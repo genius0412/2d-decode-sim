@@ -27,11 +27,26 @@ export interface RecordConfig {
 // ------------------------------------------------------------- seasons ------
 // Periods are PER GAME: each game runs its own Act → Season progression, so DECODE
 // and Chain Reaction never share a live season or an act. `game` defaults to DECODE.
+/**
+ * (game, balanceVersion) pairs this process has already seeded. `ensureSeason` is
+ * two WRITES, and `GET /api/seasons` - the leaderboard's season picker, hit on
+ * every visit to Records - ran it on every request. In production that made
+ * `seasons` the second busiest table in the whole database (121k updates against
+ * 8 inserts), all of it re-asserting a row that was already correct.
+ *
+ * Memoizing is safe precisely because the key IS the season: when an admin rolls a
+ * new one, `currentSeasonNumber` returns the new number, which is a new key, so
+ * the seed-and-deactivate runs again exactly when it has something to do.
+ */
+const seasonEnsured = new Set<string>();
+
 export async function ensureSeason(
   balanceVersion: number,
   game?: Game,
   initialAct = 0,
 ): Promise<void> {
+  const key = `${g(game)}:${balanceVersion}`;
+  if (seasonEnsured.has(key)) return;
   // No baked-in name — the structured "Act X · Season Y" label is derived in
   // listSeasons. A brand-new game's first row seeds `initialAct` (Chain Reaction
   // starts at Act 1); on conflict we only re-activate — act is left untouched.
@@ -44,6 +59,7 @@ export async function ensureSeason(
     g(game),
     balanceVersion,
   ]);
+  seasonEnsured.add(key);
 }
 
 /**
@@ -253,12 +269,28 @@ export async function deleteAnnouncement(id: string): Promise<boolean> {
 }
 
 // ------------------------------------------------------------ profiles ------
+
+/**
+ * Users whose profile row this process has already created. The insert below is
+ * `on conflict do nothing` and deliberately never touches `handle` (renames go
+ * through `setHandle`), so once it has succeeded for a user it can never do
+ * anything again - which makes skipping it exactly equivalent, not merely cheaper.
+ *
+ * Worth memoizing because `/api/friends` calls this on EVERY poll and a signed-in
+ * player polls every 6s: a third of the queries on the busiest authenticated path
+ * were provably no-ops. Bounded by the distinct users a machine sees before it
+ * auto-stops; a restart simply re-learns them.
+ */
+const profileEnsured = new Set<string>();
+
 export async function ensureProfile(userId: string, handle: string): Promise<void> {
+  if (profileEnsured.has(userId)) return;
   await q(
     `insert into profiles (user_id, handle) values ($1, $2)
      on conflict (user_id) do nothing`,
     [userId, handle],
   );
+  profileEnsured.add(userId);
 }
 
 export async function setHandle(userId: string, handle: string): Promise<void> {

@@ -20,6 +20,7 @@ import {
   purgeSeasonReplays,
   startNewSeason,
   takePendingMatch,
+  createPendingMatch,
   cleanupStalePending,
   adminListRecords,
   deleteRecordById,
@@ -47,7 +48,21 @@ import {
 
 const PORT = Number(process.env.PORT ?? 8787);
 const rooms = new Map<string, Room>();
-const matchmaker = new Matchmaker();
+
+// Has this machine staged a ranked match whose row might still be sitting in
+// `pending_matches`? Arms the reaper below; see the note on its interval for why
+// an idle machine must not sweep on a timer.
+let pendingStaged = false;
+const matchmaker = new Matchmaker(
+  dbEnabled
+    ? {
+        stage: async (m) => {
+          pendingStaged = true;
+          await createPendingMatch(m);
+        },
+      }
+    : {},
+);
 
 // live presence, surfaced at GET /api/presence (polled by the client so the
 // homepage/ranked screens can show who's around WITHOUT anyone holding a standing
@@ -149,13 +164,42 @@ function coresInUse(): number {
 // stable per-machine id for the shared presence table (unique per Fly machine)
 const MACHINE = process.env.FLY_MACHINE_ID || REGION || 'local';
 
-// GET /api/presence aggregates presence across ALL regions' machines (each machine
-// only knows its own sockets). A tiny cache absorbs a burst of client polls so the
-// aggregate query doesn't hit the DB on every request.
+/**
+ * GET /api/presence aggregates presence across ALL regions' machines (each machine
+ * only knows its own sockets). Two guards keep that off the database, because this
+ * is the most-called endpoint on the site — every open tab polls it every 8s for
+ * the online chip and every 20s for the admin-notice banner, and each poll used to
+ * be its own query. One tab left open in a background window was enough to hold the
+ * Neon compute awake indefinitely (it suspends only after 5 minutes with no
+ * queries), which bills the whole month.
+ *
+ *  1. IDLE SHORT-CIRCUIT. A machine with no sockets and an empty queue answers
+ *     from memory and never touches the DB. When nobody is connected anywhere
+ *     the true global answer IS zero, so an empty site now costs zero queries and
+ *     the compute is free to suspend. The cost of this is real but small: while
+ *     THIS machine is empty and another region is not, the caller sees this
+ *     machine's zeros instead of the global count, until they connect to
+ *     something (which un-idles the machine and restores the real aggregate).
+ *     `?full=1` opts out, for the one screen where the number drives a decision
+ *     rather than decorating one: the ranked queue depth.
+ *  2. CACHE. Once busy, collapse concurrent pollers onto one query. The TTL is
+ *     just under the client's 8s cadence so a lone poller still sees fresh
+ *     numbers while a crowd shares one read.
+ */
+const PRESENCE_CACHE_MS = 7_000;
 let presenceCache: { at: number; val: GlobalPresence } | null = null;
-async function aggregatePresence(): Promise<GlobalPresence> {
+function machineIdle(): boolean {
+  const qs = matchmaker.queueSizes();
+  return onlineCount === 0 && authedUsers.size === 0 && qs['1v1'] === 0 && qs['2v2'] === 0;
+}
+async function aggregatePresence(full = false): Promise<GlobalPresence> {
   const now = Date.now();
-  if (presenceCache && now - presenceCache.at < 3000) return presenceCache.val;
+  if (presenceCache && now - presenceCache.at < PRESENCE_CACHE_MS) return presenceCache.val;
+  if (!full && machineIdle()) {
+    // don't cache this one: the moment someone connects we want a real read, not
+    // a zero held for another 7 seconds
+    return { online: 0, signedIn: 0, queues: { '1v1': 0, '2v2': 0 } };
+  }
   const val = await globalPresence();
   presenceCache = { at: now, val };
   return val;
@@ -522,7 +566,10 @@ const httpServer = createServer((req, res) => {
     res.end(JSON.stringify(body));
     return;
   }
-  if (req.method === 'GET' && req.url === '/api/presence') {
+  if (req.method === 'GET' && new URL(req.url ?? '/', 'http://x').pathname === '/api/presence') {
+    // `?full=1` opts out of the idle short-circuit in `aggregatePresence` — the
+    // ranked screen asks for it because its queue depth is a number people act on.
+    const wantFull = new URL(req.url ?? '/', 'http://x').searchParams.get('full') === '1';
     // include any LIVE admin notice so the client can show the restart banner
     // (and block starting new games) on EVERY page — even disconnected ones
     // like Home/solo where no WebSocket delivers `serverNotice`.
@@ -542,7 +589,7 @@ const httpServer = createServer((req, res) => {
     // own sockets — anycast routing means the caller often lands on an empty region).
     // Fall back to this machine's local numbers if the DB read fails.
     if (dbEnabled) {
-      aggregatePresence().then(
+      aggregatePresence(wantFull).then(
         (g) => respond(g.online, g.signedIn, g.queues),
         (e) => {
           console.error('[presence] aggregate failed, using local:', e);
@@ -929,11 +976,31 @@ migrate()
   .then(() => console.log('[server] database ready'))
   .catch((e) => console.error('[server] migration failed (records disabled):', e));
 
-// reap staged ranked matches nobody claimed (both clients vanished after assign).
-// Only meaningful on the matchmaker/host machines; harmless elsewhere.
+/*
+ * IDLE MEANS SILENT. Everything below is a recurring timer that touches Postgres,
+ * and Neon bills COMPUTE HOURS: the compute suspends only after five consecutive
+ * minutes with NO queries, and bills for every second it is awake. So a timer that
+ * fires unconditionally does not cost "one small query" — it costs the entire
+ * month of compute. `min_machines_running = 1` (fly.toml) keeps iad up forever, so
+ * an unconditional beat there pinned the database on 24/7 whether or not a single
+ * person was playing.
+ *
+ * Rule for anything added here: fire only when there is something to say.
+ */
 if (dbEnabled) {
+  // Reap staged ranked matches nobody claimed (both clients vanished after assign).
+  // Self-arming: rows only exist after THIS machine stages one (`stagePending`
+  // below), so an idle machine sweeps nothing. A sweep that finds nothing left
+  // disarms until the next match is staged. Rows orphaned by a crash are inert —
+  // their code only ever went to the two clients, so nobody can claim them — and
+  // the next staged match sweeps the whole table, so it still self-heals.
   const reaper = setInterval(() => {
-    cleanupStalePending(60_000).catch((e) => console.error('[server] pending cleanup:', e));
+    if (!pendingStaged) return;
+    cleanupStalePending(60_000)
+      .then((n) => {
+        if (n === 0) pendingStaged = false;
+      })
+      .catch((e) => console.error('[server] pending cleanup:', e));
   }, 60_000);
   reaper.unref();
 
@@ -941,8 +1008,18 @@ if (dbEnabled) {
   // aggregate a GLOBAL total across regions. A stopped/crashed machine simply stops
   // beating and its row ages out of the freshness window; a restart with the same
   // FLY_MACHINE_ID overwrites its own row, so no ghosts accumulate.
+  //
+  // An EMPTY machine beats once to publish the zero and then goes quiet until
+  // someone shows up. Nothing reads a missing row as anything but absent —
+  // `globalPresence` already filters to rows updated inside its freshness window,
+  // so silence and a zero row mean the same thing to every consumer.
+  let lastBeatEmpty = false;
   const beat = (): void => {
     const qs = matchmaker.queueSizes();
+    const empty =
+      onlineCount === 0 && authedUsers.size === 0 && qs['1v1'] === 0 && qs['2v2'] === 0;
+    if (empty && lastBeatEmpty) return; // nothing here, and we already said so
+    lastBeatEmpty = empty;
     upsertPresence(MACHINE, REGION, onlineCount, [...authedUsers.keys()], qs['1v1'], qs['2v2']).catch(
       (e) => console.error('[presence] heartbeat failed:', e),
     );
