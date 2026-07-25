@@ -65,6 +65,20 @@ export function aimSolution(r: RobotState): { yaw: number; speed: number; angle:
   return { yaw: yaw, speed: sol.speed, angle: sol.angle };
 }
 
+/** Manual fire without turret aim assist steers the chassis toward the same
+ * lead-compensated shot heading. Aim-assist alone never hijacks driver steering. */
+export function autoAlignCommand(r: RobotState, cmd: RobotCommand): RobotCommand {
+  if (r.aimAssist || !cmd.fire) return cmd;
+  const turn = clamp(wrapAngle(aimSolution(r).yaw - r.heading) * C.AUTO_ALIGN_GAIN, -1, 1);
+  if (r.spec.drivetrain !== 'tank') return { ...cmd, rotate: turn };
+
+  const forward = ((cmd.leftDrive ?? 0) + (cmd.rightDrive ?? 0)) / 2;
+  const left = forward - turn;
+  const right = forward + turn;
+  const scale = Math.max(1, Math.abs(left), Math.abs(right));
+  return { ...cmd, rotate: turn, leftDrive: left / scale, rightDrive: right / scale };
+}
+
 /**
  * Updates the robot's drive physics (position, velocity, angular velocity, heading).
  * This function is for movement only.
@@ -263,6 +277,8 @@ export function updateRobotActions(world: World, r: RobotState, cmd: RobotComman
   // Apply aim assist if enabled (now forced true during autoPathActive)
   if (r.aimAssist) {
     r.turretHeading = aimSolution(r).yaw;
+  } else {
+    r.turretHeading = r.heading;
   }
 
   // ---- flywheel spin: ramps with distance to this robot's OWN goal (a far
@@ -279,7 +295,15 @@ export function updateRobotActions(world: World, r: RobotState, cmd: RobotComman
   // ---- fire: no spin-up before the FIRST shot; between shots the cadence
   // is the intake transfer interval plus flywheel recovery after energetic
   // (long-range) shots — see fireReadyAt set in fire() -----------------------
-  const canFire = robotsEnabled(world) && r.hopper.length > 0 && world.time >= r.fireReadyAt;
+  const manualAligned =
+    r.aimAssist ||
+    !cmd.fire ||
+    Math.abs(wrapAngle(aimSolution(r).yaw - r.heading)) <= C.AUTO_ALIGN_TOL;
+  const canFire =
+    robotsEnabled(world) &&
+    r.hopper.length > 0 &&
+    world.time >= r.fireReadyAt &&
+    manualAligned;
   const zoneOk = world.mode === 'free' || robotInLaunchZone(r);
   // cmd.fire is true if pathTraversal returns it, or if driver presses it.
   // r.autoFire is true if forced by autoPathActive or set in settings.

@@ -540,6 +540,8 @@ export const LAUNCH_ANGLE_MAX = (80 * Math.PI) / 180;
 export const LAUNCH_ANGLE_MARGIN = (14 * Math.PI) / 180; // above line-of-sight
 export const LAUNCH_HEIGHT = 12; // in, muzzle height
 export const LAUNCH_MAX_SPEED = 320; // in/s
+export const AUTO_ALIGN_TOL = 0.07; // rad heading error under which manual fire may shoot
+export const AUTO_ALIGN_GAIN = 4.0; // P-gain turning the chassis toward the goal while firing
 /** no flywheel spin-up model — shots are limited only by this cadence */
 // firing cadence lives per intake preset: INTAKE_PRESETS[*].fireInterval
 /** fraction of chassis velocity inherited by the launched ball. The turret's

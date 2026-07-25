@@ -16,7 +16,7 @@ import { rot, approach } from '../math';
 import { solveBalls, solveRobots } from './physicsEngine';
 import { decodeColliders } from '../games/decode/colliders';
 import { classifierRect } from './field';
-import { updateRobot, updateRobotActions } from './robot';
+import { autoAlignCommand, updateRobot, updateRobotActions } from './robot';
 import { checkGoalEntry, gateColliderPos, updateBasins, updateGates, updateRails } from './goal';
 import { updateHumanPlayers } from './humanPlayer';
 import { robotsEnabled, stepMatch } from './match';
@@ -73,6 +73,7 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
         r.autoPathActive = false;
       }
     }
+    if (!r.passive) currentCmd = autoAlignCommand(r, currentCmd);
     actualCommands.set(r.id, currentCmd);
   }
 

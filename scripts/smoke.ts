@@ -9,7 +9,7 @@ import type { LobbyPlayer } from '../src/net/protocol';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from '../src/net/roomCode';
 import { step } from '../src/sim/world';
 import { updatePenalties } from '../src/sim/penalties';
-import { robotInLaunchZone } from '../src/sim/robot';
+import { aimSolution, robotInLaunchZone } from '../src/sim/robot';
 import { updateHumanPlayers } from '../src/sim/humanPlayer';
 import { startMatch } from '../src/sim/match';
 import { gateColliderPos, pushingGate } from '../src/sim/goal';
@@ -779,6 +779,29 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   run(w, cmd({}), 6);
   const g = w.goals.blue;
   check('shooting on the move still scores (lead compensation)', g.classifiedCount + g.overflowCount >= 2, `entered=${g.classifiedCount + g.overflowCount}`);
+}
+
+// ---- manual fire auto-aligns the chassis when turret aim assist is off -------
+for (const drivetrain of ['mecanum', 'tank'] as const) {
+  const w = mkWorld('match', 'blue', 104, { drivetrain });
+  startMatch(w);
+  const r = w.robots[0];
+  r.aimAssist = false;
+  r.pos = { x: 10, y: 40 };
+  r.heading = 0; // face away from the blue goal in the far-left corner
+  const initialHopper = r.hopper.length;
+  run(w, cmd({ fire: true }), 0.1);
+  const heldWhileTurning = r.hopper.length === initialHopper;
+  run(w, cmd({ fire: true }), 1.2);
+  const err = Math.abs(Math.atan2(
+    Math.sin(aimSolution(r).yaw - r.heading),
+    Math.cos(aimSolution(r).yaw - r.heading),
+  ));
+  check(
+    `manual fire auto-aligns ${drivetrain} before shooting when aim assist is off`,
+    heldWhileTurning && err < 0.2 && r.hopper.length < initialHopper,
+    `held=${heldWhileTurning} err=${err.toFixed(2)} hopper=${initialHopper}->${r.hopper.length}`,
+  );
 }
 
 // ---- intake -----------------------------------------------------------------
