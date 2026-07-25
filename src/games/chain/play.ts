@@ -50,13 +50,15 @@ import {
 import {
   accelMultiplier,
   accelSide,
-  chainIntakeBand,
+  chainIntakeMouths,
+  mouthContains,
   hookPos,
   labAreas,
   onRingStand,
   CHAIN_HOOKS_PER_GOAL,
   type ChainState,
 } from './state';
+import { EDGE_ANGLE, EDGE_DIR, EDGE_PERP, edgeGeom, shooterMountOf } from './mounts';
 
 /**
  * Chain Reaction gameplay step (called from `chainStep` after the robots move).
@@ -432,14 +434,18 @@ function leadDir(
  * turns DIAGONALLY toward the goal). SHOOTING ON THE MOVE: it LEADS by turning the whole CHASSIS
  * — `leadDir` returns the heading where the muzzle (chassis-forward) speed + the inherited
  * chassis velocity heads straight at the mouth, so a turretless robot can also stay accurate
- * while moving. A REAR shooter faces its BACK to the goal (+π).
+ * while moving. The MOUNT then offsets the chassis heading so it is the SHOOTER'S EDGE that
+ * ends up pointed at the goal: a REAR shooter turns its back to it (+π), a LEFT/RIGHT shooter
+ * presents that flank (±π/2) — i.e. it drives PAST the goal sideways and fires broadside.
  */
 export function chainGoalAimHeading(r: RobotState): number {
   const mouth = { x: accelSide(r.alliance) * CHAIN_HALF_X, y: 0 }; // opening center (±72, 0)
   const mode = r.spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE;
   const speed = mode === 'dumper' ? CHAIN_DUMP_SPEED : CHAIN_DRUM_SPEED;
   const lead = leadDir(r.pos, mouth, speed, r.vel);
-  return r.spec.shooterRear ? wrapAngle(lead + Math.PI) : lead;
+  // heading = the direction the MUZZLE must point, minus where the muzzle sits relative to
+  // forward — so muzzle world angle (heading + EDGE_ANGLE) lands exactly on the lead solution.
+  return wrapAngle(lead - EDGE_ANGLE[shooterMountOf(r.spec)]);
 }
 
 /**
@@ -481,9 +487,11 @@ function launchLine(
 }
 
 /** Launch ONE particle toward the goal from lateral fraction `frac` (−0.5..0.5 across the
- * chassis width). It leaves along the robot's FORWARD heading (aim = the robot facing the
- * goal); `sideVar` scales the speed by its lateral position (dumper catapult scatter). The
- * arc is solved so it is still airborne crossing the wall plane (the tall over-field opening). */
+ * launcher's edge). It leaves along the MOUNTED EDGE's outward normal (aim = the robot turning
+ * that edge to the goal); `sideVar` scales the speed by its lateral position (dumper catapult
+ * scatter). The launch line spans the mounted edge — the chassis WIDTH on a front/back mount,
+ * its LENGTH on a left/right one, so a long narrow robot gets a wider broadside than nose-on.
+ * The arc is solved so it is still airborne crossing the wall plane (the tall opening). */
 function launchAt(
   world: World,
   chain: ChainState,
@@ -493,13 +501,17 @@ function launchAt(
   sideVar: number,
 ): void {
   const side = accelSide(r.alliance);
-  const hw = r.spec.width / 2;
-  const hl = r.spec.length / 2;
-  // a REAR shooter launches from the BACK edge, in the −forward direction
-  const sSign = r.spec.shooterRear ? -1 : 1;
-  const fwd = { x: dcos(r.heading) * sSign, y: dsin(r.heading) * sSign };
+  const edge = shooterMountOf(r.spec);
+  const { dist, span } = edgeGeom(r.spec, edge);
+  // the muzzle points along the mounted edge's outward normal, in the WORLD frame
+  const muzzle = wrapAngle(r.heading + EDGE_ANGLE[edge]);
+  const fwd = { x: dcos(muzzle), y: dsin(muzzle) };
   const wall = side * CHAIN_HALF_X;
-  const w = rot({ x: sSign * hl, y: frac * 2 * hw * CHAIN_LAUNCH_LINE_FRAC }, r.heading);
+  // launch point: out to the edge along its normal, then `frac` across it (edge perpendicular)
+  const dir = EDGE_DIR[edge];
+  const perp = EDGE_PERP[edge];
+  const across = frac * 2 * span * CHAIN_LAUNCH_LINE_FRAC;
+  const w = rot({ x: dist * dir.x + across * perp.x, y: dist * dir.y + across * perp.y }, r.heading);
   const px = r.pos.x + w.x;
   const py = r.pos.y + w.y;
   const spd = speed * (1 + sideVar * (frac * 2)); // frac*2 ∈ [−1,1] — catapult side variance
@@ -639,14 +651,10 @@ function interact(
   // collision front (the intake tip), so a particle at the intake is captured BEFORE the frame
   // would plow it forward — driving into a cluster collects fast instead of shoving them away.
   if (intakeActive && rob.hopper.length < cap) {
-    const m = chainIntakeBand(rob.spec);
-    if (m.side) {
-      // SIDE mount: rollers on BOTH side edges — a particle alongside either flank (within the
-      // chassis length, out to `outer`, in past `inner`) is grabbed.
-      const aly = Math.abs(local.y);
-      if (Math.abs(local.x) < m.halfLen && aly > m.inner && aly < m.outer + r2) return 'absorbed';
-    } else if (local.x > m.back && local.x < m.front + r2 && Math.abs(local.y) < m.half) {
-      return 'absorbed';
+    // ANY mounted edge grabs: one mouth for front/back, two for side (both flanks) and
+    // frontback (both ends). The particle radius pads only each mouth's outward lip.
+    for (const m of chainIntakeMouths(rob.spec)) {
+      if (mouthContains(m, local.x, local.y, r2)) return 'absorbed';
     }
   }
 

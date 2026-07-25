@@ -78,13 +78,21 @@ export interface RobotSpec {
    *  ('sweeper') — a roller spanning the whole chassis width that gulps Particles on contact.
    * Optional (defaulted in coerceSpec). */
   chainIntake?: ChainIntakeStyle;
-  /** Chain Reaction: mount the sweeper on the LEFT+RIGHT edges instead of the FRONT (a drum can
-   * then intake a stream it drives alongside). Same roller, different position; the open flanks
-   * cost hopper volume ⇒ lower storage cap. Optional (defaulted false in coerceSpec). */
+  /** Chain Reaction: which chassis edge(s) the sweeper rollers ride on. Same roller, different
+   * position — it moves the CAPTURE band AND the collision footprint together. Open edges cost
+   * hopper volume ⇒ lower storage cap (see `chainStorageMax`). Optional (defaulted in
+   * coerceSpec, which also migrates the legacy `intakeSide` flag). */
+  intakeMount?: ChainIntakeMount;
+  /** Chain Reaction: which chassis edge the drum/dumper launcher fires over. The robot turns
+   * THAT edge to the goal to shoot. No effect on a turret (top-mounted). Optional (defaulted in
+   * coerceSpec, which also migrates the legacy `shooterRear` flag). */
+  shooterMount?: ChainShooterMount;
+  /** @deprecated superseded by `intakeMount`. Kept so older saves migrate and older peers/
+   * servers (which only know this flag) still see the closest equivalent — `coerceSpec`
+   * MIRRORS it from `intakeMount`. Never read it directly; use `intakeMountOf`. */
   intakeSide?: boolean;
-  /** Chain Reaction: mount the drum/dumper launcher at the REAR (opposite the front intake)
-   * instead of the front. The robot turns its BACK to the goal to shoot. No effect on a turret
-   * (top-mounted). Optional (defaulted false in coerceSpec). */
+  /** @deprecated superseded by `shooterMount` (same mirroring contract as `intakeSide`).
+   * Never read it directly; use `shooterMountOf`. */
   shooterRear?: boolean;
 }
 
@@ -98,6 +106,22 @@ export type ChainScoreMode = 'turret' | 'drum' | 'dumper';
 /** Chain Reaction intake design (see `RobotSpec.chainIntake`). Only the full-width sweeper
  * exists for now; the type is kept open for future designs. */
 export type ChainIntakeStyle = 'sweeper';
+
+/** Chain Reaction intake MOUNT (see `RobotSpec.intakeMount`) — which chassis edge(s) carry the
+ * sweeper rollers. The mount moves the capture band AND the collision footprint together.
+ *  • front     — one bar across the chassis front (the default).
+ *  • back      — the same bar across the REAR: a mirror of front, so it costs nothing.
+ *  • side      — rollers on BOTH flanks: collect a stream you drive alongside, but the open
+ *    flanks eat into the hopper ⇒ the smallest storage cap.
+ *  • frontback — rollers on BOTH ends: collect driving either way (no turning around), at a
+ *    milder storage cost than `side`. */
+export type ChainIntakeMount = 'front' | 'back' | 'side' | 'frontback';
+
+/** Chain Reaction turretless-launcher MOUNT (see `RobotSpec.shooterMount`) — which chassis edge
+ * the drum/catapult fires over, i.e. the edge the robot turns to the goal. Robot frame: +x is
+ * forward, +y is the robot's LEFT, so 'left'/'right' fire along ±y and span the chassis LENGTH
+ * (not its width). No effect on a turret. */
+export type ChainShooterMount = 'front' | 'back' | 'left' | 'right';
 
 export type BallState =
   | { kind: 'ground' }

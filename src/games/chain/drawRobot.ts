@@ -8,7 +8,8 @@ import {
   CHAIN_BEAM_RENDER_H,
   CHAIN_BEAM_RUMBLE,
 } from './config';
-import { chainIntakeBand } from './state';
+import { chainIntakeMouths } from './state';
+import { EDGE_ANGLE, edgeGeom, isEndEdge, shooterMountOf } from './mounts';
 import { beamRide } from './beams';
 
 /** cosmetic clock for the crossing shudder (render-only, so a wall clock is fine + deterministic-safe) */
@@ -79,14 +80,21 @@ export function drawChainRobot(
 
   drawWheels(ctx, r, color);
 
-  drawChainIntake(ctx, r, intaking, hl);
+  drawChainIntake(ctx, r, intaking);
 
   // scoring-archetype launcher (chassis-fixed part). Drum + catapult sit just inside the
-  // front — or the REAR for a rear-shooter build. The turret is drawn last, in the world
-  // frame, so it rotates independently.
-  const sSign = r.spec.shooterRear ? -1 : 1;
-  if (mode === 'drum') drawDrum(ctx, hl, hw, loaded, sSign);
-  else if (mode === 'dumper') drawCatapult(ctx, hl, hw, loaded, sSign);
+  // MOUNTED edge — rotate the local frame to that edge and draw the same shape, so a
+  // left/right mount spans the chassis LENGTH exactly as the sim launches it (`launchAt`).
+  // The turret is drawn last, in the world frame, so it rotates independently.
+  if (mode === 'drum' || mode === 'dumper') {
+    const edge = shooterMountOf(r.spec);
+    const g = edgeGeom(r.spec, edge);
+    ctx.save();
+    ctx.rotate(EDGE_ANGLE[edge]);
+    if (mode === 'drum') drawDrum(ctx, g.dist, g.span, loaded);
+    else drawCatapult(ctx, g.dist, g.span, loaded);
+    ctx.restore();
+  }
 
   drawHopperFill(ctx, r, hw);
 
@@ -104,51 +112,45 @@ export function drawChainRobot(
   if (mode === 'turret') drawTurret(ctx, r, loaded, ox, oy);
 }
 
-/** CR intake — the full-width sweeper roller. Mounts on the FRONT (a bar across the chassis
- * front) or the LEFT+RIGHT edges (two bars along the sides). Greens while intaking. The drawn
- * bars ARE the grab area (`chainIntakeBand`, shared with `interact`). */
-function drawChainIntake(
-  ctx: CanvasRenderingContext2D,
-  r: RobotState,
-  on: boolean,
-  hl: number,
-): void {
-  const m = chainIntakeBand(r.spec);
+/** CR intake — the full-width sweeper roller, drawn on every MOUNTED edge (front, back, both
+ * flanks, or both ends). Greens while intaking. The drawn bars ARE the grab area: each bar is
+ * one `chainIntakeMouths` rect, the same rects `interact` captures with. */
+function drawChainIntake(ctx: CanvasRenderingContext2D, r: RobotState, on: boolean): void {
   const barFill = on ? GREEN_DK : '#333a45';
   const tickFill = on ? GREEN : '#6b7280';
 
-  if (m.side) {
-    // SIDE rollers along each side edge (±y), spanning the chassis length
-    const n = Math.max(2, Math.round(m.halfLen / 2.4));
-    for (const s of [1, -1] as const) {
-      const y0 = s * m.inner;
-      const y1 = s * m.outer;
-      ctx.fillStyle = barFill;
-      ctx.fillRect(-m.halfLen, Math.min(y0, y1), m.halfLen * 2, Math.abs(y1 - y0));
-      ctx.fillStyle = tickFill;
-      for (let i = -n; i <= n; i++) {
-        ctx.fillRect((i * m.halfLen) / (n + 0.5) - 0.65, s * m.outer - s * 1.2 - (s > 0 ? 0 : 1.1), 1.3, 1.1);
+  for (const m of chainIntakeMouths(r.spec)) {
+    // the roller bar fills the mouth rect from the frame out to the tip
+    ctx.fillStyle = barFill;
+    ctx.fillRect(m.x0, m.y0, m.x1 - m.x0, m.y1 - m.y0);
+
+    // ROLLER TICKS along the outer lip, laid out across the mouth's long axis
+    const end = isEndEdge(m.edge); // ends run across y, flanks along x
+    const half = end ? (m.y1 - m.y0) / 2 : (m.x1 - m.x0) / 2;
+    const n = Math.max(2, Math.round(half / 2.4));
+    ctx.fillStyle = tickFill;
+    for (let i = -n; i <= n; i++) {
+      const t = (i * half) / (n + 0.5); // position along the edge
+      if (end) {
+        // tick sits just inside the outer lip (+x on front, −x on back)
+        const x = m.edge === 'front' ? m.x1 - 1.2 : m.x0 + 0.1;
+        ctx.fillRect(x, t - 0.65, 1.1, 1.3);
+      } else {
+        const y = m.edge === 'left' ? m.y1 - 1.2 : m.y0 + 0.1;
+        ctx.fillRect(t - 0.65, y, 1.3, 1.1);
       }
     }
-    return;
   }
-
-  // FRONT: full-width roller bar across the chassis front, ticks at the tip
-  const half = m.half;
-  const x1 = m.front; // the intake tip (collision front)
-  ctx.fillStyle = barFill;
-  ctx.fillRect(hl, -half, x1 - hl, half * 2);
-  const n = Math.max(2, Math.round(half / 2.4));
-  ctx.fillStyle = tickFill;
-  for (let i = -n; i <= n; i++) ctx.fillRect(x1 - 1.2, (i * half) / (n + 0.5) - 0.65, 1.1, 1.3);
 }
 
 /** chassis-wide flywheel DRUM: a FULL-WIDTH row of compliant rollers (the flywheels) across
- * the front — NOT a channelled drum. The rollers spin to intake AND launch. Greens when loaded. */
-function drawDrum(ctx: CanvasRenderingContext2D, hl: number, hw: number, loaded: boolean, sSign = 1): void {
-  const half = hw * 0.96; // spans (nearly) the whole chassis width
-  const th = 3.4; // roller-bar depth (along x)
-  const cx = sSign * (hl - th / 2 - 0.5); // front (+1) or rear (−1) for a rear-shooter
+ * the mounted edge — NOT a channelled drum. The rollers spin to intake AND launch. Greens when
+ * loaded. Drawn in the MOUNT's frame (caller rotates): `dist` = distance out to that edge,
+ * `span` = its half-length, so a flank mount spans the chassis length instead of its width. */
+function drawDrum(ctx: CanvasRenderingContext2D, dist: number, span: number, loaded: boolean): void {
+  const half = span * 0.96; // spans (nearly) the whole edge
+  const th = 3.4; // roller-bar depth (into the frame)
+  const cx = dist - th / 2 - 0.5;
   // roller housing bar across the full width
   ctx.fillStyle = STEEL_DK;
   ctx.strokeStyle = loaded ? GREEN : IDLE;
@@ -165,12 +167,13 @@ function drawDrum(ctx: CanvasRenderingContext2D, hl: number, hw: number, loaded:
   }
 }
 
-/** chassis-wide CATAPULT: a wide bucket/paddle across the front the whole hopper is
- * flung from. Reads as a curved throwing lip. Greens when loaded. */
-function drawCatapult(ctx: CanvasRenderingContext2D, hl: number, hw: number, loaded: boolean, sSign = 1): void {
-  const half = hw * CHAIN_LAUNCH_LINE_FRAC;
-  const back = sSign * (hl - 6); // bucket floor (front, or rear for a rear-shooter)
-  const lip = sSign * (hl - 1); // throwing lip near the shooter edge
+/** chassis-wide CATAPULT: a wide bucket/paddle across the mounted edge the whole hopper is
+ * flung from. Reads as a curved throwing lip. Greens when loaded. Drawn in the MOUNT's frame
+ * (caller rotates) — see `drawDrum` for `dist`/`span`. */
+function drawCatapult(ctx: CanvasRenderingContext2D, dist: number, span: number, loaded: boolean): void {
+  const half = span * CHAIN_LAUNCH_LINE_FRAC;
+  const back = dist - 6; // bucket floor, inside the frame
+  const lip = dist - 1; // throwing lip near the shooter edge
   ctx.fillStyle = STEEL_DK;
   ctx.strokeStyle = loaded ? GREEN : IDLE;
   ctx.lineWidth = 0.8;

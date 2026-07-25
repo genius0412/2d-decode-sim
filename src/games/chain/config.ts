@@ -37,7 +37,8 @@
  * needed — approximations below are FLAGGED).
  */
 
-import type { ChainIntakeStyle, ChainScoreMode, RobotSpec, StartCat } from '../../types';
+import type { ChainIntakeMount, ChainIntakeStyle, ChainScoreMode, RobotSpec, StartCat } from '../../types';
+import { intakeMountOf } from './mounts';
 
 /** millimetres → inches (the sim's world unit) */
 export const mm = (v: number): number => v / 25.4;
@@ -203,12 +204,14 @@ export const CHAIN_EJECT_VZ = 80; // in/s upward arc on the way out (base; ×0.7
 export const CHAIN_EJECT_SPREAD = 80; // in/s random lateral (y) spread — modestly narrow width-wise scatter
 
 /**
- * INTAKE DESIGN. The only style is the SWEEPER — a full-width roller. It MOUNTS on the FRONT
- * (default) or the LEFT+RIGHT SIDES (`RobotSpec.intakeSide`, a Front/Side selector like the
- * shooter mount). Geometry lives in `chainIntakeBand` (state.ts), shared by the capture AND the
- * renderer so the grab area IS the drawn intake. `widthFrac`·chassis +`overhang` = mouth
- * half-width; `depth` = how far behind the edge it reaches. Side mount's open flanks cost hopper
- * volume ⇒ lower storage (`CHAIN_STORE_SIDE_MULT`).
+ * INTAKE DESIGN. The only style is the SWEEPER — a full-width roller. Its MOUNT
+ * (`RobotSpec.intakeMount`) picks which chassis edge(s) carry it: FRONT (default), BACK, both
+ * SIDES, or FRONT+BACK. Geometry lives in `chainIntakeMouths` (state.ts) — one rect per mounted
+ * edge, shared by the capture AND the renderer so the grab area IS the drawn intake, and by
+ * `footprintExtents` so the mount moves the COLLISION box with it. `widthFrac`·chassis
+ * +`overhang` = the mouth half-width on an END edge (a flank mouth spans the chassis length);
+ * `depth` = how far behind the edge it reaches. Open edges cost hopper volume ⇒ lower storage
+ * (`chainMountStoreMult`).
  */
 export interface ChainIntakeGeom {
   widthFrac: number; // mouth half-width as a fraction of the chassis half-width
@@ -309,16 +312,32 @@ export const CHAIN_MAX_LENGTH = 18;
 export const CHAIN_STORE_AREA_PER_BALL = 5.4;
 export const CHAIN_STORE_TURRET_MULT = 0.55; // turret loses center volume to the rotor+shooter
 export const CHAIN_STORE_LAUNCHER_MULT = 1.0; // drum + dumper: open hopper (large, equal)
+// INTAKE MOUNT storage cost — every mounted edge is an OPENING the hopper can't use.
+// front/back are mirror images (one open end), so a rear sweeper is a free stylistic choice;
+// two mounts cost real volume. SIDE is the harshest: the flanks run the full chassis LENGTH
+// (and on a wide-and-short CR chassis that's most of the perimeter), which is the price for
+// collecting a stream you drive alongside. FRONTBACK opens two ENDS — a milder bite, and it
+// buys collection in both drive directions.
 export const CHAIN_STORE_SIDE_MULT = 0.6; // SIDE intake: open flanks eat into the hopper ⇒ smaller
+export const CHAIN_STORE_FRONTBACK_MULT = 0.75; // FRONT+BACK: two open ends, less costly than flanks
 
-/** the MAX Particles this robot can hold — from its footprint × an archetype factor,
- * clamped to [MIN, MAX]. Turret is smallest; drum + dumper are equal and large; a SIDE
- * intake (open left/right flanks) holds fewer than a front sweeper. */
+/** the hopper-volume factor an intake mount costs (1 = no cost). */
+export function chainMountStoreMult(mount: ChainIntakeMount): number {
+  if (mount === 'side') return CHAIN_STORE_SIDE_MULT;
+  if (mount === 'frontback') return CHAIN_STORE_FRONTBACK_MULT;
+  return 1; // front / back — a single open end, mirror images of each other
+}
+
+/** the MAX Particles this robot can hold — from its footprint × an archetype factor × the
+ * INTAKE MOUNT factor, clamped to [MIN, MAX]. Turret is smallest; drum + dumper are equal and
+ * large; a SIDE intake (open flanks) holds fewest, FRONT+BACK is in between, and a lone
+ * front/back sweeper costs nothing (`chainMountStoreMult`). */
 export function chainStorageMax(spec: RobotSpec): number {
   const area = spec.length * spec.width;
   const mode = spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE;
-  let mult = mode === 'turret' ? CHAIN_STORE_TURRET_MULT : CHAIN_STORE_LAUNCHER_MULT;
-  if (spec.intakeSide) mult *= CHAIN_STORE_SIDE_MULT;
+  const mult =
+    (mode === 'turret' ? CHAIN_STORE_TURRET_MULT : CHAIN_STORE_LAUNCHER_MULT) *
+    chainMountStoreMult(intakeMountOf(spec));
   const cap = Math.round((area / CHAIN_STORE_AREA_PER_BALL) * mult);
   return Math.max(CHAIN_STORAGE_MIN, Math.min(CHAIN_STORAGE_MAX, cap));
 }

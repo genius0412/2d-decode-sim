@@ -40,6 +40,7 @@ import {
   mirrorStartPose,
   presetPose,
   activeStartLegal,
+  footprintExtents,
 } from '../src/sim/field';
 import { addClassified, addOverflow, assessMatchEnd } from '../src/sim/scoring';
 import type { Alliance, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, World } from '../src/types';
@@ -100,7 +101,7 @@ import { bestHost } from '../server/regions';
 import type { PendingMatch } from '../server/matchTypes';
 import { computeGlicko, glicko2Update, eloMode, RD_PROVISIONAL, type EloParticipant } from '../server/ranked';
 import type { ServerMsg, QueueMode } from '../src/net/protocol';
-import { dsin, dcos, dtan, datan2, rot } from '../src/math';
+import { dsin, dcos, dtan, datan2, rot, wrapAngle } from '../src/math';
 import { initPhysics } from '../src/sim/physicsEngine';
 import { moduleFor, gameOf } from '../src/games';
 import { decodeColliders } from '../src/games/decode/colliders';
@@ -122,7 +123,8 @@ import {
   CHAIN_MIN_LENGTH,
   CHAIN_MAX_LENGTH,
 } from '../src/games/chain/config';
-import { accelMultiplier, chainIntakeBand, hookPos, labAreas, ringStands } from '../src/games/chain/state';
+import { accelMultiplier, chainIntakeMouths, hookPos, labAreas, ringStands } from '../src/games/chain/state';
+import { intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -4305,10 +4307,10 @@ const mkMM = () => {
     rob.autoFire = false;
     rob.heading = 0;
     rob.pos = { x: 0, y: 0 };
-    const band = chainIntakeBand(rob.spec);
+    const mouth = chainIntakeMouths(rob.spec)[0];
     // a particle right at the intake tip (the collision front) → captured this tick
     gw.balls[0].state = { kind: 'ground' };
-    gw.balls[0].pos = { x: rob.pos.x + band.front, y: 0 };
+    gw.balls[0].pos = { x: rob.pos.x + mouth.x1, y: 0 };
     gw.balls[0].vel = { x: 0, y: 0 };
     const id = gw.balls[0].id;
     runChain(gw, cmd({}), SIM_DT);
@@ -4322,7 +4324,7 @@ const mkMM = () => {
   // and still scores from range.
   {
     const s = chainSetup(0, 'blue');
-    s.spec = { ...DEFAULT_SPEC, scoreMode: 'drum', shooterRear: true };
+    s.spec = { ...DEFAULT_SPEC, scoreMode: 'drum', shooterMount: 'back' };
     const gw = createChainWorld('match', 821, [s]);
     gw.match.phase = 'teleop';
     gw.match.phaseTimeLeft = 120;
@@ -4395,7 +4397,7 @@ const mkMM = () => {
   {
     const mkSide = (side: boolean) => {
       const setup = chainSetup(0, 'blue');
-      setup.spec = { ...DEFAULT_SPEC, scoreMode: 'drum', intakeSide: side };
+      setup.spec = { ...DEFAULT_SPEC, scoreMode: 'drum', intakeMount: side ? 'side' : 'front' };
       const gw = createChainWorld('match', 909, [setup]);
       gw.match.phase = 'teleop'; gw.match.phaseTimeLeft = 120;
       const rob = gw.robots[0]; rob.heading = 0; rob.pos = { x: 0, y: 20 }; rob.autoIntake = true; rob.autoFire = false;
@@ -4415,15 +4417,196 @@ const mkMM = () => {
     runChain(fr.gw, cmd({}), SIM_DT);
     check('chain side-intake: grabs a particle alongside the edge (a front sweeper misses it)', gone(sd.gw, idS) && !gone(fr.gw, idF));
     // lower storage cap
-    const sideMax = chainStorageMax({ ...DEFAULT_SPEC, scoreMode: 'drum', intakeSide: true });
-    const frontMax = chainStorageMax({ ...DEFAULT_SPEC, scoreMode: 'drum', intakeSide: false });
+    const sideMax = chainStorageMax({ ...DEFAULT_SPEC, scoreMode: 'drum', intakeMount: 'side' });
+    const frontMax = chainStorageMax({ ...DEFAULT_SPEC, scoreMode: 'drum', intakeMount: 'front' });
     check('chain side-intake: holds fewer than a front sweeper', sideMax < frontMax, `side=${sideMax} front=${frontMax}`);
     // the intake is part of the collision hitbox: side mount widens the footprint, no front reach
-    const eSide = robotExtents({ ...sd.rob, spec: { ...DEFAULT_SPEC, intakeSide: true } } as typeof sd.rob);
-    const eFront = robotExtents({ ...fr.rob, spec: { ...DEFAULT_SPEC, intakeSide: false } } as typeof fr.rob);
+    const eSide = robotExtents({ ...sd.rob, spec: { ...DEFAULT_SPEC, intakeMount: 'side' } } as typeof sd.rob);
+    const eFront = robotExtents({ ...fr.rob, spec: { ...DEFAULT_SPEC, intakeMount: 'front' } } as typeof fr.rob);
     check('chain side-intake: rollers extend the collision hitbox sideways (front reach moves to the sides)',
       eSide.half > DEFAULT_SPEC.width / 2 && Math.abs(eSide.front - DEFAULT_SPEC.length / 2) < 0.01 && eFront.front > DEFAULT_SPEC.length / 2,
       `sideHalf=${eSide.half.toFixed(1)} sideFront=${eSide.front.toFixed(1)} frontFront=${eFront.front.toFixed(1)}`);
+  }
+
+  // ── MECHANISM MOUNTS ─────────────────────────────────────────────────────────────────────
+  // The sweeper mounts FRONT / BACK / SIDES / FRONT+BACK and the turretless launcher fires
+  // over ANY of the four edges. Each mount has to move three things together: the CAPTURE
+  // band, the COLLISION footprint, and (shooter) the aim heading + launch line.
+  {
+    const mkMount = (patch: Partial<RobotSpec>, seed: number) => {
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, scoreMode: 'drum', ...patch };
+      const gw = createChainWorld('match', seed, [setup]);
+      gw.match.phase = 'teleop';
+      gw.match.phaseTimeLeft = 120;
+      const rob = gw.robots[0];
+      rob.heading = 0;
+      rob.pos = { x: 0, y: 20 };
+      rob.autoIntake = true;
+      rob.autoFire = false;
+      return { gw, rob };
+    };
+    const put = (gw: World, rob: (typeof gw.robots)[number], dx: number, dy: number): number => {
+      const p = rot({ x: dx, y: dy }, rob.heading);
+      gw.balls[0].state = { kind: 'ground' };
+      gw.balls[0].pos = { x: rob.pos.x + p.x, y: rob.pos.y + p.y };
+      gw.balls[0].vel = { x: 0, y: 0 };
+      return gw.balls[0].id;
+    };
+    const eaten = (gw: World, id: number): boolean => !gw.balls.some((b) => b.id === id);
+    const hl = DEFAULT_SPEC.length / 2;
+    const hw = DEFAULT_SPEC.width / 2;
+    /** does mount `m` swallow a particle placed at robot-local (dx,dy) in one tick? */
+    const grabs = (m: RobotSpec['intakeMount'], dx: number, dy: number, seed: number): boolean => {
+      const t = mkMount({ intakeMount: m }, seed);
+      const id = put(t.gw, t.rob, dx, dy);
+      runChain(t.gw, cmd({}), SIM_DT);
+      return eaten(t.gw, id);
+    };
+    // BACK mount: grabs behind the chassis, and NOT in front (the mirror of a front sweeper)
+    check(
+      'chain back-intake: grabs behind the chassis and no longer grabs in front',
+      grabs('back', -(hl + 1), 0, 940) && !grabs('back', hl + 1, 0, 941),
+      `behind=${grabs('back', -(hl + 1), 0, 940)} front=${grabs('back', hl + 1, 0, 941)}`,
+    );
+    // FRONT+BACK mount: BOTH ends grab (drive either way), flanks still don't
+    check(
+      'chain front+back intake: both ends grab, the flanks still do not',
+      grabs('frontback', hl + 1, 0, 942) &&
+        grabs('frontback', -(hl + 1), 0, 943) &&
+        !grabs('frontback', 0, hw + 1, 944),
+    );
+    // a FRONT mount must NOT grab behind (guards against a mouth list that leaks edges)
+    check('chain front-intake: does not grab behind the chassis', !grabs('front', -(hl + 1), 0, 945));
+
+    // COLLISION FOOTPRINT follows the mount — the rollers are physical on whichever edge
+    // they are bolted to (this is what keeps a rear intake from clipping through a wall).
+    const ext = (m: RobotSpec['intakeMount']) => footprintExtents({ ...DEFAULT_SPEC, intakeMount: m });
+    const eF = ext('front');
+    const eB = ext('back');
+    const eFB = ext('frontback');
+    const eS = ext('side');
+    const reach = INTAKE_PRESETS[DEFAULT_SPEC.intake].reach;
+    check(
+      'chain intake mounts: the collision hitbox grows on exactly the mounted edge(s)',
+      Math.abs(eB.rear - (hl + reach)) < 1e-9 &&
+        Math.abs(eB.front - hl) < 1e-9 && // back mount: rear only
+        Math.abs(eFB.front - (hl + reach)) < 1e-9 &&
+        Math.abs(eFB.rear - (hl + reach)) < 1e-9 && // frontback: both ends
+        Math.abs(eFB.half - hw) < 1e-9 &&
+        Math.abs(eS.half - (hw + reach)) < 1e-9 && // side: flanks only
+        Math.abs(eS.front - hl) < 1e-9 &&
+        Math.abs(eF.front - (hl + reach)) < 1e-9,
+      `back=${eB.front.toFixed(1)}/${eB.rear.toFixed(1)} fb=${eFB.front.toFixed(1)}/${eFB.rear.toFixed(1)} side=${eS.half.toFixed(1)}`,
+    );
+
+    // STORAGE cost ranks by how much of the perimeter is left open: front == back (mirror
+    // images, so a rear sweeper is free) > frontback (two ends) > side (two full flanks).
+    const cap = (m: RobotSpec['intakeMount']) =>
+      chainStorageMax({ ...DEFAULT_SPEC, scoreMode: 'drum', intakeMount: m });
+    check(
+      'chain intake mounts: storage front == back > front+back > side',
+      cap('front') === cap('back') && cap('front') > cap('frontback') && cap('frontback') > cap('side'),
+      `front=${cap('front')} back=${cap('back')} fb=${cap('frontback')} side=${cap('side')}`,
+    );
+
+    // SHOOTER on all four edges: the aim heading turns the MOUNTED EDGE to the goal, so the
+    // heading is offset by that edge's angle — and it still actually scores from range.
+    const EDGE_OFF: Record<string, number> = { front: 0, back: Math.PI, left: Math.PI / 2, right: -Math.PI / 2 };
+    let aimOk = true;
+    let scoreOk = true;
+    const detail: string[] = [];
+    for (const m of ['front', 'back', 'left', 'right'] as const) {
+      const s = chainSetup(0, 'blue');
+      s.spec = { ...DEFAULT_SPEC, scoreMode: 'drum', shooterMount: m };
+      const gw = createChainWorld('match', 950 + EDGE_OFF[m], [s]);
+      gw.match.phase = 'teleop';
+      gw.match.phaseTimeLeft = 120;
+      const rob = gw.robots[0];
+      rob.autoIntake = false;
+      rob.autoFire = true;
+      rob.pos = { x: -30, y: 0 };
+      rob.hopper = Array(10).fill('green');
+      // face the goal (+x) with the MOUNTED edge, then check the solver agrees
+      rob.heading = wrapAngle(0 - EDGE_OFF[m]);
+      const aim = chainGoalAimHeading(rob);
+      if (Math.abs(wrapAngle(aim - rob.heading)) > 1e-6) aimOk = false;
+      const before = gw.chain!.scored.blue;
+      runChain(gw, cmd({}), 1.0);
+      const got = gw.chain!.scored.blue - before;
+      if (got < 3) scoreOk = false;
+      detail.push(`${m}:${got}`);
+    }
+    check('chain shooter mounts: all four edges aim the mounted edge at the goal', aimOk);
+    check('chain shooter mounts: all four edges score from range', scoreOk, detail.join(' '));
+
+    // the LAUNCH LINE spans the MOUNTED edge: on a flank it spreads across the chassis
+    // LENGTH, not its width — so a long, narrow robot fires a wider broadside than nose-on.
+    {
+      const spread = (m: RobotSpec['shooterMount']): number => {
+        const s = chainSetup(0, 'blue');
+        // deliberately non-square so length-vs-width spread is distinguishable
+        s.spec = { ...DEFAULT_SPEC, scoreMode: 'dumper', shooterMount: m, length: 12, width: 18, ballStorage: 12 };
+        const gw = createChainWorld('match', 977, [s]);
+        gw.match.phase = 'teleop';
+        gw.match.phaseTimeLeft = 120;
+        const rob = gw.robots[0];
+        rob.autoIntake = false;
+        rob.autoFire = true;
+        rob.pos = { x: 30, y: 0 }; // inside CHAIN_DUMP_RANGE of the blue mouth (+x)
+        rob.heading = wrapAngle(0 - EDGE_OFF[m as string]);
+        rob.hopper = Array(8).fill('green');
+        const ids = new Set(gw.balls.map((b) => b.id));
+        runChain(gw, cmd({}), SIM_DT * 2);
+        // the fresh shots: spread of their launch points across the launch line
+        const fresh = gw.balls.filter((b) => !ids.has(b.id));
+        const along = fresh.map((b) => {
+          const p = rot({ x: b.pos.x - rob.pos.x, y: b.pos.y - rob.pos.y }, -rob.heading);
+          // measure across the edge: ends spread in local y, flanks in local x
+          return m === 'front' || m === 'back' ? p.y : p.x;
+        });
+        return along.length ? Math.max(...along) - Math.min(...along) : 0;
+      };
+      const front = spread('front'); // spans width 18
+      const left = spread('left'); // spans length 12
+      check(
+        'chain shooter mounts: the launch line spans the mounted edge (flank = chassis length)',
+        front > left + 2 && left > 4,
+        `frontSpread=${front.toFixed(1)} leftSpread=${left.toFixed(1)}`,
+      );
+    }
+
+    // LEGACY MIGRATION: the old intakeSide/shooterRear booleans still resolve, coerceSpec
+    // normalizes them into the new mounts, and MIRRORS them back so a spec routed through an
+    // older peer (which drops unknown fields) round-trips instead of silently resetting.
+    {
+      const old = coerceSpec({ ...DEFAULT_SPEC, intakeMount: undefined, shooterMount: undefined, intakeSide: true, shooterRear: true });
+      const mirrored = coerceSpec({ ...DEFAULT_SPEC, intakeMount: 'side', shooterMount: 'back' });
+      // an older peer strips the new fields — what survives is the mirror
+      const stripped = coerceSpec({ ...mirrored, intakeMount: undefined, shooterMount: undefined });
+      check(
+        'chain mounts: legacy intakeSide/shooterRear migrate, and coerceSpec mirrors them back',
+        old.intakeMount === 'side' &&
+          old.shooterMount === 'back' &&
+          mirrored.intakeSide === true &&
+          mirrored.shooterRear === true &&
+          stripped.intakeMount === 'side' &&
+          stripped.shooterMount === 'back',
+        `old=${old.intakeMount}/${old.shooterMount} stripped=${stripped.intakeMount}/${stripped.shooterMount}`,
+      );
+      // an unknown/garbage mount falls back to the default rather than reaching the sim
+      const junk = coerceSpec({ ...DEFAULT_SPEC, intakeMount: 'diagonal', shooterMount: 7 });
+      check(
+        'chain mounts: a bogus mount coerces to the default (never reaches the sim)',
+        junk.intakeMount === 'front' && junk.shooterMount === 'front',
+        `${junk.intakeMount}/${junk.shooterMount}`,
+      );
+      // the resolvers agree with the coerced spec (single source of truth for read sites)
+      check(
+        'chain mounts: intakeMountOf/shooterMountOf agree with the coerced spec',
+        intakeMountOf(mirrored) === 'side' && shooterMountOf(mirrored) === 'back',
+      );
+    }
   }
 
   // CR presets are legal + STABLE through coerceSpec (so a card applies as a no-op and

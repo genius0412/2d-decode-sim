@@ -36,6 +36,12 @@ import {
   CHAIN_MIN_LENGTH,
   CHAIN_MAX_LENGTH,
 } from '../games/chain/config';
+import {
+  CHAIN_DEFAULT_INTAKE_MOUNT,
+  CHAIN_DEFAULT_SHOOTER_MOUNT,
+  intakeMountOf,
+  shooterMountOf,
+} from '../games/chain/mounts';
 import { nextRandom, wrapAngle, rot, clamp } from '../math'; // Import wrapAngle
 import { lengthLimits, massLimits, rpmLimits, widthLimits } from './drivetrain';
 import { heldSlotPos } from './physics';
@@ -66,6 +72,9 @@ export const DEFAULT_SPEC: RobotSpec = {
   groundClearance: CHAIN_CLEARANCE_DEFAULT,
   scoreMode: CHAIN_DEFAULT_SCORE_MODE,
   chainIntake: CHAIN_DEFAULT_INTAKE,
+  intakeMount: CHAIN_DEFAULT_INTAKE_MOUNT,
+  shooterMount: CHAIN_DEFAULT_SHOOTER_MOUNT,
+  // deprecated mirrors of the two mounts above (kept in sync by coerceSpec)
   intakeSide: false,
   shooterRear: false,
 };
@@ -175,10 +184,21 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   out.chainIntake = (CHAIN_INTAKE_STYLES as readonly string[]).includes(sp.chainIntake as string)
     ? (sp.chainIntake as RobotSpec['chainIntake'])
     : (base.chainIntake ?? CHAIN_DEFAULT_INTAKE);
-  out.shooterRear = typeof sp.shooterRear === 'boolean' ? sp.shooterRear : (base.shooterRear ?? false);
-  out.intakeSide = typeof sp.intakeSide === 'boolean' ? sp.intakeSide : (base.intakeSide ?? false);
+  // MECHANISM MOUNTS. Enum-checked, with the legacy `intakeSide`/`shooterRear` booleans as the
+  // fallback so old saves + older peers migrate (see games/chain/mounts.ts). `intakeMountOf`/
+  // `shooterMountOf` do exactly that resolution, so run them on the RAW input first, then fall
+  // back to the base spec's resolved mount when the raw value carried nothing at all.
+  const rawMounts = sp as Pick<RobotSpec, 'intakeMount' | 'intakeSide' | 'shooterMount' | 'shooterRear'>;
+  const hasIntakeMount = sp.intakeMount !== undefined || sp.intakeSide !== undefined;
+  const hasShooterMount = sp.shooterMount !== undefined || sp.shooterRear !== undefined;
+  out.intakeMount = hasIntakeMount ? intakeMountOf(rawMounts) : intakeMountOf(base);
+  out.shooterMount = hasShooterMount ? shooterMountOf(rawMounts) : shooterMountOf(base);
+  // MIRROR the deprecated booleans so a spec routed through an older peer/server (which drops
+  // the fields it doesn't know) round-trips to the nearest legal mount instead of resetting.
+  out.intakeSide = out.intakeMount === 'side';
+  out.shooterRear = out.shooterMount === 'back';
   // Chain Reaction ball storage — clamped to the archetype+size max (chainStorageMax). NOTE: the
-  // side-intake storage penalty depends on out.intakeSide, so it's resolved BEFORE this clamp.
+  // intake-mount storage penalty depends on out.intakeMount, so it's resolved BEFORE this clamp.
   out.ballStorage = Math.round(
     clampFinite(
       sp.ballStorage,

@@ -16,7 +16,13 @@ import { gameServerConfigured } from '../net/env';
 import { periodLabel } from '../seasons';
 import { PeriodPicker } from './PeriodPicker';
 import { PLACEMENT_GAMES } from '../config';
-import { CHAIN_MODE_LABELS, CHAIN_INTAKE_LABELS } from '../games/chain/labels';
+import {
+  CHAIN_MODE_LABELS,
+  CHAIN_INTAKE_LABELS,
+  CHAIN_INTAKE_MOUNT_LABELS,
+  CHAIN_SHOOTER_MOUNT_LABELS,
+} from '../games/chain/labels';
+import { intakeMountOf, shooterMountOf } from '../games/chain/mounts';
 import {
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_DEFAULT_INTAKE,
@@ -95,8 +101,12 @@ function RobotSpecSummary({ spec, game }: { spec: RobotSpec; game?: GameId }) {
   );
 
   const chainMode = spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE;
-  const archetype = CHAIN_MODE_LABELS[chainMode] + (chainMode !== 'turret' && spec.shooterRear ? ' · rear' : '');
-  const sweeper = `${CHAIN_INTAKE_LABELS[spec.chainIntake ?? CHAIN_DEFAULT_INTAKE]} · ${spec.intakeSide ? 'Side' : 'Front'}`;
+  // a turret is top-mounted, so its mount is meaningless — only name it for drum/dumper
+  const sMount = shooterMountOf(spec);
+  const archetype =
+    CHAIN_MODE_LABELS[chainMode] +
+    (chainMode !== 'turret' && sMount !== 'front' ? ` · ${CHAIN_SHOOTER_MOUNT_LABELS[sMount].toLowerCase()}` : '');
+  const sweeper = `${CHAIN_INTAKE_LABELS[spec.chainIntake ?? CHAIN_DEFAULT_INTAKE]} · ${CHAIN_INTAKE_MOUNT_LABELS[intakeMountOf(spec)]}`;
 
   return (
     <>

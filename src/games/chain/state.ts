@@ -11,37 +11,61 @@ import {
   CHAIN_INTAKES,
   CHAIN_DEFAULT_INTAKE,
 } from './config';
+import { type ChainEdge, intakeMountEdges, intakeMountOf } from './mounts';
 
 /**
- * The CR intake MOUTH in the robot-local frame — the ONE source of truth shared by the capture
- * logic (`interact`) and the renderer (`drawChainIntake`) so the grab area IS the drawn intake.
- * A discriminated union by geometry (all inches, robot-local, +x = forward):
- *  • FRONT (sweeper): a box at the front. `front` = the collision/OBB tip (`robotExtents().front`,
- *    so particles are grabbed before being plowed); `back` a shallow bite behind the front edge;
- *    `half` the mouth half-width (widthFrac·chassis +overhang).
- *  • SIDE: rollers on BOTH side edges. `halfLen` the fore-aft span (chassis length); `inner` the
- *    inside capture edge (into the frame) and `outer` how far out past each side (±y) it grabs.
+ * The CR intake MOUTHS in the robot-local frame — the ONE source of truth shared by the capture
+ * logic (`interact`) and the renderers (`drawChainIntake`, `RobotPreview`) so the grab area IS
+ * the drawn intake. One entry per mounted edge (`intakeMountEdges`), each an axis-aligned rect
+ * in inches, robot-local (+x forward, +y left), so `frontback` and `side` are simply two rects.
+ *
+ * Each mouth reaches OUT to the collision extent of its edge (`footprintExtents`, which the same
+ * mount drives) and takes a shallow `depth` bite back inside the frame — so a particle at the
+ * roller is captured BEFORE the frame would plow it, on whichever edge is mounted.
+ *  • END edges (front/back) span the chassis WIDTH: `widthFrac`·chassis +`overhang`.
+ *  • FLANK edges (left/right) span the chassis LENGTH.
  */
-export type ChainIntakeBand =
-  | { side: false; back: number; front: number; half: number }
-  | { side: true; halfLen: number; inner: number; outer: number };
+export interface ChainIntakeMouth {
+  edge: ChainEdge;
+  /** robot-local axis-aligned bounds, x0 < x1 and y0 < y1 */
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
 
-export function chainIntakeBand(spec: RobotSpec): ChainIntakeBand {
+export function chainIntakeMouths(spec: RobotSpec): ChainIntakeMouth[] {
   const it = CHAIN_INTAKES[spec.chainIntake ?? CHAIN_DEFAULT_INTAKE];
+  const reach = INTAKE_PRESETS[spec.intake].reach;
   const hl = spec.length / 2;
   const hw = spec.width / 2;
-  // SIDE mount: the sweeper sits on the left+right edges instead of the front. `outer` uses the
-  // SAME intake reach as the front tip, so the capture band == the collision hitbox side extent
-  // (footprintExtents) — the intake is part of the non-ball collision footprint.
-  if (spec.intakeSide) {
-    return { side: true, halfLen: hl, inner: Math.max(0.5, hw - it.depth), outer: hw + INTAKE_PRESETS[spec.intake].reach };
-  }
-  return {
-    side: false,
-    back: hl - it.depth,
-    front: hl + INTAKE_PRESETS[spec.intake].reach, // = robotExtents().front (the intake tip)
-    half: hw * it.widthFrac + it.overhang,
-  };
+  const endHalf = hw * it.widthFrac + it.overhang; // mouth half-width across an END edge
+  // a flank roller bites `depth` into the frame; never past the centerline on a narrow chassis
+  const flankInner = Math.max(0.5, hw - it.depth);
+
+  return intakeMountEdges(intakeMountOf(spec)).map((edge): ChainIntakeMouth => {
+    switch (edge) {
+      case 'front':
+        return { edge, x0: hl - it.depth, x1: hl + reach, y0: -endHalf, y1: endHalf };
+      case 'back':
+        return { edge, x0: -hl - reach, x1: -hl + it.depth, y0: -endHalf, y1: endHalf };
+      case 'left':
+        return { edge, x0: -hl, x1: hl, y0: flankInner, y1: hw + reach };
+      case 'right':
+        return { edge, x0: -hl, x1: hl, y0: -hw - reach, y1: -flankInner };
+    }
+  });
+}
+
+/** is robot-local point (`lx`,`ly`) inside `mouth`? `pad` (a particle radius) grows ONLY the
+ * OUTWARD edge — a ball just touching the roller tip is in, but the inner/lateral bounds stay
+ * exact, so the mouth never silently swallows through the chassis. */
+export function mouthContains(mouth: ChainIntakeMouth, lx: number, ly: number, pad = 0): boolean {
+  const x0 = mouth.edge === 'back' ? mouth.x0 - pad : mouth.x0;
+  const x1 = mouth.edge === 'front' ? mouth.x1 + pad : mouth.x1;
+  const y0 = mouth.edge === 'right' ? mouth.y0 - pad : mouth.y0;
+  const y1 = mouth.edge === 'left' ? mouth.y1 + pad : mouth.y1;
+  return lx > x0 && lx < x1 && ly > y0 && ly < y1;
 }
 
 /**

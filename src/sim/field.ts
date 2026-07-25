@@ -1,6 +1,7 @@
 import type { Alliance, RobotSpec, StartPose, Vec2 } from '../types';
 import * as C from '../config';
 import { rot } from '../math';
+import { intakeMountOf } from '../games/chain/mounts';
 
 export type { StartPose } from '../types';
 
@@ -284,16 +285,17 @@ export interface StartLegality {
  * of truth reused by physics.robotExtents and the G304 start validator. */
 export function footprintExtents(spec: RobotSpec): { front: number; rear: number; half: number } {
   const reach = C.INTAKE_PRESETS[spec.intake].reach;
-  // Chain Reaction SIDE-mount sweeper: the rollers ride on the ±y edges, so the intake extends
-  // the SIDES of the collision hitbox (not the front) — the intake is part of the non-ball
-  // collision footprint, matching DECODE (front-mount intakes extend the front, below).
-  if (spec.intakeSide) {
-    return { front: spec.length / 2, rear: spec.length / 2, half: spec.width / 2 + reach };
-  }
+  // The intake is a PHYSICAL part of the robot, so it extends the collision hitbox on whichever
+  // edge(s) it is mounted on (Chain Reaction lets it move; DECODE intakes are always front, and
+  // `intakeMountOf` defaults there — so DECODE geometry is unchanged). A `frontback` sweeper is
+  // deeper fore-and-aft on BOTH ends; a `side` sweeper is wider instead.
+  const mount = intakeMountOf(spec);
+  const ends = mount === 'front' || mount === 'frontback';
+  const rear = mount === 'back' || mount === 'frontback';
   return {
-    front: spec.length / 2 + reach,
-    rear: spec.length / 2,
-    half: spec.width / 2,
+    front: spec.length / 2 + (ends ? reach : 0),
+    rear: spec.length / 2 + (rear ? reach : 0),
+    half: spec.width / 2 + (mount === 'side' ? reach : 0),
   };
 }
 

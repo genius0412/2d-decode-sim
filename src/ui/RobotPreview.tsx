@@ -5,7 +5,9 @@ import {
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_LAUNCH_LINE_FRAC,
 } from '../games/chain/config';
-import { chainIntakeBand } from '../games/chain/state';
+import { chainIntakeMouths } from '../games/chain/state';
+import { EDGE_ANGLE, edgeGeom, isEndEdge, shooterMountOf } from '../games/chain/mounts';
+import { footprintExtents } from '../sim/field';
 
 /** dimension-label type size, in the viewBox's inch units */
 const DIM_FONT = 1.7;
@@ -44,13 +46,14 @@ export function RobotPreview({
   const turretY = -TURRET_OFFSET_FRAC * len;
   const turretR = Math.min(w, len) * 0.2;
 
-  // Chain Reaction geometry — the SAME intake band the sim captures with. Front = UP (−y).
-  const cBand = chain ? chainIntakeBand(spec) : null;
-  const cFront = cBand && !cBand.side ? cBand : null; // front-mount sweeper geometry
-  const cSide = cBand && cBand.side ? cBand : null; // side-mount sweeper geometry
-  const cHalf = cFront ? cFront.half : cSide ? cSide.outer : 0; // half-span for the viewBox
-  const cReach = cFront ? cFront.front - len / 2 : 0; // intake tip past the front edge
-  const cTipY = frontY - cReach;
+  // Chain Reaction geometry — the SAME intake mouths the sim captures with, one per mounted
+  // edge, in ROBOT coords (+x forward). The collision footprint moves with the mount, so the
+  // viewBox extents come from `footprintExtents` (the sim's own hitbox) rather than the front.
+  const cMouths = chain ? chainIntakeMouths(spec) : [];
+  const cExt = chain ? footprintExtents(spec) : null;
+  const cHalf = cExt ? cExt.half : 0; // ±y half-span (grown by a flank mount)
+  const cTipY = cExt ? -cExt.front : frontY; // front-most in SCREEN y (robot +x → screen −y)
+  const cRearY = cExt ? cExt.rear : len / 2; // rear-most in SCREEN y
   const cMode = spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE;
 
   const tipY = chain ? cTipY : rollerTipY; // front-most, for the viewBox
@@ -63,7 +66,9 @@ export function RobotPreview({
   const labelHalf = (dimLabel.length * DIM_FONT * 0.56) / 2; // ~0.56em avg advance
   const halfSpan = Math.max(w / 2, chain ? cHalf : mouthHalf, labelHalf) + 2.5;
   const top = tipY - 2;
-  const bottom = len / 2 + 3.5; // room for the width dimension label
+  // room for the width dimension label — plus a rear-mounted CR intake, which grows the
+  // footprint BACKWARD (a viewBox off the chassis alone would clip it off).
+  const bottom = (chain ? cRearY : len / 2) + 3.5;
   const vbW = halfSpan * 2;
   const vbH = bottom - top;
 
@@ -133,53 +138,70 @@ export function RobotPreview({
     );
   }
 
-  // Chain Reaction intake (front = UP). Front-mount = a bar across the top; side-mount = two bars
-  // on the left/right edges (robot ±y → screen ±x, spanning the chassis length).
-  const cIntakeEl = cFront ? (
-    <g>
-      <rect x={-cHalf} y={cTipY} width={cHalf * 2} height={frontY - cTipY} fill={accent} opacity={0.4} />
-      {[-3, -2, -1, 0, 1, 2, 3].map((i) => (
-        <rect key={i} x={(i * cHalf) / 3.4 - 0.5} y={cTipY} width={1} height={1.3} rx={0.3} fill={accent}
-          opacity={Math.abs(i) <= 1 ? 0.95 : 0.6} />
-      ))}
-    </g>
-  ) : cSide ? (
-    <g>
-      {[1, -1].map((s) => (
-        <rect key={s} x={s > 0 ? cSide.inner : -cSide.outer} y={-cSide.halfLen}
-          width={cSide.outer - cSide.inner} height={cSide.halfLen * 2} fill={accent} opacity={0.4} />
-      ))}
+  // ── Chain Reaction mechanisms, authored in the ROBOT frame ────────────────────────────────
+  // Everything else in this preview is drawn in SCREEN coords (front = UP). The CR intake and
+  // launcher can sit on ANY chassis edge, so they are authored in robot coords (+x = forward,
+  // +y = the robot's left) — exactly the sim's frame, so `chainIntakeMouths` rects can be used
+  // verbatim — and mapped by ONE wrapper: rotate(−90°) sends robot (x,y) → screen (y, −x).
+  const ROBOT_FRAME = 'rotate(-90)';
+  const deg = (rad: number): number => (rad * 180) / Math.PI;
+
+  // one roller bar + a row of lip ticks per MOUNTED edge (front / back / both flanks / both ends)
+  const cIntakeEl = cMouths.length ? (
+    <g transform={ROBOT_FRAME}>
+      {cMouths.map((m) => {
+        const end = isEndEdge(m.edge); // ends run across y, flanks along x
+        const half = end ? (m.y1 - m.y0) / 2 : (m.x1 - m.x0) / 2;
+        const lip = 1.3; // tick depth, drawn just inside the outer edge
+        return (
+          <g key={m.edge}>
+            <rect x={m.x0} y={m.y0} width={m.x1 - m.x0} height={m.y1 - m.y0} fill={accent} opacity={0.4} />
+            {[-3, -2, -1, 0, 1, 2, 3].map((i) => {
+              const t = (i * half) / 3.4; // position along the edge
+              const op = Math.abs(i) <= 1 ? 0.95 : 0.6;
+              const outer =
+                m.edge === 'front' ? m.x1 - lip : m.edge === 'back' ? m.x0 : m.edge === 'left' ? m.y1 - lip : m.y0;
+              return end ? (
+                <rect key={i} x={outer} y={t - 0.5} width={lip} height={1} rx={0.3} fill={accent} opacity={op} />
+              ) : (
+                <rect key={i} x={t - 0.5} y={outer} width={1} height={lip} rx={0.3} fill={accent} opacity={op} />
+              );
+            })}
+          </g>
+        );
+      })}
     </g>
   ) : null;
 
-  // Chain Reaction archetype launcher (front = UP): drum = wide slotted bar; dumper =
-  // catapult bucket; turret = ring + barrel.
-  const drumHalf = halfW * 0.96; // full-width flywheel rollers
+  // Chain Reaction archetype launcher: drum = slotted bar along the mounted edge; dumper =
+  // catapult bucket; turret = ring + barrel (top-mounted, so it ignores the mount).
+  // Drum/dumper are authored along robot +x and rotated onto their mounted edge, so a
+  // left/right mount spans the chassis LENGTH — matching how `launchAt` spreads the shot.
+  const sEdge = shooterMountOf(spec);
+  const sGeom = edgeGeom(spec, sEdge);
+  const drumHalf = sGeom.span * 0.96; // spans (nearly) the whole mounted edge
   const drumN = Math.max(5, Math.round((drumHalf * 2) / 2.6));
-  const lineHalf = halfW * CHAIN_LAUNCH_LINE_FRAC; // catapult bucket width
-  // the launcher mounts at the FRONT (top, −y) or the REAR (bottom, +y) for a rear-shooter
-  const sMountY = spec.shooterRear ? len / 2 : frontY;
-  const sDir = spec.shooterRear ? -1 : 1; // inward direction from that edge
-  const drumY = Math.min(sMountY + sDir * 0.5, sMountY + sDir * 3.9);
+  const lineHalf = sGeom.span * CHAIN_LAUNCH_LINE_FRAC; // catapult bucket width
+  const drumX = sGeom.dist - 3.9; // roller bar, just inside the edge
   const cLauncherEl =
     cMode === 'drum' ? (
-      <g>
-        {/* full-width row of compliant flywheel rollers (not channels) */}
-        <rect x={-drumHalf} y={drumY} width={drumHalf * 2} height={3.4} rx={0.8} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
+      <g transform={`${ROBOT_FRAME} rotate(${deg(EDGE_ANGLE[sEdge])})`}>
+        {/* full-edge row of compliant flywheel rollers (not channels) */}
+        <rect x={drumX} y={-drumHalf} width={3.4} height={drumHalf * 2} rx={0.8} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
         {Array.from({ length: drumN }, (_, k) => k).map((i) => {
-          const x = -drumHalf + ((i + 0.5) * drumHalf * 2) / drumN;
-          return <rect key={i} x={x - 0.55} y={drumY + 0.5} width={1.1} height={2.4} rx={0.4} fill={accent} opacity={0.85} />;
+          const y = -drumHalf + ((i + 0.5) * drumHalf * 2) / drumN;
+          return <rect key={i} x={drumX + 0.5} y={y - 0.55} width={2.4} height={1.1} rx={0.4} fill={accent} opacity={0.85} />;
         })}
       </g>
     ) : cMode === 'dumper' ? (
-      <g>
+      <g transform={`${ROBOT_FRAME} rotate(${deg(EDGE_ANGLE[sEdge])})`}>
         <polygon
-          points={`${-lineHalf * 0.7},${sMountY + sDir * 6} ${-lineHalf},${sMountY + sDir * 1} ${lineHalf},${sMountY + sDir * 1} ${lineHalf * 0.7},${sMountY + sDir * 6}`}
+          points={`${sGeom.dist - 6},${-lineHalf * 0.7} ${sGeom.dist - 1},${-lineHalf} ${sGeom.dist - 1},${lineHalf} ${sGeom.dist - 6},${lineHalf * 0.7}`}
           fill="var(--ds-bg)"
           stroke={accent}
           strokeWidth={0.5}
         />
-        <line x1={-lineHalf} y1={sMountY + sDir * 1} x2={lineHalf} y2={sMountY + sDir * 1} stroke={accent} strokeWidth={1} />
+        <line x1={sGeom.dist - 1} y1={-lineHalf} x2={sGeom.dist - 1} y2={lineHalf} stroke={accent} strokeWidth={1} />
       </g>
     ) : (
       <g>

@@ -15,7 +15,20 @@ import {
   CHAIN_MAX_LENGTH,
   chainStorageMax,
 } from '../games/chain/config';
-import { CHAIN_MODE_LABELS, CHAIN_INTAKE_LABELS } from '../games/chain/labels';
+import {
+  CHAIN_MODE_LABELS,
+  CHAIN_INTAKE_LABELS,
+  CHAIN_INTAKE_MOUNT_LABELS,
+  CHAIN_INTAKE_MOUNT_BLURBS,
+  CHAIN_SHOOTER_MOUNT_LABELS,
+  CHAIN_SHOOTER_MOUNT_BLURBS,
+} from '../games/chain/labels';
+import {
+  CHAIN_INTAKE_MOUNTS,
+  CHAIN_SHOOTER_MOUNTS,
+  intakeMountOf,
+  shooterMountOf,
+} from '../games/chain/mounts';
 import { driveParams, lengthLimits, massLimits, rpmLimits, widthLimits } from '../sim/drivetrain';
 import { coerceSpec } from '../sim/spawn';
 import { RobotPreview } from './RobotPreview';
@@ -90,8 +103,8 @@ function chainSpecMatches(a: RobotSpec, b: RobotSpec): boolean {
     a.driveRpm === b.driveRpm &&
     (a.scoreMode ?? 'turret') === (b.scoreMode ?? 'turret') &&
     (a.chainIntake ?? 'sweeper') === (b.chainIntake ?? 'sweeper') &&
-    !!a.intakeSide === !!b.intakeSide &&
-    !!a.shooterRear === !!b.shooterRear &&
+    intakeMountOf(a) === intakeMountOf(b) &&
+    shooterMountOf(a) === shooterMountOf(b) &&
     (a.ballStorage ?? 0) === (b.ballStorage ?? 0) &&
     (a.groundClearance ?? 0) === (b.groundClearance ?? 0)
   );
@@ -437,21 +450,17 @@ export function Menu({ settings, onChange }: Props) {
                 {(spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) !== 'turret' && (
                   <>
                     <h3 className="ds-subh">Shooter mount</h3>
-                    <div className="ds-opts two">
-                      <button
-                        className={`ds-opt ${!spec.shooterRear ? 'on' : ''}`}
-                        onClick={() => setSpec({ shooterRear: false })}
-                      >
-                        <span className="ot">FRONT</span>
-                        <span className="od">Shoots from the front</span>
-                      </button>
-                      <button
-                        className={`ds-opt ${spec.shooterRear ? 'on' : ''}`}
-                        onClick={() => setSpec({ shooterRear: true })}
-                      >
-                        <span className="ot">REAR</span>
-                        <span className="od">Shoots from the back</span>
-                      </button>
+                    <div className="ds-opts four">
+                      {CHAIN_SHOOTER_MOUNTS.map((m) => (
+                        <button
+                          key={m}
+                          className={`ds-opt mini ${shooterMountOf(spec) === m ? 'on' : ''}`}
+                          onClick={() => setSpec({ shooterMount: m })}
+                        >
+                          <span className="ot">{CHAIN_SHOOTER_MOUNT_LABELS[m]}</span>
+                          <span className="od">{CHAIN_SHOOTER_MOUNT_BLURBS[m]}</span>
+                        </button>
+                      ))}
                     </div>
                   </>
                 )}
@@ -463,21 +472,17 @@ export function Menu({ settings, onChange }: Props) {
                   </div>
                 </div>
                 <h3 className="ds-subh">Intake mount</h3>
-                <div className="ds-opts two">
-                  <button
-                    className={`ds-opt ${!spec.intakeSide ? 'on' : ''}`}
-                    onClick={() => setSpec({ intakeSide: false })}
-                  >
-                    <span className="ot">FRONT</span>
-                    <span className="od">Grabs from the front</span>
-                  </button>
-                  <button
-                    className={`ds-opt ${spec.intakeSide ? 'on' : ''}`}
-                    onClick={() => setSpec({ intakeSide: true })}
-                  >
-                    <span className="ot">SIDE</span>
-                    <span className="od">Grabs from the sides · holds fewer</span>
-                  </button>
+                <div className="ds-opts four">
+                  {CHAIN_INTAKE_MOUNTS.map((m) => (
+                    <button
+                      key={m}
+                      className={`ds-opt mini ${intakeMountOf(spec) === m ? 'on' : ''}`}
+                      onClick={() => setSpec({ intakeMount: m })}
+                    >
+                      <span className="ot">{CHAIN_INTAKE_MOUNT_LABELS[m]}</span>
+                      <span className="od">{CHAIN_INTAKE_MOUNT_BLURBS[m]}</span>
+                    </button>
+                  ))}
                 </div>
               </>
             )}
