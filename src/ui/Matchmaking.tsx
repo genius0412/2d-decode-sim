@@ -131,7 +131,7 @@ export function Matchmaking({
       return;
     }
     if (restartPending) {
-      setError('Server is restarting shortly — try again in a minute.');
+      setError('Server is restarting shortly - try again in a minute.');
       return;
     }
     setError('');
@@ -331,7 +331,7 @@ export function Matchmaking({
       )}
       {error && <p className="ds-form-err">⚠ {error}</p>}
       {restartPending && (
-        <p className="ds-form-err">⚠ Server is restarting shortly — queueing is paused for a moment.</p>
+        <p className="ds-form-err">⚠ Server is restarting shortly - queueing is paused for a moment.</p>
       )}
       <div className="ds-actions">
         <button className="ds-cta" disabled={restartPending} onClick={() => void find()}>

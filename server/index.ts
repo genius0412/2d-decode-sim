@@ -755,7 +755,7 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     // rejoin/leave it from Home). Reconnects use `rejoin`, so this never blocks
     // returning to your OWN match.
     if (user && activeElsewhere(user.userId, code)) {
-      send({ t: 'error', message: 'You already have a game in progress — rejoin or leave it first.' });
+      send({ t: 'error', message: 'You already have a game in progress - rejoin or leave it first.' });
       if (created) rooms.delete(code);
       return;
     }
@@ -842,7 +842,7 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
           }
           // one live game per user: can't queue ranked while another game is live
           if (activeElsewhere(u.userId, '')) {
-            send({ t: 'error', message: 'You already have a game in progress — rejoin or leave it first.' });
+            send({ t: 'error', message: 'You already have a game in progress - rejoin or leave it first.' });
             return;
           }
           markAuthed(u.userId);
@@ -917,7 +917,7 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] DECODE game server listening on 0.0.0.0:${PORT}`);
 });
 initPhysics()
-  .then(() => console.log('[server] Rapier physics ready — matches enabled'))
+  .then(() => console.log('[server] Rapier physics ready - matches enabled'))
   .catch((e) => {
     console.error('[server] failed to init physics:', e);
     process.exit(1);

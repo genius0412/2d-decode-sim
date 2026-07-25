@@ -185,7 +185,7 @@ export function ReplayView({
     <div className="ds-replay">
       <div className="ds-replay-top">
         <button className="ds-btn ghost" onClick={onClose}>← Leaderboard</button>
-        <span className="ds-panel-title">Replay · Season {replay.current?.balanceVersion ?? '—'}</span>
+        <span className="ds-panel-title">Replay · Season {replay.current?.balanceVersion ?? '-'}</span>
         <span style={{ width: 90 }} />
       </div>
 

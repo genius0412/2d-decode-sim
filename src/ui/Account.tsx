@@ -276,7 +276,7 @@ function Username({ userId }: { userId: string }) {
         {current ? (
           <>Your profile: <code>/profile/{current}</code>. </>
         ) : (
-          'Unique — lowercase letters and numbers, 4–20 characters. '
+          'Unique - lowercase letters and numbers, 4–20 characters. '
         )}
         {!configured && 'Editing needs the game server. '}
         {status === 'error' ? (

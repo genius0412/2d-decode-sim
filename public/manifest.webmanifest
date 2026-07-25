@@ -1,5 +1,5 @@
 {
-  "name": "DSIM — Online 2D FTC Driving Simulator",
+  "name": "DSIM: Online 2D FTC Driving Simulator",
   "short_name": "DSIM",
   "description": "An online 2D driving simulator for FIRST Tech Challenge.",
   "start_url": "/",

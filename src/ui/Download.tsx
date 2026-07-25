@@ -43,7 +43,7 @@ export function Download() {
           </div>
           <div style={{ padding: 16 }}>
             <p className="ds-hint" style={{ margin: 0 }}>
-              No download needed — DSIM plays right here in your mobile browser. For a full-screen,
+              No download needed - DSIM plays right here in your mobile browser. For a full-screen,
               app-like experience, add it to your home screen: open your browser’s <b>Share</b> menu
               and tap <b>Add to Home Screen</b>. The desktop builds below are for Windows, macOS, and
               Linux.

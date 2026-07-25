@@ -61,7 +61,7 @@ export const SEASONS: readonly Season[] = [
     fullName: 'Chain Reaction',
     program: 'Unofficial FTC · CAD Competition',
     years: '2026',
-    blurb: 'The 2026 Unofficial FTC CAD-competition game — a new shooter (rules to come).',
+    blurb: 'The 2026 Unofficial FTC CAD-competition game - a new shooter (rules to come).',
     playable: true,
   },
 ] as const;

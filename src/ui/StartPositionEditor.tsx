@@ -272,7 +272,7 @@ export function StartPositionEditor({
 
       <div className="ds-startpos-side">
         <div className={`ds-startpos-status ${legality.legal ? 'ok' : 'bad'}`}>
-          {legality.legal ? reason : `${reason} — won't save`}
+          {legality.legal ? reason : `${reason} - won't save`}
         </div>
 
         <div className="ds-startpos-inputs">

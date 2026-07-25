@@ -5,8 +5,11 @@
   surfaces (play / lobby / ranked / replay / account) are deliberately absent and
   also Disallowed in robots.txt.
 
-  `/decode` is NOT listed: it canonicalizes to `/`. `/chain` is, because it is a
-  different landing (different game, different copy).
+  `/` is the SITE home. `/decode` and `/chain` are the two GAMES' landing pages,
+  each self-canonical with its own title and description, so both can be indexed
+  in their own right (and so either can turn up as a sitelink under the home
+  result). Which one a given URL canonicalizes to is decided by the URL that was
+  actually opened — see `ENTRY_HAS_GAME` in src/ui/App.tsx.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
@@ -15,9 +18,14 @@
     <priority>1.0</priority>
   </url>
   <url>
+    <loc>https://www.playdsim.com/decode</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://www.playdsim.com/chain</loc>
     <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
+    <priority>0.8</priority>
   </url>
   <url>
     <loc>https://www.playdsim.com/decode/modes</loc>

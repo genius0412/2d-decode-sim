@@ -270,7 +270,7 @@ export function MatchHistory({
                         {r.kind === 'record' ? (
                           <span className="mh-run">run</span>
                         ) : r.won == null ? (
-                          <span style={{ color: 'var(--ds-mut)' }}>—</span>
+                          <span style={{ color: 'var(--ds-mut)' }}>-</span>
                         ) : (
                           <span style={{ color: r.won ? 'var(--ds-ok)' : 'var(--ds-danger)', fontWeight: 700 }}>
                             {r.won ? 'WIN' : 'LOSS'}
@@ -291,7 +291,7 @@ export function MatchHistory({
                                 : 'var(--ds-danger)',
                         }}
                       >
-                        {delta == null ? '—' : delta >= 0 ? `+${delta}` : delta}
+                        {delta == null ? '-' : delta >= 0 ? `+${delta}` : delta}
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         {watchable ? (
@@ -299,7 +299,7 @@ export function MatchHistory({
                             Watch ▶
                           </button>
                         ) : (
-                          <span style={{ color: 'var(--ds-mut)', fontSize: 12 }}>—</span>
+                          <span style={{ color: 'var(--ds-mut)', fontSize: 12 }}>-</span>
                         )}
                       </td>
                     </tr>

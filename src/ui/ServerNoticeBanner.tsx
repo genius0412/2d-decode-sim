@@ -27,7 +27,7 @@ export function ServerNoticeBanner() {
     }
     if (leftMs <= 0) {
       restarting = true;
-      text = `${notice.message} — restarting now…`;
+      text = `${notice.message} - restarting now…`;
     } else {
       const left = Math.round(leftMs / 1000);
       const m = Math.floor(left / 60);

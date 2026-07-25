@@ -28,7 +28,7 @@
       once React is up (for Googlebot, which does render). Keep the two in sync:
       the values here ARE the home-route values in that module.
     -->
-    <title>DSIM — Online 2D FTC Driving Simulator</title>
+    <title>DSIM: Online 2D FTC Driving Simulator</title>
     <meta
       name="description"
       content="An online 2D driving simulator for FIRST Tech Challenge. Build a robot, drive DECODE or Chain Reaction, and play solo or ranked."
@@ -37,7 +37,7 @@
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="DSIM" />
-    <meta property="og:title" content="DSIM — Online 2D FTC Driving Simulator" />
+    <meta property="og:title" content="DSIM: Online 2D FTC Driving Simulator" />
     <meta
       property="og:description"
       content="An online 2D driving simulator for FIRST Tech Challenge. Build a robot, drive DECODE or Chain Reaction, and play solo or ranked."
@@ -48,17 +48,17 @@
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:type" content="image/png" />
-    <meta property="og:image:alt" content="DSIM — online 2D FTC driving simulator" />
+    <meta property="og:image:alt" content="DSIM: online 2D FTC driving simulator" />
     <meta property="og:locale" content="en_US" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="DSIM — Online 2D FTC Driving Simulator" />
+    <meta name="twitter:title" content="DSIM: Online 2D FTC Driving Simulator" />
     <meta
       name="twitter:description"
       content="An online 2D driving simulator for FIRST Tech Challenge. Build a robot, drive DECODE or Chain Reaction, and play solo or ranked."
     />
     <meta name="twitter:image" content="https://www.playdsim.com/og.png" />
-    <meta name="twitter:image:alt" content="DSIM — online 2D FTC driving simulator" />
+    <meta name="twitter:image:alt" content="DSIM: online 2D FTC driving simulator" />
     <!--
       Stamp the theme BEFORE the stylesheet loads. React mounts after first paint, so
       reading the pref from src/ would guarantee a flash of the wrong theme. This must
@@ -85,7 +85,7 @@
         "@context": "https://schema.org",
         "@type": "WebSite",
         "name": "DSIM",
-        "alternateName": "DSIM — Online 2D FTC Driving Simulator",
+        "alternateName": "DSIM: Online 2D FTC Driving Simulator",
         "url": "https://www.playdsim.com/",
         "description": "An online 2D driving simulator for FIRST Tech Challenge. Build a robot, drive DECODE or Chain Reaction, and play solo or ranked.",
         "inLanguage": "en",
@@ -202,6 +202,25 @@
         letter-spacing: 0.06em;
         opacity: 0.75;
       }
+      /* the game switcher, which is a pair of real links here. Mirrors the
+         segmented control the rendered home menu draws in the same slot. */
+      #seo-home .sh-games {
+        display: flex;
+        gap: 6px;
+        margin: 0 0 22px;
+      }
+      #seo-home .sh-games a {
+        padding: 7px 14px;
+        border-radius: 9999px;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--sh-mut);
+        text-decoration: none;
+      }
+      #seo-home .sh-games a.on {
+        background: var(--sh-accent);
+        color: var(--sh-accent-ink);
+      }
       #seo-home .sh-foot {
         margin: 26px 0 0;
         font-size: 13px;
@@ -219,6 +238,13 @@
         <p class="sh-eyebrow">FIRST Tech Challenge · 2D Driver Practice</p>
         <h1>DSIM</h1>
         <p class="sh-lead">An online 2D driving simulator for FIRST Tech Challenge.</p>
+        <!-- The two games, as real links. Each is its own indexable page with its
+             own title and description (see applyRouteMeta), and these are the only
+             thing pointing a crawler at them. -->
+        <nav class="sh-games" aria-label="Game">
+          <a class="on" href="/decode">DECODE</a>
+          <a href="/chain">Chain Reaction</a>
+        </nav>
         <nav class="sh-menu" aria-label="Main">
           <a class="sh-btn primary" href="/decode/modes"><b>Play</b><span>Pick a game mode</span></a>
           <a class="sh-btn" href="/decode/configure/robot"

@@ -20,7 +20,7 @@ import { APP_BLURB, seasonFor } from './seasons';
 /** the deployed origin — canonical/og:url must be absolute for scrapers */
 export const SITE_URL = 'https://www.playdsim.com';
 
-const HOME_TITLE = 'DSIM — Online 2D FTC Driving Simulator';
+const HOME_TITLE = 'DSIM: Online 2D FTC Driving Simulator';
 // the on-page sentence plus what you can do here. Descriptions are what shows
 // under the link in a search result — say what the page IS, don't sell it.
 const HOME_DESC = `${APP_BLURB} Build a robot, drive DECODE or Chain Reaction, and play solo or ranked.`;
@@ -93,35 +93,52 @@ function setCanonical(url: string): void {
  * Point title / description / canonical / og:url at the current route.
  *
  * `path` is the router's canonical path for the screen (always game-prefixed).
- * The HOME route canonicalizes to the bare origin instead: `/`, `/decode` and
- * the legacy unprefixed paths are one page, and `/` is the one we want indexed.
- * Non-DECODE homes keep their own prefix (`/chain` is a different landing).
+ * `entryHasGame` says whether the document was OPENED on a game-prefixed URL
+ * (see `ENTRY_HAS_GAME` in App.tsx), and only matters on home, where `/` and
+ * `/decode` render the same screen:
+ *
+ *   opened at `/` (or a legacy unprefixed path) → the SITE home. Canonical `/`,
+ *     titled for the brand. This is the result that should rank for "dsim".
+ *   opened at `/decode` or `/chain`             → that GAME's landing. Canonical
+ *     `/<game>`, titled and described for the game, so each game is its own
+ *     indexable page instead of being folded into the brand result — which is
+ *     what makes them candidates to appear as sitelinks beneath it.
+ *
+ * A game title still ends in DSIM, so if a search engine ever prefers one of
+ * them for a brand query the result is still recognisably the site.
  */
-export function applyRouteMeta(screen: string, path: string, game: GameId): void {
+export function applyRouteMeta(
+  screen: string,
+  path: string,
+  game: GameId,
+  entryHasGame = false,
+): void {
   if (typeof document === 'undefined') return;
-  const season = seasonFor(game).name;
+  const s = seasonFor(game);
+  const season = s.name;
   const meta = ROUTE_META[screen];
+  // home reached on a game-prefixed URL is that GAME's landing page
+  const gameHome = screen === 'home' && entryHasGame;
   // screens with no entry (live game, lobby, queue, replay, account, admin) are
   // transient app surfaces — robots.txt keeps them out of the index; just keep
   // the tab honest and leave the home description in place.
   //
-  // The selected game stays in the title on every screen but DECODE's home, so
+  // The selected game stays in the title on every screen but the site home, so
   // the two games keep reading as separate apps (the tab title always named the
   // game before this module existed) without burying the brand on the one page
   // search engines actually rank.
   const title = !meta
     ? `${season} · DSIM`
     : screen === 'home'
-      ? game === 'decode'
-        ? meta.title
-        : `${season} · ${meta.title}`
+      ? gameHome
+        ? `${s.fullName} · DSIM`
+        : meta.title
       : `${meta.title} · ${season} · DSIM`;
   document.title = title;
   if (meta) {
-    const description =
-      screen === 'home' && game !== 'decode'
-        ? `${seasonFor(game).blurb} Drive it in DSIM, ${APP_BLURB[0].toLowerCase()}${APP_BLURB.slice(1, -1)}.`
-        : meta.description;
+    const description = gameHome
+      ? `${s.blurb} Drive it in DSIM, ${APP_BLURB[0].toLowerCase()}${APP_BLURB.slice(1, -1)}.`
+      : meta.description;
     setMeta('name', 'description', description);
     setMeta('property', 'og:description', description);
     setMeta('name', 'twitter:description', description);
@@ -129,7 +146,7 @@ export function applyRouteMeta(screen: string, path: string, game: GameId): void
     setMeta('name', 'twitter:title', title);
   }
 
-  const canonicalPath = screen === 'home' && game === 'decode' ? '/' : path;
+  const canonicalPath = screen === 'home' ? (gameHome ? `/${game}` : '/') : path;
   const url = SITE_URL + canonicalPath;
   setCanonical(url);
   setMeta('property', 'og:url', url);

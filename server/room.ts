@@ -367,7 +367,7 @@ export class Room {
       // pre-match departure CANCELS the staged match (both drivers requeue). Full
       // strategy-phase reconnection is deferred (see docs/netcodeplan.md).
       if (this.pendingMatch && this.phase === 'strategy') {
-        this.cancelPending('Match cancelled — a player disconnected.');
+        this.cancelPending('Match cancelled - a player disconnected.');
         return;
       }
       this.clients.delete(id);
@@ -489,7 +489,7 @@ export class Room {
         // rather than throw inside step() (which would kill the tick loop)
         if (id === this.hostId && this.world === null) {
           if (physicsReady()) this.startMatch();
-          else c.send({ t: 'error', message: 'Server is starting up — try again in a moment.' });
+          else c.send({ t: 'error', message: 'Server is starting up - try again in a moment.' });
         }
         break;
       case 'restart':
@@ -562,7 +562,7 @@ export class Room {
         if (!activeStartLegal(c.player.spec, a, c.player.startPose)) {
           this.broadcast({
             t: 'error',
-            message: 'A driver’s start position is invalid for their chassis — fix it to start.',
+            message: 'A driver’s start position is invalid for their chassis - fix it to start.',
           });
           return;
         }
@@ -794,7 +794,7 @@ export class Room {
     if (connected.length === p.roster.length && connected.every((c) => c.player.ready)) {
       this.beginRanked();
     } else {
-      this.cancelPending('Match cancelled — not everyone readied up in time.');
+      this.cancelPending('Match cancelled - not everyone readied up in time.');
     }
   }
 
@@ -816,7 +816,7 @@ export class Room {
     const byUser = new Map<string, Client>();
     for (const c of this.clients.values()) if (c.connected && c.userId) byUser.set(c.userId, c);
     if (!p.roster.every((r) => r.userId && byUser.has(r.userId))) {
-      this.cancelPending('Match cancelled — an opponent disconnected.');
+      this.cancelPending('Match cancelled - an opponent disconnected.');
       return;
     }
     // roster index = robotId; keep start poses distinct per alliance as an AFK fallback
@@ -847,7 +847,7 @@ export class Room {
 
   /** a staged ranked match no player (or not everyone) showed up for: tell whoever
    * did connect and tear the room down (no rated match runs). */
-  private cancelPending(message = 'Match cancelled — an opponent did not connect.'): void {
+  private cancelPending(message = 'Match cancelled - an opponent did not connect.'): void {
     if (this.world !== null) return; // already started
     if (this.pendingTimer) {
       clearTimeout(this.pendingTimer);

@@ -77,7 +77,7 @@ export function DesktopUpdate() {
         )}
         {result?.updateAvailable && (
           <p className="ds-hint" style={{ margin: 0 }}>
-            Version {result.latest} is available — auto-checked on launch when the toggle is on.
+            Version {result.latest} is available - auto-checked on launch when the toggle is on.
           </p>
         )}
       </div>

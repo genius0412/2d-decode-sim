@@ -27,7 +27,7 @@ export function AuthPanel({ onClose }: { onClose: () => void }) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2500);
     } catch {
-      setError('Couldn’t copy — long-press the address bar to copy this link.');
+      setError('Couldn’t copy - long-press the address bar to copy this link.');
     }
   };
 
@@ -52,7 +52,7 @@ export function AuthPanel({ onClose }: { onClose: () => void }) {
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong — try again.');
+      setError(err instanceof Error ? err.message : 'Something went wrong - try again.');
     } finally {
       setBusy(false);
     }
@@ -110,14 +110,14 @@ export function AuthPanel({ onClose }: { onClose: () => void }) {
         {embedded ? (
           <div className="ds-form-hint" style={{ minHeight: 0 }}>
             Google sign-in doesn’t work in this app’s in-app browser. Open this page in
-            Safari or Chrome to continue with Google — or use email above.
+            Safari or Chrome to continue with Google - or use email above.
             <button
               type="button"
               className="ds-btn"
               style={{ width: '100%', marginTop: 8 }}
               onClick={copyLink}
             >
-              {copied ? 'Link copied — paste in your browser' : 'Copy link'}
+              {copied ? 'Link copied - paste in your browser' : 'Copy link'}
             </button>
           </div>
         ) : (

@@ -95,6 +95,24 @@ const NO_ARGS: RouteArgs = { replayId: null, username: null, sub: null };
  */
 const isWebHistory = typeof window !== 'undefined' && window.location.protocol !== 'file:';
 
+/**
+ * Did this document OPEN on a game-prefixed URL? Captured at module load, before
+ * the mount effect canonicalizes `/` to `/decode` in the address bar.
+ *
+ * It decides the home route's canonical. `/` and `/decode` render the same
+ * screen, so one has to point at the other, and which one depends on the URL
+ * that was actually requested: arrive at `/` and the canonical is `/`, arrive at
+ * `/decode` and it is `/decode`. Reading `location.pathname` from the effect
+ * can't tell the two apart (the rewrite has already run), so every visit would
+ * canonicalize to `/decode` and quietly deindex the homepage.
+ *
+ * A crawler renders exactly one URL and never navigates, so a value fixed at
+ * load is right for the only consumer that reads canonicals; in-app navigation
+ * back to home just keeps whichever form the tab was opened with.
+ */
+const ENTRY_HAS_GAME =
+  isWebHistory && /^\/(decode|chain)(?=\/|$)/.test(window.location.pathname);
+
 /** the screen part of a path (no game prefix); '' for home. */
 function screenSuffix(screen: Screen, a: RouteArgs): string {
   switch (screen) {
@@ -297,7 +315,7 @@ export function App() {
   // static tags in index.html describe the homepage (all a social scraper ever
   // gets); this is the rendering-crawler + browser-tab half of the same job.
   useEffect(() => {
-    applyRouteMeta(screen, pathFor(screen, route, settings.game), settings.game);
+    applyRouteMeta(screen, pathFor(screen, route, settings.game), settings.game, ENTRY_HAS_GAME);
   }, [screen, route, settings.game]);
 
   // surface the one-time Chain Reaction disclaimer the first time CR is selected
@@ -797,7 +815,7 @@ export function App() {
             <h2>About this simulation</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 420 }}>
               Chain Reaction is a game for the <b>Unofficial FTC Discord’s CAD Competition</b>.
-              This simulator is just a rough, for-fun approximation of it — <b>the simulation is
+              This simulator is just a rough, for-fun approximation of it - <b>the simulation is
               not realistic</b>, so how robots drive, shoot, and score here shouldn’t drive your
               CAD-competition design decisions. Build for the real game, not for this sim.
             </p>
