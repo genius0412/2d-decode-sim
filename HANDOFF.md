@@ -1,4 +1,104 @@
-# HANDOFF — 2026-07-21d (Chain Reaction: fire cadence + mecanum strafe-over-beam) — READ FIRST
+# HANDOFF — 2026-07-25 (Chain Reaction: shooter + intake MOUNTS on every edge) — READ FIRST
+
+## This session — CR mechanism placement went from two booleans to two full edge selectors
+
+Branch **alpha** (2 commits, not merged to main). `npm run build` + `npm test` (**544 checks**,
+10 new) + `npm run contrast` (167) + `npm run server:check` all green, and verified live in the
+real GUI (Electron drive).
+
+**Before:** shooter = front|rear (`RobotSpec.shooterRear`), intake = front|sides
+(`RobotSpec.intakeSide`). **Now:** intake mounts **front · back · side (both flanks) ·
+front+back (both ends)**, and the turretless launcher fires over **any of the four edges**
+(front · back · left · right). The turret is unaffected — it is top-mounted, so the shooter-mount
+picker stays hidden for it (as the rear toggle already did).
+
+### The model (read this before touching CR mechanisms)
+
+- `RobotSpec.intakeMount: ChainIntakeMount` + `shooterMount: ChainShooterMount` (types.ts).
+  `intakeSide`/`shooterRear` still exist but are **DEPRECATED MIRRORS — never read them**; use
+  `intakeMountOf(spec)` / `shooterMountOf(spec)`.
+- **`src/games/chain/mounts.ts` (new)** is the single source of truth: the resolvers (with legacy
+  migration), `intakeMountEdges`, `EDGE_ANGLE` / `EDGE_DIR` / `EDGE_PERP` (exact integer unit
+  vectors — no `cos(π/2)` residue on the flanks), `edgeGeom(spec, edge) → {dist, span}`, and
+  `isEndEdge`. It is a **LEAF module** (imports only `types`) *on purpose*: the mount decides the
+  collision footprint, so `src/sim/field.ts` must import it, and anything heavier would cycle.
+- **Robot frame everywhere: +x = forward, +y = the robot's LEFT.**
+
+### What a mount actually moves (all three, together — this is the whole point)
+
+1. **CAPTURE** — `chainIntakeBand` (a `front|side` union) is GONE, replaced by
+   **`chainIntakeMouths(spec) → ChainIntakeMouth[]`**: one robot-local rect per mounted edge, so
+   `frontback`/`side` are simply two rects. `mouthContains(m, lx, ly, pad)` pads **only the
+   OUTWARD lip**, which reproduces the old front/side bounds exactly. `interact` just loops the
+   mouths. END edges span the chassis WIDTH, FLANK edges its LENGTH.
+2. **COLLISION** — `footprintExtents` (sim/field.ts) grows on exactly the mounted edge(s): back →
+   rear, frontback → both ends, side → the flanks. DECODE resolves to `front`, so DECODE geometry
+   is byte-identical to before.
+3. **AIM + LAUNCH** — `chainGoalAimHeading` returns `lead − EDGE_ANGLE[mount]`, so the robot turns
+   the **mounted edge** at the goal (a flank shooter drives past and fires broadside). `launchAt`
+   puts the launch point out along that edge's normal and spreads the line across it — chassis
+   LENGTH on a flank, WIDTH on an end.
+
+### Balance
+
+`chainMountStoreMult` (chain/config.ts): **front == back = 1.0** (mirror images — a rear sweeper
+is a free stylistic choice), **frontback = `CHAIN_STORE_FRONTBACK_MULT` 0.75** (two open ends),
+**side = `CHAIN_STORE_SIDE_MULT` 0.6** (two full-length flanks, the harshest). Live on a default
+drum chassis that reads 44 / 44 / 33 / 27. Tune these — they are the only free parameters here.
+
+### UI
+
+- Builder: both pickers are 4-up `ds-opts four` + `ds-opt mini` grids (the same audited pattern as
+  the drivetrain row — no new CSS, contrast unchanged at 167). Labels/blurbs in
+  `chain/labels.ts` (`CHAIN_*_MOUNT_LABELS`/`_BLURBS`), shared with the leaderboard summary.
+- `chainSpecMatches` compares resolved mounts (so a preset card still highlights correctly).
+- **`RobotPreview` frame fix (2nd commit) — the gotcha worth remembering.** It had mapped robot
+  +y to screen **+x**, a MIRRORED view. Every CR mechanism to date was symmetric, so nothing could
+  expose it; a flank shooter does — LEFT drew on the schematic's right. CR mechanisms are now
+  authored in ROBOT coords under one wrapper `transform="matrix(0,-1,-1,0,0,0)"` (forward → up,
+  robot-left → screen LEFT). **Do not "simplify" that to `rotate(-90)`** — that is exactly the
+  mirrored version. The viewBox also grows for a rear/flank mount (it used to be derived from the
+  front tip alone and would clip a back-mounted sweeper).
+
+### Compatibility (the one Fly app serves every client version)
+
+`coerceSpec` is the single chokepoint: it resolves the new field (falling back to the legacy
+boolean, so old saves migrate) and then **mirrors the boolean back**. An older peer/server drops
+fields it doesn't know, so a round-trip through one returns the nearest legal mount instead of
+silently resetting to front. Smoke covers the migration, the mirroring, the strip-and-return
+round-trip, and bogus-mount coercion. **No protocol/`caps` change was needed** — this is a spec
+field, not a message shape.
+
+### Test coverage added (scripts/smoke.ts, 10 checks)
+
+per-edge capture (back grabs behind and NOT in front · frontback both ends and not the flanks ·
+front does not grab behind) · hitbox growth per mount · storage ranking front==back > frontback >
+side · all four shooter edges aim the mounted edge at the goal · all four score from range ·
+launch line spans the mounted edge (flank = chassis length, measured on a 12×18 chassis) · legacy
+migration + mirroring · bogus mount → default · resolvers agree with the coerced spec.
+
+### Live verification (Electron, temp driver deleted)
+
+Free Drive with drum + LEFT shooter + SIDES intake: flank sweepers filled the hopper **20/20**,
+holding fire turned the robot's **left flank** to the blue accelerator and drained it to **0/20**,
+and the sprite draws the loaded drum on the left flank with both flank sweepers spanning the
+chassis length. Builder preview + storage cap (44→33→27) confirmed in the browser.
+
+### Not done / next
+
+- The **DECODE** side still honours a non-front mount if a spec carries one across a game switch
+  (pre-existing behaviour of `intakeSide`, deliberately kept at parity — `coerceSpec` does not gate
+  mounts on `game`, because `game` is optional on several call paths and gating would wipe a chain
+  mount whenever it is omitted). Harmless today: the builder only offers mounts for CR.
+- `CHAIN_PRESETS` all still use the default front/front mounts — a preset showcasing a flank
+  shooter or a front+back sweeper would be a cheap, nice addition.
+- Server redeploy is NOT required for solo/local (Vercel auto-deploys the client). Multiplayer CR
+  runs the shared sim on Fly, so **a Fly deploy is needed before the new mounts behave online**
+  (`./scripts/fly-deploy.sh`, never a bare `flyctl deploy`).
+
+---
+
+# HANDOFF — 2026-07-21d (Chain Reaction: fire cadence + mecanum strafe-over-beam)
 
 ## This session (latest) — CR shooter cadence retune + realistic mecanum beam-crossing
 
