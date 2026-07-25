@@ -58,8 +58,19 @@ export function HomeMenu({
 
   return (
     <div className="ds-home">
+      {/* The eyebrow is CSS-uppercased, so the presenting sponsor gets its own
+          span that opts back out: goBILDA is not GOBILDA. Hence `presenter` is
+          a field of its own rather than part of one pre-joined string. */}
       <p className="ds-eyebrow">
-        {season.fullName} · {APP_TAGLINE}
+        {season.name}
+        {season.presenter && (
+          <>
+            {' presented by '}
+            <span className="ds-brand">{season.presenter}</span>
+          </>
+        )}
+        {' · '}
+        {APP_TAGLINE}
       </p>
       <h1 className="ds-home-title">{APP_NAME}</h1>
 

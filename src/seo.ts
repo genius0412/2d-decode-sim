@@ -15,7 +15,7 @@
  */
 
 import type { GameId } from './games/types';
-import { APP_BLURB, seasonFor } from './seasons';
+import { APP_BLURB, fullNameOf, seasonFor } from './seasons';
 
 /** the deployed origin — canonical/og:url must be absolute for scrapers */
 export const SITE_URL = 'https://www.playdsim.com';
@@ -131,7 +131,7 @@ export function applyRouteMeta(
     ? `${season} · DSIM`
     : screen === 'home'
       ? gameHome
-        ? `${s.fullName} · DSIM`
+        ? `${fullNameOf(s)} · DSIM`
         : meta.title
       : `${meta.title} · ${season} · DSIM`;
   document.title = title;

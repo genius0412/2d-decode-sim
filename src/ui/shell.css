@@ -1334,6 +1334,11 @@
   color: var(--ds-accent);
   margin: 0 0 10px;
 }
+/* A brand that owns its capitalization opts out of the uppercasing above:
+   goBILDA is not GOBILDA. Only ever wraps a trademark, never label text. */
+.ds-brand {
+  text-transform: none;
+}
 .ds-h1 {
   font-size: clamp(26px, 4vw, 38px);
   font-weight: 800;
