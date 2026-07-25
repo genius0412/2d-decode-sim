@@ -1080,6 +1080,16 @@
 .ds-home-loadout b {
   color: var(--ds-ink);
 }
+/* the landing line — the one sentence saying what this is (APP_BLURB), between
+   the title and the game switcher. It is here for the person (or crawler) who
+   arrived with no idea what DSIM is; keep it to a sentence. */
+.ds-home-lead {
+  margin: -8px 0 20px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ds-mut);
+  text-wrap: pretty;
+}
 
 /* ---- section sub-nav (Configure) + tab strip (Records) ---------------- */
 .ds-subnav-layout {

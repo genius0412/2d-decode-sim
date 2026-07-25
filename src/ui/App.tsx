@@ -45,7 +45,7 @@ import { encodeMsg } from '../net/protocol';
 import { activeStartLegal } from '../sim/field';
 import { loadActiveGame, saveActiveGame, clearActiveGame, type ActiveGameRef } from '../net/activeGame';
 import type { Replay } from '../sim/replay';
-import { seasonFor, APP_NAME } from '../seasons';
+import { applyRouteMeta } from '../seo';
 import type { GameId } from '../games/types';
 import { chainDisclaimerSeen, markChainDisclaimerSeen } from '../chainDisclaimer';
 
@@ -293,10 +293,12 @@ export function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // the tab title names the selected game so the two games read as separate apps
+  // keep <title>/description/canonical/og:url pointed at the CURRENT route. The
+  // static tags in index.html describe the homepage (all a social scraper ever
+  // gets); this is the rendering-crawler + browser-tab half of the same job.
   useEffect(() => {
-    if (typeof document !== 'undefined') document.title = `${seasonFor(settings.game).name} · ${APP_NAME}`;
-  }, [settings.game]);
+    applyRouteMeta(screen, pathFor(screen, route, settings.game), settings.game);
+  }, [screen, route, settings.game]);
 
   // surface the one-time Chain Reaction disclaimer the first time CR is selected
   useEffect(() => {
@@ -743,9 +745,6 @@ export function App() {
       >
       {authEnabled && <AccountSync onUser={onSyncUser} onLoad={onSyncLoad} seed={onSyncSeed} />}
       {authEnabled && <UsernameGate />}
-      {/* patch notes / new-season + new-act reveals — shown once on the menu shell,
-          never over a live match (the game screen returns before this) */}
-      <Announcements muted={settings.audio.volume.master <= 0} />
 
       {screen === 'home' && (
         <HomeMenu
@@ -933,6 +932,15 @@ export function App() {
         <Account settings={settings} onChange={update} onHandleSaved={setHandle} />
       )}
       {screen === 'admin' && isAdmin && <Admin />}
+
+      {/* Patch notes / new-season + new-act reveals — shown once on the menu shell,
+          never over a live match (the game screen returns before this). Mounted
+          LAST on purpose: it renders an overlay, so its position in the tree is
+          cosmetically irrelevant but semantically load-bearing — first-in-DOM is
+          what a crawler reads as the page's main content, and patch notes were
+          winning that slot over the homepage itself. (Fresh visitors never see
+          it at all now — see `useAnnouncements`.) */}
+      <Announcements muted={settings.audio.volume.master <= 0} />
       </AppShell>
     </FriendsProvider>
   );

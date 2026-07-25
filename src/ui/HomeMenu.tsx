@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { GameSettings } from '../game';
 import type { DrivetrainType, GameId } from '../types';
-import { APP_NAME, APP_TAGLINE, LINKS, seasonFor } from '../seasons';
+import { APP_BLURB, APP_NAME, APP_TAGLINE, LINKS, seasonFor } from '../seasons';
 import { registeredGames } from '../games';
 import { fetchGlobalStats, type GlobalStats } from '../net/api';
 import { RAIL_ITEMS } from './NavRail';
@@ -18,6 +18,11 @@ const DRIVETRAIN_LABELS: Record<DrivetrainType, string> = {
  * The main menu. The four top-level destinations sit CENTERED as chunky keycaps
  * — on every other screen the same four live in the left rail (`NavRail`), and
  * both read from `RAIL_ITEMS` so they can never drift apart.
+ *
+ * It is also the site's landing page, so it states what DSIM is exactly once
+ * (`APP_BLURB`) — a first-time visitor and a crawler both arrive here with no
+ * other context. One sentence, no pitch. The static fallback in `index.html`
+ * says the same sentence for clients that never run the bundle.
  */
 export function HomeMenu({
   settings,
@@ -57,6 +62,8 @@ export function HomeMenu({
         {season.fullName} · {APP_TAGLINE}
       </p>
       <h1 className="ds-home-title">{APP_NAME}</h1>
+
+      <p className="ds-home-lead">{APP_BLURB}</p>
 
       {games.length > 1 && (
         <div className="ds-segs ds-home-games" role="tablist" aria-label="Game">

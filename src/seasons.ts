@@ -13,6 +13,12 @@
 
 export const APP_NAME = 'DSIM';
 export const APP_TAGLINE = '2D Driver Practice';
+/** One plain sentence saying what this is. Shown on the home menu and reused as
+ * the first sentence of the meta description (`src/seo.ts`) — so it is also the
+ * line that shows up in a search result and a pasted-link preview. The static
+ * copy in `index.html` and the web manifest repeat it verbatim (they ship before
+ * any JS runs); keep all three in step, and keep it a description, not a pitch. */
+export const APP_BLURB = 'An online 2D driving simulator for FIRST Tech Challenge.';
 
 /** external links surfaced in the footer / download page */
 export const LINKS = {

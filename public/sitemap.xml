@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Only the routes that are a real PAGE — one with content a crawler can read and
+  a canonical URL that matches (see `applyRouteMeta` in src/seo.ts). Live-session
+  surfaces (play / lobby / ranked / replay / account) are deliberately absent and
+  also Disallowed in robots.txt.
+
+  `/decode` is NOT listed: it canonicalizes to `/`. `/chain` is, because it is a
+  different landing (different game, different copy).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://www.playdsim.com/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://www.playdsim.com/chain</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://www.playdsim.com/decode/modes</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://www.playdsim.com/decode/configure/robot</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://www.playdsim.com/decode/records</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://www.playdsim.com/decode/download</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://www.playdsim.com/decode/changelogs</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://www.playdsim.com/decode/contributors</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.4</priority>
+  </url>
+</urlset>

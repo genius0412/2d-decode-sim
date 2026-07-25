@@ -1,7 +1,7 @@
 {
-  "name": "DSIM — 2D FTC Driver Sim",
+  "name": "DSIM — Online 2D FTC Driving Simulator",
   "short_name": "DSIM",
-  "description": "A 2D top-down driver-practice simulator for the FTC 2025-26 game DECODE.",
+  "description": "An online 2D driving simulator for FIRST Tech Challenge.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

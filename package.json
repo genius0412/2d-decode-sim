@@ -13,6 +13,7 @@
     "test": "tsx scripts/smoke.ts",
     "contrast": "node scripts/contrast.mjs",
     "shiftaudit": "electron scripts/shiftaudit.cjs",
+    "og": "electron scripts/og-image.cjs",
     "server": "tsx watch server/index.ts",
     "server:start": "tsx server/index.ts",
     "server:build": "esbuild server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-server/index.js",
