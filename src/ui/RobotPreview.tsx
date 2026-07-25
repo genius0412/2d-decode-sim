@@ -141,9 +141,16 @@ export function RobotPreview({
   // ── Chain Reaction mechanisms, authored in the ROBOT frame ────────────────────────────────
   // Everything else in this preview is drawn in SCREEN coords (front = UP). The CR intake and
   // launcher can sit on ANY chassis edge, so they are authored in robot coords (+x = forward,
-  // +y = the robot's left) — exactly the sim's frame, so `chainIntakeMouths` rects can be used
-  // verbatim — and mapped by ONE wrapper: rotate(−90°) sends robot (x,y) → screen (y, −x).
-  const ROBOT_FRAME = 'rotate(-90)';
+  // +y = the robot's LEFT) — exactly the sim's frame, so `chainIntakeMouths` rects can be used
+  // verbatim — and mapped by ONE wrapper.
+  //
+  // That wrapper is a BIRD'S-EYE view with the nose up: forward (1,0) → screen (0,−1) = up, and
+  // the robot's left (0,1) → screen (−1,0) = screen LEFT (look down at a robot facing away and
+  // its left hand is on your left). Screen y points DOWN, so the matrix is [[0,−1],[−1,0]] —
+  // NOT a plain rotate(−90), which would send the robot's left to screen RIGHT and draw a
+  // LEFT-mounted shooter on the wrong flank. Symmetric mechanisms can't tell the difference;
+  // a flank mount can.
+  const ROBOT_FRAME = 'matrix(0,-1,-1,0,0,0)';
   const deg = (rad: number): number => (rad * 180) / Math.PI;
 
   // one roller bar + a row of lip ticks per MOUNTED edge (front / back / both flanks / both ends)
