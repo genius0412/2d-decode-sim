@@ -1471,6 +1471,10 @@ const ONLINE_WINDOW_S = 45;
 
 export type PresenceStatus = 'online' | 'dnd' | 'invisible';
 
+/** what a friend is doing right now — coarse and behavioural, reported by their
+ * own heartbeat. null for an offline/invisible friend (blanked like last_seen). */
+export type Activity = 'menu' | 'lobby' | 'match';
+
 export interface FriendRow {
   userId: string;
   handle: string;
@@ -1483,6 +1487,10 @@ export interface FriendRow {
    * Deliberately rounded (see `coarsen`) — the UI renders "3h", so second
    * precision would be a needlessly exact activity log to hand out. */
   offlineSeconds: number | null;
+  /** 'menu' | 'lobby' | 'match' while online; null when offline/invisible/unknown */
+  activity: Activity | null;
+  /** which game they're in ('decode' | 'chain') — only meaningful with `activity` */
+  game: Game | null;
 }
 
 export interface FriendsPayload {
@@ -1507,11 +1515,17 @@ function coarsen(sec: number | null): number | null {
  * rather than given its own ping endpoint: the poll that refreshes everyone
  * else's status already proves the caller is here, and with no user id on the
  * wire there is nothing to forge. */
-export async function touchPresence(userId: string): Promise<void> {
+export async function touchPresence(
+  userId: string,
+  activity: Activity | null = null,
+  game: Game | null = null,
+): Promise<void> {
   await q(
-    `insert into user_presence (user_id, last_seen_at) values ($1, now())
-     on conflict (user_id) do update set last_seen_at = now()`,
-    [userId],
+    `insert into user_presence (user_id, last_seen_at, activity, activity_game)
+       values ($1, now(), $2, $3)
+     on conflict (user_id) do update
+       set last_seen_at = now(), activity = $2, activity_game = $3`,
+    [userId, activity, game],
   );
 }
 
@@ -1536,6 +1550,8 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
     username: string | null;
     status: string | null;
     since: string | null;
+    activity: string | null;
+    activity_game: string | null;
   }>(
     `with pairs as (
        select case when user_low = $1 then user_high else user_low end as friend_id
@@ -1545,7 +1561,9 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
      select p.user_id, p.handle, p.username,
             case when up.status = 'invisible' then null else up.status end as status,
             case when up.status = 'invisible' then null
-                 else extract(epoch from (now() - up.last_seen_at)) end as since
+                 else extract(epoch from (now() - up.last_seen_at)) end as since,
+            case when up.status = 'invisible' then null else up.activity end as activity,
+            case when up.status = 'invisible' then null else up.activity_game end as activity_game
        from pairs
        join profiles p on p.user_id = pairs.friend_id
        left join user_presence up on up.user_id = pairs.friend_id
@@ -1556,6 +1574,12 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
   const friends: FriendRow[] = friendRows.map((r) => {
     const since = r.since === null ? null : Number(r.since);
     const online = since !== null && since <= ONLINE_WINDOW_S;
+    // activity is meaningful only while online — an offline friend's LAST activity
+    // is not something to report (they aren't doing it anymore)
+    const activity =
+      online && (r.activity === 'menu' || r.activity === 'lobby' || r.activity === 'match')
+        ? (r.activity as Activity)
+        : null;
     return {
       userId: r.user_id,
       handle: r.handle,
@@ -1563,6 +1587,8 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
       online,
       status: r.status === 'dnd' ? 'dnd' : null,
       offlineSeconds: online ? null : coarsen(since),
+      activity,
+      game: activity ? (r.activity_game === 'chain' ? 'chain' : 'decode') : null,
     };
   });
 

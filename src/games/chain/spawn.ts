@@ -27,7 +27,7 @@ import {
   CHAIN_PARTICLE_SIM,
   CHAIN_START_POSES,
 } from './config';
-import { accelSide, emptyChainState, ringStands, type ChainCatalyst } from './state';
+import { accelSide, emptyChainState, onRingStand, ringStands, type ChainCatalyst } from './state';
 
 /**
  * Chain Reaction world spawn — a PLAYABLE match.
@@ -169,6 +169,12 @@ export function createChainWorld(
     const cat: ChainCatalyst = { id: i, pos: { ...rs }, carriedBy: null, hook: null };
     chain.catalysts.push(cat);
   });
+
+  // ARM the auto descent for any robot staged ON a Ring Stand (start anchor 2/3): it
+  // earns 100 pt when it comes down off the stand during auto (see updateChain).
+  for (const r of robots) {
+    if (onRingStand(r.pos)) chain.descentArmed[r.id] = true;
+  }
 
   return {
     game: 'chain',

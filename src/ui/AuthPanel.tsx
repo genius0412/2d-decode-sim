@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { authClient } from '../lib/authClient';
+import { isEmbeddedBrowser } from '../lib/browserEnv';
 import { updateUsername } from '../net/api';
 import { UsernameInput, useUsernameCheck, usernameHintColor } from './UsernameField';
 
@@ -14,7 +15,21 @@ export function AuthPanel({ onClose }: { onClose: () => void }) {
   const [username, setUsername] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const uname = useUsernameCheck(username);
+  // In-app webviews (LinkedIn/Instagram/… browsers) get Google's
+  // `disallowed_useragent` 403 — steer them to a real browser instead.
+  const embedded = useMemo(() => isEmbeddedBrowser(), []);
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      setError('Couldn’t copy — long-press the address bar to copy this link.');
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -92,7 +107,22 @@ export function AuthPanel({ onClose }: { onClose: () => void }) {
             {busy ? 'Working…' : mode === 'in' ? 'Sign in' : 'Create account'}
           </button>
         </form>
-        <button className="ds-btn" style={{ width: '100%' }} onClick={google}>Continue with Google</button>
+        {embedded ? (
+          <div className="ds-form-hint" style={{ minHeight: 0 }}>
+            Google sign-in doesn’t work in this app’s in-app browser. Open this page in
+            Safari or Chrome to continue with Google — or use email above.
+            <button
+              type="button"
+              className="ds-btn"
+              style={{ width: '100%', marginTop: 8 }}
+              onClick={copyLink}
+            >
+              {copied ? 'Link copied — paste in your browser' : 'Copy link'}
+            </button>
+          </div>
+        ) : (
+          <button className="ds-btn" style={{ width: '100%' }} onClick={google}>Continue with Google</button>
+        )}
         <div className="ds-form-switch">
           {mode === 'in' ? (
             <>New here? <button className="ds-btn ghost" onClick={() => setMode('up')}>Create an account</button></>

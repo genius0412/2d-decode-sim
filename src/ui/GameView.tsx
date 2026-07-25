@@ -823,7 +823,7 @@ function Results({
   const val = (get: (s: ScoreBreakdown) => number): [number, number] => [get(red), get(blue)];
 
   // Chain Reaction has its own scoring: Particle points (catalyst multiplier folded in) +
-  // End Game (park 5 / ascend 20) + penalty points awarded from the OPPONENT's fouls.
+  // End Game (park 5 / ascend 100) + penalty points awarded from the OPPONENT's fouls.
   const crSections = (): [string, [string, number, number][]][] => {
     const c = hud.chain;
     if (!c) return [];
@@ -834,7 +834,7 @@ function Results({
     const blueF = isRed ? c.oppFoulPts : c.foulPts;
     return [
       ['SCORING', [['Particles ×mult', redP, blueP]]],
-      ['END GAME', [['Park / Ascend', red.total - redP - redF, blue.total - blueP - blueF]]],
+      ['RING STAND / PARK', [['Descend / Ascend / Park', red.total - redP - redF, blue.total - blueP - blueF]]],
       ['PENALTIES', [['Fouls awarded', redF, blueF]]],
     ];
   };
@@ -928,19 +928,6 @@ function Results({
           </tbody>
         </table>
         {ranked && <EloResults rows={eloResults} />}
-        {cr && hud.chain ? (
-          <p className="ds-hint">
-            Each Particle scores 1 pt × (1 + Catalysts on hooks) — RED ×
-            {hud.alliance === 'red' ? hud.chain.mult : hud.chain.oppMult}, BLUE ×
-            {hud.alliance === 'blue' ? hud.chain.mult : hud.chain.oppMult}. End Game: park 5 · ascend 20.
-            Foul points ({PTS_FOUL_MAJOR} per major) come from the opponent's violations.
-          </p>
-        ) : (
-          <p className="ds-hint">
-            Penalty points ({PTS_FOUL_MINOR} minor · {PTS_FOUL_MAJOR} major) come from the opponent's
-            fouls and are already in each total.
-          </p>
-        )}
         {matchResult && (
           <p className="ds-hint" style={{ color: 'var(--ds-accent)' }}>
             {matchResult.kind === 'record'
@@ -1112,17 +1099,6 @@ function RecordResults({
                 </tr>
               </tbody>
             </table>
-            {cr && hud.chain ? (
-              <p className="ds-hint">
-                Each Particle scores 1 pt × (1 + Catalysts on hooks, ×{hud.chain.mult}). End Game:
-                park 5 · ascend 20.
-              </p>
-            ) : (
-              <p className="ds-hint">
-                Your own fouls ({PTS_FOUL_MINOR} pt minor · {PTS_FOUL_MAJOR} pt major) subtract from
-                your score.
-              </p>
-            )}
             <div className="overlay-buttons">
               {matchResult && onWatchReplay && (
                 <button onClick={() => onWatchReplay(matchResult.replay)}>▶ WATCH REPLAY</button>

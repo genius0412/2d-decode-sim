@@ -349,16 +349,142 @@
   font-size: 13px;
   padding: 4px 10px;
 }
+/* the Ping button is a bare `.ds-seg` (intrinsic ~25px tall) sitting next to the
+   32px listbox trigger — match the trigger's height and center its label so the
+   two read as ONE control instead of a short button floating beside a taller one. */
+.ds-server-menu .ds-seg {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+}
 .ds-server-menu .ds-seg:disabled {
   opacity: 0.6;
   cursor: default;
 }
-/* a phone bar has no room for a region control — hide only the BAR copy; the
-   same control in Account must stay reachable on a phone. */
+/* a phone bar has no room for a PERMANENT region control — hide only the
+   bar's direct copy (the no-auth fallback, `right`'s direct child). The one
+   inside `.ds-profile-pop` (ProfileMenu) costs no bar width until opened, so
+   it stays reachable on a phone; so does the copy in Account. `>` matters
+   here — a plain descendant selector would also hide the popover copy. */
 @media (max-width: 640px) {
-  .ds-bar-right .ds-server-menu {
+  .ds-bar-right > .ds-server-menu {
     display: none;
   }
+}
+
+/* ---- profile menu (ProfileMenu.tsx) -----------------------------------
+   One avatar replaces the old permanent trio of name-chip + sign-out button
+   + bar-level region picker — everything account-shaped lives behind it, so
+   the bar itself never grows past one control no matter how many actions
+   hide in the popover. */
+.ds-profile-root {
+  position: relative;
+}
+.ds-avatar-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 50%;
+  line-height: 0;
+}
+.ds-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--ds-accent);
+  color: var(--ds-accent-ink);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.ds-avatar.md {
+  width: 40px;
+  height: 40px;
+  font-size: 15px;
+  flex: none;
+}
+.ds-avatar-btn:hover .ds-avatar {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ds-accent) 35%, transparent);
+}
+.ds-avatar-btn:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 2px;
+}
+.ds-profile-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-round);
+  background: var(--ds-panel);
+  box-shadow: var(--ds-block-sm);
+  text-align: left;
+}
+.ds-profile-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px;
+  border: none;
+  background: none;
+  border-radius: var(--ds-round-sm);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+.ds-profile-id:hover {
+  background: var(--ds-tile);
+}
+.ds-profile-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.ds-profile-name {
+  font-weight: 700;
+  color: var(--ds-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-profile-sub {
+  font-size: 12px;
+  color: var(--ds-mut);
+}
+.ds-profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ds-line);
+}
+.ds-profile-label {
+  font-family: var(--ds-font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ds-mut);
+}
+.ds-profile-actions {
+  padding-top: 10px;
+  border-top: 1px solid var(--ds-line);
+  display: flex;
+}
+.ds-profile-actions .ds-btn {
+  flex: 1;
 }
 
 .ds-main {
@@ -662,6 +788,16 @@
 .fr-dot.dnd {
   background: var(--ds-danger);
 }
+/* "in a lobby / in a match" — amber, distinct from plain-online green and DND
+   red. The activity is also spelled out in the sub-line (colourblind-safe). */
+.fr-dot.busy {
+  background: var(--ds-warn);
+}
+/* the "play a friend" button on an online row — compact so it fits beside the
+   overflow menu without crowding the name */
+.fr-challenge {
+  white-space: nowrap;
+}
 .fr-menu {
   position: relative;
 }
@@ -741,6 +877,77 @@
   background: var(--ds-panel);
   box-shadow: var(--ds-block-sm);
   text-align: left;
+}
+
+/* ---- friend notifications (friendsContext.tsx FriendToasts) -----------
+   A floating stack of transient cards: a new friend request or an incoming
+   challenge announces itself even with the panel collapsed. Fixed to the
+   bottom-right, above the footer; menu shell only (never over a live match). */
+.fr-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(320px, calc(100vw - 32px));
+  pointer-events: none; /* the cards re-enable it — clicks pass through the gaps */
+}
+.fr-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--ds-line);
+  border-left: 3px solid var(--ds-accent);
+  border-radius: var(--ds-round);
+  background: var(--ds-panel);
+  box-shadow: var(--ds-block);
+  animation: fr-toast-in 180ms ease;
+}
+@keyframes fr-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fr-toast-who {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.fr-toast-who:disabled {
+  cursor: default;
+}
+.fr-toast-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ds-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fr-toast-sub {
+  font-size: 11px;
+  color: var(--ds-mut);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- home: the menu IS the navigation --------------------------------- */
@@ -970,6 +1177,13 @@
 }
 .ds-foot-link:hover {
   color: var(--ds-ink);
+}
+.ds-foot-link.bold {
+  font-weight: 700;
+  color: var(--ds-ink-dim);
+}
+.ds-foot-link.bold:hover {
+  color: var(--ds-accent);
 }
 
 /* ---- footer ---------------------------------------------------------- */
@@ -1204,10 +1418,16 @@
   background: var(--ds-tile);
   color: var(--ds-ink);
   padding: 16px 18px;
-  min-height: 94px;
+  /* Top-aligned, NOT space-between: with the descriptions removed a tile is just a
+     kicker + title (+ an optional disabled-reason). space-between bottom-pinned the
+     title, so a tile with a reason (taller) and one without landed their titles at
+     DIFFERENT heights across a row. Stacking from the top keeps every title on the
+     same line; `min-height` matches the natural kicker+title height so a label-only
+     tile has no dead space, while a row-mate carrying a reason simply grows taller. */
+  min-height: 78px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   cursor: pointer;
   font: inherit;
   /* Level-1 card: flat fill, 1px stroke, hard offset block toward the bottom-right
@@ -1305,14 +1525,6 @@
 
 /* the aside in a panel header (e.g. Match setup's "Ranked and Custom set …").
    The rest of the old <details>/<summary> collapse rules went with the panel. */
-.ds-collapse-hint {
-  font-family: var(--ds-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ds-mut);
-}
-
 /* ---- panels + tables ------------------------------------------------- */
 .ds-panel {
   border: 1px solid var(--ds-line);
@@ -1320,6 +1532,12 @@
   background: var(--ds-panel);
   overflow: hidden;
   box-shadow: var(--ds-block);
+}
+/* opt-out of the corner-clipping `overflow: hidden` for panels that host a
+   popup (the region-picker listbox) which must extend past the card edge.
+   Safe here because nothing inside reaches the rounded corners with a fill. */
+.ds-panel.ds-panel-open {
+  overflow: visible;
 }
 .ds-panel-h {
   display: flex;
@@ -2317,6 +2535,21 @@ tr.lb-detail td {
   box-shadow: var(--ds-block-sm);
   transition: transform 0.08s ease, border-color 0.14s, background 0.14s, box-shadow 0.08s ease;
 }
+/* Label-only option toggles (those whose helper `.od` line was removed) would
+   otherwise sit ~20px shorter than their descriptive siblings, leaving a visible
+   dip where a two-line row meets a one-line one. Give them a floor height and
+   center the label so mixed sections keep an even rhythm. `.mini` cards (e.g. the
+   drivetrain grid) are deliberately compact and keep their natural chip height. */
+.ds-opt:not(.mini):not(:has(.od)) {
+  min-height: 62px;
+  justify-content: center;
+}
+/* Drivetrain grid (the only `.ds-opts.four`): now label-only chips — center the
+   label so the four read as an even segmented row instead of top-left labels. */
+.ds-opts.four .ds-opt {
+  justify-content: center;
+  text-align: center;
+}
 /* count badge next to a section title, e.g. "Saved robots 2/3" */
 .ds-count {
   font-size: 12px;
@@ -2527,6 +2760,35 @@ tr.lb-detail td {
   border: 1px solid color-mix(in srgb, var(--ds-accent) 40%, var(--ds-line));
   border-radius: 999px;
   padding: 2px 9px;
+}
+/* "Play a friend" format picker — a column of .ds-opt tiles in a modal. */
+.ds-chal {
+  max-width: 420px;
+}
+.ds-chal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+/* a disabled ("Soon") format tile: flat, non-interactive — neutralise the .ds-opt
+   hover/active lift so it never looks pressable. */
+.ds-opt:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.ds-opt:disabled:hover {
+  transform: none;
+  background: var(--ds-panel);
+  border-color: var(--ds-line-strong);
+  box-shadow: var(--ds-block-sm);
+}
+/* muted variant of the .oz pill for a "Soon" badge (the accent .oz would read as
+   an active/available cue on a disabled tile) */
+.ds-opt .oz.soon {
+  color: var(--ds-mut);
+  background: transparent;
+  border-color: var(--ds-line);
 }
 .ds-opt.mini {
   padding: 10px 13px;
@@ -2816,8 +3078,12 @@ input[type='range']:focus-visible {
   /* `.ds-body` is a COLUMN here, so the friends panel would otherwise land at
      the very bottom, below the content. Order it directly under the rail and
      let it span the width, matching how the rail itself degrades — an expanded
-     panel is a strip above the content rather than a side column. */
-  .ds-rail {
+     panel is a strip above the content rather than a side column.
+     SCOPE the order to `.ds-body`'s children: on home (`showRail={false}`) the
+     content is `.ds-main.ds-main-home`, a DIRECT flex child of `.ds-app`, and an
+     unscoped `.ds-main { order: 3 }` pushed it BELOW the order:0 footer — the
+     footer rendered at the very top of the page on phones. */
+  .ds-body > .ds-rail {
     order: 1;
   }
   .ds-friends {
@@ -2833,7 +3099,7 @@ input[type='range']:focus-visible {
     align-items: flex-start;
     padding: 8px 12px;
   }
-  .ds-main {
+  .ds-body > .ds-main {
     order: 3;
   }
 
@@ -3197,6 +3463,12 @@ button.ds-key:active {
   font-size: 12px;
   color: var(--ds-mut);
 }
+/* the featured "Download for <your OS>" button inside the platform hero card —
+   shown only when we recognise the visitor's OS */
+.ds-dl-get {
+  align-self: flex-start;
+  margin-top: 8px;
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -3380,12 +3652,6 @@ button.ds-key:active {
 .ds-startpos-presets .ds-opt.mini {
   flex: 1 1 auto;
 }
-.ds-startpos-hint {
-  margin: 0;
-  font: 400 11px/1.4 inherit;
-  color: var(--ds-mut);
-}
-
 /* ---- 2v2 start-role swap bar ---------------------------------------------- */
 .ds-roleswap {
   display: flex;

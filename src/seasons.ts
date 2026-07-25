@@ -16,7 +16,7 @@ export const APP_TAGLINE = '2D Driver Practice';
 
 /** external links surfaced in the footer / download page */
 export const LINKS = {
-  repo: 'https://github.com/genius0412/2d-decode-sim',
+  repo: 'https://github.com/genius0412/dsim',
   discord: 'https://discord.gg/YB4tXnx7Pj',
   /** Ko-fi page — donations + the supporter membership tier. The Donate screen
    *  reads it from this one place; the webhook (server/api.ts) is what actually

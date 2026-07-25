@@ -2,13 +2,14 @@
 # Deploy the DECODE game server to Fly, then RE-APPLY the per-region VM sizes.
 #
 # Why this wrapper exists: `fly deploy` re-applies fly.toml's single `[[vm]]`
-# (performance-1x) to EVERY machine, which resets the cheaper satellite regions.
+# (shared-cpu-4x) to EVERY machine, which resets the cheaper satellite regions.
 # fly.toml has no way to express per-region VM sizes, so we shrink the satellites
 # back here. ALWAYS deploy via this script, not a bare `fly deploy`.
 #
-# Sizing policy: iad (matchmaker + always-warm primary) and sjc run performance-1x
-# (dedicated cpu, from fly.toml). The low-traffic FAR satellites (Europe/Oceania/Asia)
-# run shared-cpu-1x — much cheaper, but SHARED: a sustained match there can burn burst
+# Sizing policy: iad (matchmaker + always-warm primary) runs shared-cpu-4x (from
+# fly.toml — 4 shared vCPUs, ample headroom for the 60Hz loop without a dedicated
+# vCPU's cost). EVERY other region, INCLUDING sjc, runs shared-cpu-1x — much cheaper,
+# but SHARED: a sustained match there can burn burst
 # credits and throttle the 60Hz loop (the flap risk fly.toml warns about). They rarely
 # host a match and auto-stop when idle, so the cost win outweighs it; bump back to a
 # performance-* size if a far region starts flapping under real matches. Tune below.
@@ -26,7 +27,7 @@ echo "==> fly deploy ($APP)"
 # NOTE: do NOT let a non-zero deploy skip the re-shrink below. `fly deploy` exits
 # non-zero on transient api.machines.dev flakes (health-check wait timeouts, cancelled
 # requests) even when every machine actually updated — and with `set -e` that aborted
-# the script mid-way, silently leaving the satellites on dedicated vCPUs. Observed
+# the script mid-way, silently leaving the satellites on shared-cpu-4x. Observed
 # 2026-07-20. So capture the status, ALWAYS re-shrink, and re-raise at the end.
 deploy_rc=0
 fly deploy --remote-only -a "$APP" "$@" || deploy_rc=$?

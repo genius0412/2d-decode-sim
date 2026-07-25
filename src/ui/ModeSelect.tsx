@@ -39,14 +39,7 @@ export function ModeSelect({
       {activeGame && (
         <div className="ds-rejoin" role="alert">
           <div className="ds-rejoin-txt">
-            <b>You have a game in progress.</b>{' '}
-            <span className="ds-sub" style={{ fontSize: 13 }}>
-              {activeGame.kind === 'ranked'
-                ? 'A ranked match is waiting — hop back in.'
-                : activeGame.kind === 'record'
-                  ? 'Your record run is still going.'
-                  : 'Your match is still going.'}
-            </span>
+            <b>You have a game in progress.</b>
           </div>
           <button className="ds-btn primary" onClick={onRejoin}>
             Rejoin match →
@@ -63,7 +56,6 @@ export function ModeSelect({
               <span className="k">Solo</span>
               <span>
                 <span className="t">Solo Practice</span>
-                <span className="d">Full match</span>
               </span>
             </button>
 
@@ -71,7 +63,6 @@ export function ModeSelect({
               <span className="k">Practice</span>
               <span>
                 <span className="t">Free Drive</span>
-                <span className="d">Practice freely with no restrictions</span>
               </span>
             </button>
           </div>
@@ -85,13 +76,11 @@ export function ModeSelect({
               <span className="k">Ranked</span>
               <span>
                 <span className="t">Find Match</span>
-                <span className="d">
-                  {!multiplayer
-                    ? 'Needs the game server'
-                    : !signedIn
-                      ? 'Sign in to play ranked'
-                      : '1v1 / 2v2 ranked'}
-                </span>
+                {(!multiplayer || !signedIn) && (
+                  <span className="d">
+                    {!multiplayer ? 'Needs the game server' : 'Sign in to play ranked'}
+                  </span>
+                )}
               </span>
             </button>
 
@@ -99,9 +88,7 @@ export function ModeSelect({
               <span className="k">Records</span>
               <span>
                 <span className="t">Solo Record</span>
-                <span className="d">
-                  {multiplayer ? 'Solo score-attack' : 'Needs the game server'}
-                </span>
+                {!multiplayer && <span className="d">Needs the game server</span>}
               </span>
             </button>
 
@@ -109,9 +96,7 @@ export function ModeSelect({
               <span className="k">Records</span>
               <span>
                 <span className="t">Duo Record</span>
-                <span className="d">
-                  {multiplayer ? '2v0 co-op' : 'Needs the game server'}
-                </span>
+                {!multiplayer && <span className="d">Needs the game server</span>}
               </span>
             </button>
           </div>
@@ -125,18 +110,14 @@ export function ModeSelect({
               <span className="k">Custom</span>
               <span>
                 <span className="t">Custom Room</span>
-                <span className="d">
-                  {multiplayer ? 'Up to 2v2' : 'Needs the game server'}
-                </span>
+                {!multiplayer && <span className="d">Needs the game server</span>}
               </span>
             </button>
             <button className="ds-tile" onClick={onWatch} disabled={!multiplayer}>
               <span className="k">Live</span>
               <span>
                 <span className="t">Watch Live</span>
-                <span className="d">
-                  {multiplayer ? 'Spectate matches in progress' : 'Needs the game server'}
-                </span>
+                {!multiplayer && <span className="d">Needs the game server</span>}
               </span>
             </button>
           </div>

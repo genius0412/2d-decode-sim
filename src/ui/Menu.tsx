@@ -1,6 +1,6 @@
 import type { GameSettings } from '../types';
-import type { ChainIntakeStyle, ChainScoreMode, DrivetrainType, IntakeStyle, RobotSpec } from '../types';
-import { MAX_SAVED_ROBOTS, ROBOT_MAX_SIZE, ROBOT_PRESETS } from '../config';
+import type { ChainScoreMode, DrivetrainType, IntakeStyle, RobotSpec } from '../types';
+import { MAX_SAVED_ROBOTS, ROBOT_PRESETS } from '../config';
 import {
   CHAIN_CLEARANCE_DEFAULT,
   CHAIN_CLEARANCE_MAX,
@@ -22,13 +22,6 @@ import { RobotPreview } from './RobotPreview';
 import { DRIVETRAIN_LABELS, INTAKE_SHORT } from './robotLabels';
 import { rangeFill } from './rangeFill';
 
-const DRIVETRAIN_BLURBS: Record<DrivetrainType, string> = {
-  mecanum: '85% strafe · FTC standard',
-  tank: 'No strafe · best push',
-  swerve: 'Full-speed any direction',
-  xdrive: 'Full-speed strafe',
-};
-
 const INTAKE_LABELS: Record<IntakeStyle, string> = {
   sloped: 'Sloped intake',
   vector: 'Vector wheel intake',
@@ -44,12 +37,6 @@ function optimizedZone(inertia: number): string {
   return 'Long range';
 }
 
-const INTAKE_BLURBS: Record<IntakeStyle, string> = {
-  sloped: 'Face artifacts to scoop them up · eats clumps',
-  vector: 'Grabs artifacts you strafe into',
-  triangle: 'Long reach, eats clumps · slower transfer',
-};
-
 // Chain Reaction robot config blurbs (CR-only builder controls). The LABELS
 // (CHAIN_MODE_LABELS / CHAIN_INTAKE_LABELS) are shared with the leaderboard config
 // summary via ../games/chain/labels so both name the archetype/intake identically.
@@ -57,9 +44,6 @@ const CHAIN_MODE_BLURBS: Record<ChainScoreMode, string> = {
   turret: 'Aims itself and fires one at a time',
   drum: 'Face the goal and fire a fast stream',
   dumper: 'Face the goal and dump the whole load up close',
-};
-const CHAIN_INTAKE_BLURBS: Record<ChainIntakeStyle, string> = {
-  sweeper: 'A roller across the whole front',
 };
 
 /** does the current spec exactly match a preset? (value compare) */
@@ -412,7 +396,6 @@ export function Menu({ settings, onChange }: Props) {
                   onClick={() => setSpec({ drivetrain: d })}
                 >
                   <span className="ot">{DRIVETRAIN_LABELS[d]}</span>
-                  <span className="od">{DRIVETRAIN_BLURBS[d]}</span>
                 </button>
               ))}
             </div>
@@ -443,14 +426,12 @@ export function Menu({ settings, onChange }: Props) {
                         onClick={() => setSpec({ shooterRear: false })}
                       >
                         <span className="ot">FRONT</span>
-                        <span className="od">Shoots from the front</span>
                       </button>
                       <button
                         className={`ds-opt ${spec.shooterRear ? 'on' : ''}`}
                         onClick={() => setSpec({ shooterRear: true })}
                       >
                         <span className="ot">REAR</span>
-                        <span className="od">Shoots from the back</span>
                       </button>
                     </div>
                   </>
@@ -459,7 +440,6 @@ export function Menu({ settings, onChange }: Props) {
                 <div className="ds-opts">
                   <div className="ds-opt on" aria-disabled>
                     <span className="ot">{CHAIN_INTAKE_LABELS.sweeper}</span>
-                    <span className="od">{CHAIN_INTAKE_BLURBS.sweeper}</span>
                   </div>
                 </div>
                 <h3 className="ds-subh">Intake mount</h3>
@@ -469,14 +449,13 @@ export function Menu({ settings, onChange }: Props) {
                     onClick={() => setSpec({ intakeSide: false })}
                   >
                     <span className="ot">FRONT</span>
-                    <span className="od">Grabs from the front</span>
                   </button>
                   <button
                     className={`ds-opt ${spec.intakeSide ? 'on' : ''}`}
                     onClick={() => setSpec({ intakeSide: true })}
                   >
                     <span className="ot">SIDE</span>
-                    <span className="od">Grabs from the sides · holds fewer</span>
+                    <span className="od">Holds fewer</span>
                   </button>
                 </div>
               </>
@@ -572,7 +551,6 @@ export function Menu({ settings, onChange }: Props) {
                   onClick={() => setSpec({ canSort: !spec.canSort })}
                 >
                   <span className="ot">Sorter {spec.canSort ? 'ON' : 'OFF'}</span>
-                  <span className="od">Fires the color the motif needs</span>
                 </button>
               )}
               {!isDecode && (() => {
@@ -619,13 +597,6 @@ export function Menu({ settings, onChange }: Props) {
                 </label>
               )}
             </div>
-
-            <p className="ds-hint">
-              Heavier pushes harder but accelerates slower · higher RPM is faster
-              {isDecode && ' · more flywheel inertia keeps long shots rapid'}
-              {!isDecode && ' · more clearance gets over the beams but handles worse'}
-              . Chassis + intake ≤ {ROBOT_MAX_SIZE}".
-            </p>
           </div>
 
           {isDecode && (
@@ -637,7 +608,6 @@ export function Menu({ settings, onChange }: Props) {
                 onClick={() => selectIntake(i)}
               >
                 <span className="ot">{INTAKE_LABELS[i]}</span>
-                <span className="od">{INTAKE_BLURBS[i]}</span>
               </button>
             ))}
           </div>
@@ -648,24 +618,18 @@ export function Menu({ settings, onChange }: Props) {
         {/* ---------- driver preferences (remembered per drivetrain) ---------- */}
         <section className="ds-sec">
           <h2>Drive style</h2>
-          <p className="ds-hint">
-            Saved per drivetrain ({DRIVETRAIN_LABELS[spec.drivetrain]}) — switching drivetrains
-            restores its own settings.
-          </p>
           <div className="ds-opts two">
             <button
               className={`ds-opt ${settings.assists.fieldCentric ? 'on' : ''}`}
               onClick={() => setAssist({ fieldCentric: true })}
             >
               <span className="ot">Field-centric</span>
-              <span className="od">Stick up always drives away from you</span>
             </button>
             <button
               className={`ds-opt ${!settings.assists.fieldCentric ? 'on' : ''}`}
               onClick={() => setAssist({ fieldCentric: false })}
             >
               <span className="ot">Robot-centric</span>
-              <span className="od">Stick up drives toward the robot's front</span>
             </button>
           </div>
           {spec.drivetrain === 'tank' && (
@@ -696,21 +660,18 @@ export function Menu({ settings, onChange }: Props) {
               onClick={() => setAssist({ aimAssist: !settings.assists.aimAssist })}
             >
               <span className="ot">Aim assist {settings.assists.aimAssist ? 'ON' : 'OFF'}</span>
-              <span className="od">Turret auto-tracks the goal</span>
             </button>
             <button
               className={`ds-opt ${settings.assists.autoIntake ? 'on' : ''}`}
               onClick={() => setAssist({ autoIntake: !settings.assists.autoIntake })}
             >
               <span className="ot">Auto intake {settings.assists.autoIntake ? 'ON' : 'OFF'}</span>
-              <span className="od">Runs when the hopper has room</span>
             </button>
             <button
               className={`ds-opt ${settings.assists.autoFire ? 'on' : ''}`}
               onClick={() => setAssist({ autoFire: !settings.assists.autoFire })}
             >
               <span className="ot">Auto fire {settings.assists.autoFire ? 'ON' : 'OFF'}</span>
-              <span className="od">Fires inside the launch zone</span>
             </button>
           </div>
         </section>
@@ -735,10 +696,6 @@ export function Menu({ settings, onChange }: Props) {
                 />
               </label>
             </div>
-            <p className="ds-hint">
-              Toggle with P or controller X. Caps drive speed for precise control — endgame only, or
-              anytime in Free Drive.
-            </p>
           </div>
         </section>
       </div>

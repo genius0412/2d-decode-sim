@@ -381,7 +381,6 @@ export function StartPositionEditor({
             </button>
           )}
         </div>
-        <p className="ds-startpos-hint">Drag the robot to place it, drag the dot to aim. Save up to {MAX_SAVED_STARTS} of your own {cat === 'close' ? 'Close' : 'Far'} positions (★). Must sit on a launch line and touch your goal or a wall (G304).</p>
       </div>
     </div>
   );

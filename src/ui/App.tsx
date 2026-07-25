@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '../game';
 import { loadSettings, saveSettings, switchGame, syncAudioMirrors } from '../settings';
-import { saveAccountSettings, fetchAdminStatus, fetchProfile, type RoomInvite } from '../net/api';
-import type { RoomConfig } from '../net/protocol';
+import {
+  saveAccountSettings,
+  fetchAdminStatus,
+  fetchProfile,
+  fetchFriends,
+  type Activity,
+  type RoomInvite,
+} from '../net/api';
+import { FriendsProvider } from './friendsContext';
+import type { RoomConfig, RoomKind } from '../net/protocol';
 import { useNewVersion } from '../net/version';
 import { useServerNotice } from '../net/notice';
 import { Admin } from './Admin';
@@ -20,11 +28,12 @@ import { Records, isRecordsTab, type RecordsTab } from './Records';
 import { RecordRun } from './RecordRun';
 import { Matchmaking } from './Matchmaking';
 import { ReplayView } from './ReplayView';
-import { AccountButton } from './AccountButton';
+import { ProfileMenu } from './ProfileMenu';
 import { Download } from './Download';
 import { Contributors } from './Contributors';
 import { Privacy, Terms } from './Legal';
 import { Donate } from './Donate';
+import { Changelog } from './Changelog';
 import { Profile } from './Profile';
 import { UsernameGate } from './UsernameGate';
 import { Account } from './Account';
@@ -59,6 +68,7 @@ type Screen =
   | 'privacy'
   | 'terms'
   | 'donate'
+  | 'changelogs'
   | 'profile'
   | 'account'
   | 'admin';
@@ -127,6 +137,8 @@ function screenSuffix(screen: Screen, a: RouteArgs): string {
       return '/terms';
     case 'donate':
       return '/donate';
+    case 'changelogs':
+      return '/changelogs';
     case 'account':
       return '/account';
     case 'admin':
@@ -174,6 +186,7 @@ function parseScreen(rest: string): { screen: Screen } & RouteArgs {
   if (rest.startsWith('/privacy')) return at('privacy');
   if (rest.startsWith('/terms')) return at('terms');
   if (rest.startsWith('/donate')) return at('donate');
+  if (rest.startsWith('/changelogs')) return at('changelogs');
   if (rest.startsWith('/account')) return at('account');
   if (rest.startsWith('/admin')) return at('admin');
   // /play (a live game) can't be restored without a session ⇒ home
@@ -334,6 +347,21 @@ export function App() {
     navigate(invite.kind === 'record' ? 'duorecord' : 'lobby');
   };
 
+  // "Challenge a friend": the invite has already gone out (FriendsProvider) — drop
+  // the challenger into the freshly-created room as host, waiting for them to join.
+  // Same one-shot pendingAutoJoin the invite-recipient path uses. `kind` picks the
+  // destination: a `record` challenge is a duo co-op run, everything else is a
+  // custom versus match — mirroring `onJoinInvite`'s routing for the recipient.
+  const hostForChallenge = (code: string, game: GameId, kind: RoomKind): void => {
+    if (kind === 'record') {
+      setPendingAutoJoin({ room: code, config: { kind: 'record', record: 'duo', game } });
+      navigate('duorecord');
+    } else {
+      setPendingAutoJoin({ room: code, config: { kind: 'versus', game } });
+      navigate('lobby');
+    }
+  };
+
   // when signed in, mirror settings to the account (debounced) as well as local
   const [accountUserId, setAccountUserId] = useState<string | null>(null);
   // the account's PUBLIC display name (the mutable `handle` behind leaderboards and
@@ -349,33 +377,19 @@ export function App() {
   // is this account an admin? (server-authorized against ADMIN_USER_IDS) — gates the
   // Admin entry; the server independently enforces every admin action
   const [isAdmin, setIsAdmin] = useState(false);
-  // has the admin-status check settled? (so we don't bounce a real admin off an
-  // admin-only deep-link before the async check resolves)
-  const [adminChecked, setAdminChecked] = useState(false);
   useEffect(() => {
     if (!accountUserId) {
       setIsAdmin(false);
-      setAdminChecked(true);
       return;
     }
     let cancelled = false;
-    setAdminChecked(false);
     fetchAdminStatus().then((s) => {
-      if (!cancelled) {
-        setIsAdmin(s.isAdmin);
-        setAdminChecked(true);
-      }
+      if (!cancelled) setIsAdmin(s.isAdmin);
     });
     return () => {
       cancelled = true;
     };
   }, [accountUserId]);
-  // the Download page is admin-only for now — bounce a non-admin who deep-links or
-  // refreshes on /download back home (once the admin check has actually settled)
-  useEffect(() => {
-    if (screen === 'download' && adminChecked && !isAdmin) navigate('home');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen, adminChecked, isAdmin]);
 
   // load the account's display handle once per sign-in. Kept out of AccountSync's
   // effect on purpose: that one is guarded by a module-level `syncedUser` so settings
@@ -593,6 +607,24 @@ export function App() {
   // no-auth builds both lock ranked — custom rooms stay open to everyone.
   const signedIn = accountUserId !== null;
 
+  // Rich-presence heartbeat for the FULL-SCREEN surfaces (game / solo record /
+  // ranked queue) that render outside AppShell's FriendsProvider — so friends see
+  // "In a match" instead of the caller silently dropping to offline mid-game. The
+  // shell screens are heartbeated by the provider's own poll; lobby/duo-record by
+  // InviteFlyout. Fire-and-forget: it only records presence, never renders.
+  useEffect(() => {
+    if (!signedIn) return;
+    const full = screen === 'game' || screen === 'record' || screen === 'matchmaking';
+    if (!full) return;
+    const act: Activity = screen === 'matchmaking' ? 'lobby' : 'match';
+    const beat = (): void => {
+      if (document.visibilityState === 'visible') void fetchFriends(act, settingsRef.current.game).catch(() => {});
+    };
+    beat();
+    const iv = window.setInterval(beat, 30_000);
+    return () => window.clearInterval(iv);
+  }, [signedIn, screen]);
+
   // full-screen surfaces (outside the shell)
   if (screen === 'game') {
     return (
@@ -673,22 +705,27 @@ export function App() {
     );
   }
 
-  // shell screens. The region menu sits in the bar (ahead of the account button)
-  // so switching server is always one click — it used to be reachable only by
-  // going into Account, or via the picker that blocked every record run.
-  const right = (
+  // shell screens. Signed-in builds fold the region menu INTO the profile
+  // avatar's popover (one control, not two) — switching server is still one
+  // click away, just behind the avatar instead of permanently taking up bar
+  // width. Without auth there's no avatar to hang it on, so it stays a bar-level
+  // control next to the plain Settings button, as before.
+  const right = authEnabled ? (
+    <ProfileMenu
+      handle={handle}
+      preferredServerId={settings.preferredServerId ?? selectedServerId()}
+      onChangeServer={(id) => update({ ...settings, preferredServerId: id })}
+      onAccount={() => navigate('account')}
+    />
+  ) : (
     <>
       <ServerMenu
         value={settings.preferredServerId ?? selectedServerId()}
         onChange={(id) => update({ ...settings, preferredServerId: id })}
       />
-      {authEnabled ? (
-        <AccountButton handle={handle} onAccount={() => navigate('account')} />
-      ) : (
-        <button className="ds-btn" onClick={() => navigate('account')}>
-          Settings
-        </button>
-      )}
+      <button className="ds-btn" onClick={() => navigate('account')}>
+        Settings
+      </button>
     </>
   );
 
@@ -696,22 +733,31 @@ export function App() {
   const recordsTab: RecordsTab = isRecordsTab(route.sub) ? route.sub : 'leaderboard';
 
   return (
-    <AppShell
-      active={navFor(screen)}
-      onNav={(n) => navigate(screenForNav(n))}
-      right={right}
-      showAdmin={isAdmin}
-      showRail={screen !== 'home'}
-      onDownload={() => navigate('download')}
-      onContributors={() => navigate('contributors')}
-      onPrivacy={() => navigate('privacy')}
-      onTerms={() => navigate('terms')}
-      onDonate={() => navigate('donate')}
+    <FriendsProvider
       signedIn={signedIn}
-      onOpenProfile={openProfile}
-      onJoinInvite={onJoinInvite}
+      activity="menu"
       game={settings.game}
+      sound={settings.audio.volume.master > 0}
+      onHostRoom={hostForChallenge}
     >
+      <AppShell
+        active={navFor(screen)}
+        onNav={(n) => navigate(screenForNav(n))}
+        right={right}
+        showAdmin={isAdmin}
+        showRail={screen !== 'home'}
+        onDownload={() => navigate('download')}
+        onContributors={() => navigate('contributors')}
+        onChangelog={() => navigate('changelogs')}
+        onPrivacy={() => navigate('privacy')}
+        onTerms={() => navigate('terms')}
+        onDonate={() => navigate('donate')}
+        signedIn={signedIn}
+        onOpenProfile={openProfile}
+        onJoinInvite={onJoinInvite}
+        myUserId={accountUserId}
+        game={settings.game}
+      >
       {authEnabled && <AccountSync onUser={onSyncUser} onLoad={onSyncLoad} seed={onSyncSeed} />}
       {authEnabled && <UsernameGate />}
       {/* patch notes / new-season + new-act reveals — shown once on the menu shell,
@@ -793,8 +839,7 @@ export function App() {
           <div className="overlay-panel">
             <h2>You’re already in a game</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              You can only be in one game at a time. Rejoin the one you’re in, or abandon it to
-              start something new.
+              You can only be in one game at a time.
             </p>
             <div className="overlay-buttons">
               <button
@@ -819,9 +864,8 @@ export function App() {
           <div className="overlay-panel">
             <h2>Start position invalid</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              Your saved custom start position isn’t legal for the chassis you’ve got selected —
-              a different-sized robot doesn’t fit where it was placed. Fix the start position (or
-              pick a preset) for this chassis before starting.
+              Your saved start position isn’t legal for the selected chassis. Fix it (or pick a
+              preset) before starting.
             </p>
             <div className="overlay-buttons">
               <button
@@ -844,8 +888,7 @@ export function App() {
           <div className="overlay-panel">
             <h2>Server restarting soon</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              A scheduled server update is about to happen, so new games are paused for a moment —
-              you’d only get dropped by the restart. Hang tight; it’ll be back in a minute.
+              A scheduled server update is about to happen, so new games are paused for a moment.
             </p>
             <div className="overlay-buttons">
               <button onClick={() => setStartBlocked(false)}>OK</button>
@@ -858,8 +901,7 @@ export function App() {
           <div className="overlay-panel">
             <h2>Update required</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              A newer version of the sim has shipped. Everyone has to be on the same version to
-              play — especially for multiplayer — so refresh to update before starting a run.
+              A newer version has shipped. Refresh to update before starting.
             </p>
             <div className="overlay-buttons">
               <button onClick={() => window.location.reload()}>REFRESH &amp; UPDATE</button>
@@ -901,18 +943,19 @@ export function App() {
         />
       )}
       {screen === 'watch' && <WatchLive onWatch={spectateRoom} onBack={() => navigate('modes')} />}
-      {screen === 'download' && isAdmin && <Download />}
-      {/* public, unlike Download — no admin gate */}
+      {screen === 'download' && <Download />}
       {screen === 'contributors' && <Contributors onOpenProfile={openProfile} />}
       {/* legal pages are public and must stay reachable without an account —
           AdSense review fetches /privacy directly */}
       {screen === 'privacy' && <Privacy />}
       {screen === 'terms' && <Terms />}
       {screen === 'donate' && <Donate signedIn={signedIn} />}
+      {screen === 'changelogs' && <Changelog />}
       {screen === 'account' && (
         <Account settings={settings} onChange={update} onHandleSaved={setHandle} />
       )}
       {screen === 'admin' && isAdmin && <Admin />}
-    </AppShell>
+      </AppShell>
+    </FriendsProvider>
   );
 }

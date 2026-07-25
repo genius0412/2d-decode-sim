@@ -85,17 +85,19 @@ fly launch --no-deploy        # pick a unique app name + region near your player
   auto-starts it on the next connection, and health-checks `GET /health` (with a 30s
   grace so a cold boot never flaps the machine). Set `min_machines_running = 1` to keep
   one machine warm and skip the first-connect cold start, at the cost of always-on
-  billing for the dedicated vCPU.
+  billing for the warm machine.
 - The Docker image is a 2-stage build: it esbuild-BUNDLES `server/index.ts` (+ the
   shared `src/sim`) to one plain-JS file, then runs it with plain `node`. This avoids
   transpiling the TS tree with `tsx` on every cold boot (~7s), so an auto_started
   machine is serving `/health` in well under a second.
 - Your server URL is `wss://<app-name>.fly.dev`.
 - Scale/CPU: the room loop runs a CONTINUOUS 60 Hz Rapier physics step. That is a
-  sustained CPU workload, so it runs on a **dedicated** `performance-1x` vCPU — a
-  burstable `shared-cpu-*` exhausts its burst credits within a minute of play, Fly then
-  throttles it to a tiny baseline, the event loop stalls, and even `/health` times out
-  (the machine flaps "unhealthy" with a single player). `auto_stop_machines = 'stop'` +
+  sustained CPU workload, so the primary `iad` machine runs on `shared-cpu-4x` (4 shared
+  vCPUs — enough parallel headroom that the 60 Hz loop never exhausts burst credits in
+  practice; a smaller `shared-cpu-1x` throttles to a tiny baseline within a minute of play,
+  stalling the event loop until even `/health` times out and the machine flaps "unhealthy").
+  See fly.toml's COST-PASS note for the measured tradeoff vs. a dedicated `performance-1x`.
+  `auto_stop_machines = 'stop'` +
   `min_machines_running = 1` keep ONE machine warm (the primary region = the
   designated `MATCHMAKER_REGION`, which ranked queueing routes to), while other regions
   idle to zero and cold-boot on first connect.
@@ -151,14 +153,16 @@ fly secrets set MATCHMAKER_REGION=iad -a dohun-sim-decode   # holds the global r
 - **`fly-replay` routing can only be verified on the deployed app** (the Fly proxy isn't in
   the loop on localhost) — after deploy, confirm a `?region=lhr` connection from the US lands
   on the `lhr` machine (`/api/presence` shows its region).
-- **Per-region VM sizes + the deploy reset (IMPORTANT).** `iad`/`sjc` run `performance-1x`
-  /2048MB (busy regions + the always-warm matchmaker; DEDICATED cpu, so no burst-throttle
-  flap); the far satellites `lhr`/`syd`/`nrt` run the much cheaper `shared-cpu-1x`/1024MB.
-  fly.toml has only ONE `[[vm]]`, and **`fly deploy` re-applies it (`performance-1x`) to
-  every machine — silently UPSIZING the satellites onto dedicated vCPUs.** So always deploy
-  with **`scripts/fly-deploy.sh`** (deploy + re-shrink the satellites) rather than a bare
-  `fly deploy`. Verify after: `fly machine list -a dohun-sim-decode` should show `iad/sjc`
-  at `performance-1x:2048MB` and `lhr/syd/nrt` at `shared-cpu-1x:1024MB`.
+- **Per-region VM sizes + the deploy reset (IMPORTANT).** `iad` runs `shared-cpu-4x`
+  /1024MB (the always-warm matchmaker; 4 shared vCPUs give the 60 Hz loop ample headroom
+  without a dedicated vCPU's cost — see fly.toml's COST-PASS note); EVERY other region —
+  `sjc` (joined 2026-07-20) plus the far satellites `lhr`/`syd`/`nrt` — runs the much cheaper
+  `shared-cpu-1x`/1024MB. fly.toml has only ONE `[[vm]]`, and **`fly deploy` re-applies it
+  (`shared-cpu-4x`) to every machine — silently UPSIZING the satellites off their cheap
+  size.** So always deploy with **`scripts/fly-deploy.sh`** (deploy + re-shrink the
+  satellites) rather than a bare `fly deploy`. Verify after: `fly machine list -a
+  dohun-sim-decode` should show `iad` at `shared-cpu-4x:1024MB` and `sjc/lhr/syd/nrt` at
+  `shared-cpu-1x:1024MB`.
 - **Calibrating `INTER_REGION_MS`** (`server/regions.ts`): measure machine-to-machine RTT over
   Fly's 6PN mesh — from each region's machine, TCP-connect to another region's hallpass
   (`<region>.<app>.internal:22`, since the app binds IPv4-only so port 8080 isn't on 6PN) and

@@ -41,9 +41,6 @@ export function ChainStartSelector({
             onClick={() => onPick(index)}
           >
             <span className="ot">{p.name}</span>
-            <span className="od">
-              {p.name.startsWith('RING') ? 'Start up on the ring stand' : 'Start on the floor'}
-            </span>
           </button>
         ))}
       </div>

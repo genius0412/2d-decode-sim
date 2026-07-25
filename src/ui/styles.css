@@ -1764,6 +1764,14 @@ button {
  *  (src/ui/Announcements.tsx). Shown once on the menu shell.
  * ================================================================= */
 
+/* full changelog page (Changelog.tsx) — reuses .ann-item/.ann-badge/.ann-md
+   (self-contained, no dependency on the modal-only .ann-panel/.ann-overlay). */
+.cl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 /* kind pill — a bordered chip tinted from its own (themed) text colour, so it
    stays readable on the light panel AND the dark tile without a hardcoded fill. */
 .ann-badge {

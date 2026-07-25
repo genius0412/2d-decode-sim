@@ -5,7 +5,7 @@ import { robotExtents } from '../../sim/physics';
 import {
   CHAIN_ACCEL_DEPTH,
   CHAIN_ACCEL_HALF_Y,
-  CHAIN_ASCEND_R,
+  CHAIN_PTS,
   CHAIN_CATALYST_PICK_R,
   CHAIN_EJECT_SPEED,
   CHAIN_EJECT_SPREAD,
@@ -53,7 +53,7 @@ import {
   chainIntakeBand,
   hookPos,
   labAreas,
-  ringStands,
+  onRingStand,
   CHAIN_HOOKS_PER_GOAL,
   type ChainState,
 } from './state';
@@ -320,6 +320,21 @@ export function updateChain(
   world.balls = out;
 
   // ── scoring + endgame ──────────────────────────────────────────────────────
+  // AUTO DESCENT (manual: descend a Ring Stand in auto = 100 pt): a robot that STARTED
+  // perched on a stand (armed at spawn) earns the descent ONCE when it comes down off
+  // the stand during auto. Latched in `chain.descended` so it survives the per-tick total
+  // recompute below. `descentArmed`/`descended` default to {} for an old-server snapshot.
+  const descended = (chain.descended ??= {});
+  const descentArmed = (chain.descentArmed ??= {});
+  if (world.match.phase === 'auto') {
+    for (const rob of world.robots) {
+      if (descentArmed[rob.id] && !descended[rob.id] && !onRingStand(rob.pos)) {
+        descended[rob.id] = true;
+        world.events.push(`DESCENT +${CHAIN_PTS.ringStandDescend}`);
+      }
+    }
+  }
+
   const isEndgame =
     world.match.phase === 'post' ||
     (world.match.phase === 'teleop' && world.match.phaseTimeLeft <= CHAIN_ENDGAME_S);
@@ -331,7 +346,8 @@ export function updateChain(
     for (const rob of world.robots) {
       if (rob.alliance !== a) continue;
       const st = chain.endgame[rob.id];
-      eg += st === 'ascended' ? 20 : st === 'parked' ? 5 : 0;
+      eg += st === 'ascended' ? CHAIN_PTS.ringStandAscend : st === 'parked' ? CHAIN_PTS.labPark : 0;
+      if (descended[rob.id]) eg += CHAIN_PTS.ringStandDescend; // auto descent (latched)
     }
     world.match.scores[a].total = chain.particlePoints[a] + eg + world.match.scores[a].foulPoints;
     world.goals[a].classifiedCount = chain.scored[a]; // surfaces in worldHash
@@ -753,9 +769,7 @@ export function chainCatalystPrompt(
  * lab-area corner) > none */
 function endgameOf(rob: RobotState): 'none' | 'parked' | 'ascended' {
   const slow = hyp(rob.vel.x, rob.vel.y) < 12;
-  for (const rs of ringStands()) {
-    if (slow && hyp(rs.x - rob.pos.x, rs.y - rob.pos.y) < CHAIN_ASCEND_R) return 'ascended';
-  }
+  if (slow && onRingStand(rob.pos)) return 'ascended';
   const cx = rob.pos.x;
   const cy = rob.pos.y;
   for (const lab of labAreas(rob.alliance)) {

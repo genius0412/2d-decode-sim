@@ -26,7 +26,7 @@
  *  • CATALYST — a 6"-OD purple ring (4 of them). Placed on a HOOK ⇒ +1 pt/particle.
  *  • HOOK — on the accelerator wall (this file's `CHAIN_HOOK_Y`); holds a Catalyst.
  *  • RING STAND — a 22.5" vertical steel pole at the field corners; robots ASCEND
- *    (endgame, 20 pt) / DESCEND (auto, 20 pt) it.
+ *    (endgame, 100 pt) / DESCEND (auto, 100 pt) it.
  *  • LAB AREA — each alliance's start/park zone (leave 5 pt auto / park 5 pt endgame).
  *  • PARTICLE ZONE — the center diamond of white tape (neutral, unprotected).
  *
@@ -76,14 +76,14 @@ export const CHAIN_CATALYST_COUNT = 4;
 
 /**
  * SCORING (manual §3) — for when scoring lands. Particle 1 pt; each Catalyst on a
- * hook adds +1 pt per particle scored in that accelerator; Ring-Stand descend 20 pt
- * (auto) / ascend 20 pt (endgame); Lab-Area leave 5 pt (auto) / park 5 pt (endgame).
+ * hook adds +1 pt per particle scored in that accelerator; Ring-Stand descend 100 pt
+ * (auto) / ascend 100 pt (endgame); Lab-Area leave 5 pt (auto) / park 5 pt (endgame).
  */
 export const CHAIN_PTS = {
   particle: 1,
   catalystPerParticle: 1,
-  ringStandDescend: 20,
-  ringStandAscend: 20,
+  ringStandDescend: 100,
+  ringStandAscend: 100,
   labLeave: 5,
   labPark: 5,
 } as const;
@@ -320,8 +320,10 @@ export const CHAIN_CATALYST_PICK_R = 9; // pick-up radius (to robot center)
 export const CHAIN_HOOK_PLACE_R = 12; // seat-on-hook radius (carried catalyst → hook)
 
 /** endgame: park fully inside a Lab-Area corner square (5 pt) / ascend within this
- * radius of a Ring Stand (20 pt). Lab squares are 24" at each field corner; an
- * alliance owns the two on its side (red x<0, blue x>0). APPROX — refine with manual. */
+ * radius of a Ring Stand (100 pt). The SAME radius decides the AUTO descent: a robot
+ * that STARTS on a stand and leaves this radius during auto scores descent (100 pt).
+ * Lab squares are 24" at each field corner; an alliance owns the two on its side
+ * (red x<0, blue x>0). APPROX — refine with manual. */
 export const CHAIN_LAB = 24; // corner square size (in)
 export const CHAIN_ASCEND_R = 9; // ascend proximity to a ring stand (in)
 

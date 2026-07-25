@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { APP_NAME, seasonFor, LINKS } from '../seasons';
 import type { GameId } from '../games/types';
 import { FriendsPanel } from './FriendsPanel';
+import { FriendToasts } from './friendsContext';
 import { Logo } from './Logo';
 import { NavRail } from './NavRail';
 import { usePresence } from './usePresence';
@@ -67,9 +68,11 @@ export function AppShell({
   onPrivacy,
   onTerms,
   onDonate,
+  onChangelog,
   signedIn,
   onOpenProfile,
   onJoinInvite,
+  myUserId,
   game,
 }: {
   active: ShellNav;
@@ -90,12 +93,17 @@ export function AppShell({
   onTerms: () => void;
   /** Support/donate page — Ko-fi link + the supporter-membership claim flow */
   onDonate: () => void;
+  /** Changelog, likewise a footer destination (public) — replaces the old bare GitHub link */
+  onChangelog: () => void;
   /** drives the friends panel: signed out it shows a sign-in prompt and never polls */
   signedIn: boolean;
   /** click-through from a friend/search row to that player's public profile */
   onOpenProfile: (username: string) => void;
   /** a friend's "Join" click on a room invite, from anywhere the panel is open */
   onJoinInvite: (invite: RoomInvite) => void;
+  /** the signed-in account's own user id — drives the panel's "Recently played"
+   * suggestions (opponents/teammates from recent matches you can friend) */
+  myUserId?: string | null;
   /** the selected game — the footer names its season (DECODE / Chain Reaction) */
   game: GameId;
 }) {
@@ -118,11 +126,21 @@ export function AppShell({
         <div className="ds-body">
           <NavRail active={active} onNav={onNav} showAdmin={showAdmin} />
           <main className="ds-main">{children}</main>
-          <FriendsPanel signedIn={signedIn} onOpenProfile={onOpenProfile} onJoinInvite={onJoinInvite} />
+          <FriendsPanel
+            signedIn={signedIn}
+            onOpenProfile={onOpenProfile}
+            onJoinInvite={onJoinInvite}
+            myUserId={myUserId}
+          />
         </div>
       ) : (
         <main className="ds-main ds-main-home">{children}</main>
       )}
+
+      {/* floating friend-request / challenge notifications — menu shell only, so
+          they never appear over a live match (full-screen surfaces are outside
+          this shell). Inside the FriendsProvider that wraps AppShell in App. */}
+      <FriendToasts onOpenProfile={onOpenProfile} onJoinInvite={onJoinInvite} />
 
       <footer className="ds-foot">
         <span className="ds-foot-brand">
@@ -144,9 +162,11 @@ export function AppShell({
           <button className="ds-foot-link" onClick={onTerms}>
             Terms
           </button>
-          <a href={LINKS.repo} target="_blank" rel="noreferrer">
-            GitHub
-          </a>
+          {/* main replaced the bare GitHub link with Changes — keep that, plus
+              monetization's Support/Privacy/Terms destinations */}
+          <button className="ds-foot-link bold" onClick={onChangelog}>
+            Changes
+          </button>
           <a href={LINKS.discord} target="_blank" rel="noreferrer">
             Discord
           </a>

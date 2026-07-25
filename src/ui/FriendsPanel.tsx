@@ -1,13 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  fetchUserMatches,
   searchUsers,
   type FriendRow,
+  type MatchHistoryEntry,
   type PresenceStatus,
   type PublicProfile,
   type RoomInvite,
 } from '../net/api';
-import { useFriends } from './useFriends';
+import type { FriendsApi } from './useFriends';
+import { useFriendsCtx } from './friendsContext';
 import { Select, type SelectOption } from './Select';
+
+/** compact game name for an activity line ("In a match · DECODE") */
+function gameShort(game: 'decode' | 'chain' | null): string {
+  return game === 'chain' ? 'Chain' : game === 'decode' ? 'DECODE' : '';
+}
+
+/** the chess.com-style activity line for an ONLINE friend: what they're doing,
+ * not just "Online". DND wins (they asked not to be shown as available). */
+function presenceLine(f: FriendRow): string {
+  if (f.status === 'dnd') return 'Do not disturb';
+  const g = gameShort(f.game);
+  if (f.activity === 'match') return g ? `In a match · ${g}` : 'In a match';
+  if (f.activity === 'lobby') return g ? `In a lobby · ${g}` : 'In a lobby';
+  return 'Online';
+}
+
+/** may this online friend be challenged right now? Not while DND (asked not to be
+ * disturbed) or mid-match (busy — the invite would just pile up unseen). */
+function canChallenge(f: FriendRow): boolean {
+  return f.online && f.status !== 'dnd' && f.activity !== 'match' && !!f.username;
+}
 
 const OPEN_KEY = 'decodesim.friendsPanelOpen';
 
@@ -63,11 +87,14 @@ export function FriendsPanel({
   signedIn,
   onOpenProfile,
   onJoinInvite,
+  myUserId,
 }: {
   signedIn: boolean;
   onOpenProfile: (username: string) => void;
   /** a friend invited you to a room and you clicked Join */
   onJoinInvite: (invite: RoomInvite) => void;
+  /** the signed-in account's user id — drives "Recently played" suggestions */
+  myUserId?: string | null;
 }) {
   const [open, setOpen] = useState(() => {
     try {
@@ -89,7 +116,7 @@ export function FriendsPanel({
     }
   };
 
-  const friends = useFriends({ signedIn, collapsed: !expanded });
+  const friends = useFriendsCtx();
   const { incoming, outgoing, blocked, invites, friends: list } = friends.data;
   const waiting = incoming.length + invites.length;
 
@@ -192,13 +219,14 @@ export function FriendsPanel({
                 // dot's hue alone: a red DND dot and a green online dot are the
                 // same dot to a red-green colourblind player. The @username stays
                 // reachable via the row's title and the click-through.
-                <Row
-                  key={f.userId}
-                  p={f}
-                  onOpenProfile={onOpenProfile}
-                  sub={f.status === 'dnd' ? 'Do not disturb' : 'Online'}
-                >
-                  <span className={`fr-dot${f.status === 'dnd' ? ' dnd' : ''}`} aria-hidden />
+                <Row key={f.userId} p={f} onOpenProfile={onOpenProfile} sub={presenceLine(f)}>
+                  <span
+                    className={`fr-dot${f.status === 'dnd' ? ' dnd' : f.activity === 'match' || f.activity === 'lobby' ? ' busy' : ''}`}
+                    aria-hidden
+                  />
+                  {canChallenge(f) && f.username && (
+                    <ChallengeButton username={f.username} onChallenge={friends.openChallenge} />
+                  )}
                   <RowMenu username={f.username} friends={friends} />
                 </Row>
               ))
@@ -261,10 +289,113 @@ export function FriendsPanel({
             </p>
           </FoldSection>
 
+          <RecentlyPlayed
+            myUserId={myUserId}
+            known={friends.data}
+            onAdd={friends.add}
+            onOpenProfile={onOpenProfile}
+          />
+
           <AddFriend onAdd={friends.add} known={friends.data} />
         </>
       )}
     </aside>
+  );
+}
+
+/** the non-self players with a public username from a page of match history,
+ * deduped, freshest-first — everyone you've recently shared a match with. */
+function recentPeople(rows: MatchHistoryEntry[], myUserId: string): PublicProfile[] {
+  const seen = new Set<string>([myUserId]);
+  const out: PublicProfile[] = [];
+  for (const row of rows) {
+    for (const p of row.players) {
+      if (seen.has(p.userId) || !p.username) continue; // no username ⇒ can't friend them
+      seen.add(p.userId);
+      out.push({ userId: p.userId, handle: p.handle, username: p.username });
+    }
+  }
+  return out;
+}
+
+/**
+ * "Recently played": opponents and teammates from your recent matches you aren't
+ * already connected to, each one-click friendable. chess.com's "add the person you
+ * just played" — the highest-intent moment to send a request — surfaced as a
+ * standing list so it isn't lost the instant the results screen closes. Renders
+ * nothing until there's at least one addable person (a new/solo player sees no
+ * empty section).
+ */
+function RecentlyPlayed({
+  myUserId,
+  known,
+  onAdd,
+  onOpenProfile,
+}: {
+  myUserId?: string | null;
+  known: { friends: FriendRow[]; incoming: PublicProfile[]; outgoing: PublicProfile[]; blocked: PublicProfile[] };
+  onAdd: (username: string) => Promise<'sent' | 'accepted'>;
+  onOpenProfile: (username: string) => void;
+}) {
+  const [people, setPeople] = useState<PublicProfile[]>([]);
+  const [added, setAdded] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!myUserId) {
+      setPeople([]);
+      return;
+    }
+    let alive = true;
+    // a page of recent matches is plenty — recentPeople dedupes to the handful of
+    // distinct people in them. Silent on failure (server asleep/older): the
+    // section just doesn't appear.
+    void fetchUserMatches(myUserId, { limit: 25 })
+      .then((page) => {
+        if (alive) setPeople(recentPeople(page.rows, myUserId));
+      })
+      .catch(() => {
+        if (alive) setPeople([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [myUserId]);
+
+  // hide anyone already a friend / pending either direction / blocked — the only
+  // ones worth suggesting are people you have no relationship with yet
+  const connected = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of known.friends) if (f.username) s.add(f.username);
+    for (const p of [...known.incoming, ...known.outgoing, ...known.blocked]) if (p.username) s.add(p.username);
+    return s;
+  }, [known]);
+
+  const suggestions = people.filter((p) => p.username && !connected.has(p.username)).slice(0, 6);
+  if (suggestions.length === 0) return null;
+
+  return (
+    <section className="fr-section">
+      <h3 className="fr-sec-h">Recently played</h3>
+      {suggestions.map((p) => (
+        <Row key={p.userId} p={p} onOpenProfile={onOpenProfile}>
+          <button
+            className="ds-btn small"
+            disabled={!!(p.username && added[p.username])}
+            onClick={() => {
+              const u = p.username;
+              if (!u) return;
+              void onAdd(u)
+                .then(() => setAdded((m) => ({ ...m, [u]: true })))
+                .catch(() => {
+                  /* the hook surfaces the message in friends.error */
+                });
+            }}
+          >
+            {p.username && added[p.username] ? 'Added' : 'Add'}
+          </button>
+        </Row>
+      ))}
+    </section>
   );
 }
 
@@ -345,6 +476,26 @@ function Row({
   );
 }
 
+/** the chess.com "play a friend" affordance: opens the format picker (1v1 / 2v2 /
+ * co-op record). The picker itself sends the invite + hosts the room. */
+function ChallengeButton({
+  username,
+  onChallenge,
+}: {
+  username: string;
+  onChallenge: (username: string) => void;
+}) {
+  return (
+    <button
+      className="ds-btn small primary fr-challenge"
+      title={`Challenge @${username} to a match`}
+      onClick={() => onChallenge(username)}
+    >
+      Challenge
+    </button>
+  );
+}
+
 /** unfriend / block, tucked behind a details disclosure so a destructive action
  * is never one stray click away in a dense list */
 function RowMenu({
@@ -352,7 +503,7 @@ function RowMenu({
   friends,
 }: {
   username: string | null;
-  friends: ReturnType<typeof useFriends>;
+  friends: FriendsApi;
 }) {
   if (!username) return null;
   return (

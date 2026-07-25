@@ -156,9 +156,6 @@ export function MatchSetup({
     <section className="ds-panel">
       <div className="ds-panel-h">
         <span className="ds-panel-title">Match setup</span>
-        <span className="ds-collapse-hint">
-          Ranked and Custom set alliance &amp; start in the lobby
-        </span>
       </div>
 
       <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -170,14 +167,12 @@ export function MatchSetup({
               onClick={() => setAlliance('red')}
             >
               <span className="ot">RED</span>
-              <span className="od">Goal at top-left of your view</span>
             </button>
             <button
               className={`ds-opt blue ${settings.alliance === 'blue' ? 'on' : ''}`}
               onClick={() => setAlliance('blue')}
             >
               <span className="ot">BLUE</span>
-              <span className="od">Goal at top-right of your view</span>
             </button>
           </div>
         </section>
@@ -210,7 +205,6 @@ export function MatchSetup({
               onClick={() => set({ practiceDummies: !settings.practiceDummies })}
             >
               <span className="ot">Practice dummies {settings.practiceDummies ? 'ON' : 'OFF'}</span>
-              <span className="od">Idle robots to push against · Free Drive</span>
             </button>
           </div>
         </section>
@@ -256,7 +250,6 @@ export function MatchSetup({
             {settings.savedAutos.length < MAX_SAVED_AUTOS && (
               <label className="ds-opt ds-opt-add" style={{ cursor: 'pointer' }}>
                 <span className="ot">＋ Import .pp</span>
-                <span className="od">Add an auto to your library</span>
                 <input type="file" accept=".pp" onChange={handleFileChange} style={{ display: 'none' }} />
               </label>
             )}

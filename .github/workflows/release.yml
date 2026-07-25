@@ -39,7 +39,23 @@ jobs:
         env:
           ELECTRON: '1'
 
-      # package for the host OS + publish to this tag's GitHub Release
+      # package for the host OS and upload to this tag's GitHub Release. The release
+      # is created as a DRAFT (build.publish.releaseType) so `releases/latest` keeps
+      # serving the PREVIOUS version while the three OS jobs upload — no window where
+      # a download 404s because its asset isn't up yet.
       - run: npx electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Flip the draft live ONLY after all three OS builds have uploaded, so every
+  # platform's asset appears atomically. Still fully automatic — no manual gate.
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest

@@ -26,7 +26,10 @@ export function InviteFlyout({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const friends = useFriends({ signedIn, collapsed: !open });
+  // Lobby is a full-screen surface OUTSIDE AppShell's FriendsProvider, so this
+  // keeps its own poll. Report 'lobby' activity + the room's game so friends see
+  // "In a lobby · DECODE" while you're setting up / waiting.
+  const friends = useFriends({ signedIn, activity: 'lobby', game: room?.config.game });
   const [invited, setInvited] = useState<Record<string, boolean>>({});
 
   useEffect(() => {

@@ -13,9 +13,24 @@ Two surfaces:
 
 ## Electron GUI drive recipe (no Playwright needed)
 
-- `npm run build` first; Electron loads `dist/index.html` (see `electron/main.cjs`).
+- **`ELECTRON=1 npm run build` — NOT a bare `npm run build`.** `vite.config.ts` sets
+  `base: '/'` by default (the web build); under `file://` that makes the bundle's
+  `/assets/index-*.js` resolve to the filesystem root and 404 **silently** — no console
+  error, no failed-load event, just a permanently blank white window (`#root` stays
+  empty forever). `ELECTRON=1` switches to a relative `./` base, matching what `npm run
+  dist`/`npm run electron` already do. If a screenshot comes back blank, check this
+  BEFORE assuming the app broke — `document.body.innerHTML.length` staying tiny (~30
+  chars, just the empty `<div id="root">`) confirms it's this, not your change.
+- Electron loads `dist/index.html` (see `electron/main.cjs`).
 - Write a driver script (CJS) in the scratchpad and run `npx electron <script>`.
 - **Gotchas (Windows, this machine):**
+  - Agent shells export `ELECTRON_RUN_AS_NODE=1`, which makes a bare `npx electron
+    script.cjs` run the script as plain Node — `app`/`BrowserWindow` are `undefined`.
+    Unset it for the invocation: `env -u ELECTRON_RUN_AS_NODE npx electron script.cjs`.
+  - `electron` must resolve `require('electron')` from a real `node_modules` — a driver
+    script living outside the repo (e.g. the session scratchpad) fails with
+    `Cannot find module 'electron'`. Put the script inside the project directory
+    (delete it when done) rather than the scratchpad.
   - `capturePage()` throws `UnknownVizError` unless you call
     `app.disableHardwareAcceleration()` AND
     `app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')`,

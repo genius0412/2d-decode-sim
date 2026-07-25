@@ -210,7 +210,7 @@ export function MatchStrategy({
           }}
         >
           <span>
-            {mode.toUpperCase()} · coordinate then ready up · {readyCount}/{players.length} ready
+            {mode.toUpperCase()} · {readyCount}/{players.length} ready
           </span>
           <span className={`ds-chip ${secsLeft <= STRAT_TICK_FROM ? 'off' : 'on'}`} title="Match cancels if not everyone readies in time">
             ⏱ {secsLeft}s

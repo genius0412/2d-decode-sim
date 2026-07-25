@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Room, type Client } from './room';
@@ -581,6 +581,16 @@ httpServer.on('connection', (socket) => socket.setNoDelay(true));
 // noServer: we intercept the upgrade ourselves (below) to do region routing.
 const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
+// WS-level liveness. A half-open TCP connection (laptop lid closed, wifi dropped,
+// a tab hard-killed) does NOT fire 'close' until the OS keepalive eventually times
+// out — minutes to hours. Until then the socket is a GHOST: it stays in the ranked
+// QUEUE (so the bucket reads e.g. "4/4" and a match is staged against a player who
+// will never reconnect) and holds its ROOM slot. A periodic ping/pong reaps them:
+// any socket that missed the previous ping is terminated, which fires 'close' and
+// runs the normal teardown (matchmaker.remove + room.detach). See the heartbeat
+// interval at the bottom of this file.
+const socketAlive = new WeakMap<WebSocket, boolean>();
+
 // ---- region routing (fly-replay) --------------------------------------------
 // One Fly app, one machine per region. A WebSocket upgrade carries a routing hint
 // in its query string; if it belongs to a DIFFERENT region we answer the upgrade
@@ -589,6 +599,24 @@ const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 // Hints:  ?mm=1 → the designated matchmaker region;  ?room=<region>-<code> → that
 // room's host region;  ?region=<code> → an explicit pick.
 // Only active on Fly (FLY_REGION set); locally REGION='' so we always accept here.
+/**
+ * The region a `?mm=1` connection was FIRST received in, from Fly's `fly-replay-src`
+ * header (format `instance=…;region=<r>;t=…`). Anycast lands the connection on the
+ * client's NEAREST region, which then replays it here to the matchmaker — so this
+ * is a SERVER-OBSERVED home region, immune to the client's `/health` probe failing
+ * (a cold/auto-stopped satellite makes that probe fall back to the warm primary or
+ * to '', which then defaults every player to iad and hosts every match one-sided).
+ * Used only as a FALLBACK when the client didn't report its own homeRegion, so the
+ * working path is unchanged. Empty string when not replayed (already nearest here).
+ */
+function replaySrcRegion(req: IncomingMessage): string {
+  const h = req.headers['fly-replay-src'];
+  const raw = Array.isArray(h) ? h[0] : h;
+  if (!raw) return '';
+  const m = /(?:^|;)\s*region=([a-z]{3})(?:;|$)/i.exec(raw);
+  return m ? m[1].toLowerCase() : '';
+}
+
 function routeTarget(url: URL): string | null {
   if (url.searchParams.get('mm') === '1') return MATCHMAKER_REGION;
   const region = url.searchParams.get('region');
@@ -631,7 +659,17 @@ httpServer.on('error', (e) => console.error('[server] http server error:', e));
 process.on('uncaughtException', (e) => console.error('[server] uncaughtException:', e));
 process.on('unhandledRejection', (e) => console.error('[server] unhandledRejection:', e));
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+  // liveness: mark alive now and on every pong; the heartbeat interval (bottom of
+  // file) pings and reaps anything that stops answering
+  socketAlive.set(ws, true);
+  ws.on('pong', () => socketAlive.set(ws, true));
+
+  // server-observed home region (see replaySrcRegion) — the fallback for a client
+  // whose own region probe failed, so a cold-satellite player is no longer
+  // mis-hosted at iad
+  const edgeRegion = replaySrcRegion(req);
+
   let id: string = randomUUID(); // reassigned to the reclaimed clientId on a rejoin
   let room: Room | null = null;
   // the owning-connection stamp this socket was issued for its slot (0 until it
@@ -817,8 +855,12 @@ wss.on('connection', (ws: WebSocket) => {
             mode: msg.mode,
             // the client's home region (Fly's x-region for its connection) + measured
             // access latency; the matchmaker estimates cross-region ping from these to
-            // pick a fair host. Falls back to THIS instance's region if omitted.
-            homeRegion: msg.homeRegion || REGION,
+            // pick a fair host. Prefer the client's own measurement; if it failed
+            // (empty — a cold satellite Anycast-fell-back to the warm primary), use the
+            // SERVER-OBSERVED source region from fly-replay-src before defaulting to
+            // THIS instance's region (iad) — otherwise every unprobed player lands on
+            // iad and every match hosts one-sided.
+            homeRegion: msg.homeRegion || edgeRegion || REGION,
             accessMs: msg.accessMs ?? 0,
             noWiden: msg.noWiden ?? false,
             caps: Array.isArray(msg.caps) ? msg.caps : [],
@@ -909,3 +951,26 @@ if (dbEnabled) {
   const hb = setInterval(beat, 5_000);
   hb.unref();
 }
+
+// WS heartbeat — reap ghost sockets (see socketAlive above). Every interval:
+// terminate any socket that didn't pong since the last ping (fires 'close' → the
+// normal matchmaker.remove + room.detach teardown), then ping the rest. A live
+// client answers pong automatically at the protocol level (no app code needed).
+// 15s cadence ⇒ a dead socket is gone within ~30s instead of lingering for the OS
+// TCP timeout, so it can no longer pad a ranked bucket or hold a match slot.
+const WS_HEARTBEAT_MS = 15_000;
+const pinger = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (socketAlive.get(ws) === false) {
+      ws.terminate();
+      continue;
+    }
+    socketAlive.set(ws, false);
+    try {
+      ws.ping();
+    } catch {
+      ws.terminate();
+    }
+  }
+}, WS_HEARTBEAT_MS);
+pinger.unref();
