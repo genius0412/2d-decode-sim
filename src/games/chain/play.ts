@@ -646,7 +646,7 @@ function interact(
 
   const intakeActive = enabled && (rob.autoIntake || (cmd?.intake ?? false));
   const cap = chainHopperCap(rob.spec);
-  // CR intake: capture every particle inside the intake MOUTH (`chainIntakeBand` — the SAME
+  // CR intake: capture every particle inside an intake MOUTH (`chainIntakeMouths` — the SAME
   // band the renderer draws, so the grab area is exactly the visible intake). It reaches the
   // collision front (the intake tip), so a particle at the intake is captured BEFORE the frame
   // would plow it forward — driving into a cluster collects fast instead of shoving them away.
