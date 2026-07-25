@@ -9,6 +9,7 @@ import { ChainStartSelector } from './ChainStartSelector';
 import { selectStart, switchCategory, saveStart, deleteSavedStart, indexCategory } from './startPositions';
 import { useRoleSwap, useDismissable } from './useRoleSwap';
 import { RoleSwapBar } from './RoleSwapBar';
+import { SupporterBadge } from './SupporterBadge';
 import { gameServerUrl, gameServerUrlWith, gameServers, multiServer, selectedServer } from '../net/env';
 import { WebSocketTransport } from '../net/transport';
 import { LobbyClient, type MatchStart } from '../net/lobbyClient';
@@ -392,6 +393,7 @@ export function Lobby({
                   <span className="pdot" />
                   <span className="pnm">
                     {p.name}
+                    <SupporterBadge supporter={p.supporter} />
                     {isMe ? ' (you)' : ''}
                   </span>
                   <span className="ptm">

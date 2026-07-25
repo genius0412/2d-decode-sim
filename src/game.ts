@@ -583,8 +583,40 @@ export class GameController {
     // robots + balls INTERPOLATED (smooth) with the local robot predicted
     const world = this.session ? this.displayWorld(dtMs) : this.world;
     this.renderer.render(this.ctx, world, this.lastCmd, this.localRobotId);
+    this.sampleFrame(dtMs);
     this.raf = requestAnimationFrame(this.loop);
   };
+
+  /**
+   * Rolling frame-time samples, surfaced by `?perf=1`.
+   *
+   * Exists to answer one question with a number instead of a guess: what does an
+   * AdSense creative parked beside a 60 Hz canvas actually cost? An ad iframe can
+   * run video, and "it feels fine" is not a measurement you can compare before
+   * and after. Load the game with `?perf=1`, drive for ten seconds with the ad
+   * columns off, then again with them on, and compare p95 — that is the sign-off
+   * the in-game unit needs before `VITE_ADSENSE_SLOT_GAME` is ever set on a live
+   * deploy.
+   *
+   * One array write per frame and nothing else when the flag is off, so it ships
+   * always-on rather than being a rebuild somebody has to remember how to do.
+   */
+  private frames: number[] = [];
+  private sampleFrame(dtMs: number): void {
+    // ~4s at 60fps: long enough for a stable p95, short enough to react to a
+    // creative that only starts misbehaving once it has finished loading.
+    if (this.frames.length >= 240) this.frames.shift();
+    this.frames.push(dtMs);
+  }
+
+  /** p50 / p95 frame time in ms, or null until enough samples exist */
+  getFrameStats(): { p50: number; p95: number; fps: number } | null {
+    if (this.frames.length < 30) return null;
+    const s = [...this.frames].sort((a, b) => a - b);
+    const at = (q: number): number => s[Math.min(s.length - 1, Math.floor(s.length * q))];
+    const p50 = at(0.5);
+    return { p50, p95: at(0.95), fps: p50 > 0 ? 1000 / p50 : 0 };
+  }
 
   /** multiplayer sim driver — a timer (not rAF) so a backgrounded tab keeps
    * stepping and feeding inputs to its peers instead of freezing the match */

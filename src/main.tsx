@@ -6,6 +6,8 @@ import { NoticePoller } from './ui/NoticePoller';
 import { initPhysics } from './sim/physicsEngine';
 import { initTheme } from './theme';
 import { AdsProvider } from './ads/AdsProvider';
+import { Analytics } from '@vercel/analytics/react';
+import { analyticsEnabled } from './analytics';
 // Self-hosted (not a CDN <link>): the Electron build runs from file:// with
 // vite `base: './'`, so fingerprinted woff2 must be bundled to resolve offline.
 // Variable cuts, because shell.css asks for weights off the 100 grid (750).
@@ -32,6 +34,9 @@ initPhysics().then(() => {
       </AdsProvider>
       <ServerNoticeBanner />
       <NoticePoller />
+      {/* Cookieless page views. Gated on VITE_ANALYTICS so a self-hosted or
+          Electron build never beacons a host it does not run on. */}
+      {analyticsEnabled() && <Analytics />}
     </StrictMode>,
   );
 });

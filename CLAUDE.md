@@ -16,9 +16,17 @@ at session start if it exists — it may describe uncommitted mid-refactor state
 - `npm test` — **headless sim verification** (`scripts/smoke.ts`, ~30 checks). Run this
   after ANY change to `src/sim/` or `src/config.ts`. It is fast and catches almost everything.
 - `npm run build` — tsc (strict) + vite build. Run before claiming work done.
-- `npm run contrast` — WCAG audit of the palette (`scripts/contrast.mjs`, 135 pairs, light +
+- `npm run contrast` — WCAG audit of the palette (`scripts/contrast.mjs`, 171 pairs, light +
   dark, no deps). Run after ANY colour/token edit. Not wired into `npm test` on purpose: a red
   `npm test` must keep meaning "physics broke".
+- `npm run dbtest` — **database + payments verification** (`scripts/dbtest.ts`, ~61 checks).
+  Boots **PGlite** (Postgres 17 in WASM, a devDependency — there is no Postgres on a dev box),
+  runs the REAL migrations and the REAL `server/db/repo.ts` against it, and asserts the Ko-fi
+  webhook's idempotency, the claim race, the auto-renewal path, the tier policy, admin
+  grant/revoke, and account deletion's cascade. Run after ANY change to `server/db/`,
+  `server/kofi.ts`, or a migration. Same rule as `contrast`: deliberately NOT in `npm test`.
+  `server/db/pool.ts` exposes a structural `DbPool` + `setPoolForTests` so the swap is possible;
+  production still builds a real `pg.Pool`.
 - `npm run shiftaudit` — layout-shift audit (`scripts/shiftaudit.cjs`, Electron). Needs a
   build + `npx vite preview --port 4173` in another shell. Forces `:hover`/`:active` and the
   `on`/`primary` state classes on every interactive element across 10 routes + the live HUD,
@@ -603,6 +611,57 @@ and become ungrabbable): ground balls get a HARD geometric eviction pass in `wor
 (walls + goal faces via `clampBallPosToStatics`, AND `collideBallRect` against both
 classifier rects) because Rapier's soft contacts can't clear a DEEPLY embedded body. Any
 new solid a ball can tunnel into needs the same geometric clamp, not just a Rapier collider.
+
+## Monetization (branch `monetization`) — ads + supporter tier
+
+Not yet deployed. `HANDOFF.md` has the full write-up; the load-bearing rules:
+
+- **`src/ads/adsense.ts` is the single gate.** Ads are OFF unless `VITE_ADSENSE_CLIENT`
+  is set, and are suppressed unconditionally in the Electron build (AdSense forbids app
+  wrappers), on touch, and for supporters. `AdsProvider` FAILS CLOSED — ads stay off
+  until the entitlement check settles, so a supporter never sees a flash of them.
+- **Ads are NON-PERSONALIZED by default and tagged TFUAC.** DSIM simulates FTC
+  (grades 7–12) and the sim is fully playable SIGNED OUT, so most impressions carry no
+  age signal. `VITE_ADSENSE_PERSONALIZED=1` is a deliberate opt-in. TFCD (COPPA) stays
+  off: the terms set 13+, so asserting child-directed would be inaccurate, not cautious.
+- **A CMP (Google Funding Choices) is REQUIRED, not optional** — without a certified CMP
+  Google serves EEA/UK/CH users no ads at all. It loads with the client id; the message
+  itself is authored in the AdSense dashboard. The footer "Privacy & cookie settings"
+  link must keep existing (consent you can't withdraw isn't consent).
+- **Three ad units, each with its own slot id**: `menu` (shell pages) and `results`
+  (post-match) are SAFE; `game` (columns flanking the live field) is the risky one —
+  60 Hz canvas + AdSense's 150px game-clearance rule. **Do not enable
+  `VITE_ADSENSE_SLOT_GAME` without first comparing p95 frame time via `?perf=1`**
+  (`GameController.getFrameStats`).
+- **`/ads.txt` is GENERATED** from `VITE_ADSENSE_CLIENT` in `vite.config.ts` — never
+  commit one, it would drift.
+- **Supporter tier is Ko-fi.** `server/kofi.ts` is a PURE policy module (no DB, no
+  import-time env) deciding what a payment buys: a subscription payment is always
+  exactly 1 month; a one-off buys `floor(amount/price)` months, capped; a foreign
+  currency buys nothing. Months are priced ONCE at webhook time and stored on the row.
+- **`profiles.kofi_email` is what makes a membership RENEW.** The first manual claim
+  links the payer address; every later webhook from it grants automatically. The UNIQUE
+  index is also the only thing stopping one subscription covering many accounts.
+- **Every write to `supporter_until` logs a `supporter_grants` audit row** (source =
+  kofi/admin/revoke). Two actors can move that column; "why does this account have a
+  membership?" has to stay answerable.
+- **Perks are cosmetic/convenience ONLY** — never anything affecting how a robot drives
+  or scores. That is a product rule AND a statement in the terms. All four advertised
+  perks are BUILT (badge, ads-off, 6 saved starts, chassis colours); **do not list a
+  perk on the Donate page before it exists.**
+- **The saved-start PERSIST cap is the SUPPORTER ceiling**
+  (`MAX_SAVED_STARTS_SUPPORTER`), in `coerceSettings` AND `saveStart`. Only the editor's
+  Save button applies the free cap. Sanitizing to the free cap would DELETE a supporter's
+  poses before the entitlement resolved, and on every lapse.
+- **The chassis colour is an ALLOWLIST key** (`CHASSIS_COLORS`), never a free colour
+  string on the wire, and it recolours only the FILL — alliance identity is the OUTLINE.
+- **`LobbyPlayer.supporter` is SERVER-AUTHORED** (set at join). `sanitizePlayer` is an
+  allowlist and `PlayerPatch` is a `Pick`, so a client cannot self-declare a paid badge.
+- ⚠️ **`LEGAL_OPERATOR`/`LEGAL_JURISDICTION` in `src/legalText.ts` are PLACEHOLDERS.**
+  Until filled, the Terms page shows a visible warning to every visitor. Fill them
+  before taking a payment; do not guess them from a timezone or an email domain.
+- Analytics (`src/analytics.ts`, `VITE_ANALYTICS=1`, Vercel Web Analytics — cookieless).
+  **Rule: no identifiers in any event payload** — counts and enums only.
 
 ## Next up (roadmap — not yet started)
 

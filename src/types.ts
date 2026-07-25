@@ -60,6 +60,10 @@ export interface RobotSpec {
   flywheelInertia: number;
   /** robot can pick which hopper color to fire (chases the motif) */
   canSort: boolean;
+  /** SUPPORTER COSMETIC: a `CHASSIS_COLORS` key for the chassis fill. Purely
+   * decorative — the alliance is carried by the OUTLINE, never this — and
+   * optional, so every existing spec, save, and replay stays valid. */
+  chassisColor?: string;
   /** Chain Reaction: how many Particles the robot's hopper holds (1–30 slider).
    * Optional so DECODE specs/old saves omit it (defaulted in coerceSpec). */
   ballStorage?: number;

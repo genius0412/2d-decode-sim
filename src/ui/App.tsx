@@ -952,7 +952,12 @@ export function App() {
       {screen === 'donate' && <Donate signedIn={signedIn} />}
       {screen === 'changelogs' && <Changelog />}
       {screen === 'account' && (
-        <Account settings={settings} onChange={update} onHandleSaved={setHandle} />
+        <Account
+          settings={settings}
+          onChange={update}
+          onHandleSaved={setHandle}
+          onDonate={() => navigate('donate')}
+        />
       )}
       {screen === 'admin' && isAdmin && <Admin />}
       </AppShell>

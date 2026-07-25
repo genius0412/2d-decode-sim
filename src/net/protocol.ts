@@ -140,6 +140,17 @@ export interface LobbyPlayer {
   // neutralized placeholders so an opponent can't be counter-picked pre-match).
   slot?: number;
   hidden?: boolean;
+  /**
+   * active supporter membership — renders the badge beside this driver's name.
+   *
+   * ALSO server-authored, set once at join from the signed-in account.
+   * `sanitizePlayer` builds an allowlisted object and `PlayerPatch` is a `Pick`,
+   * so a client cannot put this on the wire itself — which matters, because the
+   * badge is the visible half of a paid tier and a self-declared one is worth
+   * nothing. Optional, so an older server that never sets it and an older client
+   * that ignores it both keep working against this build.
+   */
+  supporter?: boolean;
 }
 
 /** a driver's pre-match ranked intro data (ELO, keyed by the robot id the server

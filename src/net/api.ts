@@ -35,6 +35,9 @@ export interface RecordRow {
   replayId: string | null;
   createdAt: string;
   config: RecordConfig | null;
+  /** active supporter membership — renders the badge. Absent from a server older
+   *  than the perk, which renders identically to false. */
+  supporter?: boolean;
 }
 
 export interface EloRow {
@@ -114,6 +117,9 @@ export interface UserStats {
   userId: string;
   handle: string | null;
   username: string | null;
+  /** active supporter membership — the profile header badge. Absent from a
+   *  server older than the perk, which renders identically to false. */
+  supporter?: boolean;
   season: number;
   elo: UserEloStat[];
   records: UserRecordStat[];
@@ -567,8 +573,19 @@ export async function adminClearUserRecords(userId: string): Promise<number | nu
   return data.removed ?? 0;
 }
 
-/** search profiles by handle (substring) or exact userId, for renaming */
-export async function adminSearchUsers(query: string): Promise<{ userId: string; handle: string }[]> {
+/** one row of the admin user search — now also the supporter console */
+export interface AdminUserRow {
+  userId: string;
+  handle: string;
+  username?: string | null;
+  supporter?: boolean;
+  supporterUntil?: string | null;
+  /** a Ko-fi payer address is linked, so this account renews automatically */
+  autoRenews?: boolean;
+}
+
+/** search profiles by handle (substring), exact userId, or exact username */
+export async function adminSearchUsers(query: string): Promise<AdminUserRow[]> {
   const base = gameServerHttpUrl();
   const token = await getAuthToken();
   if (!base || !token || !query.trim()) return [];
@@ -576,8 +593,66 @@ export async function adminSearchUsers(query: string): Promise<{ userId: string;
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) return [];
-  const data = (await res.json().catch(() => ({}))) as { users?: { userId: string; handle: string }[] };
+  const data = (await res.json().catch(() => ({}))) as { users?: AdminUserRow[] };
   return data.users ?? [];
+}
+
+/** POST to an admin route with the signed-in token; null when not authorized */
+async function adminPost<T>(path: string, params: Record<string, string>): Promise<T | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  const res = await fetch(base + path + '?' + new URLSearchParams(params).toString(), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  return (await res.json().catch(() => null)) as T | null;
+}
+
+/** comp a supporter membership (contributor, botched payment, goodwill) */
+export function adminGrantSupporter(
+  userId: string,
+  months: number,
+  note = '',
+): Promise<{ until: string | null } | null> {
+  return adminPost('/api/admin/supporter/grant', { userId, months: String(months), note });
+}
+
+/** end a membership now — chargeback, refund, or a comp given in error */
+export function adminRevokeSupporter(
+  userId: string,
+  note = '',
+): Promise<{ revoked: boolean } | null> {
+  return adminPost('/api/admin/supporter/revoke', { userId, note });
+}
+
+/** flag a Ko-fi payment as charged back. Does NOT revoke — that is a second,
+ *  deliberate decision, because the membership may cover other payments too. */
+export function adminRefundPayment(txn: string): Promise<{ ok: boolean } | null> {
+  return adminPost('/api/admin/supporter/refund', { txn });
+}
+
+export interface SupporterGrantRow {
+  source: 'kofi' | 'admin' | 'revoke';
+  months: number;
+  until: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+/** why does this account have a membership? (audit trail, newest first) */
+export async function adminSupporterHistory(userId: string): Promise<SupporterGrantRow[]> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return [];
+  const res = await fetch(
+    base + '/api/admin/supporter/history?userId=' + encodeURIComponent(userId),
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json().catch(() => ({}))) as { grants?: SupporterGrantRow[] };
+  return data.grants ?? [];
 }
 
 /** force a user's display name to a clean value; returns the saved handle or null */
@@ -757,15 +832,32 @@ export async function searchUsers(query: string): Promise<PublicProfile[]> {
   }
 }
 
+/** the supporter tier's price, as the SERVER charges it (server/kofi.ts). Read
+ *  from the server rather than hardcoded in the UI so the number on the Donate
+ *  page can never drift from the number the grant policy actually enforces. */
+export interface TierPrice {
+  amount: number;
+  /** ISO 4217, e.g. 'USD' */
+  currency: string;
+}
+
 /** an account's paid entitlements. Extend the shape (never replace it) as tiers grow. */
 export interface Entitlements {
   /** an active supporter membership — removes ads, unlocks cosmetic perks */
   supporter: boolean;
   /** ISO instant the membership lapses, or null if not a supporter */
   supporterUntil: string | null;
+  /** a Ko-fi payer address is linked, so payments renew with no manual claim */
+  autoRenews: boolean;
+  /** absent when talking to a server older than the pricing route */
+  price?: TierPrice;
 }
 
-const NO_ENTITLEMENTS: Entitlements = { supporter: false, supporterUntil: null };
+const NO_ENTITLEMENTS: Entitlements = {
+  supporter: false,
+  supporterUntil: null,
+  autoRenews: false,
+};
 
 /**
  * The caller's entitlements. NEVER throws — an ad gate that fails loudly would
@@ -777,10 +869,45 @@ const NO_ENTITLEMENTS: Entitlements = { supporter: false, supporterUntil: null }
 export async function fetchEntitlements(): Promise<Entitlements> {
   try {
     const r = await authedJson<Partial<Entitlements>>('/api/user/entitlements');
-    return { supporter: !!r.supporter, supporterUntil: r.supporterUntil ?? null };
+    return {
+      supporter: !!r.supporter,
+      supporterUntil: r.supporterUntil ?? null,
+      autoRenews: !!r.autoRenews,
+      price: r.price,
+    };
   } catch {
     return NO_ENTITLEMENTS;
   }
+}
+
+/** the tier price for a SIGNED-OUT visitor. Same never-throws contract: the
+ *  Donate page falls back to "see Ko-fi for the price" rather than breaking. */
+export async function fetchPricing(): Promise<TierPrice | null> {
+  try {
+    const base = gameServerHttpUrl();
+    if (!base) return null;
+    const res = await fetch(base + '/api/pricing');
+    if (!res.ok) return null;
+    const data = (await res.json()) as { price?: TierPrice };
+    return data.price && typeof data.price.amount === 'number' ? data.price : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete the signed-in account and everything DSIM stores about it.
+ *
+ * Irreversible, so the server demands the literal string `DELETE` in the body —
+ * a value no accidental or replayed request carries. Throws on failure: someone
+ * who asked for deletion must never be told "done" when it was not.
+ */
+export async function deleteMyAccount(): Promise<boolean> {
+  const r = await authedJson<{ deleted?: boolean }>('/api/user/delete', {
+    method: 'POST',
+    body: JSON.stringify({ confirm: 'DELETE' }),
+  });
+  return !!r.deleted;
 }
 
 /**
@@ -793,10 +920,10 @@ export async function fetchEntitlements(): Promise<Entitlements> {
  */
 export async function claimKofiPayment(
   transactionId: string,
-): Promise<{ ok: boolean; supporterUntil: string | null }> {
-  const r = await authedJson<{ ok?: boolean; supporterUntil?: string | null }>(
+): Promise<{ ok: boolean; supporterUntil: string | null; months: number }> {
+  const r = await authedJson<{ ok?: boolean; supporterUntil?: string | null; months?: number }>(
     '/api/user/claim-kofi',
     { method: 'POST', body: JSON.stringify({ transactionId }) },
   );
-  return { ok: !!r.ok, supporterUntil: r.supporterUntil ?? null };
+  return { ok: !!r.ok, supporterUntil: r.supporterUntil ?? null, months: r.months ?? 0 };
 }

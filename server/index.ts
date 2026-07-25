@@ -27,6 +27,11 @@ import {
   searchProfiles,
   setHandle,
   getProfile,
+  getSupporter,
+  grantSupporter,
+  revokeSupporter,
+  refundKofiPayment,
+  listSupporterGrants,
   createAnnouncement,
   deleteAnnouncement,
   upsertPresence,
@@ -322,7 +327,11 @@ const httpServer = createServer((req, res) => {
         u.pathname === '/api/admin/record/delete' ||
         u.pathname === '/api/admin/user/records/clear' ||
         u.pathname === '/api/admin/users' ||
-        u.pathname === '/api/admin/user/rename'
+        u.pathname === '/api/admin/user/rename' ||
+        u.pathname === '/api/admin/supporter/grant' ||
+        u.pathname === '/api/admin/supporter/revoke' ||
+        u.pathname === '/api/admin/supporter/history' ||
+        u.pathname === '/api/admin/supporter/refund'
       ) {
         const secretOk =
           !!process.env.ADMIN_SECRET && u.searchParams.get('secret') === process.env.ADMIN_SECRET;
@@ -403,6 +412,86 @@ const httpServer = createServer((req, res) => {
           await setHandle(uid, handle);
           console.log(`[admin] renamed ${uid}: "${profile.handle}" -> "${handle}"`);
           jsonOut(200, { ok: true, userId: uid, handle });
+          return;
+        }
+
+        // SUPPORTER MEMBERSHIPS. Ko-fi grants arrive by webhook, but two cases
+        // will always need a human: comping someone (a contributor, a botched
+        // payment, a currency Ko-fi settled oddly) and taking a membership back
+        // after a chargeback. Without these the only remedies were a psql session
+        // or nothing, which is not a remedy.
+        //
+        // Every change is written to `supporter_grants` with the acting admin's
+        // id, so a membership can always be traced to who gave it and why.
+
+        // POST /api/admin/supporter/grant?userId=&months=&note= — comp a membership
+        if (req.method === 'POST' && u.pathname === '/api/admin/supporter/grant') {
+          const uid = u.searchParams.get('userId') ?? '';
+          const months = Math.floor(Number(u.searchParams.get('months') ?? 1));
+          if (!uid) {
+            jsonOut(400, { ok: false, error: 'missing userId' });
+            return;
+          }
+          if (!Number.isFinite(months) || months < 1 || months > 60) {
+            jsonOut(400, { ok: false, error: 'months must be 1–60' });
+            return;
+          }
+          if (!(await getProfile(uid))) {
+            jsonOut(404, { ok: false, error: 'no such user' });
+            return;
+          }
+          const note = (u.searchParams.get('note') ?? '').slice(0, 200);
+          const until = await grantSupporter(
+            uid,
+            months,
+            'admin',
+            `by ${user?.userId ?? 'secret'}${note ? `: ${note}` : ''}`,
+          );
+          console.log(`[admin] supporter +${months}mo for ${uid} -> ${until}`);
+          jsonOut(200, { ok: true, userId: uid, until });
+          return;
+        }
+
+        // POST /api/admin/supporter/revoke?userId=&note= — chargeback / mistake
+        if (req.method === 'POST' && u.pathname === '/api/admin/supporter/revoke') {
+          const uid = u.searchParams.get('userId') ?? '';
+          if (!uid) {
+            jsonOut(400, { ok: false, error: 'missing userId' });
+            return;
+          }
+          const note = (u.searchParams.get('note') ?? '').slice(0, 200);
+          const revoked = await revokeSupporter(
+            uid,
+            `by ${user?.userId ?? 'secret'}${note ? `: ${note}` : ''}`,
+          );
+          console.log(`[admin] supporter revoked for ${uid} -> ${revoked}`);
+          jsonOut(200, { ok: true, userId: uid, revoked });
+          return;
+        }
+
+        // POST /api/admin/supporter/refund?txn= — flag a payment as charged back.
+        // Separate from revoke on purpose: the entitlement may cover other
+        // payments too, so ending it is a second, deliberate decision.
+        if (req.method === 'POST' && u.pathname === '/api/admin/supporter/refund') {
+          const txn = (u.searchParams.get('txn') ?? '').trim();
+          if (!txn) {
+            jsonOut(400, { ok: false, error: 'missing txn' });
+            return;
+          }
+          const flagged = await refundKofiPayment(txn);
+          console.log(`[admin] payment ${txn} flagged refunded -> ${flagged}`);
+          jsonOut(flagged ? 200 : 404, { ok: flagged });
+          return;
+        }
+
+        // GET /api/admin/supporter/history?userId= — why does this account have one?
+        if (req.method === 'GET' && u.pathname === '/api/admin/supporter/history') {
+          const uid = u.searchParams.get('userId') ?? '';
+          if (!uid) {
+            jsonOut(400, { ok: false, error: 'missing userId' });
+            return;
+          }
+          jsonOut(200, { grants: await listSupporterGrants(uid) });
           return;
         }
         jsonOut(404, { ok: false, error: 'unknown admin route' });
@@ -777,6 +866,14 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     if (user) {
       client.userId = user.userId;
       client.player.name = user.handle;
+      // Supporter badge, resolved once at join rather than per broadcast. A lapse
+      // mid-match therefore keeps the badge until the next join, which is the
+      // right trade: the alternative is a database read on every roster frame.
+      // Never fatal — a DB hiccup costs a badge, not a join.
+      if (dbEnabled) {
+        const ent = await getSupporter(user.userId).catch(() => null);
+        if (ent?.supporter) client.player.supporter = true;
+      }
       markAuthed(user.userId);
     }
     room.add(client);

@@ -273,25 +273,53 @@ export interface PublicProfile {
   handle: string;
   /** unique lowercase [a-z0-9] slug, or null for a legacy profile with none yet */
   username: string | null;
+  /**
+   * active supporter membership — drives the badge.
+   *
+   * OPTIONAL because only the surfaces that actually render a badge pay for the
+   * extra column: the profile page and the leaderboards do, the friends-list
+   * queries (three per poll, every few seconds) deliberately do not. `undefined`
+   * means "not asked", which the client renders identically to false.
+   */
+  supporter?: boolean;
 }
+
+/** the badge predicate, written once. `supporter_until` is an instant, and the
+ *  comparison must happen in Postgres — the five regional machines do not share
+ *  a clock, and a skewed one would show a badge that has already lapsed. */
+const SUPPORTER_COL = `(supporter_until is not null and supporter_until > now()) as supporter`;
 
 /** a user's public profile (display handle + unique username), or null */
 export async function getProfile(userId: string): Promise<PublicProfile | null> {
-  const rows = await q<{ handle: string; username: string | null }>(
-    `select handle, username from profiles where user_id = $1`,
+  const rows = await q<{ handle: string; username: string | null; supporter: boolean }>(
+    `select handle, username, ${SUPPORTER_COL} from profiles where user_id = $1`,
     [userId],
   );
-  return rows[0] ? { userId, handle: rows[0].handle, username: rows[0].username } : null;
+  return rows[0]
+    ? {
+        userId,
+        handle: rows[0].handle,
+        username: rows[0].username,
+        supporter: !!rows[0].supporter,
+      }
+    : null;
 }
 
 /** resolve a public username → profile (the /profile/<username> read path), or null */
 export async function getProfileByUsername(username: string): Promise<PublicProfile | null> {
-  const rows = await q<{ user_id: string; handle: string; username: string | null }>(
-    `select user_id, handle, username from profiles where username = $1`,
+  const rows = await q<{
+    user_id: string;
+    handle: string;
+    username: string | null;
+    supporter: boolean;
+  }>(
+    `select user_id, handle, username, ${SUPPORTER_COL} from profiles where username = $1`,
     [username],
   );
   const r = rows[0];
-  return r ? { userId: r.user_id, handle: r.handle, username: r.username } : null;
+  return r
+    ? { userId: r.user_id, handle: r.handle, username: r.username, supporter: !!r.supporter }
+    : null;
 }
 
 /** thrown by setUsername when the requested username is already taken */
@@ -356,51 +384,142 @@ export async function saveUserSettings(userId: string, settings: unknown): Promi
 export interface SupporterState {
   supporter: boolean;
   supporterUntil: string | null;
+  /** a Ko-fi payer address is linked, so payments renew without a manual claim */
+  autoRenews: boolean;
 }
 
-const NOT_A_SUPPORTER: SupporterState = { supporter: false, supporterUntil: null };
+const NOT_A_SUPPORTER: SupporterState = {
+  supporter: false,
+  supporterUntil: null,
+  autoRenews: false,
+};
 
 export async function getSupporter(userId: string): Promise<SupporterState> {
-  const rows = await q<{ until: string | null; active: boolean }>(
+  const rows = await q<{ until: string | null; active: boolean; linked: boolean }>(
     `select supporter_until as until,
-            (supporter_until is not null and supporter_until > now()) as active
+            (supporter_until is not null and supporter_until > now()) as active,
+            (kofi_email is not null) as linked
        from profiles where user_id = $1`,
     [userId],
   );
   if (!rows[0]) return NOT_A_SUPPORTER;
-  return { supporter: !!rows[0].active, supporterUntil: rows[0].until };
+  return {
+    supporter: !!rows[0].active,
+    supporterUntil: rows[0].until,
+    autoRenews: !!rows[0].linked,
+  };
+}
+
+/** the currently-active supporters among `userIds` — one query, for badges on a
+ *  leaderboard page or an in-match roster (a per-row lookup would not do). */
+export async function supportersAmong(userIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return new Set();
+  const rows = await q<{ user_id: string }>(
+    `select user_id from profiles
+      where user_id = any($1::text[]) and supporter_until > now()`,
+    [ids],
+  );
+  return new Set(rows.map((r) => r.user_id));
+}
+
+/** the SQL that extends a membership. Shared by every grant path so the
+ *  extend-don't-overwrite rule can only ever be written once.
+ *
+ *  EXTENDS rather than overwrites: `greatest(supporter_until, now())` means a
+ *  renewal that arrives before the current period ends stacks on the remaining
+ *  time instead of silently truncating it to one month from today. Someone who
+ *  pays for a year up front, or whose renewal fires a day early, does not lose
+ *  what they already bought. */
+const EXTEND_SQL = `update profiles
+     set supporter_until = greatest(coalesce(supporter_until, now()), now())
+                           + ($2 || ' months')::interval,
+         updated_at = now()
+   where user_id = $1
+   returning supporter_until as until`;
+
+/** where a change to `supporter_until` came from — recorded in supporter_grants */
+export type GrantSource = 'kofi' | 'admin' | 'revoke';
+
+/**
+ * Extend a membership by `months` and write the audit row.
+ *
+ * Two things can now move `supporter_until` — a Ko-fi payment and an admin — so
+ * "why does this account have a membership?" stops being answerable from the
+ * profile alone. Every write lands in `supporter_grants` with its source, which
+ * is what makes a chargeback investigation possible after the fact.
+ */
+export async function grantSupporter(
+  userId: string,
+  months: number,
+  source: GrantSource = 'admin',
+  note?: string,
+): Promise<string | null> {
+  const n = Math.max(1, Math.floor(months));
+  const rows = await q<{ until: string }>(EXTEND_SQL, [userId, String(n)]);
+  const until = rows[0]?.until ?? null;
+  if (rows[0]) await logGrant(userId, source, n, until, note ?? null);
+  return until;
 }
 
 /**
- * Extend a membership by `months`.
+ * End a membership immediately — a chargeback, a refund, or a mistaken comp.
  *
- * EXTENDS rather than overwrites: `greatest(supporter_until, now())` means a
- * renewal that arrives before the current period ends stacks on the remaining
- * time instead of silently truncating it to one month from today. Someone who
- * pays for a year up front, or whose renewal fires a day early, does not lose
- * what they already bought.
+ * Clears the instant rather than winding it back, because there is no honest
+ * "before" to restore to: a revoked membership is revoked, and if some of it was
+ * legitimately paid for the correct remedy is a fresh admin grant for the part
+ * that was. Returns false if there was nothing to revoke.
  */
-export async function grantSupporter(userId: string, months: number): Promise<string | null> {
-  const rows = await q<{ until: string }>(
-    `update profiles
-        set supporter_until = greatest(coalesce(supporter_until, now()), now())
-                              + ($2 || ' months')::interval,
-            updated_at = now()
-      where user_id = $1
-      returning supporter_until as until`,
-    [userId, String(Math.max(1, Math.floor(months)))],
+export async function revokeSupporter(userId: string, note?: string): Promise<boolean> {
+  const rows = await q<{ user_id: string }>(
+    `update profiles set supporter_until = null, updated_at = now()
+      where user_id = $1 and supporter_until is not null
+      returning user_id`,
+    [userId],
   );
-  return rows[0]?.until ?? null;
+  if (rows.length === 0) return false;
+  await logGrant(userId, 'revoke', 0, null, note ?? null);
+  return true;
+}
+
+async function logGrant(
+  userId: string,
+  source: GrantSource,
+  months: number,
+  until: string | null,
+  note: string | null,
+): Promise<void> {
+  await q(
+    `insert into supporter_grants (user_id, source, months, until, note)
+     values ($1, $2, $3, $4, $5)`,
+    [userId, source, months, until, note],
+  );
+}
+
+/** audit trail for one account, newest first (admin console) */
+export interface SupporterGrantRow {
+  source: GrantSource;
+  months: number;
+  until: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+export async function listSupporterGrants(
+  userId: string,
+  limit = 20,
+): Promise<SupporterGrantRow[]> {
+  return q<SupporterGrantRow>(
+    `select source, months, until, note, created_at as "createdAt"
+       from supporter_grants where user_id = $1
+      order by created_at desc limit $2`,
+    [userId, limit],
+  );
 }
 
 // ------------------------------------------------------- Ko-fi payments -----
-/**
- * Record a Ko-fi webhook event. Returns false if we had already seen this
- * `message_id` — Ko-fi retries delivery, and a repeat must never grant a second
- * month. The insert itself is the idempotency check (the primary key does the
- * work), so there is no read-then-write race between the regional machines.
- */
-export async function recordKofiPayment(p: {
+/** a Ko-fi webhook event, already parsed and priced by `server/kofi.ts` */
+export interface KofiEventRow {
   messageId: string;
   kind: string;
   email: string | null;
@@ -408,36 +527,174 @@ export async function recordKofiPayment(p: {
   amount: string | null;
   currency: string | null;
   isSubscription: boolean;
-}): Promise<boolean> {
-  const rows = await q<{ message_id: string }>(
-    `insert into kofi_payments
-       (message_id, kind, email, transaction_id, amount, currency, is_subscription)
-     values ($1, $2, $3, $4, $5, $6, $7)
-     on conflict (message_id) do nothing
-     returning message_id`,
-    [p.messageId, p.kind, p.email, p.transactionId, p.amount, p.currency, p.isSubscription],
-  );
-  return rows.length > 0;
+  tierName: string | null;
+  /** months this payment is worth — 0 for a tip below the tier */
+  months: number;
+}
+
+export interface KofiRecordResult {
+  /** false when Ko-fi retried an event we already stored */
+  fresh: boolean;
+  /** user id this was auto-granted to by matching `profiles.kofi_email`, if any */
+  autoGrantedTo: string | null;
+  /** supporter_until after an auto-grant */
+  until: string | null;
 }
 
 /**
- * Attach an unclaimed payment to an account and grant the membership.
+ * Record a Ko-fi webhook event and, when the payer is already known, grant it.
  *
- * One transaction, and the UPDATE only matches rows where `claimed_by is null`,
- * so two accounts racing on the same transaction id cannot both win — the loser
- * updates zero rows and gets 'already-claimed'.
+ * IDEMPOTENCY: `message_id` is the primary key and Ko-fi retries delivery, so the
+ * insert itself is the guard — there is no read-then-write race between the five
+ * regional machines, and a retry cannot grant a second month. Everything below
+ * the insert is skipped unless the insert actually took.
+ *
+ * AUTO-RENEWAL is the whole point of the email link. A membership's second month
+ * arrives as a brand-new event with a new transaction id; without matching it to
+ * the account that claimed the first one, the supporter silently lapses and has
+ * to paste a new id every 30 days. `profiles.kofi_email` (set by the first manual
+ * claim) closes that loop. A payer we have never seen still parks the payment for
+ * a manual claim, which is how the FIRST one always works.
+ */
+export async function recordKofiPayment(p: KofiEventRow): Promise<KofiRecordResult> {
+  return tx(async (query) => {
+    const inserted = await query<{ message_id: string }>(
+      `insert into kofi_payments
+         (message_id, kind, email, transaction_id, amount, currency,
+          is_subscription, tier_name, months)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       on conflict (message_id) do nothing
+       returning message_id`,
+      [
+        p.messageId,
+        p.kind,
+        p.email ? p.email.trim().toLowerCase() : null,
+        p.transactionId,
+        p.amount,
+        p.currency,
+        p.isSubscription,
+        p.tierName,
+        Math.max(0, Math.floor(p.months)),
+      ],
+    );
+    if (inserted.length === 0) return { fresh: false, autoGrantedTo: null, until: null };
+    if (!p.email || p.months <= 0) return { fresh: true, autoGrantedTo: null, until: null };
+
+    const owner = await query<{ user_id: string }>(
+      `select user_id from profiles where kofi_email = $1`,
+      [p.email.trim().toLowerCase()],
+    );
+    if (!owner[0]) return { fresh: true, autoGrantedTo: null, until: null };
+    const userId = owner[0].user_id;
+
+    await query(
+      `update kofi_payments
+          set claimed_by = $1, claimed_at = now(), auto_claimed = true
+        where message_id = $2`,
+      [userId, p.messageId],
+    );
+    const granted = await query<{ until: string }>(EXTEND_SQL, [userId, String(p.months)]);
+    const until = granted[0]?.until ?? null;
+    await query(
+      `insert into supporter_grants (user_id, source, months, until, note)
+       values ($1, 'kofi', $2, $3, $4)`,
+      [userId, p.months, until, `auto: ${p.messageId}`],
+    );
+    return { fresh: true, autoGrantedTo: userId, until };
+  });
+}
+
+export type ClaimOutcome =
+  | 'ok'
+  | 'not-found'
+  | 'already-claimed'
+  | 'below-tier'
+  | 'email-taken'
+  | 'refunded';
+
+export interface ClaimResult {
+  outcome: ClaimOutcome;
+  until?: string | null;
+  /** months granted (outcome 'ok') */
+  months?: number;
+  /** the payment, so the caller can explain a 'below-tier' rejection precisely */
+  payment?: { kind: string; amount: string | null; currency: string | null; isSubscription: boolean; tierName: string | null };
+}
+
+/**
+ * Attach an unclaimed payment to an account, grant the membership, and LINK the
+ * payer's email so every future payment from it renews automatically.
+ *
+ * One transaction throughout. The claiming UPDATE matches only
+ * `claimed_by is null`, so two accounts racing the same transaction id cannot
+ * both win — the loser updates zero rows and gets 'already-claimed'.
+ *
+ * The email link is the part that needs care: it is UNIQUE across profiles, so a
+ * second account claiming a payment from an address already linked elsewhere is
+ * rejected ('email-taken') rather than allowed to quietly steal the renewal
+ * stream of the first. That is also the only thing stopping one $3 subscription
+ * from removing ads on an unlimited number of accounts.
  */
 export async function claimKofiPayment(
   userId: string,
   transactionId: string,
-): Promise<{ outcome: 'ok' | 'not-found' | 'already-claimed'; until?: string | null }> {
+): Promise<ClaimResult> {
   return tx(async (query) => {
-    const found = await query<{ claimed_by: string | null }>(
-      `select claimed_by from kofi_payments where transaction_id = $1`,
+    const found = await query<{
+      message_id: string;
+      claimed_by: string | null;
+      email: string | null;
+      months: number;
+      kind: string;
+      amount: string | null;
+      currency: string | null;
+      is_subscription: boolean;
+      tier_name: string | null;
+      refunded_at: string | null;
+    }>(
+      `select message_id, claimed_by, email, months, kind, amount, currency,
+              is_subscription, tier_name, refunded_at
+         from kofi_payments where transaction_id = $1`,
       [transactionId],
     );
-    if (!found[0]) return { outcome: 'not-found' as const };
-    if (found[0].claimed_by) return { outcome: 'already-claimed' as const };
+    const row = found[0];
+    if (!row) return { outcome: 'not-found' as const };
+
+    const payment = {
+      kind: row.kind,
+      amount: row.amount,
+      currency: row.currency,
+      isSubscription: row.is_subscription,
+      tierName: row.tier_name,
+    };
+    if (row.refunded_at) return { outcome: 'refunded' as const, payment };
+    if (row.claimed_by) return { outcome: 'already-claimed' as const, payment };
+    // Recorded, but it bought nothing. Deliberately NOT claimed — leaving it open
+    // means an admin can still comp it, and the buyer can top up to the tier and
+    // claim the larger payment instead.
+    if (row.months <= 0) return { outcome: 'below-tier' as const, payment };
+
+    // Link the payer address for auto-renewal. `where kofi_email is null` keeps
+    // this from clobbering an address the account already linked (someone whose
+    // second subscription came from a different PayPal keeps their first link and
+    // simply claims by hand — annoying, but never silently redirecting renewals).
+    const email = row.email ? row.email.trim().toLowerCase() : null;
+    if (email) {
+      const taken = await query<{ user_id: string }>(
+        `select user_id from profiles where kofi_email = $1`,
+        [email],
+      );
+      if (taken[0] && taken[0].user_id !== userId) {
+        return { outcome: 'email-taken' as const, payment };
+      }
+      if (!taken[0]) {
+        await query(
+          `update profiles set kofi_email = $2, updated_at = now()
+            where user_id = $1 and kofi_email is null`,
+          [userId, email],
+        );
+      }
+    }
 
     // `returning` is how we detect whether the row was still unclaimed — the Tx
     // helper hands back rows, not a rowCount, so a bare UPDATE would look the
@@ -448,19 +705,32 @@ export async function claimKofiPayment(
         returning message_id`,
       [userId, transactionId],
     );
-    if (claimed.length === 0) return { outcome: 'already-claimed' as const };
+    if (claimed.length === 0) return { outcome: 'already-claimed' as const, payment };
 
-    const granted = await query<{ until: string }>(
-      `update profiles
-          set supporter_until = greatest(coalesce(supporter_until, now()), now())
-                                + interval '1 month',
-              updated_at = now()
-        where user_id = $1
-        returning supporter_until as until`,
-      [userId],
+    const granted = await query<{ until: string }>(EXTEND_SQL, [userId, String(row.months)]);
+    const until = granted[0]?.until ?? null;
+    await query(
+      `insert into supporter_grants (user_id, source, months, until, note)
+       values ($1, 'kofi', $2, $3, $4)`,
+      [userId, row.months, until, `claim: ${row.message_id}`],
     );
-    return { outcome: 'ok' as const, until: granted[0]?.until ?? null };
+    return { outcome: 'ok' as const, until, months: row.months, payment };
   });
+}
+
+/**
+ * Mark a payment refunded/charged back. Does NOT revoke on its own — the
+ * entitlement is a running instant that may also cover other payments, so the
+ * admin decides whether to revoke as a separate act.
+ */
+export async function refundKofiPayment(transactionId: string): Promise<boolean> {
+  const rows = await q<{ message_id: string }>(
+    `update kofi_payments set refunded_at = now()
+      where transaction_id = $1 and refunded_at is null
+      returning message_id`,
+    [transactionId],
+  );
+  return rows.length > 0;
 }
 
 // ------------------------------------------------------------- replays ------
@@ -561,6 +831,8 @@ export interface BoardRow {
   replayId: string | null;
   createdAt: string;
   config: RecordConfig | null;
+  /** active supporter membership — renders a small badge beside the name */
+  supporter?: boolean;
 }
 
 /** best score per player within a season × mode × drivetrain, ranked. Pass
@@ -589,6 +861,7 @@ export async function recordLeaderboard(opts: {
        order by r.user_id, r.score desc, r.created_at asc
      )
      select b.user_id as "userId", p.handle, p.username,
+            (p.supporter_until is not null and p.supporter_until > now()) as supporter,
             b.partner_id as "partnerId",
             pp.handle as "partnerHandle", pp.username as "partnerUsername",
             b.score, b.replay_id as "replayId", b.created_at as "createdAt", b.config
@@ -729,13 +1002,75 @@ export async function deleteUserRecords(userId: string): Promise<number> {
 export async function searchProfiles(
   query: string,
   limit = 25,
-): Promise<{ userId: string; handle: string }[]> {
-  return q<{ userId: string; handle: string }>(
-    `select user_id as "userId", handle from profiles
-     where handle ilike $1 or user_id = $2
-     order by handle limit $3`,
+): Promise<
+  {
+    userId: string;
+    handle: string;
+    username: string | null;
+    supporter: boolean;
+    supporterUntil: string | null;
+    /** a Ko-fi payer address is linked, so this account renews automatically */
+    autoRenews: boolean;
+  }[]
+> {
+  return q(
+    `select user_id as "userId", handle, username,
+            (supporter_until is not null and supporter_until > now()) as supporter,
+            supporter_until as "supporterUntil",
+            (kofi_email is not null) as "autoRenews"
+       from profiles
+      where handle ilike $1 or user_id = $2 or username = lower($2)
+      order by handle limit $3`,
     [`%${query}%`, query, limit],
   );
+}
+
+// ------------------------------------------------------ account deletion ----
+/**
+ * Delete an account and everything attached to it.
+ *
+ * The privacy policy promises this, so it has to be a real code path rather than
+ * a manual `psql` session someone half-remembers. Most tables hang off
+ * `profiles(user_id) on delete cascade` (presets, records, ELO, match
+ * participation, invites, friendships, blocks, presence), so deleting the profile
+ * row does the bulk of the work in one statement.
+ *
+ * Three things do NOT cascade and are handled explicitly, in this order:
+ *
+ *  - `replays` has no user column at all — it is reached only through
+ *    `records.replay_id`. Cascading the records first would orphan the replay
+ *    rows permanently, so they are collected and deleted BEFORE the profile goes.
+ *  - `elo_history` deliberately has no foreign key (it is a per-season snapshot
+ *    that must survive a season roll), so it needs its own delete.
+ *  - `kofi_payments.claimed_by` is `on delete set null`, which is correct — the
+ *    payment record is financial history and outlives the account — but the payer
+ *    EMAIL is personal data, so it is scrubbed here rather than left behind.
+ *
+ * Returns false if there was no such profile.
+ */
+export async function deleteAccount(userId: string): Promise<boolean> {
+  return tx(async (query) => {
+    const exists = await query<{ user_id: string }>(
+      `select user_id from profiles where user_id = $1`,
+      [userId],
+    );
+    if (!exists[0]) return false;
+
+    // replays first — see the note above about the missing back-reference
+    await query(
+      `delete from replays
+        where id in (select replay_id from records
+                      where user_id = $1 and replay_id is not null)`,
+      [userId],
+    );
+    await query(`delete from elo_history where user_id = $1`, [userId]);
+    await query(
+      `update kofi_payments set email = null where claimed_by = $1`,
+      [userId],
+    );
+    await query(`delete from profiles where user_id = $1`, [userId]);
+    return true;
+  });
 }
 
 // -------------------------------------------------------- robot presets -----
@@ -1008,6 +1343,8 @@ export interface UserStats {
   userId: string;
   handle: string | null;
   username: string | null;
+  /** active supporter membership — the profile header badge */
+  supporter?: boolean;
   season: number;
   elo: UserEloStat[];
   records: UserRecordStat[];
@@ -1037,8 +1374,8 @@ export async function getUserStats(
   const eloKeyCol = isLive ? 'act' : 'balance_version';
   const eloKeyVal = isLive ? act : balanceVersion;
   const [profile, elo, recPb, recRank, match, recent] = await Promise.all([
-    q<{ handle: string; username: string | null }>(
-      `select handle, username from profiles where user_id = $1`,
+    q<{ handle: string; username: string | null; supporter: boolean }>(
+      `select handle, username, ${SUPPORTER_COL} from profiles where user_id = $1`,
       [userId],
     ),
     q<{ mode: '1v1' | '2v2'; rating: number; games: number; rnk: string | null }>(
@@ -1114,6 +1451,7 @@ export async function getUserStats(
   return {
     userId,
     handle: profile[0]?.handle ?? null,
+    supporter: !!profile[0]?.supporter,
     username: profile[0]?.username ?? null,
     season: balanceVersion,
     elo: elos,

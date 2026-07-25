@@ -1,3 +1,193 @@
+# HANDOFF — 2026-07-25 (monetization: ship-readiness pass) — READ FIRST
+
+Branch `monetization`, in its own worktree at `../2d-decode-sim-monetization`
+(two other agents share this repo — do NOT work from the primary checkout).
+
+**All green:** `npm run build` · `npm test` (ALL PASS) · `npm run server:check` ·
+`npm run contrast` (171) · **`npm run dbtest` (NEW, 61 checks, ALL PASS)**.
+GUI boot-verified in Electron: Support / Privacy / Terms / Profile / Configure→Robot
+all render, no console errors.
+
+## What this session fixed, and why each one was blocking
+
+The branch previously had ads, legal pages and a Ko-fi tier, but the tier had three
+defects that made it unshippable and the ad layer had no compliance story.
+
+### 1. A monthly membership never renewed (the big one)
+
+`claimKofiPayment` granted a flat one month and was the ONLY path that wrote
+`supporter_until`. Ko-fi sends each cycle as a new webhook with a new
+`message_id`/`transaction_id` and nothing tied it back to the account that claimed
+cycle one — so a supporter silently lapsed and had to hunt down a new transaction id
+every 30 days.
+
+**Fix:** `profiles.kofi_email` (migration `0019_supporter_billing.sql`, UNIQUE partial
+index). The first manual claim records WHO paid; every later payment from that address
+is granted by the webhook itself (`recordKofiPayment` → `autoGrantedTo`). The unique
+index is also what stops one $3 subscription removing ads on unlimited accounts —
+a second account claiming from a linked address gets `email-taken`.
+
+### 2. Grants were amount-blind — a $1 tip bought the same month as the tier
+
+**Fix:** `server/kofi.ts` (NEW, pure, no DB, no import-time env — so it is testable).
+A SUBSCRIPTION payment is always exactly 1 month regardless of amount (it IS the
+billing cycle; reading the amount would double-count an annual tier). A ONE-OFF buys
+`floor(amount / price)` months, capped at `KOFI_MAX_MONTHS`. A currency we do not
+settle in grants NOTHING rather than guessing a rate. Months are priced ONCE at
+webhook time and stored on the row, so a later env change cannot retroactively
+re-price a payment. Below-tier payments stay UNCLAIMED (an admin can still comp them)
+and the claim form explains why with the real numbers.
+
+### 3. No revoke, no comp — `grantSupporter` had ZERO callers
+
+**Fix:** `grantSupporter`/`revokeSupporter`/`refundKofiPayment`/`listSupporterGrants`,
+four admin routes, and UI folded into Admin's existing player search (one search, two
+jobs). Every change to `supporter_until` writes a `supporter_grants` audit row with
+the acting admin's id and their typed reason — because two things can now move that
+column and "why does this account have a membership?" has to stay answerable.
+
+### 4. Three of four advertised perks did not exist — now all four are built
+
+- **Badge** (`SupporterBadge.tsx`) on leaderboards, public profiles, and the lobby
+  roster. SERVER-AUTHORED (`LobbyPlayer.supporter`, set at join): `sanitizePlayer` is
+  an allowlist and `PlayerPatch` is a `Pick`, so a client cannot self-declare it.
+  A gold FILL with fixed ink, not coloured text — it lands on three different grounds
+  and no single text colour clears AA on all of them.
+- **Extra saved starts** — `MAX_SAVED_STARTS_SUPPORTER` 6 vs 2. **The persist cap is
+  now the SUPPORTER ceiling in BOTH `coerceSettings` sites and in `saveStart`**; only
+  the editor's "＋ Save" button respects the entitlement. Sanitizing to 2 would delete
+  a paying supporter's poses on any load before the entitlement resolved, and again the
+  moment they lapsed. (A smoke check asserted the old cap; it is updated, not deleted.)
+- **Cosmetic chassis colours** — `CHASSIS_COLORS`, an ALLOWLIST of 7 keys (never a free
+  hex on the wire). Scoped to the chassis FILL: alliance identity lives entirely in the
+  OUTLINE, so a cosmetic can never make a red robot read as blue. Shown-but-locked to
+  non-supporters. `RobotPreview` deliberately keeps its themed panel fill — see the
+  comment there.
+- Ads-off already worked.
+
+### 5–7. Ads compliance
+
+- **CMP** — Google Funding Choices loads automatically whenever `VITE_ADSENSE_CLIENT`
+  is set, including the `googlefcPresent` iframe signal (inlined, CSP-safe) so the ad
+  tag holds the auction until consent is known. **Required, not optional:** without a
+  certified CMP Google serves EEA/UK/CH users no ads at all. Plus a footer
+  "Privacy & cookie settings" link (`showConsentSettings`) — consent you cannot
+  withdraw is not consent. The link hides itself if the message cannot be opened
+  (the normal case outside the EEA), rather than being a button that does nothing.
+- **Audience signals** — ads are **non-personalized by default** and tagged TFUAC.
+  DSIM simulates FTC (grades 7–12), the sim is fully playable SIGNED OUT, so most
+  impressions have no age signal at all. `VITE_ADSENSE_PERSONALIZED=1` is the
+  deliberate opt-in. TFCD (COPPA) is left OFF by default because the terms set a 13+
+  minimum and asserting child-directed would be inaccurate rather than cautious.
+- **ads.txt** — GENERATED at build time from `VITE_ADSENSE_CLIENT` (`vite.config.ts`),
+  so there is no stale hand-written pub- id to drift. No env ⇒ no file, which is the
+  correct answer for a site serving no ads. Vercel serves it because `rewrites` are
+  applied only after a filesystem miss (same reason `/version.json` works).
+
+### 8. The payment paths had never been RUN — now they are, against real Postgres
+
+`npm run dbtest` (`scripts/dbtest.ts`, **61 checks**) boots **PGlite** (Postgres 17 in
+WASM, a devDependency), runs the REAL migrations and the REAL repo code, and asserts:
+migrations apply to a virgin DB and re-run clean; webhook retry idempotency (one row
+survives, no second grant); claim races; the renewal path adds exactly one month and
+EXTENDS; the email-hijack rejection; below-tier; admin comp/revoke/refund + audit
+rows; badge reads incl. a LAPSED membership; and account deletion's cascade.
+
+`server/db/pool.ts` gained a structural `DbPool` interface + `setPoolForTests` so a
+test can substitute a pool. Production is unchanged (`pg.Pool` satisfies it
+structurally). **`npm run dbtest` is deliberately NOT wired into `npm test`** — a red
+`npm test` must keep meaning "physics broke".
+
+### 9. Legal + a REAL account-deletion path
+
+The privacy policy promised deletion by email; there was no code path at all. Now
+`deleteAccount` (repo) + `POST /api/user/delete` (typed `confirm: 'DELETE'`) + a
+Delete-account card on Profile. Handles the three things that do NOT cascade:
+`replays` (reached only via `records.replay_id` — deleted FIRST or they orphan),
+`elo_history` (no FK by design), and the payer email on `kofi_payments` (scrubbed;
+the payment row survives as a financial record). Both policy pages now say exactly
+what survives rather than over-promising.
+
+Also added: a real cookies section, the payment-data inventory, a **14-day
+no-questions refund**, and a governing-law clause.
+
+⚠️ **`LEGAL_OPERATOR` and `LEGAL_JURISDICTION` in `src/legalText.ts` are PLACEHOLDERS
+and MUST be filled before the first payment.** While they are, the Terms page renders
+a visible `role="alert"` warning to every visitor — an unfinished contract cannot
+quietly go live. Do not guess these from a timezone or an email domain.
+
+### 10–12. Placement, perf, analytics, a11y
+
+- **Placement inverted.** The in-game rails were the ONLY inventory and also the
+  riskiest (60 Hz canvas + AdSense's 150px game-clearance rule). Added `menu`
+  (shell pages, below the content) and `results` (post-match, AFTER the
+  REMATCH/MENU buttons so they stay first in tab order). Each unit has its own slot
+  id, so the SAFE units can ship while the game unit stays off. Home page gets no ad.
+- **Perf measurement** — `?perf=1` shows p50/p95 frame time + whether ads are on
+  (`GameController.getFrameStats`). Measure with the columns off, then on, and compare
+  p95 BEFORE ever setting `VITE_ADSENSE_SLOT_GAME` on a live deploy.
+- **Analytics** — `@vercel/analytics`, gated on `VITE_ANALYTICS=1`. Cookieless, no
+  consent banner needed. Funnel: `support_view` → `support_kofi_click` →
+  `support_claim_ok`/`_fail`, plus `ads_shown` and `account_deleted`. **Rule: no
+  identifiers in any payload** — counts and enums only, never a user id, username,
+  email, or transaction id.
+- **a11y** — the in-game ad `<aside>`s were `aria-hidden`, which hid the required
+  "Advertisement" label from exactly the users who cannot see the visual difference.
+  Now `aria-label="Advertisement"`.
+- Price is now STATED on-site, served from `/api/pricing` (same setting the grant
+  policy enforces, so the two cannot drift). Membership status + expiry + a
+  "won't renew" warning live on Profile. The desktop build gets an honest one-liner
+  that it shows no ads.
+
+## Files added
+
+`server/kofi.ts` · `server/db/migrations/0019_supporter_billing.sql` ·
+`scripts/dbtest.ts` · `src/analytics.ts` · `src/ui/SupporterBadge.tsx`
+
+## NEXT STEPS, in order
+
+1. **Fill `LEGAL_OPERATOR` + `LEGAL_JURISDICTION`.** Blocks taking money.
+2. **Merge-time follow-up:** `main` has since gained `public/robots.txt`,
+   `public/sitemap.xml`, `src/seo.ts` (commits `58f0d49`, `11bedd6`). Crawlability is
+   therefore COVERED and was deliberately not duplicated here — but after merging,
+   add `/privacy`, `/terms`, `/donate` to `sitemap.xml` and give them route meta in
+   `src/seo.ts`. Robots already allows `/ads.txt`.
+3. **Deploy client first** (ads dormant without `VITE_ADSENSE_CLIENT`; entitlements
+   404 degrade to "not a supporter"), so `/privacy` is live for the AdSense
+   application.
+4. **Deploy server** via `./scripts/fly-deploy.sh` — NEVER a bare `flyctl deploy`.
+   Migration `0019` is additive. Set `KOFI_VERIFICATION_TOKEN` (+ optionally
+   `KOFI_MONTHLY_PRICE`/`KOFI_CURRENCY`/`KOFI_MAX_MONTHS`) as Fly secrets and point
+   the Ko-fi webhook at `/api/kofi/webhook`.
+5. **Ko-fi setup before the first payment**: a PayPal **Business** account (a personal
+   one exposes your legal name on every receipt, and Ko-fi binds subscriptions to
+   whichever account was connected at signup). Skip Ko-fi Gold until membership
+   revenue clears ~$240/mo.
+6. **Apply to AdSense.** Then set `VITE_ADSENSE_CLIENT` + `VITE_ADSENSE_SLOT_MENU` /
+   `_RESULTS` first; hold `_GAME` until the `?perf=1` comparison is done.
+7. **Still untested live:** a real Ko-fi webhook round trip (the DB logic is proven by
+   `npm run dbtest`, but Ko-fi's actual payload field names for `tier_name` /
+   `is_subscription_payment` are from their docs, not from a captured request). Send
+   one test payment before announcing.
+
+## Gotchas found this session
+
+- **PGlite `query` is the extended protocol and refuses multi-statement SQL** — a
+  migration file is dozens of statements. `exec` is the simple protocol and takes the
+  whole script but cannot bind parameters. `scripts/dbtest.ts`'s adapter splits on
+  `params.length === 0`; `pg` blurs the two, and this is the only real difference the
+  adapter has to paper over.
+- **A JSX comment cannot open an `{cond && (…)}` expression** — `{cond && ({/*…*/}<el/>)}`
+  is a syntax error, not a style issue. Put the comment above the `{cond &&`.
+- **Float division could shave a month off an exact multiple** — `9.00 / 3.00` can land
+  at 2.9999999999999996. The epsilon in `monthsFor` is on the QUOTIENT and is 1e-9; it
+  is NOT a grace on the price (a $2.99 tip is still below a $3.00 tier, and the claim
+  message says so).
+- **`npm run shiftaudit` is still FLAKY and its exit code is still masked** (see the
+  2026-07-20 entry below) — not re-run this session.
+
+---
+
 # HANDOFF — 2026-07-25 (desktop = thin shell over the live site + baked env) — READ FIRST
 
 ## This session — downloaded app now (a) auto-updates content by loading the live site and (b) can actually play online

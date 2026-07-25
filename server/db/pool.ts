@@ -11,9 +11,34 @@ import pg from 'pg';
  */
 const url = process.env.DATABASE_URL;
 
-export const dbEnabled = !!url;
+/**
+ * The bits of `pg.Pool` the repo actually uses.
+ *
+ * Named as an interface rather than typing everything `pg.Pool` so a TEST can
+ * substitute an in-process Postgres (`scripts/dbtest.ts` runs the real payment
+ * paths against PGlite — there is no Postgres on a dev machine, and "verified by
+ * reading" is how the first version of the Ko-fi claim shipped un-run). A
+ * `pg.Pool` satisfies this structurally; nothing about production changes.
+ */
+export interface DbClient {
+  query<T extends pg.QueryResultRow = pg.QueryResultRow>(
+    text: string,
+    params?: unknown[],
+  ): Promise<{ rows: T[] }>;
+  release(): void;
+}
 
-export const pool: pg.Pool | null = url
+export interface DbPool {
+  query<T extends pg.QueryResultRow = pg.QueryResultRow>(
+    text: string,
+    params?: unknown[],
+  ): Promise<{ rows: T[] }>;
+  connect(): Promise<DbClient>;
+}
+
+export let dbEnabled = !!url;
+
+export let pool: DbPool | null = url
   ? new pg.Pool({
       connectionString: url,
       max: Number(process.env.DB_POOL_MAX ?? 5),
@@ -28,7 +53,17 @@ if (!dbEnabled) {
   );
 }
 
-pool?.on('error', (e) => console.error('[db] idle client error:', e));
+if (pool instanceof pg.Pool) pool.on('error', (e) => console.error('[db] idle client error:', e));
+
+/**
+ * Point the repo at a different Postgres. TEST-ONLY — nothing in `server/` calls
+ * this, and with `DATABASE_URL` set the production pool is already built by the
+ * time any test could. `let` + ESM live bindings mean importers see the swap.
+ */
+export function setPoolForTests(p: DbPool | null): void {
+  pool = p;
+  dbEnabled = !!p;
+}
 
 /** parameterized query → rows. Throws if the DB is disabled; callers use the
  * repo helpers (which guard on `dbEnabled`) rather than calling this directly. */
@@ -63,7 +98,8 @@ export async function tx<T>(fn: (query: Tx) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    const query: Tx = async (text, params = []) => (await client.query(text, params)).rows;
+    const query: Tx = async <R extends pg.QueryResultRow>(text: string, params: unknown[] = []) =>
+      (await client.query<R>(text, params)).rows;
     const out = await fn(query);
     await client.query('commit');
     return out;

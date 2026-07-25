@@ -45,6 +45,31 @@ export default defineConfig({
         });
       },
     },
+    // ads.txt — the IAB authorized-sellers file. AdSense flags an account with no
+    // ads.txt as "earnings at risk" and some demand simply will not bid without
+    // it, so it is not optional once ads are live.
+    //
+    // GENERATED rather than committed to `public/`, for two reasons: it must
+    // contain the real publisher id (which lives in env, not in git), and a stale
+    // hand-written copy pointing at the wrong pub- id is worse than none at all.
+    // With VITE_ADSENSE_CLIENT unset no file is emitted — a 404 is the correct
+    // answer for a site that serves no ads.
+    {
+      name: 'emit-ads-txt',
+      generateBundle() {
+        const client = (process.env.VITE_ADSENSE_CLIENT ?? '').trim();
+        // the file wants the bare publisher id; the tag wants the `ca-` prefix
+        const pub = client.replace(/^ca-/, '');
+        if (!/^pub-\d{10,}$/.test(pub)) return;
+        this.emitFile({
+          type: 'asset',
+          fileName: 'ads.txt',
+          // f08c47fec0942fa0 is Google's fixed certification-authority id — the
+          // same literal for every AdSense publisher, not a per-account secret.
+          source: `google.com, ${pub}, DIRECT, f08c47fec0942fa0\n`,
+        });
+      },
+    },
   ],
   define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   // Absolute base for the WEB build so path-based routes (/leaderboard, /replay/…)

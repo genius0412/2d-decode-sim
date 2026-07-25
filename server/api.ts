@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { GameId } from '../src/types';
 import { BALANCE_VERSION } from '../src/config';
+import { monthsFor, policyFromEnv, whyNoMonths } from './kofi';
 import { dbEnabled } from './db/pool';
 import {
   acceptFriendRequest,
@@ -36,6 +37,7 @@ import {
   getSupporter,
   claimKofiPayment,
   recordKofiPayment,
+  deleteAccount,
   listSeasons,
   recordLeaderboard,
   saveUserSettings,
@@ -254,8 +256,33 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     if (url.pathname === '/api/user/entitlements' && req.method === 'GET') {
       const user = await verifyAuthToken(bearer(req));
       if (!user) return json(401, { error: 'sign in required' }), true;
-      if (!dbEnabled) return json(200, { supporter: false, supporterUntil: null }), true;
-      return json(200, await getSupporter(user.userId)), true;
+      if (!dbEnabled) {
+        return json(200, { supporter: false, supporterUntil: null, autoRenews: false }), true;
+      }
+      // the price is served alongside the entitlement so the Donate page can state
+      // it without a second round trip, and so it can never drift from the number
+      // the grant policy actually charges (see server/kofi.ts).
+      const policy = policyFromEnv();
+      return (
+        json(200, {
+          ...(await getSupporter(user.userId)),
+          price: { amount: policy.monthlyPrice, currency: policy.currency },
+        }),
+        true
+      );
+    }
+
+    // Price + tier facts for a SIGNED-OUT visitor. Same numbers, no auth, no DB —
+    // the Donate page has to state a price before anyone signs in.
+    if (url.pathname === '/api/pricing' && req.method === 'GET') {
+      const policy = policyFromEnv();
+      return (
+        json(200, {
+          price: { amount: policy.monthlyPrice, currency: policy.currency },
+          maxMonths: policy.maxMonths,
+        }),
+        true
+      );
     }
 
     // Claim a Ko-fi payment against this account.
@@ -293,7 +320,69 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       if (r.outcome === 'already-claimed') {
         return json(409, { error: 'That payment has already been claimed.' }), true;
       }
-      return json(200, { ok: true, supporterUntil: r.until ?? null }), true;
+      // Below the tier: say exactly WHY, with the real numbers. A bare "no" on a
+      // payment someone genuinely made is the worst possible support experience,
+      // and the payment stays unclaimed so an admin can still comp it.
+      if (r.outcome === 'below-tier') {
+        return (
+          json(400, {
+            error: r.payment
+              ? whyNoMonths(
+                  {
+                    kind: r.payment.kind,
+                    amount: r.payment.amount,
+                    currency: r.payment.currency,
+                    isSubscription: r.payment.isSubscription,
+                    tierName: r.payment.tierName,
+                  },
+                  policyFromEnv(),
+                )
+              : "That payment doesn't meet the membership tier.",
+          }),
+          true
+        );
+      }
+      if (r.outcome === 'email-taken') {
+        return (
+          json(409, {
+            error:
+              'That payment came from a Ko-fi account already linked to a different DSIM account. One membership covers one account — email us if this is wrong.',
+          }),
+          true
+        );
+      }
+      if (r.outcome === 'refunded') {
+        return json(409, { error: 'That payment was refunded.' }), true;
+      }
+      return (
+        json(200, { ok: true, supporterUntil: r.until ?? null, months: r.months ?? 0 }),
+        true
+      );
+    }
+
+    // ---- delete your own account -------------------------------------------
+    // The privacy policy promises deletion on request, so it is a route, not an
+    // inbox commitment. Destructive and irreversible, hence the typed
+    // confirmation: the body must carry `confirm: 'DELETE'`, which no accidental
+    // fetch or replayed request will ever contain.
+    //
+    // Auth deliberately does NOT include the Neon Auth identity itself — that
+    // lives in the provider and is deleted from the account settings there. This
+    // removes everything DSIM stores; the policy says so in the same words.
+    if (url.pathname === '/api/user/delete' && req.method === 'POST') {
+      const user = await verifyAuthToken(bearer(req));
+      if (!user) return json(401, { error: 'sign in required' }), true;
+      if (!dbEnabled) return json(503, { error: 'unavailable' }), true;
+      let confirm: unknown;
+      try {
+        confirm = JSON.parse(await readBody(req)).confirm;
+      } catch {
+        return json(400, { error: 'bad request' }), true;
+      }
+      if (confirm !== 'DELETE') return json(400, { error: 'confirmation required' }), true;
+      const gone = await deleteAccount(user.userId);
+      console.log(`[api] account deleted: ${user.userId} -> ${gone}`);
+      return json(200, { ok: true, deleted: gone }), true;
     }
 
     // ---- Ko-fi webhook ------------------------------------------------------
@@ -318,6 +407,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         amount?: string;
         currency?: string;
         is_subscription_payment?: boolean;
+        tier_name?: string;
       };
       try {
         const body = await readBody(req);
@@ -338,19 +428,44 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       if (!payload.message_id) return json(400, { error: 'missing message_id' }), true;
       if (!dbEnabled) return json(503, { error: 'db unavailable' }), true;
 
-      // `fresh` is false when Ko-fi retried an event we already stored — the
-      // insert's primary key is the idempotency guard, so a retry cannot grant a
-      // second month. Always answer 200 so Ko-fi stops retrying.
-      const fresh = await recordKofiPayment({
-        messageId: payload.message_id,
+      // What the payment is WORTH is decided here, once, and stored on the row —
+      // not recomputed at claim time against env that may since have changed.
+      const event = {
         kind: payload.type ?? 'Donation',
-        email: payload.email ?? null,
-        transactionId: payload.kofi_transaction_id ?? null,
         amount: payload.amount ?? null,
         currency: payload.currency ?? null,
         isSubscription: !!payload.is_subscription_payment,
+        tierName: payload.tier_name ?? null,
+      };
+      const months = monthsFor(event, policyFromEnv());
+
+      // `fresh` is false when Ko-fi retried an event we already stored — the
+      // insert's primary key is the idempotency guard, so a retry cannot grant a
+      // second month. Always answer 200 so Ko-fi stops retrying.
+      //
+      // `autoGrantedTo` is set when the payer's email is already linked to an
+      // account: that is the RENEWAL path, and it is why a monthly membership no
+      // longer needs the buyer to paste a new transaction id every 30 days.
+      const r = await recordKofiPayment({
+        ...event,
+        messageId: payload.message_id,
+        email: payload.email ?? null,
+        transactionId: payload.kofi_transaction_id ?? null,
+        months,
       });
-      return json(200, { ok: true, recorded: fresh }), true;
+      if (r.autoGrantedTo) {
+        console.log(
+          `[kofi] auto-renewed ${r.autoGrantedTo} +${months}mo -> ${r.until} (${payload.message_id})`,
+        );
+      } else if (r.fresh) {
+        console.log(
+          `[kofi] parked ${payload.message_id} (${event.kind}, ${event.amount ?? '?'} ${event.currency ?? '?'}, ${months}mo) — awaiting claim`,
+        );
+      }
+      return (
+        json(200, { ok: true, recorded: r.fresh, granted: !!r.autoGrantedTo, months }),
+        true
+      );
     }
 
     // ---- friends ------------------------------------------------------------

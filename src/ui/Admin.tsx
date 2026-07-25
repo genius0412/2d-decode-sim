@@ -9,6 +9,11 @@ import {
   adminClearUserRecords,
   adminSearchUsers,
   adminRenameUser,
+  adminGrantSupporter,
+  adminRevokeSupporter,
+  adminSupporterHistory,
+  type AdminUserRow,
+  type SupporterGrantRow,
   adminPublishAnnouncement,
   adminDeleteAnnouncement,
   fetchAnnouncements,
@@ -57,8 +62,13 @@ export function Admin() {
 
   // moderation — user display names
   const [userQuery, setUserQuery] = useState('');
-  const [users, setUsers] = useState<{ userId: string; handle: string }[]>([]);
+  const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [rename, setRename] = useState<Record<string, string>>({});
+  // supporter memberships — comps and chargebacks, on the same rows as the name
+  // moderation above (one search, two jobs; a second search box would just be a
+  // second place to paste the same user id).
+  const [grantMonths, setGrantMonths] = useState<Record<string, string>>({});
+  const [history, setHistory] = useState<Record<string, SupporterGrantRow[]>>({});
   const [userStatus, setUserStatus] = useState<string | null>(null);
   const [userBusy, setUserBusy] = useState(false);
 
@@ -110,6 +120,58 @@ export function Admin() {
     setUserBusy(false);
     if (saved) setUsers((us) => us.map((u) => (u.userId === userId ? { ...u, handle: saved } : u)));
     setUserStatus(saved ? `Renamed to "${saved}".` : 'Failed — check admin sign-in.');
+  };
+
+  /** comp a membership. Confirmed because it costs real money to honour. */
+  const grantSupporter = async (u: AdminUserRow): Promise<void> => {
+    const months = Math.floor(Number(grantMonths[u.userId] ?? '1'));
+    if (!Number.isFinite(months) || months < 1 || months > 60) {
+      setUserStatus('Months must be 1–60.');
+      return;
+    }
+    const reason = window.prompt(`Give ${u.handle} ${months} month(s) of supporter. Reason?`, '');
+    if (reason === null) return;
+    setUserBusy(true);
+    const r = await adminGrantSupporter(u.userId, months, reason);
+    setUserBusy(false);
+    if (!r) {
+      setUserStatus('Failed — check admin sign-in.');
+      return;
+    }
+    setUsers((us) =>
+      us.map((x) =>
+        x.userId === u.userId ? { ...x, supporter: true, supporterUntil: r.until } : x,
+      ),
+    );
+    setUserStatus(
+      `${u.handle} is a supporter until ${r.until ? new Date(r.until).toLocaleDateString() : '—'}.`,
+    );
+    void loadHistory(u.userId);
+  };
+
+  /** end a membership now — a chargeback, or a comp given in error */
+  const revokeSupporter = async (u: AdminUserRow): Promise<void> => {
+    const reason = window.prompt(`Revoke ${u.handle}'s supporter membership. Reason?`, 'chargeback');
+    if (reason === null) return;
+    setUserBusy(true);
+    const r = await adminRevokeSupporter(u.userId, reason);
+    setUserBusy(false);
+    if (!r) {
+      setUserStatus('Failed — check admin sign-in.');
+      return;
+    }
+    setUsers((us) =>
+      us.map((x) =>
+        x.userId === u.userId ? { ...x, supporter: false, supporterUntil: null } : x,
+      ),
+    );
+    setUserStatus(r.revoked ? `Revoked ${u.handle}'s membership.` : 'Nothing to revoke.');
+    void loadHistory(u.userId);
+  };
+
+  const loadHistory = async (userId: string): Promise<void> => {
+    const grants = await adminSupporterHistory(userId);
+    setHistory((h) => ({ ...h, [userId]: grants }));
   };
 
   const run = async (fn: () => Promise<boolean>, okMsg: string): Promise<void> => {
@@ -402,10 +464,11 @@ export function Admin() {
         {recStatus && <p className="ds-hint" style={{ marginTop: 12 }}>{recStatus}</p>}
       </div>
 
-      <h2 className="ds-h2" style={{ marginTop: 32 }}>Moderation — display names</h2>
+      <h2 className="ds-h2" style={{ marginTop: 32 }}>Players — names &amp; memberships</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
-        Find a player by display name (or exact user id) and force an inappropriate name to
-        something clean. The change is immediate across the leaderboards.
+        Find a player by display name, username, or exact user id. Force an inappropriate name to
+        something clean, comp a supporter membership, or revoke one after a chargeback. Every
+        membership change is written to an audit trail with your account id and your reason.
       </p>
       <div className="admin-card">
         <div className="admin-field">
@@ -424,21 +487,75 @@ export function Admin() {
         {users.length > 0 && (
           <div className="admin-list" style={{ marginTop: 12 }}>
             {users.map((u) => (
-              <div key={u.userId} className="admin-row">
-                <input
-                  type="text"
-                  className="admin-grow"
-                  maxLength={24}
-                  value={rename[u.userId] ?? ''}
-                  onChange={(e) => setRename((m) => ({ ...m, [u.userId]: e.target.value }))}
-                />
-                <button
-                  className="ds-btn ghost sm"
-                  disabled={userBusy || (rename[u.userId] ?? '').trim() === u.handle}
-                  onClick={() => renameUser(u.userId, u.handle)}
-                >
-                  RENAME
-                </button>
+              <div key={u.userId} className="admin-user">
+                <div className="admin-row">
+                  <input
+                    type="text"
+                    className="admin-grow"
+                    maxLength={24}
+                    value={rename[u.userId] ?? ''}
+                    onChange={(e) => setRename((m) => ({ ...m, [u.userId]: e.target.value }))}
+                  />
+                  <button
+                    className="ds-btn ghost sm"
+                    disabled={userBusy || (rename[u.userId] ?? '').trim() === u.handle}
+                    onClick={() => renameUser(u.userId, u.handle)}
+                  >
+                    RENAME
+                  </button>
+                </div>
+                <div className="admin-row admin-sub">
+                  <span className="ds-hint admin-grow">
+                    {u.supporter ? (
+                      <>
+                        <strong>Supporter</strong> until{' '}
+                        {u.supporterUntil ? new Date(u.supporterUntil).toLocaleDateString() : '—'}
+                        {u.autoRenews ? ' · auto-renews' : ' · manual claims only'}
+                      </>
+                    ) : (
+                      <>Not a supporter{u.autoRenews ? ' · Ko-fi linked (lapsed)' : ''}</>
+                    )}
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    className="admin-months"
+                    aria-label={`Months to grant ${u.handle}`}
+                    value={grantMonths[u.userId] ?? '1'}
+                    onChange={(e) =>
+                      setGrantMonths((m) => ({ ...m, [u.userId]: e.target.value }))
+                    }
+                  />
+                  <button className="ds-btn ghost sm" disabled={userBusy} onClick={() => grantSupporter(u)}>
+                    GRANT
+                  </button>
+                  <button
+                    className="ds-btn ghost sm"
+                    disabled={userBusy || !u.supporter}
+                    onClick={() => revokeSupporter(u)}
+                  >
+                    REVOKE
+                  </button>
+                  <button className="ds-btn ghost sm" disabled={userBusy} onClick={() => loadHistory(u.userId)}>
+                    HISTORY
+                  </button>
+                </div>
+                {history[u.userId] && (
+                  <div className="admin-history">
+                    {history[u.userId].length === 0 ? (
+                      <p className="ds-hint">No membership changes recorded.</p>
+                    ) : (
+                      history[u.userId].map((g, i) => (
+                        <p key={i} className="ds-hint">
+                          {new Date(g.createdAt).toLocaleString()} · <strong>{g.source}</strong>
+                          {g.months ? ` +${g.months}mo` : ''}
+                          {g.note ? ` · ${g.note}` : ''}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

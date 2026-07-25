@@ -1,15 +1,27 @@
 import { useEffect, useRef } from 'react';
-import { ADSENSE_CLIENT, ensureAdSenseLoaded, fillSlot, slotFor, type AdUnit } from '../ads/adsense';
+import {
+  ADSENSE_CLIENT,
+  AD_TFCD,
+  AD_TFUAC,
+  ensureAdSenseLoaded,
+  fillSlot,
+  slotFor,
+  type AdUnit,
+} from '../ads/adsense';
 import { useAds } from '../ads/AdsProvider';
+import { trackEvent } from '../analytics';
 
 /** fixed pixel sizes per unit. See the comment on `reserved boxes` below. */
 const SIZE: Record<AdUnit, { w: number; h: number }> = {
-  // 160x600 wide skyscraper. Chosen over the taller-earning 300x250 because
+  // 160x600 wide skyscraper. Chosen over the better-earning 300x250 because
   // AdSense requires >=150px of clearance between an ad and a game, and only a
   // 160px unit leaves that clearance on a 1366- or 1440-wide laptop.
   game: { w: 160, h: 600 },
-  // menu pages are not game-play pages, so the clearance rule does not apply.
+  // menu + results pages are not game-play pages, so the clearance rule does not
+  // apply and the standard medium rectangle (the best-filled size in AdSense's
+  // inventory) is the right unit.
   menu: { w: 300, h: 250 },
+  results: { w: 300, h: 250 },
 };
 
 /**
@@ -41,6 +53,34 @@ export function useAdUnitActive(unit: AdUnit): boolean {
   return showAds && !!slotFor(unit);
 }
 
+/**
+ * The shell-page ad, wrapper included.
+ *
+ * A component rather than a bare `<AdSlot unit="menu">` because the SPACING
+ * around it must disappear along with the unit: an empty 32px margin above
+ * nothing is the tell-tale gap every ad-blocked page has, and this app's shell
+ * pages end in a footer where that gap is very visible.
+ */
+export function MenuAd() {
+  if (!useAdUnitActive('menu')) return null;
+  return (
+    <div className="menu-ad">
+      <AdSlot unit="menu" />
+    </div>
+  );
+}
+
+/** the post-match results ad. Same reasoning as `MenuAd`; separate unit id so
+ *  the two can be enabled, priced, and reported on independently. */
+export function ResultsAd() {
+  if (!useAdUnitActive('results')) return null;
+  return (
+    <div className="menu-ad">
+      <AdSlot unit="results" />
+    </div>
+  );
+}
+
 export function AdSlot({ unit, className }: { unit: AdUnit; className?: string }) {
   const ref = useRef<HTMLModElement>(null);
   const slot = slotFor(unit);
@@ -48,6 +88,9 @@ export function AdSlot({ unit, className }: { unit: AdUnit; className?: string }
 
   useEffect(() => {
     if (!active) return;
+    // which UNITS actually render, so "the game columns cost us N% of sessions"
+    // is answerable. The unit name is the only property — no user, no page id.
+    trackEvent('ads_shown', { unit });
     let cancelled = false;
     void ensureAdSenseLoaded().then(() => {
       if (cancelled || !ref.current) return;
@@ -56,7 +99,7 @@ export function AdSlot({ unit, className }: { unit: AdUnit; className?: string }
     return () => {
       cancelled = true;
     };
-  }, [active]);
+  }, [active, unit]);
 
   if (!active) return null;
 
@@ -77,6 +120,12 @@ export function AdSlot({ unit, className }: { unit: AdUnit; className?: string }
         style={{ display: 'inline-block', width: w, height: h }}
         data-ad-client={ADSENSE_CLIENT}
         data-ad-slot={slot}
+        // Audience signals, per unit. React drops a `false` on a data- attribute
+        // but renders "false" for a string, so these are conditional rather than
+        // ternary — the ABSENCE of the attribute is what means "not tagged", and
+        // `data-tag-...="false"` would be read as a value, not as an opt-out.
+        {...(AD_TFUAC ? { 'data-tag-for-under-age-of-consent': '1' } : {})}
+        {...(AD_TFCD ? { 'data-tag-for-child-directed-treatment': '1' } : {})}
       />
     </div>
   );

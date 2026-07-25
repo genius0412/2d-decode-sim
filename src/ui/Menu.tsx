@@ -1,6 +1,7 @@
 import type { GameSettings } from '../types';
 import type { ChainScoreMode, DrivetrainType, IntakeStyle, RobotSpec } from '../types';
-import { MAX_SAVED_ROBOTS, ROBOT_PRESETS } from '../config';
+import { MAX_SAVED_ROBOTS, ROBOT_PRESETS, CHASSIS_COLORS, CHASSIS_COLOR_KEYS } from '../config';
+import { useAds } from '../ads/AdsProvider';
 import {
   CHAIN_CLEARANCE_DEFAULT,
   CHAIN_CLEARANCE_MAX,
@@ -84,6 +85,54 @@ function chainSpecMatches(a: RobotSpec, b: RobotSpec): boolean {
 interface Props {
   settings: GameSettings;
   onChange: (s: GameSettings) => void;
+}
+
+/**
+ * SUPPORTER COSMETIC: the chassis fill.
+ *
+ * Shown to EVERYONE, locked for non-supporters. A perk that is invisible until
+ * you pay for it sells nothing and, worse, makes the tier feel like a mystery
+ * box; a visible locked row is honest about what the membership actually is.
+ * The swatches are the real hex values, so the row is also the preview — see the
+ * comment in `RobotPreview` for why the SVG chassis deliberately is not.
+ */
+function ChassisColorRow({
+  spec,
+  onPick,
+}: {
+  spec: RobotSpec;
+  onPick: (key: string) => void;
+}) {
+  const { supporter } = useAds();
+  const current = spec.chassisColor ?? 'default';
+  return (
+    <div className="ds-field" style={{ flex: '1 1 100%' }}>
+      <span className="cap">
+        Chassis colour{' '}
+        <span className="val">
+          {supporter ? current : 'supporter perk'}
+        </span>
+      </span>
+      <div className="chassis-swatches">
+        {CHASSIS_COLOR_KEYS.map((key) => (
+          <button
+            key={key}
+            type="button"
+            className={`chassis-sw${current === key ? ' on' : ''}`}
+            style={{ background: CHASSIS_COLORS[key] }}
+            // A locked swatch is `disabled`, not hidden: the browser skips it in
+            // the tab order and announces it as unavailable, which is the right
+            // story for "you could have this" — and it can't be clicked past.
+            disabled={!supporter && key !== 'default'}
+            aria-label={`Chassis colour ${key}${!supporter && key !== 'default' ? ' (supporter only)' : ''}`}
+            aria-pressed={current === key}
+            title={!supporter && key !== 'default' ? 'Supporter perk' : key}
+            onClick={() => onPick(key)}
+          />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -553,6 +602,7 @@ export function Menu({ settings, onChange }: Props) {
                   <span className="ot">Sorter {spec.canSort ? 'ON' : 'OFF'}</span>
                 </button>
               )}
+              <ChassisColorRow spec={spec} onPick={(chassisColor) => setSpec({ chassisColor })} />
               {!isDecode && (() => {
                 const storeMax = chainStorageMax(spec);
                 const store = Math.min(spec.ballStorage ?? CHAIN_STORAGE_DEFAULT, storeMax);

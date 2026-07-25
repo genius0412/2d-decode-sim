@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { cmpEnabled, showConsentSettings } from '../ads/adsense';
 import { APP_NAME, seasonFor, LINKS } from '../seasons';
 import type { GameId } from '../games/types';
+import { MenuAd } from './AdSlot';
 import { FriendsPanel } from './FriendsPanel';
 import { FriendToasts } from './friendsContext';
 import { Logo } from './Logo';
@@ -125,7 +127,15 @@ export function AppShell({
       {showRail ? (
         <div className="ds-body">
           <NavRail active={active} onNav={onNav} showAdmin={showAdmin} />
-          <main className="ds-main">{children}</main>
+          <main className="ds-main">
+            {children}
+            {/* The SAFE ad inventory: a shell page is not a gameplay page, so
+                there is no clearance rule and no frame budget to protect. It
+                sits BELOW the page content, after the thing the visitor came
+                for — an ad above the leaderboard would be the interstitial
+                pattern AdSense's own policies discourage. */}
+            <MenuAd />
+          </main>
           <FriendsPanel
             signedIn={signedIn}
             onOpenProfile={onOpenProfile}
@@ -134,6 +144,9 @@ export function AppShell({
           />
         </div>
       ) : (
+        // The home screen deliberately gets NO ad. It is the first thing a new
+        // visitor sees and the page an AdSense reviewer lands on; it should read
+        // as a product, not as inventory.
         <main className="ds-main ds-main-home">{children}</main>
       )}
 
@@ -162,6 +175,7 @@ export function AppShell({
           <button className="ds-foot-link" onClick={onTerms}>
             Terms
           </button>
+          <ConsentLink />
           {/* main replaced the bare GitHub link with Changes — keep that, plus
               monetization's Support/Privacy/Terms destinations */}
           <button className="ds-foot-link bold" onClick={onChangelog}>
@@ -173,5 +187,32 @@ export function AppShell({
         </span>
       </footer>
     </div>
+  );
+}
+
+/**
+ * "Privacy & cookie settings" — reopens the consent message.
+ *
+ * Required rather than a nicety: consent that cannot be withdrawn as easily as
+ * it was given is not valid consent, and the privacy policy points at this exact
+ * link by name, so it has to exist wherever that policy is served.
+ *
+ * Rendered only when the build actually ships a CMP (`cmpEnabled`), and it
+ * disappears if the message cannot be opened — which is the normal case outside
+ * the EEA/UK/CH, where there is no consent dialog to reopen. A footer link that
+ * silently does nothing is worse than no link.
+ */
+function ConsentLink() {
+  const [gone, setGone] = useState(false);
+  if (!cmpEnabled() || gone) return null;
+  return (
+    <button
+      className="ds-foot-link"
+      onClick={() => {
+        if (!showConsentSettings()) setGone(true);
+      }}
+    >
+      Privacy &amp; cookie settings
+    </button>
   );
 }

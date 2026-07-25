@@ -87,6 +87,47 @@ button {
   overflow: hidden;
   flex: 0 0 auto;
 }
+/* Unfinished-terms warning. `--ds-warn` is a readable-against-surface token (it
+   inverts with the theme); the ground is a tint of it composited on the page, and
+   that call-site pair is asserted in scripts/contrast.mjs. */
+.legal-warn {
+  border: 1px solid var(--ds-warn);
+  background: color-mix(in srgb, var(--ds-warn) 9%, transparent);
+  color: var(--ds-warn);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+/* `?perf=1` frame-time readout. Its ground is the CANVAS (hardcoded dark), so it
+   uses the `--ds-on-field` family, which deliberately does NOT invert — see the
+   theming note in CLAUDE.md. Pinned top-left, out of the way of the score bar
+   (bottom) and the status chips (top-right). */
+.perf-readout {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 20;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  color: var(--ds-on-field);
+  background: rgba(0, 0, 0, 0.45);
+  padding: 3px 7px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+/* Shell-page + results ad wrapper. Only ever rendered when the unit is actually
+   active (see `MenuAd`), so this margin can never become the tell-tale empty gap
+   an ad-blocked page leaves above its footer. */
+.menu-ad {
+  display: flex;
+  justify-content: center;
+  margin: 32px 0 8px;
+}
 .ad-slot-label {
   display: block;
   font-size: 9.5px;
@@ -1751,6 +1792,97 @@ button {
   padding: 5px 8px;
   font: inherit;
 }
+/* ---- supporter cosmetic: chassis colour swatches ----------------------- */
+/* The swatch IS the preview (RobotPreview keeps the themed panel fill — see the
+   comment there), so the background is the literal CHASSIS_COLORS hex and the
+   selected state has to be carried by the RING, not by the fill. `--ds-ink` for
+   the ring: it is a readable-against-surface token, so it inverts with the theme
+   and stays visible against every one of these deliberately-dark swatches. */
+.chassis-swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.chassis-sw {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--ds-line-strong);
+  cursor: pointer;
+  padding: 0;
+  /* transform/shadow only — a border or margin that appears on hover moves every
+     swatch after it, which `npm run shiftaudit` fails the build over */
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.chassis-sw:hover:not(:disabled) { transform: translateY(-1px); }
+.chassis-sw.on { box-shadow: 0 0 0 2px var(--ds-ink); }
+.chassis-sw:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---- supporter badge --------------------------------------------------- */
+/* A FILL with fixed ink, not coloured text. shell.css's rule — "a colour that is
+   both a fill and a text colour will fail one of the two" — bites hard here: this
+   badge lands on the leaderboard panel, the lobby roster tile, AND a profile
+   header, and a single ink value could not clear AA on all three. `--ds-gold` /
+   `--ds-gold-ink` is an already-audited pair (the same one `.lb-standing-badge`
+   uses) and, being category 2, it does not invert between themes — so the badge
+   reads identically in light and dark.
+
+   Sized to sit INSIDE a line of text without changing its height: `em` units and
+   `vertical-align` keep it from nudging the baseline, which `npm run shiftaudit`
+   would otherwise see as a row moving when a name is hovered. */
+.sup-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ds-gold);
+  color: var(--ds-gold-ink);
+  border-radius: 999px;
+  vertical-align: baseline;
+  flex: 0 0 auto;
+}
+.sup-badge.sm {
+  width: 1.15em;
+  height: 1.15em;
+  font-size: 0.72em;
+  margin-left: 0.4em;
+  transform: translateY(0.05em);
+}
+.sup-badge.md {
+  width: 1.05em;
+  height: 1.05em;
+  font-size: 0.5em;
+  margin-left: 0.35em;
+  transform: translateY(-0.25em);
+}
+
+/* One player, two jobs: the rename row and the membership row belong to the SAME
+   person, so they are grouped rather than listed as two independent rows — an
+   admin acting on a chargeback must not be able to revoke the row below the one
+   they read. The sub-row is visually subordinate (no border of its own). */
+.admin-user {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.admin-row.admin-sub {
+  background: transparent;
+  border: 0;
+  padding: 0 10px 2px;
+  flex-wrap: wrap;
+}
+.admin-row.admin-sub .ds-hint { font-size: 12px; margin: 0; }
+input.admin-months {
+  width: 56px;
+  background: var(--ds-panel);
+  border: 1px solid var(--ds-line-strong);
+  border-radius: 6px;
+  color: var(--ds-ink);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+.admin-history {
+  padding: 4px 10px 8px;
+  border-left: 2px solid var(--ds-line);
+  margin-left: 10px;
+}
+.admin-history .ds-hint { font-size: 11.5px; margin: 0 0 2px; }
 .ds-btn.sm { padding: 5px 10px; font-size: 12px; }
 /* was a hardcoded #ff6b6b — a DARK-mode red, stranded here since before the light
    retheme, and only ~2.6:1 on a light panel. --ds-danger is 6.17 light / 6.14 dark. */

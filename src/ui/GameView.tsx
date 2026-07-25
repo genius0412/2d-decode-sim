@@ -10,7 +10,7 @@ import { keyLabel, padButtonLabel } from '../input/bindings';
 import { appChannel } from '../net/env';
 import { ENDGAME_START, PTS_FOUL_MINOR, PTS_FOUL_MAJOR, POWER_DRAW_MAX } from '../config';
 import { MobileControls } from './MobileControls';
-import { AdSlot, useAdUnitActive } from './AdSlot';
+import { AdSlot, ResultsAd, useAdUnitActive } from './AdSlot';
 import { DEFAULT_MOBILE_LAYOUT } from '../settings';
 import type { MatchResultInfo, NetSession, NetStatus } from '../net/session';
 import { clearActiveGame } from '../net/activeGame';
@@ -199,6 +199,14 @@ export function GameView({
   // exactly where it was. GameController watches the canvas with a ResizeObserver,
   // so the camera re-fits the moment this flips.
   const ads = useAdUnitActive('game');
+  // `?perf=1` — a frame-time readout, off by default and never chrome a player
+  // sees by accident. It is how the in-game ad columns get signed off: measure
+  // p95 with them off, then on. Read ONCE (not per render) since a query string
+  // cannot change without a reload.
+  const [perf] = useState(
+    () => typeof location !== 'undefined' && new URLSearchParams(location.search).has('perf'),
+  );
+  const [frames, setFrames] = useState<{ p50: number; p95: number; fps: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -220,9 +228,16 @@ export function GameView({
       const h = controller.getHud();
       if (h && (h.phase === 'post' || h.net?.failed)) clearActiveGame();
     }, 250);
+    // sampled at 2 Hz, and ONLY when the flag is on — a per-frame React state
+    // update to display a frame-time number would itself be the slowest thing on
+    // the page, which is a memorably useless way to measure performance.
+    const perfTimer = perf
+      ? window.setInterval(() => setFrames(controller.getFrameStats()), 500)
+      : 0;
     return () => {
       window.clearInterval(hudTimer);
       window.clearInterval(clearTimer);
+      if (perfTimer) window.clearInterval(perfTimer);
       window.removeEventListener('keydown', onKey);
       controller.dispose();
       controllerRef.current = null;
@@ -276,12 +291,23 @@ export function GameView({
        going unused. The CSS gate below only reveals the columns at widths where
        that still holds — see the media query in styles.css. */
     <div className="game-shell">
+      {/* NOT aria-hidden. It was, and that hid the "Advertisement" label along
+          with the unit — the label exists precisely so an ad is distinguishable
+          from content, and hiding it from the one group that cannot see the
+          visual difference defeats it. `aria-label` names the region instead, so
+          a screen-reader user can skip past it knowingly. */}
       {ads && (
-        <aside className="game-ad" aria-hidden="true">
+        <aside className="game-ad" aria-label="Advertisement">
           <AdSlot unit="game" />
         </aside>
       )}
       <div className="game-root">
+      {perf && frames && (
+        <div className="perf-readout" role="status">
+          {frames.fps.toFixed(0)} fps · p50 {frames.p50.toFixed(1)}ms · p95{' '}
+          {frames.p95.toFixed(1)}ms · ads {ads ? 'ON' : 'off'}
+        </div>
+      )}
       {/* A screen-reader-playable driving sim is out of scope (see the Phase 6 audit,
           F7). The label at least stops this being an unlabelled interactive region;
           score/timer/gate state is announced by the live regions below. */}
@@ -424,8 +450,13 @@ export function GameView({
         />
       )}
       </div>
+      {/* NOT aria-hidden. It was, and that hid the "Advertisement" label along
+          with the unit — the label exists precisely so an ad is distinguishable
+          from content, and hiding it from the one group that cannot see the
+          visual difference defeats it. `aria-label` names the region instead, so
+          a screen-reader user can skip past it knowingly. */}
       {ads && (
-        <aside className="game-ad" aria-hidden="true">
+        <aside className="game-ad" aria-label="Advertisement">
           <AdSlot unit="game" />
         </aside>
       )}
@@ -942,6 +973,12 @@ function Results({
           {canRematch && <button onClick={onRematch}>REMATCH</button>}
           <button onClick={onExit}>MENU</button>
         </div>
+        {/* AFTER the buttons, deliberately. The results screen is a good place
+            for an ad — the match is over and the player is reading rather than
+            driving — but REMATCH and MENU must stay the first things reachable,
+            by mouse and by tab order. An ad between the score and the exit is
+            the pattern that generates accidental clicks. */}
+        <ResultsAd />
           </>
         )}
       </div>

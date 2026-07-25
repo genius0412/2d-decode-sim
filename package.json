@@ -19,7 +19,8 @@
     "server:prod": "node dist-server/index.js",
     "server:check": "tsc -p tsconfig.server.json",
     "electron": "electron .",
-    "dist": "set ELECTRON=1&& npm run build && electron-builder --win"
+    "dist": "set ELECTRON=1&& npm run build && electron-builder --win",
+    "dbtest": "tsx scripts/dbtest.ts"
   },
   "build": {
     "appId": "com.decodesim.app",
@@ -76,6 +77,7 @@
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.19.3",
     "@neondatabase/auth": "^0.4.2-beta",
+    "@vercel/analytics": "^2.0.1",
     "jose": "^6.1.2",
     "pg": "^8.22.0",
     "react": "^18.3.1",
@@ -84,6 +86,7 @@
     "ws": "^8.21.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "@fontsource-variable/plus-jakarta-sans": "^5.2.8",
     "@fontsource-variable/space-grotesk": "^5.2.10",
     "@types/node": "^22.10.0",

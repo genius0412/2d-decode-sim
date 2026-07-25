@@ -4,7 +4,7 @@
  */
 import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
-import { derivedRole } from '../src/ui/startPositions';
+import { derivedRole, savedStartCap } from '../src/ui/startPositions';
 import type { LobbyPlayer } from '../src/net/protocol';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from '../src/net/roomCode';
 import { step } from '../src/sim/world';
@@ -73,6 +73,10 @@ import {
   POSSESSION_MOVE_SPEED,
   POSSESSION_GRACE,
   PTS_FOUL_MAJOR,
+  MAX_SAVED_STARTS,
+  MAX_SAVED_STARTS_SUPPORTER,
+  CHASSIS_COLORS,
+  chassisFill,
 } from '../src/config';
 import { robotCorners, robotExtents, robotIntersectsRect, wheelContacts } from '../src/sim/physics';
 import { beamBlock, beamDragFactor, canCrossBeams, cogFactor, CHAIN_BEAMS } from '../src/games/chain/beams';
@@ -319,7 +323,23 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   const def = coerceSettings({});
   check('coerceSettings defaults startCat/library/memory', def.startCat === 'close' && Array.isArray(def.savedStartPoses.close) && def.startMemory.far.index === 1);
   const capped = coerceSettings({ savedStartPoses: { close: [{ x: 5, y: 6, headingDeg: 0 }, { x: 7, y: 8, headingDeg: 10 }, { x: 9, y: 9, headingDeg: 20 }], far: [{ x: NaN, y: 0, headingDeg: 0 }, 'junk'] } });
-  check('coerceSettings caps saved starts per category + drops junk', capped.savedStartPoses.close.length === 2 && capped.savedStartPoses.far.length === 0);
+  // The PERSIST cap is the SUPPORTER ceiling, deliberately — not the free one.
+  // Sanitizing to 2 would silently delete a supporter's saved poses on any load
+  // before the entitlement resolved, and again the moment a membership lapsed.
+  // The free cap is enforced by the Save button (savedStartCap), not by storage.
+  check('coerceSettings keeps saved starts up to the SUPPORTER cap + drops junk', capped.savedStartPoses.close.length === 3 && capped.savedStartPoses.far.length === 0);
+  const overflow = coerceSettings({
+    savedStartPoses: {
+      close: Array.from({ length: MAX_SAVED_STARTS_SUPPORTER + 3 }, (_, i) => ({ x: i, y: 0, headingDeg: 0 })),
+      far: [],
+    },
+  });
+  check('coerceSettings still caps runaway saved starts at the supporter ceiling', overflow.savedStartPoses.close.length === MAX_SAVED_STARTS_SUPPORTER);
+  check('savedStartCap: free players get MAX_SAVED_STARTS, supporters get more', savedStartCap(false) === MAX_SAVED_STARTS && savedStartCap(true) === MAX_SAVED_STARTS_SUPPORTER);
+  // the supporter chassis colour is an ALLOWLIST — a spoofed spec cannot inject
+  // an arbitrary CSS colour into the renderer, and an unknown key falls back
+  check('chassisColor: coerceSpec accepts only allowlisted keys', coerceSpec({ chassisColor: 'plum' }).chassisColor === 'plum' && coerceSpec({ chassisColor: 'url(javascript:x)' }).chassisColor === undefined);
+  check('chassisFill: an unknown/absent key renders the default fill', chassisFill(undefined) === CHASSIS_COLORS.default && chassisFill('nope') === CHASSIS_COLORS.default);
 
   // PER-GAME loadouts: switching games swaps robot + saved robots + start positions; nothing bleeds
   {

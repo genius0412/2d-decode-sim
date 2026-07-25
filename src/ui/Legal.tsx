@@ -1,5 +1,5 @@
 import { Markdown } from './markdown';
-import { PRIVACY_MD, TERMS_MD, LEGAL_UPDATED } from '../legalText';
+import { PRIVACY_MD, TERMS_MD, LEGAL_UPDATED, LEGAL_IDENTIFIED, LEGAL_CONTACT } from '../legalText';
 import { APP_NAME } from '../seasons';
 
 /**
@@ -46,10 +46,25 @@ export function Privacy() {
 
 export function Terms() {
   return (
-    <LegalPage
-      title="Terms of Use"
-      sub="The rules for using the sim, the servers, and supporter memberships."
-      body={TERMS_MD}
-    />
+    <>
+      {/* A contract that names no party and no governing law is not finished, and
+          the failure mode is silent — it renders as a perfectly normal-looking
+          page with two bracketed placeholders that everyone's eye slides past.
+          This makes it impossible to miss, and it is deliberately visible to
+          EVERY visitor rather than dev-only: if it ships unfilled, the person who
+          most needs to see it is whoever is about to pay. */}
+      {!LEGAL_IDENTIFIED && (
+        <p className="legal-warn" role="alert">
+          These terms are incomplete: the operator and governing law have not been
+          filled in yet. Please don't rely on them, and email {LEGAL_CONTACT} with any
+          question about your account or a payment.
+        </p>
+      )}
+      <LegalPage
+        title="Terms of Use"
+        sub="The rules for using the sim, the servers, and supporter memberships."
+        body={TERMS_MD}
+      />
+    </>
   );
 }

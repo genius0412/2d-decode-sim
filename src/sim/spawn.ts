@@ -175,6 +175,11 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   out.chainIntake = (CHAIN_INTAKE_STYLES as readonly string[]).includes(sp.chainIntake as string)
     ? (sp.chainIntake as RobotSpec['chainIntake'])
     : (base.chainIntake ?? CHAIN_DEFAULT_INTAKE);
+  // SUPPORTER COSMETIC: an allowlisted key, never a free colour string, so a
+  // spoofed spec can only ever select one of the vetted fills (or the default).
+  out.chassisColor = (C.CHASSIS_COLOR_KEYS as readonly string[]).includes(sp.chassisColor as string)
+    ? (sp.chassisColor as string)
+    : base.chassisColor;
   out.shooterRear = typeof sp.shooterRear === 'boolean' ? sp.shooterRear : (base.shooterRear ?? false);
   out.intakeSide = typeof sp.intakeSide === 'boolean' ? sp.intakeSide : (base.intakeSide ?? false);
   // Chain Reaction ball storage — clamped to the archetype+size max (chainStorageMax). NOTE: the

@@ -42,7 +42,7 @@ export function drawChainRobot(
   ctx.rotate(r.heading);
 
   // chassis
-  ctx.fillStyle = '#1f242c';
+  ctx.fillStyle = C.chassisFill(r.spec.chassisColor);
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, 1.6);
