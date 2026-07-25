@@ -1,4 +1,67 @@
-# HANDOFF — 2026-07-25 (Chain Reaction: shooter + intake MOUNTS on every edge) — READ FIRST
+# HANDOFF — 2026-07-25b (CR presets showcase the mounts · mounts are chain-only · assists ride the robot) — READ FIRST
+
+Branch **alpha** (worktree `../2d-decode-sim-alpha` — see the isolation note below). Follows the
+mount work in the section below, which is still accurate. 554 smoke checks, build, contrast 167,
+server:check all green; verified live in the browser.
+
+## 1. CHAIN_PRESETS now demonstrate the mount space
+
+Each card picks the mounts its playstyle actually wants — the mount is never decoration:
+
+| preset | archetype | intake | shooter | why |
+|---|---|---|---|---|
+| Sniper | turret | FRONT+BACK | (n/a) | a top-mounted turret aims itself, so the chassis never has to face the goal and can collect driving either way |
+| Hauler | dumper | front | BACK | fill forward, reverse into range, unload — one straight line, and two opposite END mounts cost no storage |
+| Drummer | drum | SIDES | front | turns a mecanum's strafe into the collection tool |
+| Skimmer | dumper (x-drive) | front | RIGHT | run the wall and fire broadside without turning; the launch line spans the chassis LENGTH |
+
+**Gotcha when retuning these:** a mount's storage multiplier LOWERS `chainStorageMax`, so a
+preset whose `ballStorage` exceeds its mount-adjusted cap gets silently clamped and the card
+stops highlighting as selected. Smoke asserts both the stability and that the set keeps covering
+the mount options.
+
+## 2. MOUNTS ARE CHAIN-ONLY (a real leak, now closed)
+
+The intake mount moves `footprintExtents`, which is SHARED — so a CR side sweeper reaching
+DECODE widened its flanks *and deleted its front intake reach* (measured: half 8.25→11.25,
+front 10.25→7.25). `switchGame` already keeps a per-game spec so the normal UI path was safe,
+but a spec can still arrive from a hand-edited store, a pre-loadouts save, or a client whose
+build doesn't match the room's game. `coerceSpec` now forces the mounts to `front` when `game`
+is **explicitly** non-chain — and deliberately NOT when it is `undefined`, because several call
+paths omit it and treating unspecified as DECODE would silently wipe a real CR build.
+
+## 3. DRIVER ASSISTS ARE SAVED ON THE ROBOT — both games, all ON by default
+
+`RobotSpec.assists` is now where the preference lives, so it travels with saved robot slots,
+presets, the per-game loadout `switchGame` swaps, and account sync. **`assistsByDrivetrain` is
+gone** (assists used to be remembered per drivetrain, with swerve alone defaulting field-centric).
+
+- **`PLAYER_ASSISTS`** (sim/spawn.ts) = all four ON, including **field-centric** — that is a
+  deliberate default change; previously only swerve was field-centric.
+- **`DEFAULT_ASSISTS` is unchanged** and still auto-OFF: it is the neutral sim/wire fallback for
+  replay, dummies, and smoke. Do not conflate the two.
+- `GameSettings.assists` stays as the ACTIVE mirror of `spec.assists`, so every downstream reader
+  (spawn, lobby, matchmaking, record runs) and **the wire are untouched — not a protocol change**.
+- MIGRATION: an old save with a flat `assists` and no `spec.assists` adopts it onto the robot,
+  so an existing player's choice survives instead of being reset to all-ON.
+
+**Also fixed: CR's aim-assist toggle was INERT.** `aimAssist` was spawned onto the CR robot state
+and never read. It now gates the turretless steering — OFF means the fire button no longer
+hijacks the heading and the driver lines the shot up by hand (the fire gate still needs the
+mounted edge within `CHAIN_AIM_TOL`). A CR **turret** still always tracks: there is no manual
+turret control to fall back on, so gating it would leave that archetype unable to aim at all.
+The menu blurb is game-aware to match.
+
+## Worktree isolation (process note)
+
+Multiple agents share this repo. `alpha` is checked out in its own worktree at
+`../2d-decode-sim-alpha` (with its own `node_modules`); the shared `2d-decode-sim` directory was
+left on a **detached HEAD** holding no branch, so it blocks nobody. Do not `git checkout` a
+branch in the shared directory — add a worktree instead.
+
+---
+
+# HANDOFF — 2026-07-25 (Chain Reaction: shooter + intake MOUNTS on every edge)
 
 ## This session — CR mechanism placement went from two booleans to two full edge selectors
 
