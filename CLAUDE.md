@@ -1,22 +1,42 @@
-# CLAUDE.md — DECODE 2D Simulator
+# CLAUDE.md — DSIM, a 2D FTC driver-practice simulator
 
-2D top-down driver-practice sim for the FTC 2025-26 game **DECODE presented by RTX**.
-Vite + React + TypeScript, Canvas 2D, zero runtime deps beyond React. Deploys to
-Vercel zero-config; Electron wrapper for a desktop build.
+2D top-down driver-practice sim hosting **more than one game**:
+
+| id | game | status |
+|----|------|--------|
+| `decode` | **DECODE presented by RTX** (FTC 2025–26) | full match, scored, ranked |
+| `chain` | **Chain Reaction** (2026 Unofficial-FTC CAD competition) | full match, scored, ranked |
+
+Vite + React + TypeScript, Canvas 2D. The CLIENT bundle is React + **Rapier 2D**
+(`@dimforge/rapier2d-compat`, wasm) and nothing else; the rest of `dependencies`
+(`ws`, `tsx`, `pg`, `jose`, `@neondatabase/auth`) exists for the SERVER and auth — keep the
+client that lean. Deploys to Vercel zero-config; a Node/`ws` authoritative game server on
+Fly; Electron wrapper for the desktop build.
+
+**The app brand is DSIM; a game is a "season" (`src/seasons.ts`).** Keep them separate in
+UI copy — DECODE/Chain Reaction are what is currently loaded, not the product name.
+
+> Read this top-to-bottom once. The **Shared core** rules apply to BOTH games; each game
+> then has its own section. When you touch a game, check whether the thing you're editing
+> is shared (`src/sim/`, `src/config.ts`) or game-owned (`src/games/<id>/`) — that
+> distinction is the single most load-bearing fact in the repo.
 
 ## Session protocol
 
 **At the end of every working session, write/refresh `HANDOFF.md`** (repo root): current
-state (is the build green?), what was finished, exact next steps, and gotchas. Read it
-at session start if it exists — it may describe uncommitted mid-refactor state.
+state (is the build green?), what was finished, exact next steps, and gotchas. Read it at
+session start if it exists — it may describe uncommitted mid-refactor state. HANDOFF is a
+reverse-chronological log; prepend a new dated section and demote the old "READ FIRST".
 
 ## Commands
 
 - `npm run dev` — dev server (localhost:5173)
-- `npm test` — **headless sim verification** (`scripts/smoke.ts`, ~30 checks). Run this
-  after ANY change to `src/sim/` or `src/config.ts`. It is fast and catches almost everything.
+- `npm test` — **headless sim verification** (`scripts/smoke.ts`, 544 checks, BOTH games).
+  Run this after ANY change to `src/sim/`, `src/config.ts`, or `src/games/`. It is fast and
+  catches almost everything. **Add a check per behavior change.**
 - `npm run build` — tsc (strict) + vite build. Run before claiming work done.
-- `npm run contrast` — WCAG audit of the palette (`scripts/contrast.mjs`, 135 pairs, light +
+- `npm run server:check` — typecheck the server against the shared sim (`tsconfig.server.json`).
+- `npm run contrast` — WCAG audit of the palette (`scripts/contrast.mjs`, 167 pairs, light +
   dark, no deps). Run after ANY colour/token edit. Not wired into `npm test` on purpose: a red
   `npm test` must keep meaning "physics broke".
 - `npm run shiftaudit` — layout-shift audit (`scripts/shiftaudit.cjs`, Electron). Needs a
@@ -24,597 +44,740 @@ at session start if it exists — it may describe uncommitted mid-refactor state
   `on`/`primary` state classes on every interactive element across 10 routes + the live HUD,
   in BOTH themes, and asserts nothing outside that element's own subtree moves. Pressables must
   move via `transform`/`box-shadow`, never a border or margin that appears on hover.
-- `npm run electron` / `npm run dist` — desktop shell / Windows installer (`release/`)
+- `npm run server` / `server:start` — the authoritative game server locally.
+- `npm run electron` / `npm run dist` — desktop shell / installers (`release/`).
+  **Desktop builds MUST be built with `ELECTRON=1`** (relative asset base — see Gotchas).
 
-## Architecture (load-bearing rules)
+## Repo map
 
-- **`src/sim/` is a pure deterministic state machine.** No DOM, no clock, no
-  `Math.random`, no `Date`. It consumes per-tick `RobotCommand`s keyed by robot id and
-  a seeded mulberry32 PRNG stored in `world.rngState`. This is the seam for future
-  **2v2 multiplayer with real people** (a stated user goal): more robots = more
-  `RobotState`s + command sources replayed into `step()`.
-- **ROBOT collision is now Rapier 2D** (`@dimforge/rapier2d-compat`, Phase 2 slice 1):
-  `src/sim/physicsEngine.ts` `solveRobots()` rebuilds a fresh Rapier world each `step()`
-  (stateless → reconcile/determinism safe, no WASM leak), owns robot translation +
-  velocity (walls/goal-faces/classifier + mass-weighted robot-robot + velocity-kill),
-  and writes `pos/vel` back into the canonical `RobotState`. The bespoke square-up
-  torque + `rrContacts` stay in `physics.ts` `squareUpRobots`. `RAPIER.init()` is async
-  → `initPhysics()` is awaited in smoke, server, and `main.tsx` before any step.
-  **BALLS are still bespoke** (slice 2, deferred). Rapier is deterministic in-process
-  (all the server-authoritative model needs); the `dsin/dcos/datan2` discipline STAYS
-  until balls also move to Rapier. Key gotcha: the world is in INCHES → set
-  `integrationParameters.lengthUnit` (see `PHYS_*` constants + `HANDOFF.md`).
-- `src/config.ts` is the single source of truth for ALL geometry, physics, and scoring
-  constants. Tune there, not inline.
-- `src/render/` and `src/ui/` only read world state. `src/input/` only produces commands.
-- Fixed timestep 60 Hz (`SIM_DT` = 1/60, `MAX_STEPS_PER_FRAME` 5), rAF render loop in
-  `src/game.ts` (GameController).
-- HUD is React, polled at 10 Hz from `GameController.getHud()`.
+```
+src/
+  config.ts        SHARED constants: robot/drivetrain/motor balance + ALL DECODE geometry
+  types.ts         World / RobotState / RobotSpec / Artifact / BallState (shared shapes)
+  math.ts          rot/clamp/hyp + the deterministic trig wrappers (dsin/dcos/datan2)
+  game.ts          GameController: rAF loop, fixed-timestep stepping, predict+reconcile, HUD
+  settings.ts      GameSettings + coerceSettings (localStorage, field-by-field validation)
+  seasons.ts       app brand + the SEASON/GameId registry
+  sim/             SHARED deterministic core (see below) — DECODE's rules also live here
+  games/
+    types.ts       the GAME-ABSTRACTION seam (DOM-free): GameSimModule, StaticSpec, bounds
+    module.ts      GameModule = GameSimModule + canvas renderers + builder/HUD spec
+    index.ts       CLIENT registry (moduleFor/gameOf) — falls back to DECODE
+    sim.ts         SERVER-SAFE registry (simModuleFor/simGameOf) — no DOM imports
+    decode/        thin: points at src/sim + src/render (DECODE is NOT relocated)
+    chain/         Chain Reaction: config/spawn/step/play/state/beams/penalties/mounts/draw*
+  render/          DECODE canvas renderers + the shared camera/robot/wheel drawing
+  ui/              React menus, HUD, leaderboard, lobby (read-only over world state)
+  input/           keyboard/gamepad → RobotCommand (+ rebindable bindings.ts)
+  net/             protocol / transport / lobbyClient / serverSession / sanitize
+server/            Node + ws authoritative rooms, Neon Postgres repo, Glicko-2 ranked
+scripts/           smoke.ts (the real test suite), contrast.mjs, shiftaudit.cjs, fly-deploy.sh
+docs/              decode-reference.md (field sources), netcodeplan.md (roadmap), deploy.md
+```
+
+---
+
+# The game-abstraction seam
+
+`src/games/types.ts` defines it. Read that file before adding a game or moving code.
+
+- **`GameSimModule`** (DOM-free): `id`, `scored`, `startLegality`, `bounds`, `colliders`,
+  `createWorld`, `step`. This is all the authoritative server and headless smoke need.
+- **`GameModule`** (`module.ts`) = `GameSimModule` + `drawField`/`drawRobot`/`drawBalls`/
+  `drawOverlays` + `ui` (`showScoreHud`, `startEditor`, `intakes`). Client-only.
+- **Two registries on purpose**: `games/index.ts` (client, full) and `games/sim.ts`
+  (server-safe). The server importing the client registry would drag in canvas code.
+- Both resolvers **fall back to DECODE** for an absent/unknown/missing `game` — that is the
+  single back-compat rule (old worlds/snapshots/replays carry no `game` field).
+  **`'decode'` must always be registered.**
+- Modules emit **plain-number collider specs** (`StaticSpec`), never Rapier handles.
+  `physicsEngine.ts` owns RAPIER and turns specs into bodies. A game with a different field
+  size just works, because the shared Rapier solve + camera are parameterized on
+  `bounds`/`colliders`.
+- `World.game: GameId` tags a world; `GameSettings.game` is the player's current pick.
+  DB rows, leaderboards, records, and ranked periods are **keyed per game** already.
+
+**Rule of thumb when adding behavior:** if it would be true of any FTC-style game (drive
+feel, robot-robot shove, match phases, HUD chrome, netcode) it belongs in the shared core;
+if it names a game element (artifact, gate, particle, catalyst, beam) it belongs in
+`src/games/<id>/`.
+
+---
+
+# Shared core (both games)
+
+## Determinism — the non-negotiable
+
+- **`src/sim/` is a pure deterministic state machine.** No DOM, no clock, no `Math.random`,
+  no `Date`. It consumes per-tick `RobotCommand`s keyed by robot id and a seeded mulberry32
+  PRNG stored in `world.rngState`. The same rule binds `src/games/*/` sim code.
+- Fixed timestep 60 Hz (`SIM_DT` = 1/60, `MAX_STEPS_PER_FRAME` 5); rAF render loop in
+  `src/game.ts` (`GameController`). HUD is React, polled at 10 Hz from `getHud()`.
+- All game state must be **plain JSON** (`world.chain`, `world.penalties`, …) so snapshots,
+  reconcile, and replays hold.
+- `dsin`/`dcos`/`datan2` (`math.ts`) exist from the old cross-machine-lockstep era. Under
+  server authority they are no longer a *correctness* requirement, but **they stay in
+  `src/sim` until the Rapier ball port lands** — do not rip them out yet.
+
+## Physics
+
+- **ROBOT collision is Rapier 2D** (`@dimforge/rapier2d-compat`). `src/sim/physicsEngine.ts`
+  `solveRobots()` rebuilds a fresh Rapier world each `step()` (stateless → reconcile/
+  determinism safe, no WASM leak), owns robot translation + velocity (field colliders from
+  the active module + mass-weighted robot-robot + velocity-kill), and writes `pos`/`vel` back
+  into the canonical `RobotState`. The bespoke square-up torque + `rrContacts` stay in
+  `physics.ts`. `RAPIER.init()` is async → **`initPhysics()` must be awaited** in smoke, the
+  server, and `main.tsx` before any step.
+- **BALLS/PARTICLES are still bespoke** (Rapier slice 2, deferred). Key gotcha: the world is
+  in **INCHES** → set `integrationParameters.lengthUnit` (see `PHYS_*` constants).
+- Wall/structure contacts apply **TORQUE** (summed over touching corners) so a tilted robot
+  squares up flush. Torque is PRESSURE-SCALED (`CONTACT_PRESS_GAIN`); a fast angled hit also
+  injects spin (`CONTACT_IMPACT_SPIN`, scaled by torque×speed — it **must** scale with torque;
+  a sign()-only kick once caused a numerical-noise spin-up on dead-center contacts). Flat-face
+  alignment is capped at the REMAINING TILT (`flushErr` in `pushRobotAt`) so the heading never
+  steps past flush and buzzes.
+- `robotIntersectsRect` (SAT) exists because thin zones can be fully covered by a robot body
+  with no corner inside.
+
+## Robot spec, builder, and drive feel
+
+`RobotSpec` is shared by both games; some fields are game-specific and optional.
+
+Shared: `name`/`teamName`/`teamNumber`, `length`, `width`, `intake` (`IntakeStyle`), `massLb`
+(20–42), `drivetrain`, `driveRpm` (200–600), `flywheelInertia` (0–1), `canSort`.
+Chain-only (optional, defaulted in `coerceSpec`): `ballStorage`, `groundClearance`,
+`scoreMode`, `chainIntake`, `intakeMount`, `shooterMount` (+ two deprecated mirrors).
+
+- **`coerceSpec` (`src/sim/spawn.ts`) is the single sanitizing chokepoint** and is
+  IDEMPOTENT — run at settings load, server ingress (`net/sanitize.ts`), AND `createWorld`.
+  Its clamp order is deliberate and mirrors the builder's dependency graph:
+  intake+drivetrain → size, drivetrain → rpm, inertia → 0..1, drivetrain×inertia → mass.
+  Specs arrive from hand-editable localStorage AND untrusted clients — people have spoofed
+  oversized/NaN robots. **Every new spec field must be clamped/enum-checked here.**
+- The builder's slider envelopes come from the SAME limit functions (`massLimits`,
+  `rpmLimits`, `lengthLimits`, `widthLimits` in `drivetrain.ts`), so the UI can't offer an
+  illegal value the coercer would then rewrite.
+
+### Drivetrain feel — REAL-MOTOR model (`BALANCE_VERSION` 2)
+
+ALL drivetrain/motor knobs live in ONE documented `DRIVETRAIN & MOTOR BALANCE` block in
+`config.ts` (edit there; `npm test` prints the `driveSummary` table so a tweak's effect is
+visible). Grounded in real hardware: `SPEED_PER_RPM` is DERIVED from a **104 mm goBILDA
+wheel** free-speed geometry × `DRIVE_EFFICIENCY` 0.95 → **~89 in/s at 435 wheel-rpm**. The
+modeled motor is the **MATRIX / goBILDA 5000-series 12VDC** brushed motor (5800 rpm free,
+20.45 oz-in stall) — its LINEAR torque–speed curve IS the `motorStep` model.
+
+- **PEAK accel is TRACTION-limited (μ·g), NOT motor-limited** — stall torque could give
+  ~460 in/s² but the wheels slip first, so `BASE_DRIVE_ACCEL` 240 × accelMult lands each
+  drivetrain at its μ·g ceiling (tank μ≈0.9 → 348 … x-drive omni μ≈0.45 → 175).
+- **MOTORS follow a torque–speed curve** (`motorStep`, used for fwd/strafe/turn): full stall
+  accel off the line, falling ~linearly to `MOTOR_MIN_TORQUE_FRAC` at free speed
+  (`MOTOR_TORQUE_CURVE` 1.0 = physically real), so speed approaches the top asymptotically
+  (~0.5–0.8 s to 95%); braking pulls harder (`MOTOR_BRAKE_MULT`).
+- **Mecanum is realistically LOSSY** (per GM0 rollers): speed 0.87 / strafe 0.80 / accel 0.88 /
+  **push 0.65** — it loses straight-line speed AND gets shoved by tank. Realistic orders:
+  speed tank>swerve>mecanum>xdrive · push tank>swerve≫mecanum>xdrive · accel
+  tank>swerve>mecanum>xdrive (@435 rpm: speed 89/84/77/74 in/s; peak accel 348/312/211/175).
+- Four wheel-saturation models: mecanum/xdrive `|f|+|s|+|ω|`, tank `|f|+|ω|` (strafe DEAD —
+  left stick/W-S left side, right stick/Up-Down right side), swerve `hypot(f,s)+|ω|`.
+  `maxTurn = wheelSpeed / halfDiagonal`, capped at `TURN_MAX_SPEED`. The mecanum
+  wheel-saturation model is correct physics — keep it.
+- **SWERVE = FOUR INDEPENDENT modules** (`RobotState.moduleAngles[4]`, FL/FR/BL/BR): real
+  per-module inverse kinematics (target vel = translation + ω×r), WPILib-style module
+  optimization (a >90° change FLIPS the pod + REVERSES drive, `MODULE_SLEW_RATE` 7), and
+  forward kinematics of the pods for the achieved chassis motion. **Balancing weakness is
+  WOBBLE, not weight** (a heavy-swerve nerf was tried and reverted): each module's control
+  loop is imperfect (`SWERVE_WOBBLE_AMP`/`_FREQ`, INDEPENDENT phase per pod) → real path
+  drift + yaw wobble driving straight. X-drive renders as a proper X (omnis at ±45°).
+- **NICHES:** tank raw power/no-strafe · swerve strongest-but-imprecise · mecanum
+  light/instant/precise but weaker · x-drive deliberately-weak novelty.
+- **PUSHING POWER = effective Rapier shove mass** (`physicsEngine.ts` `setMass`):
+  `massLb · pushMult · rpmPush · (1−powerDraw)`, `rpmPush = clamp(REF_DRIVE_RPM/driveRpm,
+  0.6, 1.8)` — geared-for-speed ⇒ less torque. `driveParams.accel` uses REAL mass, so
+  inflating shove mass never touches linear accel.
+- **Per-drivetrain CLAMPS** live in `DRIVETRAIN_LIMITS`; the mass FLOOR is raised by flywheel
+  inertia (`INERTIA_MASS_FLOOR` 14) via `massLimits(dt, inertia)`.
+
+## Controls, settings, audio
+
+- **Controls are fully rebindable** (`src/input/bindings.ts`, `src/ui/ControlsSection.tsx`):
+  every keyboard action, gamepad buttons, AND the drive/turn stick assignment. Escape is
+  reserved (menu/cancel — never bindable). Conflict policy: a rebound key is STOLEN from its
+  old action (may show UNBOUND). Defaults: WASD drive, Q/E or ←/→ turn, Shift/K intake,
+  Space fire, C catalyst (CR), F flip-front, P park, Enter start, R restart.
+- "Flip front" reverses robot-centric drive so the shooter side leads — applied at INPUT level
+  in `GameController`, sim untouched; REVERSED chip in the HUD.
+- All `GameSettings` persist to `localStorage['decodesim.settings.v1']` via `src/settings.ts`
+  (validated field-by-field on load — corrupt/stale data falls back per field) and sync to
+  Postgres per account.
+- **Assists are menu-only** (field/robot-centric, aim assist, auto intake, auto fire) — NO
+  in-game toggle keybinds. Auto-fire/intake must respect match phases (no firing in
+  `pre`/`transition`).
+- Audio: real FIRST field sounds (`public/sounds`, from Team254/cheesy-arena) + an announcer
+  VOICE via speechSynthesis. Countdown digits must interrupt in-flight speech to stay on the
+  visual beat. Menu has Sounds ON/OFF (master) + Voice lines ON/OFF (falls back to beeps).
+  Shoot/intake/gate SFX are SYNTHESIZED (WebAudio, `sfx*` in `audio.ts`) and triggered by
+  edge-detection on world state in `GameController.handleActionAudio` — **the sim core stays
+  event-free for these**.
+
+## HUD / UX product rules
+
+- HUD mimics the FTC live scoring display: red|timer|blue bar at the BOTTOM.
+- **No popup toasts over the field** — events go to the muted left-edge log; zone status lives
+  in the top-right chips.
+- Visible MENU/RESET buttons on the game screen (don't rely on Esc/R knowledge); "MATCH
+  BEGINS IN" text lead-in before the 3-2-1 digits.
+- END GAME at 20 s left (`ENDGAME_START` / `CHAIN_ENDGAME_S`): warning cue + HUD label/tint.
+- Games opt into chrome via `GameModule.ui` (`showScoreHud`, `startEditor`, `intakes`).
+
+## Netcode (server-authoritative + client prediction)
+
+The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/netcodeplan.md`.
+
+- **`server/`** (Node + `ws`, run via `tsx`) imports the SHARED sim (no fork) and runs a
+  fixed-`SIM_DT` authoritative loop per room: ingest each client's latest `RobotCommand` by
+  robot id, `step(world, SIM_DT, inputs)`, broadcast a **delta snapshot every 2 ticks
+  (30 Hz)**. `server/room.ts` = lobby + match + host lifecycle + deterministic drop.
+  `SNAPSHOT_INTERVAL` was dropped from 60 Hz after profiling (the lag was NETWORK, not CPU;
+  halving snapshot bandwidth + `setNoDelay(true)` to kill Nagle was the fix).
+- **`src/net/protocol.ts`** — JSON `ClientMsg` (join/update/start/restart/input) and
+  `ServerMsg` (welcome/roster/matchStart/snapshot/drop), plus quantize helpers. The client
+  must PREDICT on `localizeCommand(cmd)` (exactly what the server decodes).
+- **`game.ts` `stepServer`** applies its OWN command locally + `sendInput`, buffering it; on a
+  snapshot it snaps `this.world` to the authoritative world and REPLAYS buffered inputs past
+  `serverTick` (`reconcile`). Only the local robot is predicted. **`session: null` ⇒ the solo
+  path is bit-identical.**
+- **SMOOTHING is Minecraft-style entity INTERPOLATION, not extrapolation** (`displayWorld`/
+  `snapBuf`/`renderTick`): the render clock runs a few ticks behind the newest snapshot and
+  REMOTE robots lerp between the two bracketing snapshots. The LOCAL robot stays predicted
+  with a decaying `localSmooth` error offset (cosmetic only — never touches `this.world`).
+  **BALLS are NOT interpolated** — they spawn/despawn and collide, and lerping ghost-cloned
+  fresh balls and blended colliding balls through each other.
+- **DELTA SNAPSHOTS**: `slimWorld`/`unslimWorld` strip static robot `spec` (client re-injects
+  from setups) + delta the balls (send the id ORDER every frame — determinism — but only
+  CHANGED ball data); reconnect re-primes with a keyframe.
+- **CONNECTION-QUALITY HUD**: `ping`/`pong` probe → smoothed RTT; snapshot arrival rate +
+  inter-arrival JITTER measured client-side → SMOOTH/OK/CHOPPY dot. **Jitter is the real
+  choppiness signal** — surface it when diagnosing lag reports.
+- **RECONNECTION**: the server holds a dropped slot `RECONNECT_GRACE_MS` (`detach`/`reattach`/
+  `checkGrace`), the transport auto-reconnects, the session re-sends `rejoin`.
+- **DEPLOY**: Fly app `dohun-sim-decode`, `Dockerfile` + `fly.toml` + `docs/deploy.md`,
+  `GET /health`; `ws` + `tsx` are runtime `dependencies`. Protocol: commit → **`./scripts/
+  fly-deploy.sh`** → verify `/health` → Vercel auto-deploys clients.
+  **NEVER deploy with a bare `flyctl deploy`** — fly.toml expresses only ONE `[[vm]]` size, so
+  a bare deploy re-applies `shared-cpu-4x` to EVERY machine and silently upsizes the cheap
+  satellites. The wrapper re-shrinks them; verify with `fly machine list -a dohun-sim-decode`.
+- **The one Fly app serves EVERY client version** (alpha/beta/main bake the same
+  `VITE_GAME_SERVER_URL`), so protocol changes MUST stay backward-compatible. New clients
+  advertise `caps` (`CLIENT_CAPS`) on `join`/`queue` and the server feature-gates on them.
+  With that discipline you don't have to sync branches before deploying the server.
+  **A new `RobotSpec` field is NOT a protocol change** — but an older server's `coerceSpec`
+  will drop it, so mirror it onto an older field when one exists (see CR mounts).
+
+## Accounts / ranked / leaderboards / records
+
+Neon Postgres via `server/db/` (`repo.ts` + `migrations/`), written at match end OFF the hot
+path. **Ranked is Glicko-2** (`server/ranked.ts`: rating + RD + volatility, `SCALE 173.7178`,
+`CENTER 1500`, provisional RD shown with "?"), decided AFTER the score SETTLES
+(`MATCH_SETTLE_S` — late-draining balls finish scoring before finalize); an opponent who
+LEAVES mid-match is retained (`departed`) so the match still rates. **SOLO RECORD RUNS**
+(score-attack): results show NET score (earned − own penalties), no opponent/winner, and
+PB / WR / global rank per **mode × drivetrain × season**. Boards, records, and Act→Season
+periods are **keyed per game**, so DECODE and CR never share a leaderboard.
+**ADMIN MENU** (`src/ui/Admin.tsx`, `/admin`) gated on the signed-in UUID (`ADMIN_USER_IDS`;
+the server enforces every action independently). **VERSION GATE**: a new build is detected
+(`__BUILD_ID__` → `/version.json` poll) and forces a refresh when a player STARTS a run
+(never mid-run) — no "play anyway", everyone must be on the same version for multiplayer.
+
+---
+
+# GAME: DECODE (`decode`)
+
+DECODE's rules live in **`src/sim/`** and **`src/config.ts`** (they predate the seam and were
+deliberately NOT relocated); `src/games/decode/` is a thin module that points at them.
+`src/config.ts` is the single source of truth for ALL DECODE geometry, physics, and scoring
+constants. Tune there, not inline.
 
 ## Field geometry — verified, do not "fix" from intuition
 
-Geometry was measured from the official Competition Manual Section 9 figures (extracted
-the embedded images from the PDF and pixel-measured them). See `docs/decode-reference.md`
-for the full map and sources. Key facts people get wrong:
+Measured from the official Competition Manual Section 9 figures (extracted the embedded
+images from the PDF and pixel-measured them). See `docs/decode-reference.md`. Facts people
+get wrong:
 
 - World frame: origin center, +x = audience's right, +y away from audience. Inches.
 - **Goals are cross-court**: BLUE goal far-LEFT corner (tag 20), RED far-RIGHT (tag 24).
-  Red alliance wall = left (x=-72), blue wall = right (x=+72).
-- Driver view rotation: `viewAngleOf()` in `src/sim/field.ts` — blue looks from the
-  right wall (-π/2), red from the left (+π/2). Camera AND driver-frame input both use it.
+  Red alliance wall = left (x=−72), blue wall = right (x=+72).
+- Driver view rotation: `viewAngleOf()` in `src/sim/field.ts` — blue looks from the right wall
+  (−π/2), red from the left (+π/2). Camera AND driver-frame input both use it.
 - Launch zones are **shared** (not per alliance): big triangle `y >= |x|` (apex at field
   center) + small audience triangle. Any robot part inside ⇒ may launch.
-- Each goal's classifier channel runs down the adjacent side wall to a gate near
-  mid-wall (y≈0); released/overflow balls roll out beneath it toward the audience.
+- Each goal's classifier channel runs down the adjacent side wall to a gate near mid-wall
+  (y≈0); released/overflow balls roll out beneath it toward the audience.
 - **GOAL FOOTPRINT is a right triangle in the corner, NOT a symmetric 45° face**
-  (corrected July 2026, `smoke.ts` asserts it): legs flush along the walls —
-  `GOAL_FACE_WIDTH` 26.5" along the far wall, `GOAL_DEPTH` 18.3" down the side wall,
-  right angle at the field corner. The FACE robots shoot at is the hypotenuse
-  (`GOAL_FACE_LEN` ~32.2", ~34.6° off the far wall). `goalTriangle`/`goalFacePoints`/
-  `goalFaceNormal` (unit normal into the field) / `goalCenter` (opening centroid).
-  **`goalLineValue` now returns TRUE perpendicular inches** from the face (>0 behind,
-  inside the footprint; <0 field side) — do NOT divide by SQRT2 anywhere (the old
-  45°-face scaling was removed at every call site).
-- **START POSITIONS are configurable + rulebook-constrained (G304).** A robot may
-  start on any pose satisfying **G304** (verified from Section 11): (A) footprint
-  OVER a white LAUNCH LINE, (B) TOUCHING the GOAL or the FIELD perimeter, (C) fully
-  within its own half (blue x≤0 / red x≥0) — PLUS the collision box may only rest
-  AGAINST a solid, never penetrate it (goal wedge / classifier channel). All in
-  `src/sim/field.ts`: `evalStartPose(spec,pose,a)→StartLegality` (footprint =
-  chassis+intake via `footprintExtents`/`footprintCorners`, SAT tests), `snapStartToLegal`
-  (nearest legal along the goal-face + audience loci), `mirrorStartPose` (canonical
-  goalSide=+1 ↔ actual, self-inverse), `startPose(a,index,custom?,spec?)`. Tolerances
-  `START_TOUCH_TOL`/`START_PEN_SLOP` in config. `START_POSES` (3 named quick-picks:
-  GOAL·FAR / AUDIENCE / GOAL·GATE) are **semantic ANCHORS resolved DYNAMICALLY per
-  chassis** via `presetPose(index,a,spec)` (= snap the anchor legal for THAT robot),
-  so a preset is legal at ANY size — not a fixed coordinate. **Anchor index 0 & 1
-  MUST stay far apart** (a 2-robot alliance spawns slots at 0/1 — smoke-checked). Custom poses ride
-  `RobotSetup.startPose`/`GameSettings.startPose`/`LobbyPlayer.startPose` (canonical,
-  overrides `startIndex`), sanitized by `coerceStartPose` + snapped legal at the spawn
-  chokepoint `coerceSetup`. UI `src/ui/StartPositionEditor.tsx`: a CANVAS reusing the
-  real `drawField`/`drawRobot` renderers + drag/rotate + X/Y/heading inputs; snapping
-  is an OPT-IN toggle (default OFF) and an illegal pose is previewed red but NEVER
-  saved (reverts to the last legal on release). Wired into MatchSetup / Lobby /
-  MatchStrategy. `caps:'startpose'` advertised for future server-gating.
-  **START POSITIONS split CLOSE vs FAR** (by distance to goal; presets carry `cat` in
-  config): a per-player SAVED library (`GameSettings.savedStartPoses{close,far}`, ≤
-  `MAX_SAVED_STARTS` each) + `startMemory` (last pick per category, restored on tab
-  switch) + `startCat`. Pure patch-helpers in `src/ui/startPositions.ts`
-  (`categoryPresets/switchCategory/selectStart/saveStart/deleteSavedStart/samePose`).
-  `startIndex`/`startPose` stay the ACTIVE start (spawn+wire); the library/memory are
-  LOCAL settings (persist + account-sync, no protocol change). In a 2v2 the robot's
-  role LOCKS the category (1st on the alliance by clientId = CLOSE, 2nd = FAR; derived
-  client-side in Lobby/MatchStrategy → `lockedCategory`). Editor gotcha: a preset pick
-  must be ONE settings patch (`selectStart`), never two `set()` calls (stale-closure
-  overwrite drops one). **ROLE is SWAPPABLE by mutual consent** (`src/ui/useRoleSwap.ts`
-  + `RoleSwapBar.tsx`): `LobbyPlayer.startRole?`/`swapReq?` (protocol + sanitize passthrough
-  — needs a server redeploy) drive a two-flag handshake (propose→accept; when both set
-  each client flips ITS OWN role to the opposite, race-free; `enacted` ref guards the
-  broadcast window). The enact also resets the active start to the new category default.
-  Decline is LOCAL-only (a partner can't clear your flag).
-- Spike marks: horizontal 10" tape at x=±48.5 — that is ONE tile (~23.5") from the
-  side wall (re-verified July 2026; an old "two tiles" comment was wrong, the value
-  right), rows y = -35.5 / -12.8 / +11.1, 3 balls per row (GPP / PGP / PPG near→far).
-  BASE zone 18×18, corners at (d·24,−48) & (d·42,−30), `BASE_CENTER` (d·33,−39) where
-  d = driverSide (blue +x, red −x). Loading zones = audience corners, 23×23.
-- GATE ZONE: the real marking is TWO thin alliance-colored tape LINES, 10" long,
-  2.75" apart (`GATE_TAPE_W`), **starting at the classifier edge (x=±66) and running
-  into the field** (`gateTapeSegments` → `[[Vec2,Vec2],[Vec2,Vec2]]` line pairs,
-  drawn). The larger 10×5 `gateZone()` INTERACTION rect works the gate and is
+  (`smoke.ts` asserts it): legs flush along the walls — `GOAL_FACE_WIDTH` 26.5" along the far
+  wall, `GOAL_DEPTH` 18.3" down the side wall, right angle at the field corner. The FACE
+  robots shoot at is the hypotenuse (`GOAL_FACE_LEN` ~32.2", ~34.6° off the far wall).
+  `goalTriangle`/`goalFacePoints`/`goalFaceNormal` (unit normal into the field)/`goalCenter`.
+  **`goalLineValue` returns TRUE perpendicular inches** from the face (>0 behind, inside the
+  footprint; <0 field side) — do NOT divide by SQRT2 anywhere.
+- Spike marks: horizontal 10" tape at x=±48.5 — ONE tile (~23.5") from the side wall; rows
+  y = −35.5 / −12.8 / +11.1, 3 balls per row (GPP / PGP / PPG near→far). BASE zone 18×18,
+  corners at (d·24,−48) & (d·42,−30), `BASE_CENTER` (d·33,−39), d = driverSide (blue +x,
+  red −x). Loading zones = audience corners, 23×23.
+- GATE ZONE: the real marking is TWO thin alliance-colored tape LINES, 10" long, 2.75" apart
+  (`GATE_TAPE_W`), starting at the classifier edge (x=±66) and running into the field
+  (`gateTapeSegments`). The larger 10×5 `gateZone()` INTERACTION rect works the gate and is
   intentionally undrawn (feel > strict tape).
-- DEPOT tape runs flush ALONG the goal face (the hypotenuse) from the far-wall corner
-  to the classifier edge (x=±66) — it does NOT run through the channel to the side
-  wall (`depotSegment` clips at the classifier). Band `DEPOT_DEPTH` 6" deep; band fill
-  is no longer drawn (white tape line drawn last so the goal outline can't overdraw it).
-- SECRET TUNNEL: `TUNNEL_W` 6.125" (its own constant, not CLASSIFIER_W), drawn with a
-  colored outline. `tunnelStrip(X)` is beneath X's goal but belongs to the OPPOSING
-  alliance (whose drive team is on that wall).
-- ALLIANCE (drive-team) AREAS are NO LONGER DRAWN (removed to enlarge the field); the
-  `allianceArea` helper stays (96×54 outside each wall, flush with the audience end)
-  for zone logic / the coming penalty engine. `VIEW_MARGIN` 14 (bigger field); the
-  camera reserves HUD bands (`HUD_TOP`/`HUD_BOTTOM` in camera.ts) so the score bar and
-  chips never cover the field.
-- The manual PDFs re-download from ftc-resources.firstinspires.org/ftc/game/manual-NN
-  via WebFetch (saves the binary); scratchpad extract.cjs (text) and
-  extract-imgs.cjs (figures) from this session extract them with Node stdlib.
+- DEPOT tape runs flush ALONG the goal face (the hypotenuse) from the far-wall corner to the
+  classifier edge — it does NOT run through the channel (`depotSegment` clips at the
+  classifier). Band `DEPOT_DEPTH` 6"; band fill is not drawn (white tape line drawn last).
+- SECRET TUNNEL: `TUNNEL_W` 6.125" (its own constant, not `CLASSIFIER_W`). `tunnelStrip(X)` is
+  beneath X's goal but belongs to the OPPOSING alliance (whose drive team is on that wall).
+- ALLIANCE (drive-team) AREAS are NOT DRAWN (removed to enlarge the field); the `allianceArea`
+  helper stays (96×54 outside each wall) for zone logic. `VIEW_MARGIN` 14; the camera reserves
+  HUD bands (`HUD_TOP`/`HUD_BOTTOM` in camera.ts) so chips never cover the field.
+
+## START POSITIONS — configurable + rulebook-constrained (G304)
+
+A robot may start on any pose satisfying **G304** (Section 11): (A) footprint OVER a white
+LAUNCH LINE, (B) TOUCHING the GOAL or the FIELD perimeter, (C) fully within its own half
+(blue x≤0 / red x≥0) — PLUS the collision box may only rest AGAINST a solid, never penetrate
+it. All in `src/sim/field.ts`: `evalStartPose(spec,pose,a)→StartLegality` (footprint =
+chassis+intake via `footprintExtents`/`footprintCorners`, SAT tests), `snapStartToLegal`,
+`mirrorStartPose` (canonical goalSide=+1 ↔ actual, self-inverse), `startPose(a,index,custom?,
+spec?)`. Tolerances `START_TOUCH_TOL`/`START_PEN_SLOP`.
+
+`START_POSES` (GOAL·FAR / AUDIENCE / GOAL·GATE) are **semantic ANCHORS resolved DYNAMICALLY
+per chassis** via `presetPose(index,a,spec)` — a preset is legal at ANY size, not a fixed
+coordinate. **Anchor index 0 & 1 MUST stay far apart** (a 2-robot alliance spawns slots 0/1 —
+smoke-checked). Custom poses ride `RobotSetup.startPose`/`GameSettings.startPose`/
+`LobbyPlayer.startPose`, sanitized by `coerceStartPose` + snapped legal at `coerceSetup`.
+
+UI `src/ui/StartPositionEditor.tsx`: a CANVAS reusing the real `drawField`/`drawRobot`
+renderers + drag/rotate + X/Y/heading inputs; snapping is OPT-IN (default OFF) and an illegal
+pose is previewed red but NEVER saved. **Starts split CLOSE vs FAR** (by distance to goal):
+a per-player SAVED library (`savedStartPoses{close,far}`) + `startMemory` + `startCat`, with
+pure patch-helpers in `src/ui/startPositions.ts`. In a 2v2 the robot's role LOCKS the category
+(1st on the alliance by clientId = CLOSE, 2nd = FAR). Editor gotcha: a preset pick must be ONE
+settings patch (`selectStart`), never two `set()` calls (stale-closure overwrite drops one).
+**ROLE is SWAPPABLE by mutual consent** (`useRoleSwap.ts` + `RoleSwapBar.tsx`): a two-flag
+handshake (propose→accept; when both set, each client flips ITS OWN role, race-free). Decline
+is LOCAL-only.
 
 ## Ball lifecycle (no teleporting — user is emphatic)
 
-flight → (crosses opening plane, either direction) → **basin** (jumbles inside goal
-wedge with real containment/collisions, funnels to the SQUARE when slow) → **rail**
-(1D flow down the classifier, gravity + contact stacking, position always continuous —
-hand-offs preserve position and blend onto the rail line) → gate exit → ground.
-Overflow rides OVER the stack at `OVERFLOW_Z` and always exits.
-**Classified-vs-overflow is decided at CONTACT, not at hand-off** (user was explicit):
-a ball boards the rail as `pending`, and only when it first meets the column (or gate
-floor) does it commit — 9 retained below it at that instant ⇒ overflow (1 pt), else
-classified (3 pts). Scoring happens at that decision moment, so a gate tap that drains
-in time SAVES an incoming ball. A pending ball that flows out an open gate untouched
-classifies at exit.
-Gate physics (manual 9.8.3, `updateGates` in goal.ts): the gate is a PHYSICAL class-1
-LEVER, not a boolean. A continuous `GoalState.gatePos` (0 closed .. 1 fully lifted) +
-`gateVel` + `gateLatch` model it. **Geometry (Figure 9-15):** the lever HINGES at the
-CLASSIFIER EDGE where the gate-zone tape starts (|x| = `FIELD_HALF − CLASSIFIER_W`) — a
-SHORT handle (`GATE_ARM_SHORT`) pokes OUT into the gate zone (what a robot pushes) and a
-LONG paddle (`GATE_ARM_LONG` = `CLASSIFIER_W`) lies ACROSS the channel to the WALL edge,
-COVERING the artifacts. **Opening is ONE-DIRECTIONAL** (`pushingGate`): only a STRAIGHT
-push toward the wall opens it — `velToward = r.vel.x·goalSide` (or the drive-command
-component); driving SIDEWAYS along the wall does NOT open it. Merely LOITERING doesn't
-open it either. **A tap LATCHES it open** (`gateLatch = GATE_OPEN_LATCH_S`) so the driver
-does NOT keep pressing; **resting against an already-OPEN gate re-arms the latch** (touch-
-hold) so it stays open without re-pushing. When released/untouched the latch decays and it
-is **"closed by gravity"** — SWINGS shut (`GATE_GRAVITY`/`GATE_CLOSE_MAX`, non-instant).
-**Flow holds an OPEN gate open** — a ball in the gateway suspends gravity (drains the whole
-column) but does NOT LIFT it: a ball reaching an ALMOST-CLOSED gate (below `GATE_PASS_FRAC`)
-can't reopen it — only a robot push can. `gateOpen` (an artifact can pass) is DERIVED =
-`gatePos >= GATE_PASS_FRAC`. **The handle is a PHYSICAL one-way door** — a robot-only
-Rapier collider (`buildGateArms` in physicsEngine.ts, robot solve only) spanning the SHORT
-arm's foreshortened reach, so a robot can't strafe/drive THROUGH the closed lever; a
-straight push lifts `gatePos` and RETRACTS the collider so the opening robot glides in
-(not shoved), and touch-hold means it never swings closed against a resting robot (light
-arm). **The lift is RAM-SPEED-SCALED and the collider retract is ANTICIPATED (no jolt):**
-`gateLiftRate(ramSpeed) = GATE_OPEN_RATE + GATE_OPEN_RATE_SPEED·ramSpeed` (cap
-`GATE_OPEN_RATE_MAX`) — harder ram ⇒ opens faster (~fully in one tick at a hard ram),
-`GATE_OPEN_HOLD` is now 0. `buildGateArms` runs one step BEFORE `updateGates`, so it would
-otherwise build the handle from last tick's still-closed `gatePos` and hard-stop a robot
-that is, THIS tick, ramming it open (the old "1-tick jolt"). `gateColliderPos(world,dt,
-cmds,a)` in goal.ts anticipates the exact lift `updateGates` is about to apply and world.ts
-passes it (`Record<Alliance,number>`) into `solveRobots`→`buildGateArms`, so the handle
-retracts on the SAME tick the push lands (`gateRamSpeed` is the shared ram metric;
-`pushingGate = gateRamSpeed>0`). A non-pushing robot (strafe) still sees the raw closed
-stub. The LONG paddle needs no collider (over the already-solid classifier). `gateArmRect`
-(the push/foul contact rect, `GATE_ARM_REACH`/`GATE_ARM_Y0/Y1`) is kept TIGHT around the
-handle. Rendered (`drawGateArm`) top-down by FORESHORTENING each arm toward the pivot
-(`len·cos(gatePos·GATE_LIFT)`), the long paddle greening past the pass fraction. See
-`GATE_*` constants in config.ts.
+flight → (crosses opening plane, either direction) → **basin** (jumbles inside the goal wedge
+with real containment/collisions, funnels to the SQUARE when slow) → **rail** (1D flow down
+the classifier, gravity + contact stacking, position always continuous — hand-offs preserve
+position and blend onto the rail line) → gate exit → ground. Overflow rides OVER the stack at
+`OVERFLOW_Z` and always exits.
 
-## Product decisions the user insisted on (do not regress)
+**Classified-vs-overflow is decided at CONTACT, not at hand-off** (user was explicit): a ball
+boards the rail as `pending`, and only when it first meets the column (or gate floor) does it
+commit — 9 retained below it at that instant ⇒ overflow (1 pt), else classified (3 pts).
+Scoring happens at that decision moment, so a gate tap that drains in time SAVES an incoming
+ball. A pending ball that flows out an open gate untouched classifies at exit.
 
-1. **No flywheel spin-up before the FIRST shot** (the original product decision,
-   preserved): a robot's opening shot is always instant. BETWEEN shots the cadence
-   is the intake preset's hopper→shooter transfer interval
-   (`INTAKE_PRESETS[*].fireInterval`: 0.1 s, except triangle 0.3 s — slower transfer
-   is its stated tradeoff) PLUS a flywheel-recovery term (Phase B, in the approved
-   plan). Recovery scales with the previous shot's energy and the robot's
-   `flywheelInertia` (0–1 builder slider): `recovery = closeRecovery +
-   FLYWHEEL_RECOVERY_MAX · shotNorm² · (1−inertia)`, where `shotNorm` ramps in only
-   past `FLYWHEEL_CLOSE_SPEED` (the DISTANCE term). FAR shots are slowed for low-inertia
-   flywheels (high inertia ⇒ base cadence even at range). **CLOSE-range rapid fire now
-   carries a SMALL floor for near-zero inertia** (`closeRecovery = FLYWHEEL_CLOSE_RECOVERY
-   · max(0, 1 − inertia/FLYWHEEL_CLOSE_INERTIA_KNEE)`): +0.04 s cadence at inertia 0,
-   fading to 0 by inertia 0.2 — so a close-zone cycler wants a LITTLE inertia (~0.1–0.2)
-   rather than 0, without needing a heavy far-range wheel. (Previously close fire was
-   unchanged at any inertia; user revised this.) `r.fireReadyAt` gates the next shot in
-   `robot.ts`. The DEFAULT robot (inertia 0.5) keeps a snappy burst.
-   **POWER DRAW** (session 7; rebalanced session 11): a running intake plus the
-   flywheel pull current off the drive motors. The flywheel has TWO terms, both
-   ×`flywheelInertia`: a small steady HOLD (`POWER_DRAW_FLYWHEEL_HOLD·spin` — just
-   being far from the goal barely matters, by design) and the DOMINANT SPIN-UP
-   (`POWER_DRAW_FLYWHEEL_SPINUP·flywheelSpinRate` — the cost of ACCELERATING the
-   wheel while driving AWAY from the goal; spinning DOWN costs nothing). `flywheelSpin`
-   ramps 0→1 with distance to the robot's OWN goal (`FLY_SPIN_NEAR`→`FLY_SPIN_FAR`,
-   via `flywheelSpinTarget`) and `flywheelSpinRate` is its positive rate of change
-   (1/s); both set in `updateRobotActions`. `r.powerDraw = min(inertia·(HOLD·spin +
-   SPINUP·spinRate) + (intake?POWER_DRAW_INTAKE:0), POWER_DRAW_MAX 0.18)`. It scales a
-   LOCAL `driveParams` copy in `updateRobot` (speed/accel/turn ×(1−draw)) —
-   `driveParams()` itself is untouched so the 75/7/280 calibration holds — AND weakens
-   the shove (see #7). One-tick lag (fire runs after drive) is invisible + deterministic.
-   `flywheelSpin` seeds at the spawn-distance target so there's no phantom first-tick
-   spin-up.
-2. **The shooter NEVER misses**: no dispersion; `solveShot` uses the MINIMUM-SPEED
-   trajectory to the goal opening — the adaptive hood angle sweeps ~89° (near-vertical
-   lob at point-blank) down to ~45° far out, so an exact, finite solution exists at
-   EVERY distance incl. point-blank and the required launch speed is a SMOOTH function
-   of distance (`v²=g·(dh+√(d²+dh²))` — the old fixed-hood 55°→80° solve had no solution
-   inside ~5in and spiked 96→316 in/s across d=4..6). Turret is always exactly on the
-   lead-compensated solution (no slew limit); opening accepts ascending entries.
-   No aim ray / no dashed goal-tracking line drawn.
-3. **Assists are menu-only**: field/robot-centric, aim assist, auto intake, auto fire
-   are configured in the main menu — NO in-game toggle keybinds.
-4. Auto-fire/intake must respect match phases (no firing during `pre`/`transition`).
-5. **No popup toasts over the field** (they found them distracting) — events go to the
-   muted left-edge log; zone status lives in the top-right chips.
-6. HUD mimics the FTC live scoring display: red|timer|blue bar at the BOTTOM.
-   Breakdown chips show artifact COUNTS, not points. PATTERN shows only BANKED
-   points (assessed end-of-AUTO and end-of-match — never a live matched count).
-7. **Drivetrain feel — REAL-MOTOR model (retuned 2026-07, `BALANCE_VERSION` 2).**
-   ALL drivetrain/motor knobs live in ONE documented `DRIVETRAIN & MOTOR BALANCE`
-   block in `config.ts` (edit there; `npm test` prints the `driveSummary` table so a
-   tweak's effect is visible). Grounded in real hardware: `SPEED_PER_RPM` is DERIVED
-   from a **104 mm goBILDA wheel** (`WHEEL_DIAMETER_MM`) free-speed geometry ×
-   `DRIVE_EFFICIENCY` 0.95 (gearbox/bearing loss) → **~89 in/s at 435 wheel-rpm (7.4
-   ft/s)**. The modeled motor is the **MATRIX / goBILDA 5000-series 12VDC** brushed
-   motor (5800 rpm free, 20.45 oz-in stall) — its LINEAR torque–speed curve IS the
-   motorStep model. **PEAK accel is TRACTION-limited (μ·g), NOT motor-limited** — the
-   stall torque could give ~460 in/s² but the wheels slip first, so `BASE_DRIVE_ACCEL`
-   240 × accelMult lands each drivetrain at its μ·g ceiling (tank μ≈0.9 → 348 …
-   x-drive omni μ≈0.45 → 175). Each `DRIVETRAIN_PRESETS` entry applies REAL efficiency
-   factors on the ideal-traction datum. **MOTORS follow a
-   torque–speed curve** (`motorStep` in drivetrain.ts, used by robot.ts for fwd/strafe/turn): full stall
-   accel off the line, falling ~linearly to `MOTOR_MIN_TORQUE_FRAC` at the free speed
-   (`MOTOR_TORQUE_CURVE` 1.0 = physically real, 0 = old constant accel), so speed
-   approaches the top asymptotically (~0.5–0.8 s to 95%); braking pulls harder
-   (`MOTOR_BRAKE_MULT`). **Mecanum is now realistically LOSSY** (per GM0 rollers): speed
-   0.87 / strafe 0.80 / accel 0.88 / **push 0.65** — it loses straight-line speed AND
-   gets shoved by tank (no longer the pushMult=1.0 anchor). Realistic orders: speed
-   tank>swerve>mecanum>xdrive · push tank>swerve≫mecanum>xdrive · accel
-   tank>swerve>mecanum>xdrive (@435rpm: speed tank 89 / swerve 84 / mecanum 77 / xdrive
-   74 in/s; peak accel tank 348 / swerve 312 / mecanum 211 / xdrive 175 in/s²). Mecanum
-   beats the X-drive compromise on forward. Four wheel-saturation models: mecanum/xdrive
-   `|f|+|s|+|ω|`, tank `|f|+|ω|` (strafe DEAD — traditional tank drive: left stick/W-S
-   left side, right stick/Up-Down right side), swerve `hypot(f,s)+|ω|`. `maxTurn =
-   wheelSpeed / halfDiagonal` (smaller/faster bots turn quicker, capped at
-   `TURN_MAX_SPEED`). mass↑→accel↓, rpm↑→(accel↓, topspeed↑). **SWERVE has STEERING PODS**
-   (`RobotState.moduleAngle`, robot frame): robot.ts steers them to the commanded direction
-   with WPILib-style MODULE OPTIMIZATION — target set immediately, and a >90° change FLIPS the
-   pod + REVERSES the drive (pod flip) so pods never rotate >90° and a 180° reversal is instant
-   (`MODULE_SLEW_RATE` 7). **Swerve = FOUR INDEPENDENT modules** (`RobotState.moduleAngles[4]`,
-   FL/FR/BL/BR): robot.ts does real per-module INVERSE kinematics (target vel = translation + ω×r),
-   per-module pod-flip + slew, and FORWARD kinematics of the pods for the achieved chassis motion.
-   **Balancing WEAKNESS is WOBBLE, not weight** (user decision — a heavy-swerve nerf was tried +
-   reverted): each module's control loop is imperfect (`SWERVE_WOBBLE_AMP`/`_FREQ`, INDEPENDENT
-   phase per pod), so the mispointed pods don't cancel → real path DRIFT + a net YAW wobble driving
-   straight (mecanum tracks perfectly). Rendered as 4 independently swiveling/wobbling pods
-   (`drawRobot` reads `moduleAngles[i]`; `RobotPreview` static-forward, on top of the chassis); X-DRIVE renders as a
-   proper X (omnis at ±45°). NICHES: tank raw power/no-strafe · swerve strongest-but-imprecise
-   (wobble + reorient lag) · mecanum light/instant/precise but weaker · x-drive deliberately-weak
-   novelty. **PUSHING POWER = effective Rapier shove mass**
-   (session 7) at `physicsEngine.ts` `setMass`: `massLb · pushMult · rpmPush · (1−powerDraw)`,
-   `rpmPush = clamp(REF_DRIVE_RPM/driveRpm, 0.6, 1.8)` — geared-for-speed ⇒ less torque.
-   So push scales with drivetrain (tank 1.7 … xdrive 0.45), mass↑, rpm↓, power-draw↓.
-   `driveParams.accel` uses REAL mass, so inflating the shove mass never touches linear
-   accel; the mass-weighted-shove smoke checks divide out the mults so they hold.
-   **Per-drivetrain CLAMPS** live in `DRIVETRAIN_LIMITS` ({min/maxMass, min/maxRpm}, replacing
-   the old `SWERVE_*` consts); the mass FLOOR is raised by flywheel inertia
-   (`INERTIA_MASS_FLOOR 14`, a heavier flywheel) via `massLimits(dt, inertia)` / `rpmLimits(dt)`
-   in `drivetrain.ts` — consumed by the Menu sliders (the inertia slider bumps mass to the new
-   floor; drivetrain-switch re-clamps) and `settings.ts` `coerceSettings` (reads inertia first).
-   The mecanum wheel-saturation model is correct physics — keep it. Wall/structure contacts apply
-   TORQUE (summed over touching corners) so a tilted robot squares up flush.
-   Contact torque is PRESSURE-SCALED (`CONTACT_PRESS_GAIN`): pushing into the wall
-   turns faster, and a fast angled hit also injects spin (`CONTACT_IMPACT_SPIN`,
-   scaled by torque×speed — MUST scale with torque, a sign()-only kick once caused
-   a numerical-noise spin-up on dead-center contacts). Flat-face alignment is
-   capped at the REMAINING TILT (flushErr in `pushRobotAt`) so the heading never
-   steps past flush and buzzes; ball-pin contacts pass `squareTo=false` and pivot
-   freely (capping them killed corner scatter). Classifier corner eviction must
-   never push a wheel TOWARD the field wall (wall-vs-structure fight = stuck robot).
-   Balls have "mass" feel: robot→ball contact is near-inelastic
-   (`BALL_ROBOT_RESTITUTION`), and a ball PINNED between chassis and wall transmits
-   the refused push back onto the robot (`pushRobotAt`) — the robot stalls on a
-   dead-center pinned ball while off-center balls squirt out sideways. The pin only
-   transmits when the ROBOT drives into it (`BALL_PIN_PUSH_MIN_SPEED`): balls
-   arriving under their own momentum (gate outflow into a parked robot) stop
-   against the chassis instead of shoving it.
-8. Audio: real FIRST field sounds (public/sounds, from Team254/cheesy-arena) + an
-   announcer VOICE via speechSynthesis ("Match begins in… 3, 2, 1", "Drivers, pick up
-   your controllers") — the user flip-flopped once and settled on KEEPING the voice.
-   Countdown digits must interrupt in-flight speech to stay on the visual beat. Menu
-   has Sounds ON/OFF (master) and Voice lines ON/OFF (falls back to beeps) toggles.
-   Shoot/intake/gate SFX are SYNTHESIZED (WebAudio, `sfx*` in audio.ts) and triggered
-   by edge-detection on world state in `GameController.handleActionAudio` — the sim
-   core stays event-free for these. If the user ever supplies real FTC Live audio
-   files, wire those in instead.
-9. Stray balls must never enter goal wedges or classifier channels (solid to balls),
-   and no collision may ever push a ball outside the field (final wall clamp pass).
-10. The intake is physical: the collision OBB extends forward by intake reach
-    (`robotExtents` in physics.ts) — it cannot clip walls/goals. THREE presets
-    (user-named — keep these names): **Sloped** (ramp, trapezoid mouth in the
-    frame, devours clumps), **Vector wheel** (VERTICAL compliant wheels drawn
-    as a row of small rects — never circles; chassis 11.5–14.5"; steady pace),
-    **Triangle** (named for its TRIANGULAR internal ball storage — hopper pips
-    draw in a triangle; longest reach, devours clumps, slower transfer).
-    Internal keys: sloped/vector/triangle ('compact'/'extended' in old saves
-    migrate in settings.ts). **CAPTURE MODEL (session-7 physical rewrite):** each
-    preset carries a `mouth` sub-object (`INTAKE_PRESETS[*].mouth`): `mouthHalf`
-    (opening at the tip), `wheelHalf` (compliant-wheel capture line), `wedge`/
-    `wedgeWidth`/`funnel`, `capMin`/`capMax`, `clumpInterval`, `dual`. A ball is
-    captured on the wheel line at the tip of reach (width `wheelHalf`); non-overhang
-    presets clamp the mouth inside the frame so a full-width chassis geometrically
-    forbids side intake (unchanged). **Timing depends on WHERE the ball enters:**
-    `single = capMin + (capMax−capMin)·(|localY|/wheelHalf)` — vector CENTER fast,
-    its vectoring SIDES slow. **Wedges FUNNEL** off-center balls toward the
-    centerline (sloped/triangle): a lateral VELOCITY nudge only (`approach(vLocal.y,
-    −sign·funnel, funnel)`), never a position write — it runs before the ball solve so
-    Rapier/`collideBallRobot` own penetration (no OBB fight, no explosion). **Triangle
-    takes TWO per cycle** from a clump (`dual`); hopper stays a flat color array. Flank
-    capture (`sideTouch`) still exists only where the vector's wheel span overhangs a
-    narrower chassis, comparing SPANS not penetration (the robot moves before the ball
-    pass each tick, so depth tests see phantom overlap). A clump of 2+ feeds at
-    `clumpInterval`. NOTE: `halfWidth`/`perBall`/`clumpPerBall` were REMOVED (grep before
-    reintroducing); top-level `reach`/`overhang`/`min/maxLength`/`fireInterval` stayed so
-    `robotExtents`/the Rapier collider/length clamps are unchanged.
-    Per-preset length ranges live in the preset (`minLength`/`maxLength`).
-    The chassis may be NARROWER than the intake (`ROBOT_MIN_WIDTH` 10 < vector's
-    17). BASE PARKING counts only the four WHEEL ground-contact points
-    (`wheelContacts`, inset `WHEEL_INSET` inside the chassis — wheels are inside
-    the frame, per high-level FTC builds): intake/turret overhang neither earns
-    nor spoils credit. The turret never protrudes: its offset scales with length
-    (`TURRET_OFFSET_FRAC`) and the drawn ring/barrel fit within the chassis.
-11. Gate: a TAP drains the column — the flow physically holds the gate open until a
-    gap appears at the gateway.
-12. Visible MENU/RESET buttons on the game screen (don't rely on Esc/R knowledge);
-    "MATCH BEGINS IN" text lead-in before the 3-2-1 digits.
-13. **Controls are fully rebindable in the menu** (`src/input/bindings.ts`,
-    `src/ui/ControlsSection.tsx`): every keyboard action, gamepad buttons, AND the
-    drive/turn stick assignment. Escape is reserved (menu/cancel — never bindable).
-    Conflict policy: a rebound key is STOLEN from its old action (may show UNBOUND).
-    "Flip front" (default F / pad Y) reverses robot-centric drive so the shooter side
-    leads — applied at input level in GameController, sim untouched; REVERSED chip in
-    the HUD. All GameSettings persist to `localStorage['decodesim.settings.v1']`
-    via `src/settings.ts` (validated field-by-field on load — corrupt/stale data
-    falls back per field).
-14. **Robot is fully specced + the field is multi-robot** (Phase B, "Road to
-    Multiplayer"). `RobotSpec` v2 carries name/team/number, `massLb` (20–42),
-    `drivetrain`, `driveRpm` (200–600), `flywheelInertia` (0–1), `canSort`, plus
-    the existing length/width/intake. The menu offers 5 named `ROBOT_PRESETS`
-    (cards) AND a custom builder (sliders/selects); editing flips to Custom.
-    `createWorld(mode, seed, setups: RobotSetup[])` — a `RobotSetup` is
-    `{id, alliance, spec, assists, startIndex}`, and ONLY filled slots spawn a
-    robot (the multiplayer seam: the sim already steps N robots from the command
-    map keyed by id). `START_POSES` = 3 named mirrored poses (GOAL SIDE / CENTER /
-    WALL SIDE); a 2-robot alliance splits the 6 preload balls (slot A `PRELOAD`,
-    slot B `HP_INITIAL_STOCK`) and starts that alliance's HP stock empty.
-    Robot-robot collisions are `collideRobots` (SAT, MASS-WEIGHTED split
-    `wa=mb/(ma+mb)`, restitution 0, contact torque on both — bumpers square up);
-    the `step()` solver runs 2 passes of {all id-ascending pairs → `constrainRobot`
-    all} so walls always win a squeeze, and records `world.rrContacts` per tick for
-    the coming penalty engine. `canSort` robots fire the hopper color matching the
-    next unfilled motif slot (else FIFO). Free-Drive has a "practice dummies"
-    toggle (3 idle default robots as obstacles). `game.ts` uses `localRobotId`
-    (not `robots[0]`); non-local robots get name/team labels + per-robot SFX.
+Stray balls must never enter goal wedges or classifier channels (solid to balls), and no
+collision may ever push a ball outside the field (final wall clamp pass). Balls have "mass"
+feel: robot→ball contact is near-inelastic (`BALL_ROBOT_RESTITUTION`), and a ball PINNED
+between chassis and wall transmits the refused push back onto the robot (`pushRobotAt`) — the
+robot stalls on a dead-center pinned ball while off-center balls squirt out sideways. The pin
+only transmits when the ROBOT drives into it (`BALL_PIN_PUSH_MIN_SPEED`).
 
-## Gotchas
+## Gate physics (manual 9.8.3, `updateGates` in goal.ts)
+
+The gate is a PHYSICAL class-1 LEVER, not a boolean: continuous `GoalState.gatePos`
+(0 closed .. 1 lifted) + `gateVel` + `gateLatch`. **Geometry (Figure 9-15):** it HINGES at the
+classifier edge where the gate-zone tape starts (|x| = `FIELD_HALF − CLASSIFIER_W`) — a SHORT
+handle (`GATE_ARM_SHORT`) pokes OUT into the gate zone (what a robot pushes) and a LONG paddle
+(`GATE_ARM_LONG` = `CLASSIFIER_W`) lies ACROSS the channel, covering the artifacts.
+
+- **Opening is ONE-DIRECTIONAL** (`pushingGate`): only a STRAIGHT push toward the wall opens it
+  (`velToward = r.vel.x·goalSide`); driving SIDEWAYS along the wall does not, and loitering
+  does not.
+- **A tap LATCHES it open** (`GATE_OPEN_LATCH_S`) so the driver need not keep pressing; resting
+  against an already-OPEN gate RE-ARMS the latch (touch-hold). Released, the latch decays and
+  it is **closed by gravity** — it SWINGS shut (`GATE_GRAVITY`/`GATE_CLOSE_MAX`), never snaps.
+- **Flow holds an OPEN gate open** — a ball in the gateway suspends gravity (drains the whole
+  column) but does NOT LIFT it: a ball reaching an almost-closed gate (below `GATE_PASS_FRAC`)
+  can't reopen it, only a robot push can. `gateOpen` is DERIVED = `gatePos >= GATE_PASS_FRAC`.
+- **The handle is a PHYSICAL one-way door** — a robot-only Rapier collider (`buildGateArms`),
+  so a robot can't strafe THROUGH the closed lever; a straight push lifts `gatePos` and
+  RETRACTS the collider so the opening robot glides in.
+- **The lift is RAM-SPEED-SCALED and the retract is ANTICIPATED (no jolt):**
+  `gateLiftRate(ramSpeed) = GATE_OPEN_RATE + GATE_OPEN_RATE_SPEED·ramSpeed`. `buildGateArms`
+  runs one step BEFORE `updateGates`, so `gateColliderPos(world,dt,cmds,a)` anticipates the
+  exact lift about to be applied and world.ts passes it into `solveRobots`→`buildGateArms` —
+  the handle retracts on the SAME tick the push lands (this killed the old 1-tick jolt).
+- Rendered (`drawGateArm`) top-down by FORESHORTENING each arm toward the pivot
+  (`len·cos(gatePos·GATE_LIFT)`), the long paddle greening past the pass fraction.
+
+## Shooter + intake (DECODE)
+
+- **The shooter NEVER misses**: no dispersion; `solveShot` uses the MINIMUM-SPEED trajectory to
+  the goal opening — the adaptive hood angle sweeps ~89° (near-vertical lob at point-blank)
+  down to ~45° far out, so an exact finite solution exists at EVERY distance and the required
+  speed is a SMOOTH function of distance (`v²=g·(dh+√(d²+dh²))`). The turret is always exactly
+  on the lead-compensated solution (no slew limit). No aim ray drawn.
+- **No flywheel spin-up before the FIRST shot** — the opening shot is always instant. BETWEEN
+  shots the cadence is the intake preset's transfer interval (`INTAKE_PRESETS[*].fireInterval`:
+  0.1 s, triangle 0.3 s) PLUS a flywheel-recovery term: `recovery = closeRecovery +
+  FLYWHEEL_RECOVERY_MAX · shotNorm² · (1−inertia)`, where `shotNorm` ramps in only past
+  `FLYWHEEL_CLOSE_SPEED`. FAR shots are slowed for low-inertia flywheels. **Close-range rapid
+  fire carries a SMALL floor for near-zero inertia** (`closeRecovery = FLYWHEEL_CLOSE_RECOVERY
+  · max(0, 1 − inertia/FLYWHEEL_CLOSE_INERTIA_KNEE)`): +0.04 s at inertia 0, fading to 0 by
+  0.2 — a close-zone cycler wants a LITTLE inertia (~0.1–0.2), not 0. `r.fireReadyAt` gates it.
+- **POWER DRAW**: a running intake plus the flywheel pull current off the drive motors. Two
+  flywheel terms, both ×`flywheelInertia`: a small steady HOLD
+  (`POWER_DRAW_FLYWHEEL_HOLD·spin`) and the DOMINANT SPIN-UP
+  (`POWER_DRAW_FLYWHEEL_SPINUP·flywheelSpinRate` — the cost of ACCELERATING the wheel while
+  driving AWAY from the goal; spinning DOWN is free). `flywheelSpin` ramps 0→1 with distance to
+  the robot's OWN goal (`FLY_SPIN_NEAR`→`FLY_SPIN_FAR`); it seeds at the spawn-distance target
+  so there's no phantom first-tick spin-up. `r.powerDraw` scales a LOCAL `driveParams` copy
+  (speed/accel/turn ×(1−draw)) — `driveParams()` itself is untouched — AND weakens the shove.
+- **The intake is physical**: the collision OBB extends by intake reach (`footprintExtents` →
+  `robotExtents`) — it cannot clip walls/goals. THREE presets (**keep these user-given names**):
+  **Sloped** (ramp, trapezoid mouth, devours clumps), **Vector wheel** (VERTICAL compliant
+  wheels drawn as a row of small rects — never circles; chassis 11.5–14.5"), **Triangle**
+  (TRIANGULAR internal storage — hopper pips draw in a triangle; longest reach, slower
+  transfer). Internal keys sloped/vector/triangle ('compact'/'extended' migrate in settings).
+- **CAPTURE MODEL**: each preset carries a `mouth` sub-object (`mouthHalf`, `wheelHalf`,
+  `wedge`/`wedgeWidth`/`funnel`, `capMin`/`capMax`, `clumpInterval`, `dual`). A ball is captured
+  on the wheel line at the tip of reach; non-overhang presets clamp the mouth inside the frame
+  so a full-width chassis geometrically forbids side intake. **Timing depends on WHERE the ball
+  enters**: `single = capMin + (capMax−capMin)·(|localY|/wheelHalf)`. **Wedges FUNNEL** off-center
+  balls toward the centerline via a lateral VELOCITY nudge only, never a position write — it
+  runs before the ball solve so Rapier owns penetration. **Triangle takes TWO per cycle**
+  (`dual`). Flank capture (`sideTouch`) exists only where the vector's wheel span overhangs a
+  narrower chassis, comparing SPANS not penetration. NOTE: `halfWidth`/`perBall`/`clumpPerBall`
+  were REMOVED — grep before reintroducing.
+- BASE PARKING counts only the four WHEEL ground-contact points (`wheelContacts`, inset
+  `WHEEL_INSET`): intake/turret overhang neither earns nor spoils credit. The turret never
+  protrudes (`TURRET_OFFSET_FRAC`). The chassis may be NARROWER than the intake
+  (`ROBOT_MIN_WIDTH` 10 < vector's 17).
+
+## Scoring + multi-robot
+
+Classified 3 / overflow 1 / pattern 2 per slot / leave 3 / depot 1 / base 5/10+10. PATTERN
+shows only BANKED points (assessed end-of-AUTO and end-of-match — never a live matched count);
+breakdown chips show artifact COUNTS, not points. `canSort` robots fire the hopper color
+matching the next unfilled motif slot (else FIFO). A 2-robot alliance splits the 6 preload
+balls (slot A `PRELOAD`, slot B `HP_INITIAL_STOCK`) and starts that alliance's HP stock empty.
+Free-Drive has a "practice dummies" toggle (3 idle robots as obstacles).
+
+## Penalty engine (`src/sim/penalties.ts`)
+
+**MINOR = 5 pts, MAJOR = 15 pts** (user-set, NOT the manual's 10/30), awarded to the OPPOSING
+(victim) alliance via `awardFoul` → the victim's `ScoreBreakdown.foulPoints`;
+`match.fouls[offender]` tallies committed counts for the HUD.
+
+- **G417** — TOUCHING an opponent's gate is an immediate **MAJOR**, edge-triggered on bumper
+  contact with the gate ARM (`robotIntersectsRect(r, gateArmRect(a))`), **even if it never
+  opens**. Deliberately DIFFERENT from `updateGates`' physical `pushingGate` (which also needs
+  an active shove). Touching your OWN gate is legal.
+- **G418.B** — each classified artifact INSIDE the opponent's RAMP when the gate is opened is a
+  MAJOR **per artifact**. The engine remembers who opened each gate (`penalties.gateCulprit`)
+  and bills every ball that then drains off that ramp (`penalties.rampBallIds`) to them even
+  after they leave — matching manual Example 3.
+- **Protected zones use one uniform model** — each zone is OWNED by an alliance and a
+  cross-alliance CONTACT while either robot is in it fouls the NON-owner ("regardless of who
+  initiates"): **G424 gate zone** (MINOR — opening the gate is legal for anyone; only in-zone
+  *contact* fouls), **G425 tunnel** (MINOR — `tunnelStrip(a)` sits under a's goal but is OWNED
+  by `other(a)`; fires only when the INTRUDER itself is in the strip). **G424.A gate↔tunnel
+  exception**: they overlap in the classifier corner and are MUTUALLY EXCLUSIVE — if the gate
+  robot is also in the opponent's tunnel it's G425 only, else G424 only.
+- **G426 loading** (MINOR). **G427 base** (MAJOR in endgame + sets `RobotState.baseAwarded`).
+- **G402 auto interference** (MAJOR): an alliance BELONGS on its **goalSide** (blue −x, red +x
+  — NOT driverSide, which was inverted and fouled the alliance sitting on its own side); fires
+  when fully on the opponent's side + contact during AUTO, on the CROSSER.
+- **G422 pinning** (MINOR → MAJOR on a repeat by the same pinner): 3 s of contact while the
+  pinned robot commands motion, stays < 8 in/s, and hasn't escaped 24". Pinner-vs-pinned is
+  disambiguated by `pinnedAgainstWall` — the VICTIM must be trapped against a boundary with the
+  pinner on the open-field side; without it a wall shove satisfied BOTH orderings.
+- **Fouls are EDGE-triggered — NO cooldown/timer** (user was emphatic): fire on the false→true
+  edge, once while held, and AGAIN immediately on re-entry. `fire()` is idempotent within a
+  tick. All penalty state is plain JSON.
+
+---
+
+# GAME: Chain Reaction (`chain`)
+
+The 2026 Unofficial-FTC CAD-competition game. **Everything CR lives in `src/games/chain/`**
+(nothing CR belongs in `src/config.ts` or `src/sim/`). Numbers come from the competition
+manual (`cm.pdf` — its page streams are corrupt, so values came from manual PAGES supplied as
+images + explicit dimensions); mm are converted via `mm()` (÷25.4). Values still approximated
+from description rather than a figure are FLAGGED `APPROX` in `config.ts` — refine those
+rather than inventing new ones.
+
+**Fully playable and SCORED** (`CHAIN_SIM.scored = true`), so CR matches ride the ranked/record
+boards under their own per-game periods. `startLegality: false` — CR start poses are legal by
+construction, so the server's DECODE-only G304 gate stays off.
+
+## Field + elements
+
+- Square 12'×12', walls at ±72 (`CHAIN_HALF_X/Y`), origin center — same frame convention as
+  DECODE. Colliders are just the four perimeter walls; there are **no in-field solids**, so
+  `chainColliders` has no `dynamic` entry.
+- **ACCELERATOR** — the alliance goal, OUTSIDE each side wall (red left x<0, blue right x>0),
+  centered in y. `CHAIN_ACCEL_DEPTH` 27.46" out of the wall × `CHAIN_ACCEL_WIDTH` 54.87" along
+  it. Its opening HANGS over the field, so launchers score from a stand-off distance, not
+  point-blank. The camera bounds (`CHAIN_VIEW_HALF_X`) include the protrusion; the WALLS stay
+  at ±72.
+- **PARTICLE** — a 3"-OD wiffle ball, **300 of them** (`CHAIN_PARTICLE_SIM`), all simulated.
+  Conserved: ground + flight + in-hoppers === 300, always.
+- **CATALYST** — a 6"-OD purple ring (4 total). Seated on a **HOOK** (on the accelerator wall
+  at y = ±`CHAIN_HOOK_Y`, four total) it raises that accelerator's multiplier.
+- **RING STAND** — a 22.5" vertical pole very close to each field corner (inset APPROX).
+  Robots ASCEND (endgame) / DESCEND (auto).
+- **LAB AREA** — each alliance's two 24" corner squares on its side: start / leave / park.
+- **PARTICLE ZONE** — the central white-tape diamond (`CHAIN_DIAMOND_SIDE` 48" outer side,
+  half-diagonal `CHAIN_DIAMOND_R` ≈ 33.94"). Neutral and unprotected — it is the carve-out in
+  the auto-protection rule.
+- **BEAMS** — four 1"×1" black tubes on the x/y axes, 56" long, running IN from each wall
+  (inner end 16" from centre, crossing the diamond). See *Terrain* below.
+
+## Scoring (`CHAIN_PTS`)
+
+Particle **1 pt × the accelerator's multiplier**; `accelMultiplier(state, a)` = 1 + one per
+CATALYST seated on that alliance's hooks. Ring-Stand **descend 100** (auto) / **ascend 100**
+(endgame); Lab-Area **leave 5** (auto) / **park 5** (endgame). Match timing 30 s auto / 120 s
+teleop / last 20 s endgame. The alliance total is recomputed each tick as
+`particlePoints + endgame + foulPoints` — endgame status is DERIVED from position
+(`endgameOf`: ascended = slow near a stand > parked = centre in a Lab square), and the AUTO
+descent is LATCHED (`descentAwarded`) so a robot that came down keeps the points all match.
+
+## Particle lifecycle (bespoke, not Rapier)
+
+Ground particles use a bespoke integrator + a spatial-hash SEPARATION pass so they never
+overlap (`separateParticles`, scales to 300 cheaply).
+
+**PRE-MATCH RANDOMIZATION** — the manual has the accelerators fling all 300 particles back out
+to randomize the field. We STAGE half inside each goal (`staged` flight balls, inert) and the
+launcher ejects `CHAIN_PRELAUNCH_PER_TICK` per goal per tick during the pre-match window
+(~2.5 s to clear 150), scattering deterministically off the world RNG.
+
+**In match:** launched → ballistic flight → crosses the wall plane within `CHAIN_ACCEL_HALF_Y`
+⇒ **SCORED** (count + points at that instant) → it KEEPS its momentum and BOUNCES inside the
+goal box (restitution + friction, `CHAIN_FUNNEL_MIN`..`CHAIN_FUNNEL_S` dwell) → drifts to the
+wall-side launcher → **EJECTED back onto the field** (`CHAIN_EJECT_*`, randomized power/arc/
+spread). A shot that MISSES the opening is retrieved by a human and thrown back in
+(`CHAIN_THROWBACK_*`). Nothing is ever consumed — that is why the count stays at 300.
+
+## Robot archetypes (`RobotSpec.scoreMode`)
+
+- **turret** — a dye-rotor + turreted single shooter: indexes ONE particle per
+  `CHAIN_FIRE_INTERVAL` (**13 bps**) from ANY range, auto-aiming. The turret **SLEWS** at
+  `CHAIN_TURRET_SLEW` — it cannot snap, so a sudden velocity change (a shove) makes the lead
+  solution jump faster than the turret can follow and shots fired mid-correction MISS. Aim is a
+  physical state, not a promise. (Contrast DECODE, where the shooter never misses.)
+- **drum** — a chassis-wide flywheel drum, no turret: streams SINGLE particles at ~**24 bps**
+  (`CHAIN_DRUM_INTERVAL` with ±`CHAIN_DRUM_JITTER`) from a RANDOM lateral position across the
+  rollers, uniform launch speed. NEVER a rigid uniform line, never a "6-then-wait" burst.
+- **dumper** — a chassis-wide catapult: flings the WHOLE hopper at once within
+  `CHAIN_DUMP_RANGE` (56"), with side-to-side speed variance (`CHAIN_DUMP_SIDE_VAR`) ⇒ real
+  scatter.
+
+**Cadence gotcha:** the turret ACCUMULATES its interval (`fireReadyAt += INTERVAL`) rather than
+re-anchoring to `world.time`, so the sub-tick remainder carries and the rate averages exactly
+13 bps (a plain re-anchor tick-quantizes to 12 or 15, never 13). An idle-guard clamps
+`fireReadyAt` forward so a refilled hopper can't burst-fire accumulated debt.
+
+**Turretless aiming**: drum/dumper have no turret, so **the robot aims by TURNING** —
+`chainAimAssist` (called from `chainStep` BEFORE the drivetrain model) overrides `rotate` while
+the MANUAL fire button is held, and the shot is gated on `CHAIN_AIM_TOL`. Auto-fire fires
+opportunistically and never hijacks the driver's heading. **SHOOTING ON THE MOVE**: a launched
+particle inherits the CHASSIS velocity, so both archetypes lead — a turret by offsetting
+`turretHeading`, a turretless one by offsetting the whole chassis heading (`leadDir`).
+
+## Mechanism MOUNTS (`src/games/chain/mounts.ts`)
+
+The sweeper intake and the turretless launcher can sit on any chassis edge. Robot frame
+throughout: **+x = forward, +y = the robot's LEFT**.
+
+- `RobotSpec.intakeMount`: **front · back · side (both flanks) · frontback (both ends)**.
+- `RobotSpec.shooterMount`: **front · back · left · right** (no effect on a turret, which is
+  top-mounted — the builder hides the picker for it).
+- `intakeSide`/`shooterRear` are **DEPRECATED MIRRORS — never read them.** Use
+  `intakeMountOf(spec)` / `shooterMountOf(spec)`. `coerceSpec` resolves the new field (falling
+  back to the legacy boolean, so old saves migrate) and keeps the boolean MIRRORED, so a spec
+  round-tripped through an older peer/server returns the nearest legal mount instead of
+  resetting.
+- `mounts.ts` is a **LEAF module** (imports only `types`) on purpose: the mount decides the
+  collision footprint, so `src/sim/field.ts` must import it, and anything heavier would cycle.
+  It owns `EDGE_ANGLE`/`EDGE_DIR`/`EDGE_PERP` (exact integer unit vectors — no `cos(π/2)`
+  residue on the flanks), `edgeGeom(spec, edge) → {dist, span}`, `isEndEdge`.
+
+**A mount moves three things together — change one, change all three:**
+1. **CAPTURE** — `chainIntakeMouths(spec)` returns one robot-local rect per mounted edge (so
+   `frontback`/`side` are simply two rects); `mouthContains(m, lx, ly, pad)` pads ONLY the
+   outward lip. END edges span the chassis WIDTH, FLANK edges its LENGTH.
+2. **COLLISION** — `footprintExtents` grows on exactly the mounted edge(s). DECODE resolves to
+   `front`, so DECODE geometry is unchanged.
+3. **AIM + LAUNCH** — `chainGoalAimHeading` returns `lead − EDGE_ANGLE[mount]` so the robot
+   turns the MOUNTED edge at the goal; `launchAt` spreads the launch line across that edge.
+
+The drawn intake bars ARE the grab area (renderer and `interact` share
+`chainIntakeMouths`) — keep it that way.
+
+## Ball storage
+
+The manual sets no fixed particle limit (G01 unlimited control; G02 bounds them to an
+18"×24"×18" CONTROL PRISM, G03 permits expanding into it), so the practical max is
+VOLUME-limited. `chainStorageMax` derives it from footprint area ÷ `CHAIN_STORE_AREA_PER_BALL`
+× an archetype factor × a mount factor, clamped to [1, `CHAIN_STORAGE_MAX` 60]:
+
+- archetype — turret `0.55` (loses centre volume to the rotor+shooter), drum/dumper `1.0`.
+- mount (`chainMountStoreMult`) — front == back `1.0` (mirror images; a rear sweeper is a free
+  stylistic choice), frontback `0.75` (two open ends), side `0.6` (two full-length flanks).
+
+The `ballStorage` slider picks any capacity up to that max; `chainHopperCap` is the ACTIVE cap
+read by the sim, renderer, and HUD.
+
+## Terrain — beams + ground clearance (`beams.ts`)
+
+`groundClearance` (0.3–1.5", default 1.0) must be ≥ `CHAIN_BEAM_HEIGHT` 1" to cross a beam, but
+more clearance RAISES the centre of gravity (`cogFactor`) and makes the drive sluggish —
+`CHAIN_COG_PENALTY` 0.16 generally, and `CHAIN_COG_SWERVE_PENALTY` 0.6 on a squared curve for
+SWERVE (tall modules tip and scrub). `chainStep` scales the whole movement command by
+`cogFactor` BEFORE the drivetrain model.
+
+**Beam crossing is modeled PER WHEEL**, not by chassis overlap: a beam drags only while one of
+the four `wheelContacts` is perched on the ridge (within `CHAIN_BEAM_WHEEL_R` 2.5" of the beam
+line). So a robot STRADDLING a beam (tube under the belly, all wheels down) rolls DRAG-FREE,
+and a perpendicular crossing is TWO distinct bumps (front axle, then rear). Lifted wheels lose
+traction: `grounded = (4−wheelsUp)/4` scales the forward retain toward
+`CHAIN_BEAM_GROUND_FLOOR` 0.82. Momentum eases the climb only a little
+(`CHAIN_BEAM_MOMENTUM_EASE`) — a beam ALWAYS costs speed.
+
+**A strafing MECANUM is CURBED, not dragged** (this was revised twice from feedback — a
+velocity drag let the wheel ooze onto the ridge and get stuck on top). Real mecanum climbs a
+bump it drives straight at (full-diameter wheel rolls over it — which is why mecanum has the
+BEST forward beam traction), but sideways force is the sum of four 45° rollers whose tiny outer
+diameter cannot climb a 1" tube. So: a **pre-solve velocity wall** in `beamDrag` caps inward
+speed so the leading wheel stops EXACTLY at the near face this tick, plus a **post-solve
+positional clamp** `beamStrafeBlock` for numerical slop. It engages only when the crossing is
+strafe-dominant (`forwardness < CHAIN_BEAM_STRAFE_BLOCK_FWD` 0.5) and there is a **STRADDLE
+GUARD** so a robot already across isn't shoved back. Mecanum ONLY — tank can't strafe, swerve
+steers its pods into travel, x-drive is 4-fold symmetric.
+
+Rendering EXAGGERATES the invisible 1" tube (`CHAIN_BEAM_RENDER_H`) and bobs a crossing robot
+up with a ground shadow + `CHAIN_BEAM_RUMBLE` shudder — cosmetic only; the physics footprint
+stays the flat 1".
+
+## Start poses + roles
+
+**G04**: a robot must begin completely in the Lab Area (tile floor OR already ascended on a
+corner Ring Stand). `CHAIN_START_POSES` are four named anchors — LAB·TOP, LAB·BOTTOM, RING
+STAND·TOP, RING STAND·BOTTOM — CANONICAL for BLUE and x-MIRRORED for RED (`chainStartPose`).
+**All are legal by construction**, so the selector can only produce legal poses and there is no
+G304-style validator. Starting on a stand ARMS the auto-descent award (`descentArmed`).
+
+**CR roles are TOP / BOTTOM** (which Lab corner), NOT DECODE's CLOSE / FAR. The shared
+`StartCat` slots carry them (close = TOP y≥0, far = BOTTOM y<0) via `chainAnchorCat` /
+`chainDefaultIndex` / `chainRoleLabel`, so a locked role limits the selector to that corner's
+floor + ring-stand anchors and two alliance robots never stack.
+
+## Penalties (`src/games/chain/penalties.ts`)
+
+Only the runtime CONTACT rules are modeled, and all are **MAJOR**, awarded to the victim:
+
+- **G06** — during AUTO, contacting an opponent COMPLETELY within its own Alliance Section (its
+  half, EXCLUDING the neutral Particle Zone diamond) → MAJOR on the aggressor.
+- **G05** — during ENDGAME, contacting an ASCENDING opponent → MAJOR.
+
+Edge-triggered via `chain.foulEdge` (same discipline as DECODE: fire on the false→true edge,
+once while held, again on re-entry) and cleared outside auto/teleop. G01–G04 are structurally
+enforced; G07 (de-score) is legal — you can lift a ring off EITHER goal's hook. G02 plowing,
+G08, G09 are intentionally not modeled.
+
+## CR pipeline order (`chainStep`)
+
+resolve commands → `chainAimAssist` rotate override → CoG scaling → shared drivetrain/motor
+(`updateRobot`) → Rapier + wall containment → `updateChain` (particles, intake, shooter,
+accelerator score/recycle, catalysts, endgame) → `updateChainPenalties` → phase/timer machine.
+It DELIBERATELY skips DECODE's `updateRobotActions`, goals/gates, penalties, and scoring — CR
+owns all of that.
+
+---
+
+# Gotchas
 
 - **THEMING (dark mode).** Pref lives in `localStorage['decodesim.theme']` (`src/theme.ts`),
   never in `GameSettings` (that syncs to Postgres per account). First paint is stamped by a
   blocking inline script in `index.html`; `system` is resolved in JS so CSS sees only
-  `data-theme="light|dark"`. **EVERYTHING THEMES, INCLUDING THE IN-MATCH HUD** — the old
-  `:root[data-theme='dark'] .game-root` "light island" is GONE, and so is the pinning of the
-  legacy bridge (`--bg`/`--panel`/`--panel-2`/`--border`/`--text`/`--muted`/`--amber`), which
-  now simply ALIASES the matching `--ds-*` tokens. Three categories decide how a token behaves:
-  (1) *readable against the surface* ⇒ INVERTS (`--ds-ink`, `--ds-mut`, `--ds-accent`,
-  `--ds-warn`, the `-ink` siblings); (2) *a fill with fixed ink* ⇒ does NOT (`--ds-red`,
-  `--ds-*-chip`, `--ds-gold`); (3) *its ground is the CANVAS* ⇒ does NOT, because the field is
-  hardcoded dark — that is `--ds-on-field` / `-dim` / `-accent`, deliberately absent from the
-  dark block. Use category 3 for anything drawn straight on the field or on the dark overlay
-  scrims (countdown digits, mobile joystick, ranked-intro eyebrow/VS).
+  `data-theme="light|dark"`. **EVERYTHING THEMES, INCLUDING THE IN-MATCH HUD.** Three
+  categories decide how a token behaves: (1) *readable against the surface* ⇒ INVERTS
+  (`--ds-ink`, `--ds-mut`, `--ds-accent`, `--ds-warn`, the `-ink` siblings); (2) *a fill with
+  fixed ink* ⇒ does NOT (`--ds-red`, `--ds-*-chip`, `--ds-gold`); (3) *its ground is the
+  CANVAS* ⇒ does NOT, because the field is hardcoded dark — that is `--ds-on-field`/`-dim`/
+  `-accent`, deliberately absent from the dark block. Use category 3 for anything drawn
+  straight on the field or the dark overlay scrims.
   A dark HUD card is only ~1.4:1 on the dark field by FILL, so its EDGE identifies it:
-  floating surfaces take **`--ds-hud-line`** (readable against card *and* field), never
-  `--ds-line`, which is tuned against the card behind it. `--ds-line-strong` is likewise tuned
-  against `--ds-panel` and drops to 2.73:1 on the translucent HUD card — rings that must read
-  there (`.hopper-pip`, `.pg-bar`) use `--ds-mut`. To detect the theme in JS read
-  `document.documentElement.dataset.theme` (as `renderer.ts` does for the letterbox), not
-  `getComputedStyle`. `npm run contrast` (`scripts/contrast.mjs`) asserts 135 pairs in BOTH
-  themes — including the HUD, the canvas grounds, and the server-gated screens — and exits 1
-  on a regression; run it after any palette edit. **A colour that is both a fill and a text
-  colour will fail one of the two** — split it (`--ds-ok`/`--ds-ok-ink`).
+  floating surfaces take **`--ds-hud-line`**, never `--ds-line` (tuned against the card behind
+  it). `--ds-line-strong` is tuned against `--ds-panel` and drops to 2.73:1 on the translucent
+  HUD card — rings that must read there use `--ds-mut`. Detect the theme in JS via
+  `document.documentElement.dataset.theme`, not `getComputedStyle`. **A colour that is both a
+  fill and a text colour will fail one of the two** — split it (`--ds-ok`/`--ds-ok-ink`).
   The letterbox themes (`COLORS.backdropDark`) but the field mat does NOT; the board is
-  separated from the dark floor by its outline alone (mat vs dark bg is 1.03:1), so keep it.
-- Camera/screen math: `worldToScreen` = rotate by `viewAngle`, then y-flip. Driver
-  stick → field frame uses `rot(stick, -viewAngle)` (the INVERSE — sign matters since
-  view angles are ±90°).
-- The basin containment normal points INTO the field; push balls back inside with `-n`
-  (a sign inversion here once caused positions to explode to 1e250).
-- `robotIntersectsRect` (SAT) exists because thin zones (gate tape) can be covered by
-  the robot body with no corner inside.
+  separated from the dark floor by its outline alone (1.03:1), so keep the outline.
+- **Camera/screen math**: `worldToScreen` = rotate by `viewAngle`, then y-flip. Driver stick →
+  field frame uses `rot(stick, -viewAngle)` (the INVERSE — sign matters at ±90°).
+- **Bird's-eye vs mirrored** (bit us once): for a nose-up schematic, robot (x,y) → screen
+  must be `[[0,−1],[−1,0]]` (forward → up, robot-LEFT → screen LEFT), NOT `rotate(-90)`, which
+  puts the robot's left on the screen's right. Symmetric mechanisms can't reveal the
+  difference; anything left/right-asymmetric can. See `ROBOT_FRAME` in `RobotPreview.tsx`.
+- The DECODE basin containment normal points INTO the field; push balls back inside with `-n`
+  (a sign inversion here once made positions explode to 1e250).
+- **Ball containment invariant**: ground balls get a HARD geometric eviction pass in `world.ts`
+  (walls + goal faces via `clampBallPosToStatics`, AND `collideBallRect` against both
+  classifier rects) because Rapier's soft contacts can't clear a DEEPLY embedded body. **Any
+  new solid a ball can tunnel into needs the same geometric clamp**, not just a collider.
+- **Electron builds need `ELECTRON=1`** (`vite.config.ts` switches `base` to `./`). A bare
+  `npm run build` loaded under `file://` resolves `/assets/*.js` at the filesystem root and
+  404s **silently** — a permanently blank white window. Check this before assuming the app
+  broke. The desktop shell is a THIN SHELL: online it loads the live site, offline it falls
+  back to the bundled `dist`.
+- The manual PDFs re-download from ftc-resources.firstinspires.org/ftc/game/manual-NN via
+  WebFetch; figures are embedded images — extract and Read them as images when geometry
+  questions come up.
 - Windows PowerShell 5.1: no `&&` in npm-adjacent commands; use `;` or `if ($?)`.
-- The manual PDFs' text is extractable with the stdlib scripts pattern (see memory);
-  figures are embedded images — extract and Read them as images when geometry questions
-  come up. `manual09/10` text dumps live in the old session scratchpad (regenerate if needed).
 
-## State of play / roadmap
+---
 
-Done: full solo match + free drive, scoring per manual (classified 3 / overflow 1 /
-pattern 2/slot / leave 3 / depot 1 / base 5/10+10), motif randomization, human-player
-restock, gamepad + keyboard, physical basin/rail/gate classifier, contact-torque robot
-physics, driver assists (menu), audio (field sounds + announcer + menu toggles),
-pre-match countdown, favicon, on-screen MENU/RESET, Electron packaging, robot
-size/intake presets in menu, rebindable keyboard+gamepad controls with localStorage
-persistence, flip-front toggle, pinned-ball resistance physics, contact-time
-overflow decision, synthesized shoot/intake/gate SFX, pressure-scaled wall torque,
-END GAME at 20s left (`ENDGAME_START`: warning cue + HUD label/tint), vector-intake
-side capture, wheel-contact base parking + narrow chassis, three named intake
-presets (sloped / vector wheel / triangle) with per-preset length + fire cadence,
-trapezoid mouths + geometric side-intake rules + clump feeding, **session-7 physical
-intake rewrite** (per-preset `mouth` geometry, position-dependent swallow timing, wedge
-funneling, triangle dual-capture), **power draw** (spun-up flywheel + intake slow the
-drive and weaken the shove), **drivetrain push/accel retune + per-drivetrain clamps +
-inertia→mass-floor coupling** (`BALANCE_VERSION` 2).
-**Phase A (field markings), Phase B (RobotSpec v2, four drivetrains, flywheel
-recovery, canSort, robot presets + custom builder, start positions, practice
-dummies, mass-weighted robot-robot collisions, multi-robot spawn/step), and
-Phase C (penalty engine) are DONE and green.** The netcode/physics roadmap now lives
-at `docs/netcodeplan.md` (supersedes the old "Road to Multiplayer" plan + the Phase D
-notes). **Netcode Phase 0 (server-authoritative + client prediction) is DONE and
-build/smoke-green** (see below); the old P2P lockstep is deleted.
-`scripts/smoke.ts` has ~205 checks — keep adding one per behavior change.
+# State of play
 
-**Phase C — penalty engine** (`src/sim/penalties.ts`, `updatePenalties` called in
-`world.ts` after the robot-robot solver). **MINOR = 5 pts, MAJOR = 15 pts** (user-set,
-NOT the manual's 10/30), awarded to the OPPOSING (victim) alliance via `awardFoul` in
-scoring.ts → the victim's `ScoreBreakdown.foulPoints`; `match.fouls[offender]` tallies
-committed counts for the HUD. Rules (numbers/severities per Section 11 — corrected
-July 2026 to follow the manual): **GATE/RAMP rules** (`updateGateFouls`) — **G417**
-TOUCHING an OPPONENT's gate is an immediate **MAJOR** (edge-triggered; fires when the
-opponent's bumper contacts the gate ARM — `robotIntersectsRect(r, gateArmRect(a))` —
-**even if it never opens the gate**: contact with the arm is the violation, no push
-required. This is deliberately DIFFERENT from `updateGates`' physical push-to-open
-condition (`pushingGate`, which additionally needs an active shove). Touching your OWN
-gate is legal), and **G418.B** each classified artifact
-INSIDE the opponent's RAMP at the moment the gate is opened is a **MAJOR per
-artifact**. The engine remembers which opponent opened each gate (`penalties.
-gateCulprit`) and bills every ball that then drains off that ramp (`penalties.
-rampBallIds` tracks the committed, non-overflow rail balls) to them even after they
-leave — matching manual Example 3 (open the opponent gate → 1 G417 + N G418). Then the
-**protected-zone** rules use one uniform model —
-each zone is OWNED by an alliance and a cross-alliance CONTACT while either robot is
-in it fouls the NON-owner ("regardless of who initiates"): **G424 gate zone** (MINOR
-— protects the OWNER's access to their own gate; contact-based, NOT the old homebrew
-"presence in the opponent gate = MAJOR", which is gone. The gate is still physically
-openable by ANYONE via `updateGates`; opening it is legal, only in-zone *contact*
-fouls), **G425 tunnel** (MINOR — `tunnelStrip(a)` sits under a's goal but is OWNED by
-`other(a)`, so the intruder/offender is `a`; G425 fires only when the INTRUDER itself
-is in the strip — an owner defending inside its OWN tunnel is not a foul). **G424.A
-gate↔tunnel exception**: a side wall holds one alliance's gate zone AND the other's
-secret tunnel (they overlap in the classifier corner), and the two rules are MUTUALLY
-EXCLUSIVE — if the gate robot is ALSO in the opponent's tunnel it's G425 only (on the
-gate robot); if it's clear of the tunnel it's G424 only (on the opponent). **G426
-loading** (MINOR), **G427 base**
-(MAJOR in endgame + sets `RobotState.baseAwarded` → full base at match end). **G402
-auto interference** (MAJOR): an alliance BELONGS on its **goalSide** (robots stage
-near their cross-court goal: blue −x, red +x — NOT driverSide, which was inverted and
-fouled the alliance sitting on its OWN side); fires when fully on the opponent's side
-+ contact during AUTO, on the CROSSER. **G422 pinning** (MINOR, →MAJOR on a repeat by
-the same pinner: 3 s of contact while the pinned robot commands motion, stays < 8
-in/s, and hasn't escaped 24"). Pinner-vs-pinned is disambiguated by
-`pinnedAgainstWall` — the VICTIM must be trapped against a field boundary with the
-pinner on the open-field side (`PIN_WALL_SLOP`); without it a wall shove satisfied
-BOTH orderings and wrongly fouled the victim's alliance too. **Fouls are
-EDGE-triggered — NO cooldown/timer** (user was
-emphatic): a violation fires on the false→true edge, once while held, and AGAIN
-immediately on re-entry (leave the opponent gate and re-enter ⇒ instant new foul).
-`fire()` is idempotent within a tick (a duplicated `rrContacts` pair, or two rules on
-one key, awards once). All penalty state (`world.penalties`: episodes/pins/pinFouls) is
-plain JSON so determinism/lockstep hold. HUD: FOULS chip (committed counts) + a
-PENALTIES score-table row (`foulPoints`).
+**DECODE** — complete: full solo match + free drive, scoring per manual, motif randomization,
+human-player restock, gamepad + keyboard, physical basin/rail/gate classifier, contact-torque
+physics, driver assists, audio, pre-match countdown, Electron packaging, three intake presets
+with the physical `mouth` capture model, power draw, the drivetrain retune (`BALANCE_VERSION`
+2), configurable G304 start positions with the canvas editor, and the Phase C penalty engine.
 
-**Netcode Phase 0 — server-authoritative + client-side prediction** (DONE, build +
-smoke + live-2-client green). The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED
-(`mesh.ts`, `lockstep.ts`, `lobby.ts` gone); see `docs/netcodeplan.md` for the full
-roadmap (Phases 1–3 + UI redesign). Architecture:
-- **`server/`** (Node + `ws`, run via `tsx`) — imports the SHARED `src/sim` (no fork)
-  and runs a fixed-`SIM_DT` authoritative loop per room: ingest each client's latest
-  `RobotCommand` by robot id, `step(world, SIM_DT, inputs)`, broadcast a full-world
-  `snapshot` every 3 ticks (~20 Hz). `server/room.ts` = lobby + match + host lifecycle +
-  deterministic drop (a client leaving → its robot runs ZERO from the current tick,
-  broadcast). `server/index.ts` = WS accept + room registry. `tsconfig.server.json` +
-  `npm run server` / `server:start` / `server:check`.
-- **`src/net/protocol.ts`** — kept the quantize helpers (`quantize/dequantize/localize`);
-  replaced lockstep packets with JSON `ClientMsg` (join/update/start/restart/**input**)
-  and `ServerMsg` (welcome/roster/**matchStart**/**snapshot**/drop). Determinism rule is
-  now NARROWER: no cross-machine float determinism needed (server is authority) — only
-  that the client PREDICTS on `localizeCommand(cmd)` (what the server decodes).
-- **`src/net/session.ts`** is now the `NetSession` INTERFACE (reconcile contract:
-  `sendInput`, `takeSnapshot`, `isHost`, `requestRestart`, `onRestart`, `seed`, `setups`,
-  `localRobotId`, `status`, `dispose`). `transport.ts` (`WebSocketTransport`, Phase-1 seam
-  for WebTransport), `lobbyClient.ts` (thin lobby over the socket), `serverSession.ts`
-  (`ServerSession implements NetSession` — takes over the transport at matchStart).
-- **`game.ts`**: `stepNetworked` → **`stepServer` (predict + reconcile)**. Each tick it
-  applies its OWN command locally + `sendInput`, buffering it; on a snapshot it snaps
-  `this.world` to the authoritative world and REPLAYS buffered inputs past `serverTick`
-  (`reconcile`). Only the local robot is predicted; remote robots default to ZERO in
-  `step()` and get corrected each snapshot. **`session: null` ⇒ solo path bit-identical.**
-- **UI**: `App.tsx` gates MULTIPLAYER on `gameServerConfigured()` (`VITE_GAME_SERVER_URL`,
-  `.env.example`); `Lobby.tsx` runs on the game-server socket (no mesh/presence/ready-mesh
-  gating). HUD `net` chip shape unchanged.
-- **Why this fixes disconnects**: no head-of-line blocking (one laggy/dropped client never
-  freezes others — prediction + authoritative correction), central drop/liveness authority.
-  The old cross-browser-desync trig discipline (`dsin/dcos/datan2`) is NO LONGER a
-  correctness requirement here, but is **still in `src/sim`** and stays until Phase 2
-  removes it — do not rip it out yet.
+**Chain Reaction** — complete and scored: 300-particle bespoke physics with pre-match
+randomization + the accelerator score/recycle loop, three archetypes (turret/drum/dumper) with
+lead-compensated shooting on the move, four-edge shooter mounts + four intake mounts, catalysts
+and hooks (multiplier, de-score allowed), ring-stand ascend/descend + Lab park, per-wheel beam
+terrain with the mecanum strafe-curb, ground-clearance↔CoG tradeoff, Lab-Area start anchors
+with TOP/BOTTOM roles, and the G05/G06 penalty pair.
 
-**Phase 1 DONE + DEPLOYED** (Fly app `dohun-sim-decode`, `VITE_GAME_SERVER_URL` on
-Vercel). Per-tick server input buffering (`frameCommands`, hold-last). **SNAPSHOT RATE
-is 30 Hz** (`room.ts` `SNAPSHOT_INTERVAL = 2`) — dropped from 60 after network profiling
-(user was emphatic the lag was NETWORK, not CPU; halving snapshot bandwidth + TCP frames
-was part of the fix, alongside `setNoDelay(true)` to kill Nagle on the server sockets).
-**SMOOTHING is Minecraft-style entity INTERPOLATION, not extrapolation** (`game.ts`
-`displayWorld`/`snapBuf`/`renderTick`, `INTERP_DELAY_TICKS`/`INTERP_BUFFER`): the render
-clock runs a few ticks behind the newest snapshot and REMOTE ROBOTS lerp between the two
-bracketing authoritative snapshots, so they glide at any snapshot rate. The LOCAL robot
-stays predicted with a decaying `localSmooth` error offset (cosmetic only — never touches
-`this.world`, so determinism/anti-cheat hold). **BALLS are NOT interpolated** — they spawn/
-despawn (launches) and collide, and lerping them ghost-cloned fresh balls + blended
-colliding balls THROUGH each other; they render straight from the predicted sim.
-**CONNECTION-QUALITY HUD** (`ServerSession` + `NetQuality` chip, top-right): a `ping`/`pong`
-probe (once/sec, echoed at the server socket level) → smoothed RTT; snapshot arrival rate
-(Hz) + inter-arrival JITTER (mean-abs-dev) measured client-side; a SMOOTH/OK/CHOPPY
-coloured dot from rtt+jitter. Jitter is the real choppiness signal — surface it when
-diagnosing lag reports. **RECONNECTION (transient drops)**: server holds a dropped slot
-`RECONNECT_GRACE_MS` (`room.ts` `detach`/`reattach`/`checkGrace`), transport auto-reconnects
-(`onReopen`/`onDown`/`onFail`), session re-sends `rejoin`. **DELTA SNAPSHOTS**:
-`slimWorld`/`unslimWorld` (`protocol.ts`) strip static robot `spec` (client re-injects from
-setups) + delta the balls (send the id ORDER every frame — determinism — but only CHANGED
-ball data); reconnect re-primes with a keyframe. **DEPLOY**: `Dockerfile`+`fly.toml`+
-`docs/deploy.md`, `GET /health`; `ws`+`tsx` are runtime `dependencies`. Deploy protocol
-(SIM/server change): commit on alpha → **`./scripts/fly-deploy.sh`** → verify `/health` →
-Vercel auto-deploys clients. **NEVER deploy with a bare `flyctl deploy`** — fly.toml can
-only express ONE `[[vm]]` size, so a bare deploy re-applies `shared-cpu-4x` (iad's size) to
-EVERY machine and silently UPSIZES the cheap satellites (sjc/lhr/syd/nrt, `shared-cpu-1x`/1024MB)
-to shared-cpu-4x. The wrapper deploys and then re-shrinks them; verify with
-`fly machine list -a dohun-sim-decode`. **The one Fly app serves EVERY client version** (alpha/beta/
-main all bake the same `VITE_GAME_SERVER_URL`), so protocol changes MUST stay
-backward-compatible — new clients advertise `caps` (`CLIENT_CAPS` in `protocol.ts`) on
-`join`/`queue` and the server feature-gates on them (e.g. the pre-match strategy window
-only opens when every client supports `'strategy'`, else `startRankedImmediate`). With
-that discipline you no longer have to merge/sync alpha→main before deploying the server —
-old branch clients keep working. Still open: **WebTransport**
-(deferred — needs TLS-deploy validation, and the delta must switch to ACK-keyed for
-unreliable datagrams); full-reload reconnect (localStorage session restore). Deferred:
-obelisk AprilTag visuals, mobile/touch, deferred fouls (G408 possession>3 / plowing).
+**Netcode** — Phase 0 (server authority + prediction), Phase 1 (30 Hz delta snapshots,
+interpolation, reconnection, connection-quality HUD, Fly deploy), and Phase 3 (accounts,
+Glicko-2 ranked, leaderboards, records, admin, version gate) are LIVE.
+**Phase 2 (Rapier)** — ROBOTS slice done; **BALLS still bespoke**.
 
-**Phase 3 — accounts / ranked / leaderboards / records (LIVE).** Neon Postgres via
-`server/db/` (`repo.ts` + `migrations/`, `0003_glicko.sql` adds rd/vol), written at match
-end OFF the hot path. **Ranked is Glicko-2** (`server/ranked.ts`: rating + RD + volatility,
-`SCALE 173.7178`, `CENTER 1500`, provisional RD shown with a "?"), decided AFTER the score
-SETTLES (`room.ts` `MATCH_SETTLE_S` — late-draining balls finish scoring before finalize);
-an opponent who LEAVES mid-match is retained (`departed`) so the match still rates (chess.com
-forfeit). `EloDelta` drives the results-screen reveal animation. **SOLO RECORD RUNS**
-(score-attack, no PvP): the results screen shows NET score (earned − own penalties, `−`
-sign), NO opponent/winner, and PB / WR / global-rank (`RecordRankInfo`, per mode×drivetrain×
-season); the DB save + reveal are synced to the whoosh so late points aren't cut off.
-**ADMIN MENU** (`src/ui/Admin.tsx`, `/admin`): gated on the signed-in UUID (`ADMIN_USER_IDS`
-env; server enforces every action independently) — schedule a server restart with a countdown
-notice broadcast to all clients (`serverNotice` banner). **VERSION GATE**: a new client build
-is detected (`__BUILD_ID__` from git sha → `/version.json` poll, `useNewVersion`) and, when a
-player STARTS a run (never mid-run), forces a refresh — NO "play anyway" (everyone must be on
-the same version for multiplayer). Still open (Phase 3): matchmaking polish, replay UI,
-leaderboard tiers, the full UI redesign (`docs/netcodeplan.md`).
+## Next up (not started)
 
-**Phase 2 — Rapier 2D physics: ROBOTS slice DONE + green (~205 smoke checks).** Robot
-collision is Rapier (`physicsEngine.ts` — see the architecture bullet above); balls are
-still bespoke (slice 2, deferred — the trickiest port per `docs/netcodeplan.md`). Slice
-2 = balls → Rapier bodies/sensors while KEEPING basin/rail/gate scripted (contact-time
-classified-vs-overflow commit must stay exact); ONLY after that, delete the dead
-`collideRobots`/`constrainRobot` and remove the `dsin/dcos/datan2` discipline.
-**Ball containment invariant** (added when a ground ball could mesh under the classifier
-and become ungrabbable): ground balls get a HARD geometric eviction pass in `world.ts`
-(walls + goal faces via `clampBallPosToStatics`, AND `collideBallRect` against both
-classifier rects) because Rapier's soft contacts can't clear a DEEPLY embedded body. Any
-new solid a ball can tunnel into needs the same geometric clamp, not just a Rapier collider.
-
-## Next up (roadmap — not yet started)
-
-1. **Penalty hitbox audit** — the foul rules are correct (Phase C), but re-verify the
-   ZONE GEOMETRY / contact hitboxes each rule tests against the manual figures:
-   `gateZone`/`gateTapeSegments`, `tunnelStrip`, `allianceArea` (loading/base), the
-   `pinnedAgainstWall` slop, and the SAT contact test (`rrContacts`) — make sure the
-   trigger volumes match the real field markings and robot bumper extents, not just the
-   rule logic. Tighten with smoke cases per zone.
-2. **Major intake revamp — DONE (session 7).** Rewrote the intake to a physical `mouth`
-   model (per-preset geometry, position-dependent swallow timing, wedge funneling, triangle
-   dual-capture) alongside power draw + the drivetrain push/clamp/inertia-coupling work. See
-   product decision #10 (updated) + HANDOFF. Preserved the user-named presets and the "no side
-   intake except where the vector wheel overhangs a narrower chassis" feel. Further tuning is
-   welcome — #10 is the new baseline, not a frozen spec.
+1. **Rapier slice 2 — balls/particles.** Port to Rapier bodies/sensors while KEEPING the
+   scripted basin/rail/gate (the contact-time classified-vs-overflow commit must stay exact).
+   ONLY after that: delete the dead `collideRobots`/`constrainRobot` and drop the
+   `dsin/dcos/datan2` discipline.
+2. **DECODE penalty hitbox audit** — the rules are right; re-verify the ZONE GEOMETRY each one
+   tests (`gateZone`/`gateTapeSegments`, `tunnelStrip`, `allianceArea`, `pinnedAgainstWall`
+   slop, the SAT `rrContacts` test) against the manual figures. Tighten with smoke cases.
+3. **Chain Reaction manual refinement** — replace the `APPROX` constants (ring-stand inset,
+   Lab-Area size/geometry, exact zone coordinates) with measured manual values.
+4. **CR presets** — `CHAIN_PRESETS` all still use the default front/front mounts; a card
+   showcasing a flank shooter or a front+back sweeper would be cheap and instructive.
+5. Deferred: WebTransport (needs TLS-deploy validation + an ACK-keyed delta), full-reload
+   reconnect, obelisk AprilTag visuals, DECODE deferred fouls (G408 possession>3 / plowing),
+   matchmaking polish, replay UI, leaderboard tiers.

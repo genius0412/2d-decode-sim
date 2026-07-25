@@ -30,11 +30,13 @@
  *  • LAB AREA — each alliance's start/park zone (leave 5 pt auto / park 5 pt endgame).
  *  • PARTICLE ZONE — the center diamond of white tape (neutral, unprotected).
  *
- * STILL A SHELL: robots are drivable + wall-contained and the ACCELERATORS, HOOKS,
- * RING STANDS and PARTICLE ZONE are placed/drawn. Scoring/particles/catalysts and
- * the Lab-Area / column-grid geometry are NOT implemented yet (exact field-zone
- * coordinates for the Particle Zone, Lab Areas, and Ring-Stand positions are still
- * needed — approximations below are FLAGGED).
+ * FULLY PLAYABLE + SCORED: particles (all 300, with pre-match randomization and the
+ * accelerator score/recycle loop), the three shooter archetypes, catalysts/hooks,
+ * ring-stand ascend/descend, Lab park, beam terrain, and the G05/G06 penalties are all
+ * implemented. What is still OUTSTANDING is manual PRECISION, not features: a few
+ * field-zone coordinates (Ring-Stand inset, Lab-Area size, Particle-Zone placement) were
+ * derived from description rather than a figure — every one of those is FLAGGED `APPROX`
+ * below. Refine those constants rather than inventing new ones.
  */
 
 import type { ChainIntakeMount, ChainIntakeStyle, ChainScoreMode, RobotSpec, StartCat } from '../../types';
