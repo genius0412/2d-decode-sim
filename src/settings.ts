@@ -6,7 +6,7 @@ import {
   coerceAutoPath,
   coerceStartPose,
   defaultAssistsFor,
-  defaultAssistsByDrivetrain,
+  PLAYER_ASSISTS,
 } from './sim/spawn';
 import { START_POSES, MAX_SAVED_ROBOTS, MAX_SAVED_AUTOS, MAX_SAVED_STARTS } from './config';
 import { CHAIN_START_POSES } from './games/chain/config';
@@ -37,9 +37,8 @@ export function defaultSettings(): GameSettings {
     game: 'decode',
     mode: 'match',
     alliance: 'blue',
-    // active assists = the default spec's drivetrain slot; library = per-drivetrain defaults
-    assists: defaultAssistsFor(DEFAULT_SPEC.drivetrain),
-    assistsByDrivetrain: defaultAssistsByDrivetrain(),
+    // the ACTIVE assists always MIRROR the robot's own (`spec.assists`) — all ON by default
+    assists: { ...(DEFAULT_SPEC.assists ?? defaultAssistsFor()) },
     spec: { ...DEFAULT_SPEC },
     savedRobots: [],
     savedAutos: [],
@@ -128,8 +127,9 @@ function coerceLoadout(raw: unknown, game: GameId): GameLoadout {
 }
 
 /** switch the ACTIVE game, swapping the flat robot/start fields to that game's OWN copy
- * (archiving the game we're leaving first) so saved robots + start positions never bleed
- * across games. Active assists follow the restored robot's drivetrain slot. */
+ * (archiving the game we're leaving first) so the robot build, saved robots and start
+ * positions never bleed across games. Assists ride the restored ROBOT (`spec.assists`), so
+ * each game keeps its own drive frame + automation too. */
 export function switchGame(s: GameSettings, game: GameId): GameSettings {
   if (game === s.game) return s;
   const loadouts: Partial<Record<GameId, GameLoadout>> = { ...(s.loadouts ?? {}) };
@@ -141,7 +141,7 @@ export function switchGame(s: GameSettings, game: GameId): GameSettings {
     game,
     loadouts,
     ...restore,
-    assists: s.assistsByDrivetrain[restore.spec.drivetrain] ?? s.assists,
+    assists: coerceAssists(restore.spec.assists, PLAYER_ASSISTS),
   };
 }
 
@@ -184,24 +184,19 @@ export function coerceSettings(raw: unknown): GameSettings {
     // same legal ranges as a spoofed wire spec, so both surfaces agree exactly.
     // Spec is coerced FIRST because its drivetrain decides the active-assist fallback.
     if (s.spec !== undefined) out.spec = coerceSpec(s.spec, out.spec, out.game);
-    // per-drivetrain assist library: each slot coerced against its own drivetrain default
-    const dfltByDt = defaultAssistsByDrivetrain();
-    const hadByDt = typeof s.assistsByDrivetrain === 'object' && s.assistsByDrivetrain !== null;
-    const rawByDt = hadByDt ? (s.assistsByDrivetrain as Record<string, unknown>) : {};
-    out.assistsByDrivetrain = {
-      mecanum: coerceAssists(rawByDt.mecanum, dfltByDt.mecanum),
-      tank: coerceAssists(rawByDt.tank, dfltByDt.tank),
-      swerve: coerceAssists(rawByDt.swerve, dfltByDt.swerve),
-      xdrive: coerceAssists(rawByDt.xdrive, dfltByDt.xdrive),
-    };
-    // active assists: an explicitly-stored value wins; else this drivetrain's slot
-    out.assists = coerceAssists(s.assists, out.assistsByDrivetrain[out.spec.drivetrain]);
-    // migration: an old save with no per-drivetrain library seeds the active
-    // drivetrain's slot from its stored active assists, so the choice survives a
-    // drivetrain round-trip (other drivetrains get the new defaults)
-    if (!hadByDt && s.assists !== undefined) {
-      out.assistsByDrivetrain[out.spec.drivetrain] = { ...out.assists };
+    // ASSISTS RIDE THE ROBOT. `spec.assists` (already coerced above, defaulting all-ON) is
+    // the stored preference; the flat `assists` is just its ACTIVE mirror, so the two can
+    // never drift.
+    //
+    // MIGRATION off the old model: pre-assists-on-spec saves kept the choice in the flat
+    // `assists` (and a per-drivetrain library that is now gone). If the stored spec carried
+    // no assists of its own, adopt that flat value onto the robot so an existing player's
+    // settings survive; only a save with neither falls back to all-ON.
+    const specAssists = (s.spec as { assists?: unknown } | undefined)?.assists;
+    if (specAssists === undefined && s.assists !== undefined) {
+      out.spec = { ...out.spec, assists: coerceAssists(s.assists, PLAYER_ASSISTS) };
     }
+    out.assists = coerceAssists(out.spec.assists, PLAYER_ASSISTS);
     // saved libraries: validate each entry through the same coercers, cap the count
     if (Array.isArray(s.savedRobots)) {
       out.savedRobots = s.savedRobots.slice(0, MAX_SAVED_ROBOTS).map((r) => coerceSpec(r, undefined, out.game));

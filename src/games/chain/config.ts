@@ -447,37 +447,58 @@ export const CHAIN_FOUL_SLOP = 1; // in of bumper slack for the robot-robot cont
  * so a single click sets a coherent playstyle. All numbers are within the shared
  * coerceSpec ranges (so applying one is a no-op through the coercer and the card
  * highlights as selected). `name`/`teamName` describe the archetype (no team number).
+ *
+ * MOUNTS: every preset picks the intake/shooter EDGES that its playstyle actually wants,
+ * so the four cards between them demonstrate all of them. The mount is never decoration —
+ * each one below buys a specific driving habit, and (for `side`/`frontback`) pays for it in
+ * hopper volume via `chainMountStoreMult`, which is why their storage numbers are lower.
+ * Every `ballStorage` here must stay ≤ that build's `chainStorageMax`, or coerceSpec clamps
+ * it and the card stops highlighting as selected — smoke asserts this.
  */
 export const CHAIN_PRESETS: readonly RobotSpec[] = [
   {
-    // long-range precision: turret shoots from anywhere, swerve + clearance to roam
-    // over the beams
-    name: 'Sniper', teamName: 'Turret · scores from anywhere', teamNumber: 0,
+    // long-range precision: turret shoots from anywhere, swerve + clearance to roam over
+    // the beams. MOUNT: a turret is top-mounted and aims itself, so the chassis never has
+    // to face the goal — which is exactly the build that can afford a FRONT+BACK sweeper
+    // and collect while driving in either direction. It pays ~25% of the hopper for that.
+    name: 'Sniper', teamName: 'Turret · shoots and collects any direction', teamNumber: 0,
     length: 14.5, width: 17, intake: 'sloped', massLb: 24, drivetrain: 'swerve',
     driveRpm: 500, flywheelInertia: 0.2, canSort: false,
     ballStorage: 12, groundClearance: 1.3, scoreMode: 'turret', chainIntake: 'sweeper',
+    intakeMount: 'frontback', shooterMount: 'front',
   },
   {
     // volume hauler: dumps a huge load at the wall, tank push + MAX storage + high
-    // clearance to bulldoze over the beams
-    name: 'Hauler', teamName: 'Dumper · haul & unload', teamNumber: 0,
+    // clearance to bulldoze over the beams. MOUNT: a REAR catapult means the whole cycle
+    // is one straight line — drive forward to fill the hopper, reverse into range, dump.
+    // No turning around at either end. Two end mounts on opposite edges cost NO storage
+    // (front and back are mirror images), so it keeps the biggest hopper in the set.
+    name: 'Hauler', teamName: 'Dumper · fill forward, reverse and unload', teamNumber: 0,
     length: 15, width: 18, intake: 'sloped', massLb: 38, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.2, canSort: false,
     ballStorage: 40, groundClearance: 1.5, scoreMode: 'dumper', chainIntake: 'sweeper',
+    intakeMount: 'front', shooterMount: 'back',
   },
   {
-    // the volume shooter: a chassis-wide drum firing 6 at once from anywhere, light mecanum
-    name: 'Drummer', teamName: 'Drum · fast stream from anywhere', teamNumber: 0,
+    // the volume shooter: a chassis-wide drum streaming from anywhere, light mecanum.
+    // MOUNT: SIDE sweepers turn a mecanum's strafe into the collection tool — slide
+    // sideways along a line of particles and hoover it up with the flank rollers, then
+    // face the goal and stream. The open flanks are the harshest storage cost (0.6).
+    name: 'Drummer', teamName: 'Drum · strafe-collect, stream from anywhere', teamNumber: 0,
     length: 14.5, width: 17, intake: 'sloped', massLb: 25, drivetrain: 'mecanum',
     driveRpm: 470, flywheelInertia: 0.3, canSort: false,
     ballStorage: 24, groundClearance: 1.4, scoreMode: 'drum', chainIntake: 'sweeper',
+    intakeMount: 'side', shooterMount: 'front',
   },
   {
-    // fast wall-runner: a quick x-drive dumper that shuttles particles to its own
-    // accelerator; low clearance keeps it off the beams (works its own quadrant)
-    name: 'Skimmer', teamName: 'Dumper · fast wall runs', teamNumber: 0,
+    // fast wall-runner: a quick x-drive dumper working its own quadrant; low clearance
+    // keeps it off the beams. MOUNT: an x-drive strafes as fast as it drives, so a
+    // BROADSIDE catapult lets it run the wall and fire sideways WITHOUT ever turning —
+    // the launch line then spans the chassis LENGTH, not its width.
+    name: 'Skimmer', teamName: 'Dumper · run the wall, fire broadside', teamNumber: 0,
     length: 14.5, width: 16, intake: 'sloped', massLb: 22, drivetrain: 'xdrive',
     driveRpm: 520, flywheelInertia: 0.1, canSort: false,
     ballStorage: 26, groundClearance: 1.0, scoreMode: 'dumper', chainIntake: 'sweeper',
+    intakeMount: 'front', shooterMount: 'right',
   },
 ] as const;

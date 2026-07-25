@@ -30,7 +30,7 @@ import {
   shooterMountOf,
 } from '../games/chain/mounts';
 import { driveParams, lengthLimits, massLimits, rpmLimits, widthLimits } from '../sim/drivetrain';
-import { coerceSpec } from '../sim/spawn';
+import { coerceSpec, coerceAssists, PLAYER_ASSISTS } from '../sim/spawn';
 import { RobotPreview } from './RobotPreview';
 import { DRIVETRAIN_LABELS, INTAKE_SHORT } from './robotLabels';
 import { rangeFill } from './rangeFill';
@@ -125,16 +125,15 @@ interface Props {
  */
 export function Menu({ settings, onChange }: Props) {
   const set = (patch: Partial<GameSettings>) => onChange({ ...settings, ...patch });
-  // Apply a fully-formed spec, and when the DRIVETRAIN changes, swap the ACTIVE
-  // assists to that drivetrain's remembered slot (assists are per-drivetrain: swerve
-  // field-centric, everything else robot-centric). Used by the drivetrain buttons,
-  // the intake/slider edits (via setSpec), and preset/saved-robot loads.
+  // Apply a fully-formed spec. ASSISTS RIDE THE ROBOT, so the ACTIVE assists always
+  // re-mirror from the incoming spec — loading a preset or a saved robot (or switching
+  // games, via switchGame) brings that robot's own drive frame + automation with it.
+  // Used by the drivetrain buttons, the intake/slider edits (via setSpec), and loads.
   const applySpec = (next: RobotSpec) => {
-    const dtChanged = next.drivetrain !== settings.spec.drivetrain;
     onChange({
       ...settings,
       spec: next,
-      ...(dtChanged ? { assists: settings.assistsByDrivetrain[next.drivetrain] } : {}),
+      assists: coerceAssists(next.assists, PLAYER_ASSISTS),
     });
   };
   // any spec edit RE-CLAMPS all coupled values (mass floor moves with drivetrain +
@@ -154,14 +153,15 @@ export function Menu({ settings, onChange }: Props) {
     };
     applySpec(next);
   };
-  // an assist edit updates the ACTIVE assists AND writes back to the current
-  // drivetrain's remembered slot, so the choice sticks per drivetrain
+  // an assist edit writes ONTO THE ROBOT (`spec.assists`) and mirrors to the active
+  // `assists`, so the choice is saved with the build — it rides saved-robot slots, the
+  // per-game loadout, and account sync, instead of being a separate global preference.
   const setAssist = (patch: Partial<GameSettings['assists']>) => {
     const merged = { ...settings.assists, ...patch };
     onChange({
       ...settings,
+      spec: { ...settings.spec, assists: merged },
       assists: merged,
-      assistsByDrivetrain: { ...settings.assistsByDrivetrain, [settings.spec.drivetrain]: merged },
     });
   };
 
@@ -365,10 +365,15 @@ export function Menu({ settings, onChange }: Props) {
                   <>
                     <span className="om">
                       {DRIVETRAIN_LABELS[p.drivetrain]} · {p.massLb} lb · {p.driveRpm} RPM ·{' '}
-                      {CHAIN_INTAKE_LABELS[p.chainIntake ?? CHAIN_DEFAULT_INTAKE]} · {p.ballStorage} store
+                      {CHAIN_INTAKE_LABELS[p.chainIntake ?? CHAIN_DEFAULT_INTAKE]}{' '}
+                      {CHAIN_INTAKE_MOUNT_LABELS[intakeMountOf(p)]} · {p.ballStorage} store
                     </span>
+                    {/* a turret is top-mounted, so naming its shooter mount would be noise */}
                     <span className="oz">
                       🎯 {CHAIN_MODE_LABELS[p.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]}
+                      {(p.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) !== 'turret'
+                        ? ` · ${CHAIN_SHOOTER_MOUNT_LABELS[shooterMountOf(p)]}`
+                        : ''}
                     </span>
                   </>
                 )}
@@ -654,8 +659,7 @@ export function Menu({ settings, onChange }: Props) {
         <section className="ds-sec">
           <h2>Drive style</h2>
           <p className="ds-hint">
-            Saved per drivetrain ({DRIVETRAIN_LABELS[spec.drivetrain]}) — switching drivetrains
-            restores its own settings.
+            Saved with this robot — each saved build keeps its own drive style and assists.
           </p>
           <div className="ds-opts two">
             <button
@@ -701,7 +705,11 @@ export function Menu({ settings, onChange }: Props) {
               onClick={() => setAssist({ aimAssist: !settings.assists.aimAssist })}
             >
               <span className="ot">Aim assist {settings.assists.aimAssist ? 'ON' : 'OFF'}</span>
-              <span className="od">Turret auto-tracks the goal</span>
+              {/* what it actually does differs per game: DECODE tracks with the turret,
+                  CR turns a turretless drum/dumper onto the goal while firing */}
+              <span className="od">
+                {isDecode ? 'Turret auto-tracks the goal' : 'Firing turns the robot onto the goal'}
+              </span>
             </button>
             <button
               className={`ds-opt ${settings.assists.autoIntake ? 'on' : ''}`}

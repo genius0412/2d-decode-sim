@@ -78,7 +78,7 @@ import {
 import { robotCorners, robotExtents, robotIntersectsRect, wheelContacts } from '../src/sim/physics';
 import { beamBlock, beamDrag, beamDragFactor, beamStrafeBlock, beamForwardness, beamRide, canCrossBeams, cogFactor, wheelsOnBeam, CHAIN_BEAMS } from '../src/games/chain/beams';
 import { driveParams, massLimits, rpmLimits, motorStep, driveSummary, widthLimits } from '../src/sim/drivetrain';
-import { coerceSettings, switchGame, syncAudioMirrors } from '../src/settings';
+import { coerceSettings, defaultSettings, switchGame, syncAudioMirrors } from '../src/settings';
 import type { RobotSetup } from '../src/sim/spawn';
 import { DEFAULT_BINDINGS, mergeBindings } from '../src/input/bindings';
 import { quantizeCommand, dequantizeCommand, localizeCommand, slimWorld, unslimWorld } from '../src/net/protocol';
@@ -4607,6 +4607,148 @@ const mkMM = () => {
         intakeMountOf(mirrored) === 'side' && shooterMountOf(mirrored) === 'back',
       );
     }
+
+    // MOUNTS ARE CHAIN-ONLY. The intake mount moves the COLLISION FOOTPRINT, so a CR build
+    // reaching DECODE would widen its flanks and delete its front intake reach. coerceSpec
+    // normalizes whenever the game is explicitly non-chain — and must NOT when it's unknown,
+    // since several call paths omit `game` and would otherwise wipe a real CR build.
+    {
+      const crBuild = { ...DEFAULT_SPEC, intakeMount: 'side' as const, shooterMount: 'left' as const };
+      const asChain = coerceSpec(crBuild, DEFAULT_SPEC, 'chain');
+      const asDecode = coerceSpec(crBuild, DEFAULT_SPEC, 'decode');
+      const noGame = coerceSpec(crBuild, DEFAULT_SPEC);
+      check(
+        'mounts are chain-only: a CR mount is stripped for DECODE, kept when the game is unknown',
+        asChain.intakeMount === 'side' &&
+          asChain.shooterMount === 'left' &&
+          asDecode.intakeMount === 'front' &&
+          asDecode.shooterMount === 'front' &&
+          asDecode.intakeSide === false &&
+          noGame.intakeMount === 'side',
+        `chain=${asChain.intakeMount} decode=${asDecode.intakeMount} noGame=${noGame.intakeMount}`,
+      );
+      // the point of the strip: DECODE's hitbox keeps its FRONT intake reach and normal width
+      const eD = footprintExtents(asDecode);
+      const eRef = footprintExtents(coerceSpec(DEFAULT_SPEC, DEFAULT_SPEC, 'decode'));
+      check(
+        'mounts are chain-only: a leaked CR spec cannot reshape the DECODE collision box',
+        Math.abs(eD.front - eRef.front) < 1e-9 &&
+          Math.abs(eD.half - eRef.half) < 1e-9 &&
+          Math.abs(eD.rear - eRef.rear) < 1e-9,
+        `leaked=${eD.front.toFixed(2)}/${eD.half.toFixed(2)} ref=${eRef.front.toFixed(2)}/${eRef.half.toFixed(2)}`,
+      );
+      // the UI path: switching games swaps in that game's OWN loadout and restores it on return
+      const sChain = coerceSettings({ game: 'chain', spec: crBuild });
+      const sDecode = switchGame(sChain, 'decode');
+      const sBack = switchGame(sDecode, 'chain');
+      check(
+        'switchGame: the robot build does NOT carry across a game switch (and is restored on return)',
+        intakeMountOf(sChain.spec) === 'side' &&
+          intakeMountOf(sDecode.spec) === 'front' &&
+          shooterMountOf(sDecode.spec) === 'front' &&
+          intakeMountOf(sBack.spec) === 'side' &&
+          shooterMountOf(sBack.spec) === 'left',
+        `chain=${intakeMountOf(sChain.spec)} decode=${intakeMountOf(sDecode.spec)} back=${intakeMountOf(sBack.spec)}`,
+      );
+    }
+
+    // ── DRIVER ASSISTS RIDE THE ROBOT (both games), all ON by default ──────────────────
+    {
+      // 1. the default robot has every assist enabled, in BOTH games
+      const dDecode = coerceSpec(DEFAULT_SPEC, DEFAULT_SPEC, 'decode').assists!;
+      const dChain = coerceSpec(DEFAULT_SPEC, DEFAULT_SPEC, 'chain').assists!;
+      const allOn = (a: typeof dDecode): boolean =>
+        a.fieldCentric && a.aimAssist && a.autoIntake && a.autoFire;
+      check(
+        'assists: every assist defaults ON, for DECODE and Chain Reaction alike',
+        allOn(dDecode) && allOn(dChain) && allOn(defaultSettings().assists),
+        `decode=${JSON.stringify(dDecode)} chain=${JSON.stringify(dChain)}`,
+      );
+
+      // 2. they are STORED on the spec, so they survive the coercer field-by-field
+      const custom = coerceSpec(
+        { ...DEFAULT_SPEC, assists: { fieldCentric: false, aimAssist: true, autoIntake: false, autoFire: true } },
+        DEFAULT_SPEC,
+        'chain',
+      );
+      check(
+        'assists: a per-robot assist choice survives coerceSpec exactly',
+        custom.assists!.fieldCentric === false &&
+          custom.assists!.aimAssist === true &&
+          custom.assists!.autoIntake === false &&
+          custom.assists!.autoFire === true,
+        JSON.stringify(custom.assists),
+      );
+
+      // 3. they ride the ROBOT across a game switch — each game keeps its own, and the
+      //    flat active `assists` always mirrors the active spec (they can't drift)
+      const s0 = coerceSettings({ game: 'chain', spec: custom });
+      const s1 = switchGame(s0, 'decode');
+      const s2 = switchGame(s1, 'chain');
+      check(
+        'assists: saved with the robot — per game, and the active mirror never drifts',
+        s0.assists.autoIntake === false && // chain robot's own choice
+          s1.assists.autoIntake === true && // DECODE gets its own all-ON robot
+          s1.assists.fieldCentric === true &&
+          s2.assists.autoIntake === false && // restored on return
+          s2.assists.fieldCentric === false &&
+          JSON.stringify(s0.assists) === JSON.stringify(s0.spec.assists) &&
+          JSON.stringify(s1.assists) === JSON.stringify(s1.spec.assists) &&
+          JSON.stringify(s2.assists) === JSON.stringify(s2.spec.assists),
+        `chain=${JSON.stringify(s0.assists)} decode=${JSON.stringify(s1.assists)}`,
+      );
+
+      // 4. MIGRATION: a pre-assists-on-spec save kept the choice in the flat field with no
+      //    spec.assists — adopt it onto the robot rather than resetting the player to all-ON
+      const legacy = coerceSettings({
+        game: 'decode',
+        assists: { fieldCentric: false, aimAssist: false, autoIntake: false, autoFire: false },
+        spec: { ...DEFAULT_SPEC, assists: undefined },
+      });
+      check(
+        'assists: an old save without spec.assists migrates its flat choice onto the robot',
+        legacy.spec.assists!.autoFire === false &&
+          legacy.spec.assists!.fieldCentric === false &&
+          legacy.assists.autoFire === false,
+        JSON.stringify(legacy.spec.assists),
+      );
+
+      // 5. a saved-robot slot carries its own assists (that is the point of storing them
+      //    on the spec — loading a build restores how it drives)
+      const withSaved = coerceSettings({ game: 'chain', savedRobots: [custom] });
+      check(
+        'assists: a saved robot slot keeps its own assists',
+        withSaved.savedRobots[0].assists!.autoIntake === false &&
+          withSaved.savedRobots[0].assists!.fieldCentric === false,
+        JSON.stringify(withSaved.savedRobots[0].assists),
+      );
+    }
+
+    // CR AIM ASSIST is now a real toggle: with it OFF the fire button no longer steers a
+    // turretless launcher (the driver aims by hand); ON, it turns the robot onto the goal.
+    {
+      const mkAim = (aimAssist: boolean) => {
+        const s = chainSetup(0, 'blue');
+        s.spec = { ...DEFAULT_SPEC, scoreMode: 'drum' };
+        s.assists = { ...DEFAULT_ASSISTS, aimAssist, autoFire: false };
+        const gw = createChainWorld('match', 991, [s]);
+        gw.match.phase = 'teleop';
+        gw.match.phaseTimeLeft = 120;
+        const rob = gw.robots[0];
+        rob.pos = { x: -30, y: 0 };
+        rob.heading = Math.PI / 2; // 90° off the goal (+x): assist must turn it back
+        rob.hopper = Array(10).fill('green');
+        runChain(gw, cmd({ fire: true }), 0.6);
+        return Math.abs(wrapAngle(gw.robots[0].heading - 0)); // heading error to the goal
+      };
+      const errOn = mkAim(true);
+      const errOff = mkAim(false);
+      check(
+        'chain aim assist: ON steers a turretless launcher onto the goal, OFF leaves the heading alone',
+        errOn < 0.1 && errOff > 1.4,
+        `errOn=${errOn.toFixed(2)} errOff=${errOff.toFixed(2)}`,
+      );
+    }
   }
 
   // CR presets are legal + STABLE through coerceSpec (so a card applies as a no-op and
@@ -4615,7 +4757,7 @@ const mkMM = () => {
     let ok = true;
     const bad: string[] = [];
     for (const p of CHAIN_PRESETS) {
-      const c = coerceSpec({ ...p });
+      const c = coerceSpec({ ...p }, undefined, 'chain');
       if (
         c.massLb !== p.massLb ||
         c.driveRpm !== p.driveRpm ||
@@ -4624,13 +4766,30 @@ const mkMM = () => {
         c.scoreMode !== p.scoreMode ||
         c.chainIntake !== p.chainIntake ||
         c.ballStorage !== p.ballStorage ||
-        c.groundClearance !== p.groundClearance
+        c.groundClearance !== p.groundClearance ||
+        // the MOUNTS must survive too — and `ballStorage` surviving is the sharp assertion
+        // now that mounts exist: a mount's storage multiplier LOWERS chainStorageMax, so a
+        // preset whose hopper exceeds its mount-adjusted cap gets silently clamped and the
+        // card stops matching what it just applied.
+        intakeMountOf(c) !== intakeMountOf(p) ||
+        shooterMountOf(c) !== shooterMountOf(p)
       ) {
         ok = false;
         bad.push(p.name);
       }
     }
     check('chain presets: every CR archetype survives coerceSpec unchanged', ok, bad.join(' '));
+
+    // showcasing the mount space is now these cards' job — keep them from drifting back
+    // to all-default mounts the next time someone retunes the presets.
+    check(
+      'chain presets: between them they showcase the mount options',
+      CHAIN_PRESETS.some((p) => intakeMountOf(p) === 'side') &&
+        CHAIN_PRESETS.some((p) => intakeMountOf(p) === 'frontback') &&
+        CHAIN_PRESETS.some((p) => shooterMountOf(p) === 'back') &&
+        CHAIN_PRESETS.some((p) => shooterMountOf(p) === 'left' || shooterMountOf(p) === 'right'),
+      CHAIN_PRESETS.map((p) => `${p.name}:${intakeMountOf(p)}/${shooterMountOf(p)}`).join(' '),
+    );
   }
 
   // HOPPER MAX = archetype × size: turret smallest, drum == dumper (large), bigger chassis holds more

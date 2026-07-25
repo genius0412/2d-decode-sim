@@ -60,6 +60,15 @@ export interface RobotSpec {
   flywheelInertia: number;
   /** robot can pick which hopper color to fire (chases the motif) */
   canSort: boolean;
+  /** DRIVER ASSISTS saved WITH THE ROBOT — BOTH games. Drive frame (field/robot-centric)
+   * plus the aim/intake/fire automation. They live on the spec so they travel with
+   * everything a spec travels with: saved robot slots, the per-game loadout `switchGame`
+   * swaps, presets, and account sync — rather than being a separate global preference.
+   * EVERY assist DEFAULTS ON (`PLAYER_ASSISTS` in sim/spawn.ts).
+   * This is the STORED preference. The sim still reads the resolved `RobotSetup.assists`
+   * (which the UI fills from here), so the spawn seam and the wire are unchanged.
+   * Optional so old saves omit it (defaulted in `coerceSpec`). */
+  assists?: AssistConfig;
   /** Chain Reaction: how many Particles the robot's hopper holds (1–30 slider).
    * Optional so DECODE specs/old saves omit it (defaulted in coerceSpec). */
   ballStorage?: number;
@@ -436,14 +445,12 @@ export interface GameSettings {
    * flat fields above are always the ACTIVE game's copy; `switchGame` swaps them. */
   loadouts?: Partial<Record<GameId, GameLoadout>>;
   practiceDummies: boolean;
-  /** the ACTIVE resolved driver assists (what spawns + goes on the wire) */
+  /** the ACTIVE resolved driver assists (what spawns + goes on the wire).
+   * MIRRORED from `spec.assists`, which is where the preference is actually STORED — the
+   * robot owns its assists, so loading a saved robot / preset / the other game's loadout
+   * brings its own. Kept as a flat field because spawn, the lobby, matchmaking and record
+   * runs all read it, so the wire and the spawn seam never had to change. */
   assists: AssistConfig;
-  /** driver assists remembered PER DRIVETRAIN. Switching drivetrain (or picking a
-   * robot preset) loads that drivetrain's slot into `assists`; editing an assist
-   * writes back to the active drivetrain's slot. Swerve defaults field-centric, every
-   * other drivetrain robot-centric. LOCAL setting — persists + account-syncs, and is
-   * NOT sent over the wire (only the resolved `assists` is), so no protocol change. */
-  assistsByDrivetrain: Record<DrivetrainType, AssistConfig>;
   bindings: ControlBindings;
   audio: {
     /** per-category levels, 0–1 — the source of truth. `master` scales the other

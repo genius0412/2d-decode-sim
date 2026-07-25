@@ -77,6 +77,8 @@ export const DEFAULT_SPEC: RobotSpec = {
   // deprecated mirrors of the two mounts above (kept in sync by coerceSpec)
   intakeSide: false,
   shooterRear: false,
+  // driver assists ride the ROBOT (both games) — all ON by default. See PLAYER_ASSISTS.
+  assists: { fieldCentric: true, aimAssist: true, autoIntake: true, autoFire: true },
 };
 
 // Neutral sim/wire FALLBACK for assists (used by coercion bases, replay, server
@@ -89,22 +91,25 @@ export const DEFAULT_ASSISTS: AssistConfig = {
   autoFire: false,
 };
 
-// The player-facing DEFAULT assists, remembered PER DRIVETRAIN. Every drivetrain
-// defaults to robot-centric with all assists ON, EXCEPT swerve, which defaults
-// field-centric (its holonomic pods make field-relative driving the natural pick —
-// this is what makes the Cypher swerve preset field-centric out of the box).
-export function defaultAssistsFor(d: DrivetrainType): AssistConfig {
-  return { fieldCentric: d === 'swerve', aimAssist: true, autoIntake: true, autoFire: true };
-}
+/**
+ * The player-facing DEFAULT assists, and the default for `RobotSpec.assists` — EVERY assist
+ * is ON, including field-centric drive, for every drivetrain and BOTH games.
+ *
+ * Assists used to be remembered per DRIVETRAIN (with swerve alone defaulting field-centric);
+ * they are now saved ON THE ROBOT (`RobotSpec.assists`), so the memory is per-build and the
+ * per-drivetrain library is gone. Distinct from `DEFAULT_ASSISTS` above, which stays auto-OFF
+ * as the neutral sim/wire fallback for replay, dummies, and smoke.
+ */
+export const PLAYER_ASSISTS: AssistConfig = {
+  fieldCentric: true,
+  aimAssist: true,
+  autoIntake: true,
+  autoFire: true,
+};
 
-/** the full per-drivetrain assist library a fresh player starts with */
-export function defaultAssistsByDrivetrain(): Record<DrivetrainType, AssistConfig> {
-  return {
-    mecanum: defaultAssistsFor('mecanum'),
-    tank: defaultAssistsFor('tank'),
-    swerve: defaultAssistsFor('swerve'),
-    xdrive: defaultAssistsFor('xdrive'),
-  };
+/** the player default (kept as a function for call sites; no longer drivetrain-dependent) */
+export function defaultAssistsFor(_d?: DrivetrainType): AssistConfig {
+  return { ...PLAYER_ASSISTS };
 }
 
 // ---- untrusted-input sanitization -------------------------------------------
@@ -193,6 +198,18 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   const hasShooterMount = sp.shooterMount !== undefined || sp.shooterRear !== undefined;
   out.intakeMount = hasIntakeMount ? intakeMountOf(rawMounts) : intakeMountOf(base);
   out.shooterMount = hasShooterMount ? shooterMountOf(rawMounts) : shooterMountOf(base);
+  // MOUNTS ARE CHAIN-ONLY. They are the one CR field with a SHARED physics effect — the intake
+  // mount moves the collision footprint (`footprintExtents`), so a CR build's side sweeper
+  // leaking into DECODE would widen its flanks and delete its front intake reach. The builder
+  // only offers mounts for CR and `switchGame` keeps a per-game spec, but a spec can still
+  // arrive from a hand-edited store, a pre-loadouts save, or an untrusted client whose build
+  // doesn't match the room's game — so normalize here, the chokepoint every one of those passes.
+  // Only when the game is EXPLICITLY known and non-chain: `game` is optional on several call
+  // paths, and treating "unspecified" as DECODE would silently wipe a real CR build.
+  if (game !== undefined && game !== 'chain') {
+    out.intakeMount = CHAIN_DEFAULT_INTAKE_MOUNT;
+    out.shooterMount = CHAIN_DEFAULT_SHOOTER_MOUNT;
+  }
   // MIRROR the deprecated booleans so a spec routed through an older peer/server (which drops
   // the fields it doesn't know) round-trips to the nearest legal mount instead of resetting.
   out.intakeSide = out.intakeMount === 'side';
@@ -214,6 +231,11 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
     CHAIN_CLEARANCE_MAX,
     base.groundClearance ?? CHAIN_CLEARANCE_DEFAULT,
   );
+
+  // DRIVER ASSISTS ride the robot (both games), every flag defaulting ON. Each flag is
+  // validated independently, so an old spec with no `assists` (or a partial one off the
+  // wire) fills from the base rather than being dropped.
+  out.assists = coerceAssists(sp.assists, base.assists ?? PLAYER_ASSISTS);
 
   // identity + flags (no cross-field dependency)
   if (typeof sp.canSort === 'boolean') out.canSort = sp.canSort;

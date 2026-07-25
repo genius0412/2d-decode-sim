@@ -454,10 +454,17 @@ export function chainGoalAimHeading(r: RobotState): number {
  * (see the fire gate in updateChain). Returns a `rotate` command override, or null to leave
  * the player's rotation alone (turret, or auto-fire, which fires opportunistically without
  * hijacking the driver's heading). Called from `chainStep` BEFORE the drivetrain model.
+ *
+ * Honours the robot's `aimAssist` driver assist: with it OFF the fire button no longer
+ * hijacks the heading and the driver lines the shot up by hand (the fire gate still requires
+ * the mounted edge within `CHAIN_AIM_TOL`, so a manual shot has to be aimed). A CR TURRET
+ * deliberately ignores the toggle — it always tracks, because there is no manual turret
+ * control to fall back on and gating it would leave that archetype unable to aim at all.
  */
 export function chainAimAssist(r: RobotState, cmd: RobotCommand | undefined, enabled: boolean): number | null {
   const mode = r.spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE;
   if (mode !== 'drum' && mode !== 'dumper') return null;
+  if (!r.aimAssist) return null; // manual aiming: the driver turns the robot themselves
   if (!enabled || !(cmd?.fire ?? false)) return null; // only the manual button steers
   const err = wrapAngle(chainGoalAimHeading(r) - r.heading);
   return clamp(err * CHAIN_AIM_GAIN, -1, 1);
