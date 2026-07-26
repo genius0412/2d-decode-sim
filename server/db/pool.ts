@@ -4,10 +4,32 @@ import pg from 'pg';
  * Postgres (Neon) connection pool. The Fly game server is a long-lived process,
  * so a standard `pg.Pool` is the right fit (not the edge/serverless HTTP driver).
  *
- * When `DATABASE_URL` is unset the pool is null and ALL persistence NO-OPS — the
+ * When `DATABASE_URL` is unset the pool is null and ALL persistence NO-OPS - the
  * game, lobby, and matches keep working; only leaderboards/records/ELO are off.
  * That keeps local dev and a boards-less deploy trivial. Neon connection strings
  * already carry `?sslmode=require`.
+ *
+ * WHAT NEON ACTUALLY BILLS, because it is not what you would guess and it decides
+ * how the code above this layer has to be written:
+ *
+ *   Neon charges CU-HOURS = compute size x WALL-CLOCK TIME AWAKE. The compute
+ *   suspends after five consecutive minutes with NO QUERIES and stops billing the
+ *   moment it does. So the price of a query is not the query, it is the five-minute
+ *   wake it pins open - and any timer firing faster than that pins the compute open
+ *   permanently, ~730 h/month, whether or not a single person is playing.
+ *
+ * Consequences:
+ *   - CONNECTIONS ARE FREE. Idle pooled connections do not defer suspend (only an
+ *     open transaction does), so `max` and `idleTimeoutMillis` are sized for
+ *     concurrency and socket hygiene, NOT for cost. DB_POOL_MAX=5 per machine over
+ *     ~5 regions sits far inside Neon's connection ceiling; raising it would not
+ *     cost a cent more and lowering it would not save one.
+ *   - QUERY TIMING IS EVERYTHING. Anything recurring must be gated on real
+ *     activity or it quietly converts a bursty workload into an always-on bill.
+ *     See the "IDLE MEANS SILENT" block in server/index.ts.
+ *   - `idleTimeoutMillis` well under the five-minute window means the pool has
+ *     normally released its sockets before Neon pulls them, so a suspend rarely
+ *     surfaces as an error - the next query just pays a ~500ms wake.
  */
 const url = process.env.DATABASE_URL;
 

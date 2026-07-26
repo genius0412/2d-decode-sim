@@ -6,7 +6,7 @@ import type { RoleSwap } from './useRoleSwap';
 // Reaction splits TOP/BOTTOM (which Lab corner). `useRoleSwap` still carries the two
 // abstract StartCat slots; only the wording differs per game.
 const roleLabel = (r: StartCat | undefined, game?: GameId) =>
-  game === 'chain' ? chainRoleLabel(r) : r === 'close' ? 'CLOSE' : r === 'far' ? 'FAR' : '—';
+  game === 'chain' ? chainRoleLabel(r) : r === 'close' ? 'CLOSE' : r === 'far' ? 'FAR' : '-';
 
 /**
  * The 2v2 start-ROLE bar: shows this robot's role (Close/Far for DECODE, Top/Bottom

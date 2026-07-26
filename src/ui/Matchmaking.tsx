@@ -51,7 +51,11 @@ export function Matchmaking({
 }) {
   const [mode, setMode] = useState<QueueMode>('1v1');
   const [noWiden, setNoWiden] = useState(false);
-  const presence = usePresence(); // live queue depths, refreshed while on this screen
+  // Live queue depths, refreshed while on this screen. `full` because THIS is the
+  // screen where the number decides something: you read "3 waiting in 1v1" and
+  // queue on the strength of it, so it gets an uncached read rather than the
+  // ambient chip's up-to-a-minute-old one.
+  const presence = usePresence(8000, true);
   // block queueing while a server restart is scheduled (you'd only get dropped)
   const notice = useServerNotice();
   const restartPending =
@@ -131,7 +135,7 @@ export function Matchmaking({
       return;
     }
     if (restartPending) {
-      setError('Server is restarting shortly — try again in a minute.');
+      setError('Server is restarting shortly - try again in a minute.');
       return;
     }
     setError('');
@@ -331,7 +335,7 @@ export function Matchmaking({
       )}
       {error && <p className="ds-form-err">⚠ {error}</p>}
       {restartPending && (
-        <p className="ds-form-err">⚠ Server is restarting shortly — queueing is paused for a moment.</p>
+        <p className="ds-form-err">⚠ Server is restarting shortly - queueing is paused for a moment.</p>
       )}
       <div className="ds-actions">
         <button className="ds-cta" disabled={restartPending} onClick={() => void find()}>

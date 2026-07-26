@@ -1080,6 +1080,16 @@
 .ds-home-loadout b {
   color: var(--ds-ink);
 }
+/* the landing line — the one sentence saying what this is (APP_BLURB), between
+   the title and the game switcher. It is here for the person (or crawler) who
+   arrived with no idea what DSIM is; keep it to a sentence. */
+.ds-home-lead {
+  margin: -8px 0 20px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ds-mut);
+  text-wrap: pretty;
+}
 
 /* ---- section sub-nav (Configure) + tab strip (Records) ---------------- */
 .ds-subnav-layout {
@@ -1234,6 +1244,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Static status label (e.g. "✓ Friends") meant to sit INLINE with real `.ds-btn`
+   actions (Share/Unfriend/Block) — DESIGN.md reserves pill corners for chips and
+   high-action buttons; a status badge is neither, and a pill dropped into a row of
+   rectangular action buttons reads as a mismatched shape, not a deliberate accent.
+   Same footprint as `.ds-btn.small` so it sits flush with its row-mates. */
+.ds-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: var(--ds-round-sm);
+  border: 1px solid color-mix(in srgb, var(--ds-ok) 55%, var(--ds-line));
+  color: var(--ds-ok-ink);
+  background: var(--ds-panel);
+}
+
 /* KEYCAP: a solid cap sitting 3px above its own darker edge. Hover sinks 1px,
    press sinks the full 3px so the cap meets the edge — a physical click. The
    cap moves with `transform`, never `margin`, so nothing around it reflows. */
@@ -1301,6 +1329,7 @@
   border-radius: var(--ds-round-sm);
 }
 .ds-btn:focus-visible,
+.ds-back:focus-visible,
 .ds-tile:focus-visible,
 .ds-seg:focus-visible,
 .ds-mark:focus-visible,
@@ -1323,6 +1352,11 @@
   text-transform: uppercase;
   color: var(--ds-accent);
   margin: 0 0 10px;
+}
+/* A brand that owns its capitalization opts out of the uppercasing above:
+   goBILDA is not GOBILDA. Only ever wraps a trademark, never label text. */
+.ds-brand {
+  text-transform: none;
 }
 .ds-h1 {
   font-size: clamp(26px, 4vw, 38px);
@@ -2404,19 +2438,37 @@ tr.lb-detail td {
   gap: 14px;
   flex-wrap: wrap;
 }
+/* Same "pressable keycap" language as `.ds-btn` — a bare bordered rect with no
+   shadow read as an unstyled AI-card leftover next to every other control in the
+   system, which all carry `--ds-edge-soft` and a press motion. Standalone uses
+   (WatchLive) get breathing room from the copy below via `margin-bottom`; the
+   `.ds-head` flex row (Lobby/Matchmaking/RecordRun/MatchStrategy) cancels it since
+   `.ds-console-in`'s own `gap` already spaces the whole header block. */
 .ds-back {
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   padding: 7px 13px;
+  margin-bottom: 24px;
   border-radius: var(--ds-round);
   border: 1px solid var(--ds-line);
   background: var(--ds-panel);
   color: var(--ds-ink);
   cursor: pointer;
+  box-shadow: var(--ds-edge-soft);
+  transition: transform 0.06s ease, box-shadow 0.06s ease, border-color 0.15s;
 }
 .ds-back:hover {
   border-color: color-mix(in srgb, var(--ds-accent) 50%, var(--ds-line));
+  transform: translateY(1px);
+  box-shadow: 0 2px 0 var(--ds-line);
+}
+.ds-back:active {
+  transform: translateY(3px);
+  box-shadow: 0 0 0 var(--ds-line);
+}
+.ds-head .ds-back {
+  margin-bottom: 0;
 }
 .ds-head .ds-mark {
   font-size: 17px;

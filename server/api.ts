@@ -312,7 +312,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       if (r.outcome === 'not-found') {
         return (
           json(404, {
-            error: "We can't find that transaction. Ko-fi payments can take a minute to arrive — try again shortly.",
+            error: "We can't find that transaction. Ko-fi payments can take a minute to arrive - try again shortly.",
           }),
           true
         );
@@ -346,7 +346,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         return (
           json(409, {
             error:
-              'That payment came from a Ko-fi account already linked to a different DSIM account. One membership covers one account — email us if this is wrong.',
+              'That payment came from a Ko-fi account already linked to a different DSIM account. One membership covers one account - email us if this is wrong.',
           }),
           true
         );
@@ -459,7 +459,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         );
       } else if (r.fresh) {
         console.log(
-          `[kofi] parked ${payload.message_id} (${event.kind}, ${event.amount ?? '?'} ${event.currency ?? '?'}, ${months}mo) — awaiting claim`,
+          `[kofi] parked ${payload.message_id} (${event.kind}, ${event.amount ?? '?'} ${event.currency ?? '?'}, ${months}mo) - awaiting claim`,
         );
       }
       return (

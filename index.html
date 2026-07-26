@@ -17,7 +17,64 @@
     <!-- keep in sync with --ds-bg (shell.css) and THEME_BG (src/theme.ts) -->
     <meta name="theme-color" content="#f9faf7" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#20262c" media="(prefers-color-scheme: dark)" />
-    <title>DSIM — 2D FTC Driver Sim</title>
+
+    <!--
+      SEO + link previews. This file is ALL a crawler or a social scraper gets:
+      the app is client-rendered, and the scrapers behind Discord / iMessage /
+      Slack / X don't run JS at all. So the title, description, canonical and
+      og:*/twitter:* tags below have to describe the HOMEPAGE on their own.
+
+      `src/seo.ts` re-points title / description / canonical / og:url per route
+      once React is up (for Googlebot, which does render). Keep the two in sync:
+      the values here ARE the home-route values in that module.
+    -->
+    <title>DSIM: Online 2D FTC Driving Simulator</title>
+    <meta
+      name="description"
+      content="An online 2D driving simulator for FIRST Tech Challenge. Build a robot, drive DECODE or Chain Reaction, and play solo or ranked."
+    />
+    <link rel="canonical" href="https://www.playdsim.com/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="DSIM" />
+    <meta property="og:title" content="DSIM: Online 2D FTC Driving Simulator" />
+    <meta
+      property="og:description"
+      content="An online 2D driving simulator for FIRST Tech Challenge. Build a robot, drive DECODE or Chain Reaction, and play solo or ranked."
+    />
+    <meta property="og:url" content="https://www.playdsim.com/" />
+    <!-- absolute, and a real 1200x630 card: scrapers won't resolve a relative src -->
+    <meta property="og:image" content="https://www.playdsim.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="DSIM: online 2D FTC driving simulator" />
+    <meta property="og:locale" content="en_US" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DSIM: Online 2D FTC Driving Simulator" />
+    <meta
+      name="twitter:description"
+      content="An online 2D driving simulator for FIRST Tech Challenge. Build a robot, drive DECODE or Chain Reaction, and play solo or ranked."
+    />
+    <meta name="twitter:image" content="https://www.playdsim.com/og.png" />
+    <meta name="twitter:image:alt" content="DSIM: online 2D FTC driving simulator" />
+    <!--
+      Google AdSense site verification. This has to sit in the served HTML of EVERY
+      page, which for a client-rendered SPA means here and only here: index.html is
+      what Vercel returns for every route, so one tag covers the whole site.
+
+      `data-dsim-adsense` is the dedupe key the runtime ad loader looks for
+      (`src/ads/adsense.ts`, monetization branch) before injecting its own copy —
+      without it a merged build would pull adsbygoogle.js twice.
+    -->
+    <script
+      async
+      src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7020325778340658"
+      crossorigin="anonymous"
+      data-dsim-adsense="1"
+    ></script>
+
     <!--
       Stamp the theme BEFORE the stylesheet loads. React mounts after first paint, so
       reading the pref from src/ would guarantee a flash of the wrong theme. This must
@@ -38,9 +95,188 @@
         document.documentElement.dataset.theme = p;
       })();
     </script>
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "DSIM",
+        "alternateName": "DSIM: Online 2D FTC Driving Simulator",
+        "url": "https://www.playdsim.com/",
+        "description": "An online 2D driving simulator for FIRST Tech Challenge. Build a robot, drive DECODE or Chain Reaction, and play solo or ranked.",
+        "inLanguage": "en",
+        "publisher": { "@type": "Organization", "name": "DSIM", "url": "https://www.playdsim.com/" }
+      }
+    </script>
+
+    <!--
+      The static homepage below (#seo-home, inside #root) is what a NON-JS client
+      sees: social scrapers, plain crawlers, and any human whose bundle hasn't
+      parsed yet. React clears #root on mount, so it is a fallback, never a second
+      copy of the page — and it deliberately says the SAME things the rendered
+      home menu says (`HomeMenu.tsx`), so the two can't read as cloaking.
+
+      It is also where the site's only crawlable <a href> links live: every
+      in-app destination is a <button onClick> behind the router, so without
+      these there is nothing for a crawler to follow off the homepage.
+
+      Styles are self-contained (own palette vars, system fonts) on purpose —
+      shell.css and the webfonts arrive with the bundle, i.e. after this markup
+      has already had to stand on its own.
+    -->
+    <style>
+      #seo-home {
+        --sh-bg: #f9faf7;
+        --sh-panel: #ffffff;
+        --sh-ink: #191c1b;
+        --sh-mut: #5c645f;
+        --sh-line: #c0c9c4;
+        --sh-accent: #366758;
+        --sh-accent-ink: #ffffff;
+        --sh-accent-edge: #24463b;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 48px 20px;
+        box-sizing: border-box;
+        background: var(--sh-bg);
+        color: var(--sh-ink);
+        text-align: center;
+        font-family: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, -apple-system,
+          'Segoe UI', Roboto, sans-serif;
+      }
+      :root[data-theme='dark'] #seo-home {
+        --sh-bg: #20262c;
+        --sh-panel: #272e35;
+        --sh-ink: #e8eae7;
+        --sh-mut: #949e98;
+        --sh-line: #404a52;
+        --sh-accent: #5fb597;
+        --sh-accent-ink: #0f1214;
+        --sh-accent-edge: #3f7f69;
+      }
+      #seo-home .sh-eyebrow {
+        margin: 0;
+        font-family: 'Space Grotesk Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--sh-accent);
+      }
+      #seo-home h1 {
+        margin: 2px 0 14px;
+        font-size: clamp(44px, 7vw, 64px);
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        line-height: 1.05;
+      }
+      #seo-home .sh-lead {
+        margin: 0 0 22px;
+        max-width: 460px;
+        font-size: 15px;
+        line-height: 1.55;
+        color: var(--sh-mut);
+      }
+      #seo-home .sh-menu {
+        width: 100%;
+        max-width: 460px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      #seo-home .sh-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 15px 18px;
+        border: 1px solid var(--sh-line);
+        border-radius: 9999px;
+        background: var(--sh-panel);
+        color: var(--sh-ink);
+        text-decoration: none;
+        box-shadow: 0 3px 0 var(--sh-line);
+      }
+      #seo-home .sh-btn.primary {
+        background: var(--sh-accent);
+        color: var(--sh-accent-ink);
+        border-color: transparent;
+        box-shadow: 0 3px 0 var(--sh-accent-edge);
+      }
+      #seo-home .sh-btn b {
+        font-size: 19px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+      }
+      #seo-home .sh-btn span {
+        font-family: 'Space Grotesk Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        letter-spacing: 0.06em;
+        opacity: 0.75;
+      }
+      /* the game switcher, which is a pair of real links here. Mirrors the
+         segmented control the rendered home menu draws in the same slot. */
+      #seo-home .sh-games {
+        display: flex;
+        gap: 6px;
+        margin: 0 0 22px;
+      }
+      #seo-home .sh-games a {
+        padding: 7px 14px;
+        border-radius: 9999px;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--sh-mut);
+        text-decoration: none;
+      }
+      #seo-home .sh-games a.on {
+        background: var(--sh-accent);
+        color: var(--sh-accent-ink);
+      }
+      #seo-home .sh-foot {
+        margin: 26px 0 0;
+        font-size: 13px;
+        color: var(--sh-mut);
+      }
+      #seo-home .sh-foot a {
+        color: var(--sh-mut);
+        margin: 0 7px;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="seo-home">
+        <p class="sh-eyebrow">FIRST Tech Challenge · 2D Driver Practice</p>
+        <h1>DSIM</h1>
+        <p class="sh-lead">An online 2D driving simulator for FIRST Tech Challenge.</p>
+        <!-- The two games, as real links. Each is its own indexable page with its
+             own title and description (see applyRouteMeta), and these are the only
+             thing pointing a crawler at them. -->
+        <nav class="sh-games" aria-label="Game">
+          <a class="on" href="/decode">DECODE</a>
+          <a href="/chain">Chain Reaction</a>
+        </nav>
+        <nav class="sh-menu" aria-label="Main">
+          <a class="sh-btn primary" href="/decode/modes"><b>Play</b><span>Pick a game mode</span></a>
+          <a class="sh-btn" href="/decode/configure/robot"
+            ><b>Configure</b><span>Robot &amp; match setup</span></a
+          >
+          <a class="sh-btn" href="/decode/records"><b>Records</b><span>Leaderboard &amp; career</span></a>
+          <a class="sh-btn" href="/decode/download"><b>Download</b><span>Desktop app</span></a>
+        </nav>
+        <p class="sh-foot">
+          <a href="/decode/changelogs">Changes</a>
+          <a href="/decode/contributors">Contributors</a>
+          <a href="https://github.com/genius0412/dsim" rel="noreferrer">GitHub</a>
+          <a href="https://discord.gg/YB4tXnx7Pj" rel="noreferrer">Discord</a>
+        </p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

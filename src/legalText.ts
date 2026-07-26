@@ -52,7 +52,7 @@ export const LEGAL_IDENTIFIED =
 export const PRIVACY_MD = `
 DSIM is a free FTC driver-practice simulator. This policy explains what the app
 collects, why, and what you can do about it. It is written to be read, not to be
-skimmed past — it is short because the app genuinely collects very little.
+skimmed past - it is short because the app genuinely collects very little.
 
 ## The short version
 
@@ -66,11 +66,11 @@ does not apply to you.
 These live in your browser's local storage and are never transmitted unless you
 sign in and enable account sync:
 
-- **Settings** (\`decodesim.settings.v1\`) — robot builds, control bindings, assists,
+- **Settings** (\`decodesim.settings.v1\`) - robot builds, control bindings, assists,
   audio and start-position preferences.
-- **Theme** (\`decodesim.theme\`) — light or dark.
+- **Theme** (\`decodesim.theme\`) - light or dark.
 - **Session scratch** (\`decodesim.active\`, \`decodesim.chain\`, \`decodesim.friends\`,
-  \`decodesim.seen\`) — which match you were in, and which announcements you have read.
+  \`decodesim.seen\`) - which match you were in, and which announcements you have read.
 
 Clearing your browser data removes all of it. There is no recovery, and we keep no
 copy unless you were signed in.
@@ -79,21 +79,21 @@ copy unless you were signed in.
 
 Only if you create an account:
 
-- **Identity** — your email address and display name, handled by our authentication
+- **Identity** - your email address and display name, handled by our authentication
   provider. If you sign in with Google, we receive your email and name from Google;
   we never see your Google password.
-- **Profile** — your chosen username and public handle.
-- **Settings** — the same settings blob described above, so your setup follows you
+- **Profile** - your chosen username and public handle.
+- **Settings** - the same settings blob described above, so your setup follows you
   between devices.
-- **Gameplay records** — scores, game mode, drivetrain, and timestamps for record
+- **Gameplay records** - scores, game mode, drivetrain, and timestamps for record
   runs and ranked matches.
-- **Replays** — the random seed, robot configurations, and per-tick inputs needed to
+- **Replays** - the random seed, robot configurations, and per-tick inputs needed to
   reconstruct a match. A replay contains no personal information beyond the robot
   setups and the account it belongs to.
-- **Ranking** — your Glicko-2 rating, deviation, and match history.
-- **Social** — friend requests, friendships, blocks, room invites, and an online or
+- **Ranking** - your Glicko-2 rating, deviation, and match history.
+- **Social** - friend requests, friendships, blocks, room invites, and an online or
   last-seen status if you use those features.
-- **Robot presets** — the names and specifications you save.
+- **Robot presets** - the names and specifications you save.
 
 Our game servers also process your IP address to route your connection, as any
 network service must. It is not stored in the database or used to build a profile.
@@ -102,7 +102,7 @@ network service must. It is not stored in the database or used to build a profil
 
 DSIM itself sets **no cookies**. Your settings live in your browser's local
 storage (listed above), and signing in uses a token held by our authentication
-provider — neither is used to track you between sites.
+provider - neither is used to track you between sites.
 
 Where the web version shows advertising, **Google AdSense** and its partners may
 set cookies or read device identifiers to serve and measure ads and to limit how
@@ -114,7 +114,7 @@ The web version of DSIM shows advertising served by **Google AdSense**.
 
 **Ads are non-personalised by default.** DSIM is a simulator for a school
 robotics competition, so a real share of players are young teenagers and most are
-not signed in at all — we therefore do not let advertising be targeted using
+not signed in at all - we therefore do not let advertising be targeted using
 browsing history unless we have a reason to believe otherwise. Ad requests are
 also tagged as being for users below the age of consent for advertising purposes.
 
@@ -134,7 +134,7 @@ and **not** shown to supporters.
 ## Payments
 
 Supporter memberships and donations are processed by **Ko-fi**, which in turn uses
-**PayPal**. Your payment details go to those services, never to us — we never see
+**PayPal**. Your payment details go to those services, never to us - we never see
 or store a card number.
 
 What we do receive and store for each payment is the email address you paid with,
@@ -149,11 +149,11 @@ financial record.
 
 We use a small number of infrastructure providers, each acting on our behalf:
 
-- **Neon** — database and authentication.
-- **Fly.io** — the multiplayer game servers.
-- **Vercel** — hosting for the website.
-- **Google AdSense** — advertising on the web version.
-- **Ko-fi** and **PayPal** — payments.
+- **Neon** - database and authentication.
+- **Fly.io** - the multiplayer game servers.
+- **Vercel** - hosting for the website.
+- **Google AdSense** - advertising on the web version.
+- **Ko-fi** and **PayPal** - payments.
 
 We do not sell your data, and we do not share it with anyone else.
 
@@ -165,14 +165,14 @@ records, replays, ratings, presets, and social data are deleted with it.
 
 ## Your choices
 
-- **See or correct your data** — most of it is visible on your profile and settings
+- **See or correct your data** - most of it is visible on your profile and settings
   pages.
-- **Delete everything** — there is a **Delete account** button on your Profile
+- **Delete everything** - there is a **Delete account** button on your Profile
   page. It removes your profile, username, settings, robot presets, records and
   their replays, rating and rating history, and all friendships, blocks, and
   invites, immediately and permanently. You do not have to email anyone or wait.
-- **Advertising choices** — see the Advertising section above.
-- **Play anonymously** — simply do not sign in.
+- **Advertising choices** - see the Advertising section above.
+- **Play anonymously** - simply do not sign in.
 
 Two things deliberately survive an account deletion, and it is fairer to say so
 than to promise otherwise: matches you played remain in the other players' match
@@ -201,7 +201,7 @@ Questions, corrections, and deletion requests: **${LEGAL_CONTACT}**
 `;
 
 export const TERMS_MD = `
-These terms cover your use of DSIM — the website, the multiplayer service, and the
+These terms cover your use of DSIM - the website, the multiplayer service, and the
 desktop application. Using any of them means you accept what follows.
 
 ## Who you are agreeing with
@@ -231,7 +231,7 @@ may lose their rating, their records, or their access.
 ## Supporter memberships
 
 Supporter benefits are cosmetic or convenience features. **They do not confer any
-competitive advantage**, and they never will — that is a deliberate design rule, not
+competitive advantage**, and they never will - that is a deliberate design rule, not
 a current limitation.
 
 Memberships are billed monthly through Ko-fi and you can cancel at any time from
@@ -239,11 +239,11 @@ your Ko-fi account; cancelling stops future charges and you keep the benefit unt
 the paid period ends.
 
 **Refunds.** Email us within **14 days** of a payment and we will refund it in
-full, no reason needed — that is a promise, not a discretion, and it is the same
+full, no reason needed - that is a promise, not a discretion, and it is the same
 14-day cancellation right UK and EU consumers have by law. After 14 days a
 payment for a period already served is not normally refunded, but if something has
-gone wrong — a double charge, a membership that never activated, a payment made by
-a child without a parent's permission — email us and we will fix it rather than
+gone wrong - a double charge, a membership that never activated, a payment made by
+a child without a parent's permission - email us and we will fix it rather than
 argue about it.
 
 A one-off tip is a tip, not a purchase. If you tipped at or above the monthly
@@ -278,7 +278,7 @@ names and rules are referenced for the purpose of simulating the competition.
 
 ## Ending things
 
-You can stop using DSIM and delete your account at any time — there is a **Delete
+You can stop using DSIM and delete your account at any time - there is a **Delete
 account** button on your Profile page, and it takes effect immediately. We may
 suspend an account that breaks these terms, and will say why where we reasonably
 can. If we suspend a supporter's account for a reason that is not their fault, we
@@ -288,7 +288,7 @@ refund the unused part of their membership.
 
 These terms are governed by the law of **${LEGAL_JURISDICTION}**, and its courts
 have jurisdiction over any dispute. If you are a consumer, this does not take away
-the protections of the law where you live — you can always bring a claim there.
+the protections of the law where you live - you can always bring a claim there.
 
 ## Changes
 

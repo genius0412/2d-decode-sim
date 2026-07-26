@@ -171,10 +171,18 @@ export interface Presence {
   notice?: { kind: 'restart' | 'info'; message: string; until?: number } | null;
 }
 
-/** live presence: who's online + how deep each ranked queue is, so a player can
- * see it BEFORE queueing. Cheap JSON off the same host; poll it (usePresence). */
-export function fetchPresence(): Promise<Presence> {
-  return getJson(`/api/presence`);
+/**
+ * Live presence: who's online + how deep each ranked queue is, so a player can
+ * see it BEFORE queueing. Cheap JSON off the same host; poll it (usePresence).
+ *
+ * `full` asks for a FRESH aggregate rather than a cached one. The count is always
+ * real either way; a server with nobody connected just holds its last read longer
+ * (~45s) so one browsing visitor costs about a query a minute instead of one every
+ * 8 seconds. Pass `full` where the number drives a decision rather than decorating
+ * one - ranked queue depth - and leave it off for the ambient chip.
+ */
+export function fetchPresence(full = false): Promise<Presence> {
+  return getJson(`/api/presence${full ? '?full=1' : ''}`);
 }
 
 export interface PublicProfile {
@@ -739,16 +747,29 @@ export class FriendsUnavailableError extends Error {
 async function authedJson<T>(path: string, init?: RequestInit): Promise<T> {
   const base = gameServerHttpUrl();
   if (!base) throw new FriendsUnavailableError();
-  const token = await getAuthToken();
-  if (!token) throw new Error('Please sign in again.');
-  const res = await fetch(base + path, {
-    ...init,
-    headers: {
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      authorization: `Bearer ${token}`,
-      ...init?.headers,
-    },
-  });
+
+  const send = async (force: boolean): Promise<Response> => {
+    const token = await getAuthToken(force);
+    if (!token) throw new Error('Please sign in again.');
+    return fetch(base + path, {
+      ...init,
+      headers: {
+        ...(init?.body ? { 'content-type': 'application/json' } : {}),
+        authorization: `Bearer ${token}`,
+        ...init?.headers,
+      },
+    });
+  };
+
+  // The token is cached in memory until it nears expiry (see getAuthToken), which
+  // is what keeps a polling client off Neon Auth — and therefore off the database
+  // it reads. The one case a cache can't predict is a session revoked server-side:
+  // the token is still unexpired but no longer accepted. A 401 is exactly that
+  // signal, so retry ONCE with a forced refresh before surfacing an error. Only
+  // once, so a genuinely signed-out client fails fast instead of looping.
+  let res = await send(false);
+  if (res.status === 401) res = await send(true);
+
   // 404 = this server predates the friends API. Distinguished from other errors
   // so the caller can degrade instead of showing a failure.
   if (res.status === 404 && !init?.method) throw new FriendsUnavailableError();

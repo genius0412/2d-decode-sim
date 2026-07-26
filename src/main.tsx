@@ -6,6 +6,7 @@ import { NoticePoller } from './ui/NoticePoller';
 import { initPhysics } from './sim/physicsEngine';
 import { initTheme } from './theme';
 import { AdsProvider } from './ads/AdsProvider';
+import { loadCmp } from './ads/adsense';
 import { Analytics } from '@vercel/analytics/react';
 import { analyticsEnabled } from './analytics';
 // Self-hosted (not a CDN <link>): the Electron build runs from file:// with
@@ -20,6 +21,12 @@ import './ui/shell.css';
 // This re-stamps from the same key and, when the pref is 'system', arms the
 // prefers-color-scheme listener so an OS switch is picked up live.
 initTheme();
+
+// Consent BEFORE the auction. index.html hardcodes the adsbygoogle tag so the
+// AdSense crawler finds it on every route, which means the tag is already parsing
+// by the time React mounts - a CMP that waited for the first ad slot would arrive
+// far too late to gate anything. No-ops without a publisher id, and under Electron.
+loadCmp();
 
 // Init the Rapier physics WASM (shared src/sim) before the first sim step. It
 // inlines its WASM as base64 (no separate asset), so this is a fast local

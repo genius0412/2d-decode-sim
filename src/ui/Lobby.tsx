@@ -397,7 +397,7 @@ export function Lobby({
                     {isMe ? ' (you)' : ''}
                   </span>
                   <span className="ptm">
-                    {p.spec.name} · {p.teamNumber || '—'}
+                    {p.spec.name} · {p.teamNumber || '-'}
                   </span>
                   {p.clientId === hostId && (
                     <span className="ds-chip on">★ HOST</span>
@@ -407,8 +407,8 @@ export function Lobby({
                     {p.startPose
                       ? 'CUSTOM'
                       : settings.game === 'chain'
-                        ? (CHAIN_START_POSES[p.startIndex]?.name ?? '—')
-                        : (START_POSES[p.startIndex]?.label ?? '—')}
+                        ? (CHAIN_START_POSES[p.startIndex]?.name ?? '-')
+                        : (START_POSES[p.startIndex]?.label ?? '-')}
                   </span>
                   <span className={`ds-chip ${p.ready ? 'on' : 'off'}`}>
                     {p.ready ? 'READY' : 'NOT READY'}
@@ -493,7 +493,7 @@ export function Lobby({
         </div>
         {!startLegal && (
           <p className="ds-hint">
-            ⚠ Your start position isn’t legal for this chassis — fix it above (or pick a preset) to
+            ⚠ Your start position isn’t legal for this chassis - fix it above (or pick a preset) to
             ready up.
           </p>
         )}
@@ -504,7 +504,7 @@ export function Lobby({
           <p className="ds-hint">START unlocks when everyone is ready.</p>
         )}
         {isHost && restartPending && (
-          <p className="ds-hint">Server is restarting shortly — starting is paused for a moment.</p>
+          <p className="ds-hint">Server is restarting shortly - starting is paused for a moment.</p>
         )}
       </div>
     </div>

@@ -69,16 +69,53 @@ export default defineConfig({
     // ads.txt below, it satisfies verification twice over.
     {
       name: 'adsense-verification-meta',
-      transformIndexHtml() {
+      transformIndexHtml(html: string) {
+        // ---- 1. the desktop build must never carry the ad tag ---------------
+        // index.html hardcodes the adsbygoogle script so AdSense's crawler finds
+        // it on every route of this client-rendered SPA. That is right for the
+        // WEB, and a policy violation for the DESKTOP app: AdSense does not
+        // permit serving inside a non-browser application wrapper, and the
+        // Electron build ships this exact file. `src/ads/adsense.ts` already
+        // refuses to render units under Electron, but a hardcoded <script> tag
+        // sails straight past every runtime gate, so it is stripped at build.
+        let out = html;
+        if (process.env.ELECTRON === '1') {
+          out = out.replace(
+            /\s*<script[^>]*data-dsim-adsense[^>]*>\s*<\/script>/g,
+            '\n    <!-- AdSense tag stripped: not permitted in an app wrapper -->',
+          );
+        }
+
+        // ---- 2. the publisher id must not disagree with itself --------------
+        // The id now lives in TWO places: the hardcoded tag above, and
+        // VITE_ADSENSE_CLIENT (which drives ads.txt, the runtime loader, and the
+        // CMP). If they ever drift, ads.txt would authorize a different seller
+        // than the tag requesting the ads - which is precisely the mismatch
+        // ads.txt exists to detect, and it silently kills fill rate. Fail the
+        // build instead of shipping it.
         const client = (process.env.VITE_ADSENSE_CLIENT ?? '').trim();
-        if (!/^ca-pub-\d{10,}$/.test(client)) return [];
-        return [
-          {
-            tag: 'meta',
-            attrs: { name: 'google-adsense-account', content: client },
-            injectTo: 'head' as const,
-          },
-        ];
+        const inTag = html.match(/adsbygoogle\.js\?client=(ca-pub-\d+)/)?.[1];
+        if (client && inTag && client !== inTag) {
+          throw new Error(
+            `AdSense publisher id mismatch: VITE_ADSENSE_CLIENT is "${client}" but ` +
+              `index.html hardcodes "${inTag}". They must match.`,
+          );
+        }
+
+        // The meta tag is a SECOND verification signal, and free: Google accepts
+        // the script snippet, this tag, or ads.txt. Belt and braces while the
+        // review is pending; harmless afterwards.
+        const tags =
+          /^ca-pub-\d{10,}$/.test(client) && process.env.ELECTRON !== '1'
+            ? [
+                {
+                  tag: 'meta',
+                  attrs: { name: 'google-adsense-account', content: client },
+                  injectTo: 'head' as const,
+                },
+              ]
+            : [];
+        return { html: out, tags };
       },
     },
     {

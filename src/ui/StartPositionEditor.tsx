@@ -75,7 +75,7 @@ export function StartPositionEditor({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drag = useRef<'move' | 'rotate' | null>(null);
-  const [snapOn, setSnapOn] = useState(false); // OFF by default — free placement
+  const [snapOn, setSnapOn] = useState(false); // OFF by default - free placement
   // an in-progress (possibly ILLEGAL) working pose, actual frame. Rendered live,
   // but only COMMITTED to the parent when legal — an illegal pose never saves.
   const [draft, setDraft] = useState<StartPose | null>(null);
@@ -279,7 +279,7 @@ export function StartPositionEditor({
 
       <div className="ds-startpos-side">
         <div className={`ds-startpos-status ${legality.legal ? 'ok' : 'bad'}`}>
-          {legality.legal ? reason : `${reason} — won't save`}
+          {legality.legal ? reason : `${reason} - won't save`}
         </div>
 
         <div className="ds-startpos-inputs">

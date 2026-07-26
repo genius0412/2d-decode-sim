@@ -133,7 +133,7 @@ export function AudioSection({
             onAudition={() => audio.say('Volume', true)}
           />
           {silent && (
-            <p className="ds-hint">Master is at 0% — everything is silent until you raise it.</p>
+            <p className="ds-hint">Master is at 0% - everything is silent until you raise it.</p>
           )}
         </div>
       </section>

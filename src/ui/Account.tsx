@@ -153,7 +153,7 @@ function Membership({ onDonate }: { onDonate?: () => void }) {
           </>
         ) : (
           <p className="ds-hint">
-            No membership. DSIM is free either way — supporting turns off ads and adds a few
+            No membership. DSIM is free either way - supporting turns off ads and adds a few
             cosmetic extras.
           </p>
         )}
@@ -217,7 +217,7 @@ function DeleteAccount() {
         <p className="ds-hint" style={{ marginTop: 8 }}>
           Matches you played stay on other players' history without your name, and payment records
           are kept (without your email) because they are financial records. Your sign-in identity
-          itself lives with our authentication provider — delete it there too if you want it gone.
+          itself lives with our authentication provider - delete it there too if you want it gone.
         </p>
         <div className="ds-claim-row" style={{ marginTop: 12 }}>
           <input
@@ -260,9 +260,7 @@ function Identity({ onHandleSaved }: { onHandleSaved?: (handle: string) => void 
       {user ? (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <span className="ds-chip">
-              <b>{user.email ?? 'signed in'}</b>
-            </span>
+            <span style={{ fontWeight: 700, color: 'var(--ds-ink)' }}>{user.email ?? 'signed in'}</span>
             <span className="ds-head-spacer" />
             <button className="ds-btn ghost" onClick={() => client.signOut()}>
               Sign out
@@ -447,7 +445,7 @@ function Username({ userId }: { userId: string }) {
         {current ? (
           <>Your profile: <code>/profile/{current}</code>. </>
         ) : (
-          'Unique — lowercase letters and numbers, 4–20 characters. '
+          'Unique - lowercase letters and numbers, 4–20 characters. '
         )}
         {!configured && 'Editing needs the game server. '}
         {status === 'error' ? (

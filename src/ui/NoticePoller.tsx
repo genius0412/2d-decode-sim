@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { fetchPresence } from '../net/api';
 import { gameServerConfigured } from '../net/env';
 import { setServerNotice } from '../net/notice';
+import { onUserActive, userIdle } from './userActivity';
 
 /**
  * Poll the game server for a LIVE admin notice (scheduled restart / info) and
@@ -13,25 +14,37 @@ import { setServerNotice } from '../net/notice';
  *
  * Mounted once at the app root. Renders nothing. Coarse cadence (the countdown
  * itself ticks locally in the banner), so it barely adds to server load.
+ *
+ * Skips UNATTENDED pages - hidden, or visible with nobody at the keyboard for
+ * five minutes - and re-checks the moment someone is back. See `usePresence`
+ * for why (a background tab polling forever holds the Fly machine and the Neon
+ * compute awake, and Neon bills for every hour it is awake). A notice that lands
+ * while the tab is hidden is picked up on the visibilitychange, which is before
+ * the reader could have acted on it anyway.
  */
 export function NoticePoller({ pollMs = 20000 }: { pollMs?: number }) {
   useEffect(() => {
     if (!gameServerConfigured()) return;
     let alive = true;
     const tick = (): void => {
+      if (userIdle()) return;
       fetchPresence()
         .then((p) => {
           if (alive) setServerNotice(p.notice ?? null);
         })
         .catch(() => {
-          /* server asleep / unreachable — keep the last value, retry next tick */
+          /* server asleep / unreachable - keep the last value, retry next tick */
         });
     };
     tick();
     const iv = window.setInterval(tick, pollMs);
+    document.addEventListener('visibilitychange', tick);
+    const unwake = onUserActive(tick);
     return () => {
       alive = false;
       window.clearInterval(iv);
+      document.removeEventListener('visibilitychange', tick);
+      unwake();
     };
   }, [pollMs]);
   return null;

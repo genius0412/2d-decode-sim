@@ -86,7 +86,7 @@ export function Admin() {
     const ok = await adminDeleteRecord(row.recordId);
     setRecBusy(false);
     if (ok) setRecords((rs) => rs.filter((r) => r.recordId !== row.recordId));
-    setRecStatus(ok ? `Deleted ${row.handle}'s run.` : 'Failed — check admin sign-in.');
+    setRecStatus(ok ? `Deleted ${row.handle}'s run.` : 'Failed - check admin sign-in.');
   };
 
   const clearUser = async (row: AdminRecordRow): Promise<void> => {
@@ -95,7 +95,7 @@ export function Admin() {
     const removed = await adminClearUserRecords(row.userId);
     setRecBusy(false);
     if (removed != null) setRecords((rs) => rs.filter((r) => r.userId !== row.userId));
-    setRecStatus(removed != null ? `Cleared ${removed} run${removed === 1 ? '' : 's'} by ${row.handle}.` : 'Failed — check admin sign-in.');
+    setRecStatus(removed != null ? `Cleared ${removed} run${removed === 1 ? '' : 's'} by ${row.handle}.` : 'Failed - check admin sign-in.');
   };
 
   const searchUsers = async (): Promise<void> => {
@@ -119,7 +119,7 @@ export function Admin() {
     const saved = await adminRenameUser(userId, next);
     setUserBusy(false);
     if (saved) setUsers((us) => us.map((u) => (u.userId === userId ? { ...u, handle: saved } : u)));
-    setUserStatus(saved ? `Renamed to "${saved}".` : 'Failed — check admin sign-in.');
+    setUserStatus(saved ? `Renamed to "${saved}".` : 'Failed - check admin sign-in.');
   };
 
   /** comp a membership. Confirmed because it costs real money to honour. */
@@ -135,7 +135,7 @@ export function Admin() {
     const r = await adminGrantSupporter(u.userId, months, reason);
     setUserBusy(false);
     if (!r) {
-      setUserStatus('Failed — check admin sign-in.');
+      setUserStatus('Failed - check admin sign-in.');
       return;
     }
     setUsers((us) =>
@@ -144,7 +144,7 @@ export function Admin() {
       ),
     );
     setUserStatus(
-      `${u.handle} is a supporter until ${r.until ? new Date(r.until).toLocaleDateString() : '—'}.`,
+      `${u.handle} is a supporter until ${r.until ? new Date(r.until).toLocaleDateString() : '-'}.`,
     );
     void loadHistory(u.userId);
   };
@@ -157,7 +157,7 @@ export function Admin() {
     const r = await adminRevokeSupporter(u.userId, reason);
     setUserBusy(false);
     if (!r) {
-      setUserStatus('Failed — check admin sign-in.');
+      setUserStatus('Failed - check admin sign-in.');
       return;
     }
     setUsers((us) =>
@@ -178,7 +178,7 @@ export function Admin() {
     setBusy(true);
     const ok = await fn();
     setBusy(false);
-    setStatus(ok ? okMsg : 'Failed — are you still signed in as an admin?');
+    setStatus(ok ? okMsg : 'Failed - are you still signed in as an admin?');
   };
 
   const startSeason = async (newAct: boolean): Promise<void> => {
@@ -196,7 +196,7 @@ export function Admin() {
     setSeasonStatus(
       season != null
         ? `Started a new ${what}. New runs now score onto it; older periods are archived but still viewable.`
-        : 'Failed — are you still signed in as an admin (and is the DB configured)?',
+        : 'Failed - are you still signed in as an admin (and is the DB configured)?',
     );
   };
 
@@ -206,7 +206,7 @@ export function Admin() {
     const freed = await adminPurgeReplays();
     setSeasonBusy(false);
     setSeasonStatus(
-      freed != null ? `Purged ${freed} archived-season replay${freed === 1 ? '' : 's'}.` : 'Failed — check admin sign-in / DB.',
+      freed != null ? `Purged ${freed} archived-season replay${freed === 1 ? '' : 's'}.` : 'Failed - check admin sign-in / DB.',
     );
   };
 
@@ -238,9 +238,9 @@ export function Admin() {
       setAnnTitle('');
       setAnnTagline('');
       setAnnBody('');
-      setAnnStatus(`Published — players see it on their next load. ${created.kind === 'patch' ? '' : 'It plays a cinematic reveal.'}`);
+      setAnnStatus(`Published - players see it on their next load. ${created.kind === 'patch' ? '' : 'It plays a cinematic reveal.'}`);
     } else {
-      setAnnStatus('Failed — check admin sign-in / DB.');
+      setAnnStatus('Failed - check admin sign-in / DB.');
     }
   };
 
@@ -250,7 +250,7 @@ export function Admin() {
     const ok = await adminDeleteAnnouncement(a.id);
     setAnnBusy(false);
     if (ok) setAnnouncements((rows) => rows.filter((r) => r.id !== a.id));
-    setAnnStatus(ok ? `Retired "${a.title}".` : 'Failed — check admin sign-in.');
+    setAnnStatus(ok ? `Retired "${a.title}".` : 'Failed - check admin sign-in.');
   };
 
   const isCinematic = annKind !== 'patch';
@@ -284,7 +284,7 @@ export function Admin() {
           <button
             className="ds-btn"
             disabled={busy}
-            onClick={() => run(() => adminAnnounce(minutes * 60, message), `Announced — restart in ${minutes} min.`)}
+            onClick={() => run(() => adminAnnounce(minutes * 60, message), `Announced - restart in ${minutes} min.`)}
           >
             ANNOUNCE RESTART
           </button>
@@ -299,13 +299,13 @@ export function Admin() {
         {status && <p className="ds-hint" style={{ marginTop: 12 }}>{status}</p>}
       </div>
       <p className="ds-hint" style={{ marginTop: 16 }}>
-        Reminder: this only warns players — it doesn’t restart the server. Run your deploy when
+        Reminder: this only warns players - it doesn’t restart the server. Run your deploy when
         the countdown reaches 0.
       </p>
 
       <h2 className="ds-h2" style={{ marginTop: 32 }}>Announcements</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
-        Publish patch notes, bug-fix summaries, or a new season / act. Each player sees it once —
+        Publish patch notes, bug-fix summaries, or a new season / act. Each player sees it once -
         the first time they open the app after you publish. A new season or act plays a full-screen
         cinematic reveal; patch notes show in a “What’s new” panel.
       </p>
@@ -324,7 +324,7 @@ export function Admin() {
             type="text"
             value={annTitle}
             maxLength={80}
-            placeholder={isCinematic ? 'e.g. Act II — The Rising Tide' : 'e.g. Build 42 — gate + intake fixes'}
+            placeholder={isCinematic ? 'e.g. Act II - The Rising Tide' : 'e.g. Build 42 - gate + intake fixes'}
             onChange={(e) => setAnnTitle(e.target.value)}
           />
         </label>
@@ -341,13 +341,13 @@ export function Admin() {
           </label>
         )}
         <label className="admin-field col">
-          <span>{isCinematic ? 'Details (shown in “What’s new”) — Markdown' : 'Notes — Markdown'}</span>
+          <span>{isCinematic ? 'Details (shown in “What’s new”) - Markdown' : 'Notes - Markdown'}</span>
           <textarea
             className="admin-textarea"
             value={annBody}
             maxLength={8000}
             rows={8}
-            placeholder={'## Gate & Intake\n- Fixed the gate lever swinging closed on a **resting** robot\n- Faster basin drain\n\n## Drivetrain\n- New swerve pod wobble tuning — see [the notes](https://example.com)'}
+            placeholder={'## Gate & Intake\n- Fixed the gate lever swinging closed on a **resting** robot\n- Faster basin drain\n\n## Drivetrain\n- New swerve pod wobble tuning - see [the notes](https://example.com)'}
             onChange={(e) => setAnnBody(e.target.value)}
           />
           <span className="ds-hint" style={{ marginTop: 4 }}>
@@ -402,7 +402,7 @@ export function Admin() {
             type="text"
             value={seasonName}
             maxLength={40}
-            placeholder="e.g. Spring Showdown — blank ⇒ Act X · Season Y"
+            placeholder="e.g. Spring Showdown - blank ⇒ Act X · Season Y"
             onChange={(e) => setSeasonName(e.target.value)}
           />
         </label>
@@ -420,10 +420,10 @@ export function Admin() {
         {seasonStatus && <p className="ds-hint" style={{ marginTop: 12 }}>{seasonStatus}</p>}
       </div>
 
-      <h2 className="ds-h2" style={{ marginTop: 32 }}>Moderation — records</h2>
+      <h2 className="ds-h2" style={{ marginTop: 32 }}>Moderation - records</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Inspect a leaderboard bucket (live season) and remove cheated or invalid runs. Deleting a
-        run also deletes its replay. “Clear all” wipes every run by that player — for confirmed
+        run also deletes its replay. “Clear all” wipes every run by that player - for confirmed
         cheaters.
       </p>
       <div className="admin-card">
@@ -464,7 +464,9 @@ export function Admin() {
         {recStatus && <p className="ds-hint" style={{ marginTop: 12 }}>{recStatus}</p>}
       </div>
 
-      <h2 className="ds-h2" style={{ marginTop: 32 }}>Players — names &amp; memberships</h2>
+      {/* main's heading was "Moderation - display names"; this section now does
+          memberships too. Hyphen, not an em dash, per main's site-wide copy pass. */}
+      <h2 className="ds-h2" style={{ marginTop: 32 }}>Players - names &amp; memberships</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Find a player by display name, username, or exact user id. Force an inappropriate name to
         something clean, comp a supporter membership, or revoke one after a chargeback. Every
@@ -509,7 +511,7 @@ export function Admin() {
                     {u.supporter ? (
                       <>
                         <strong>Supporter</strong> until{' '}
-                        {u.supporterUntil ? new Date(u.supporterUntil).toLocaleDateString() : '—'}
+                        {u.supporterUntil ? new Date(u.supporterUntil).toLocaleDateString() : '-'}
                         {u.autoRenews ? ' · auto-renews' : ' · manual claims only'}
                       </>
                     ) : (

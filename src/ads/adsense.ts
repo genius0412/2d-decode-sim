@@ -139,8 +139,8 @@ let cmpLoaded = false;
  * consent is known. Skipping it is how sites end up serving an un-consented
  * impression on first paint.
  */
-function loadCmp(): void {
-  if (cmpLoaded || !CLIENT) return;
+export function loadCmp(): void {
+  if (cmpLoaded || !CLIENT || isElectron()) return;
   cmpLoaded = true;
 
   const pub = CLIENT.replace(/^ca-/, '');
@@ -205,10 +205,12 @@ export function showConsentSettings(): boolean {
 export function ensureAdSenseLoaded(): Promise<void> {
   if (!adsConfigured()) return Promise.resolve();
   if (loading) return loading;
-  // The CMP goes FIRST, and it is a separate call rather than something awaited:
-  // its whole job is to be present before the ad tag requests an auction, and the
-  // `googlefcPresent` signal is what makes the tag wait. Awaiting it here would
-  // instead block the ad tag on a third-party script that may be blocked.
+  // Belt and braces: normally the CMP has already loaded at boot (`main.tsx`),
+  // which it must, because index.html hardcodes the ad tag and a CMP that waited
+  // for the first slot would arrive after it. This call only matters if boot was
+  // skipped. Not awaited: its job is to be PRESENT before an auction (the
+  // `googlefcPresent` signal makes the tag wait), and awaiting it would block ads
+  // on a third-party script an extension may have killed.
   loadCmp();
   loading = new Promise<void>((resolve) => {
     // Page-level ad settings must be pushed BEFORE the tag loads — the tag reads

@@ -62,7 +62,7 @@ export function ChallengePicker({
       className="ds-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label={`Play a friend — @${username}`}
+      aria-label={`Play a friend - @${username}`}
       onClick={busy ? undefined : onClose}
     >
       <div className="ds-modal ds-chal" onClick={(e) => e.stopPropagation()}>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RoomConfig } from '../net/protocol';
 import { useFriends } from './useFriends';
+import { PeopleGlyph } from './FriendsPanel';
 
 /**
  * Compact friend flyout for `Lobby`, which bypasses `AppShell` (and its
@@ -63,7 +64,7 @@ export function InviteFlyout({
   return (
     <div className="ds-invite-root" ref={rootRef}>
       <button className="ds-chip ds-invite-toggle" onClick={() => setOpen((o) => !o)}>
-        👥 {room ? 'Invite friends' : 'Friends'}
+        <PeopleGlyph size={13} /> {room ? 'Invite friends' : 'Friends'}
         {badge > 0 && (
           <span className="fr-badge ds-invite-badge" aria-label={`${badge} invites`}>
             {badge}

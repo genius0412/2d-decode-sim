@@ -85,7 +85,7 @@ export function MatchSetup({
       return;
     }
     if (settings.savedAutos.length >= MAX_SAVED_AUTOS) {
-      showToast(`You can save up to ${MAX_SAVED_AUTOS} autos — delete one first.`, 'warning');
+      showToast(`You can save up to ${MAX_SAVED_AUTOS} autos - delete one first.`, 'warning');
       event.target.value = '';
       return;
     }

@@ -26,7 +26,7 @@ export function SupporterBadge({
   return (
     <span
       className={`sup-badge ${size}`}
-      title="Supporter — helps pay for the servers"
+      title="Supporter - helps pay for the servers"
       // The title carries the meaning for a mouse; screen readers get the same
       // sentence as text. `aria-hidden` on the glyph keeps it from being read as
       // a bare heart with no context.
