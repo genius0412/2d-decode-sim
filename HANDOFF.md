@@ -1,6 +1,66 @@
-# HANDOFF — 2026-07-27b (owner + admin badges, staff perks) — READ FIRST
+# HANDOFF — 2026-07-27c (badges on every name) — READ FIRST
 
-## This session (latest) — staff roles
+## This session (latest) — the badge everywhere a name appears
+
+**State: green and SHIPPED.** `npm test`, `npm run build`, `npm run server:check`,
+`npm run contrast` (175), `npm run dbtest` (98 checks, 18 new) all pass. Commit
+`11065e0`, pushed, Fly deployed (all 5 machines on the new image, satellites re-shrunk
+to `shared-cpu-1x`, `/health` ok), Vercel live on `11065e0`.
+
+### What was wrong
+
+The badge shipped on the RECORD leaderboard and was silently missing everywhere else a
+name appears — the ranked board immediately beside it, match history, the career panel,
+the friends list, username search. Every one of those was the same omission: a query
+that did not project `role` / the supporter predicate.
+
+**The failure mode is silent, and that is the thing to remember.** An absent field
+renders as "no badge", not as an error, so nothing — not the type checker, not
+`contrast`, not `shiftaudit` — can tell you a surface is bare. Only looking does.
+
+### How it is prevented from recurring
+
+- **Server:** `badgeCols(alias[, prefix])` in `repo.ts` writes the pair once. The
+  `prefix` form names a SECOND person in the same row (`partnerRole`/`partnerSupporter`
+  — the duo record partner, whose name was printed with no badge). `coalesce(…, false)`
+  is load-bearing there: a solo run takes the LEFT JOIN and the predicate over all-NULL
+  columns is NULL, not false.
+- **Client:** every row type `extends BadgeFields` (`src/net/api.ts`) instead of
+  re-declaring `supporter?`/`role?`. A new row type that forgets it is now visible.
+- **`npm run dbtest`** asserts one check per query, staff AND plain row separately —
+  the "and plain" half matters, or a check passes against a query selecting nothing.
+  (My first draft of the `sent`-list check had exactly that hole.)
+
+### Placement rule, learned the hard way twice
+
+**A badge is decoration BESIDE a name, never part of one.** Render it as a SIBLING of
+the name element:
+
+- `.lb-name-h` and `.mh-player.link` carry the hover underline → a nested badge gets
+  underlined along with the name.
+- `.fr-name` ellipsises on overflow → a nested badge gets truncated with a long handle.
+  `.fr-nameline` (new, `shell.css`) is the flex row for the stacked name-over-subline
+  friend/search/challenge rows; `min-width: 0` on both it and `.fr-name` is what still
+  lets the name ellipsise.
+
+### The friends poll now pays for the columns
+
+It previously skipped them on purpose ("only surfaces that render a badge pay"). It no
+longer does: same already-joined `profiles` row, two more projected columns, and a badge
+that shows on the leaderboard but not beside the same person in your friends list reads
+as a bug rather than as a saving.
+
+### Verified live, not just asserted
+
+Career panel chip, match history (including the alliance-coloured versus row, where the
+plain opponent correctly has none), and username search were confirmed by screenshot on
+playdsim.com. The RANKED board carries `role`/`supporter` in its payload (checked via
+`/api/elo`) but shows no badge yet **because no staff or supporter has played a ranked
+match** — not a bug. It renders through the same `DriverName` cell the record board uses.
+
+---
+
+## Previous session — staff roles
 
 Owner gets a green **★**, admins a blue **◆**, supporters keep the gold **♥**.
 Exactly ONE renders, in rank order owner > admin > supporter — staff are entitled to
