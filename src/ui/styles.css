@@ -1814,14 +1814,21 @@ button {
 .chassis-sw.on { box-shadow: 0 0 0 2px var(--ds-ink); }
 .chassis-sw:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* ---- supporter badge --------------------------------------------------- */
+/* ---- name badges: supporter / admin / owner ----------------------------- */
 /* A FILL with fixed ink, not coloured text. shell.css's rule — "a colour that is
    both a fill and a text colour will fail one of the two" — bites hard here: this
    badge lands on the leaderboard panel, the lobby roster tile, AND a profile
-   header, and a single ink value could not clear AA on all three. `--ds-gold` /
-   `--ds-gold-ink` is an already-audited pair (the same one `.lb-standing-badge`
-   uses) and, being category 2, it does not invert between themes — so the badge
-   reads identically in light and dark.
+   header, and a single ink value could not clear AA on all three.
+
+   Each of the three variants reuses an ALREADY-AUDITED fill/ink pair rather than
+   introducing a colour: supporter keeps `--ds-gold`/`--ds-gold-ink` (shared with
+   `.lb-standing-badge`), owner takes `--ds-accent`/`--ds-accent-ink`, admin takes
+   `--ds-blue-chip` with white. All three pairs are checked in BOTH themes by
+   `npm run contrast`.
+
+   They are distinguished by SHAPE as well as colour (♥ / ◆ / ★) — at 1.15em a
+   colour difference alone is not something a colour-blind reader can rely on, and
+   the badge is ~13px of surface with no text to fall back on.
 
    Sized to sit INSIDE a line of text without changing its height: `em` units and
    `vertical-align` keep it from nudging the baseline, which `npm run shiftaudit`
@@ -1849,6 +1856,29 @@ button {
   font-size: 0.5em;
   margin-left: 0.35em;
   transform: translateY(-0.25em);
+}
+/* Staff. Both fills are SATURATED, and that is a separate requirement from the
+   one `npm run contrast` checks: the audit asks whether the glyph reads against
+   its own fill, but a badge also has to read as an object against the panel
+   BEHIND it. The pastels fail that second test — `--ds-lavender` is #c9c3f0 in
+   light and #34305c in dark, so a lavender badge on the #272e35 dark panel is a
+   dark blob on a dark card even though its glyph clears AA against it.
+
+   `--ds-accent` inverts between themes but stays saturated on both sides (deep
+   green / mint), and `--ds-blue-chip` does not invert at all. With gold for the
+   supporter that gives three distinct hues, each visible on both grounds.
+
+   The blue is the alliance-blue chip colour. In a lobby roster that sits near
+   alliance colouring, but the badge is a 1.15em disc beside a name rather than
+   a row tint, and staff are rare enough that the collision is worth the
+   legibility. */
+.sup-badge.owner {
+  background: var(--ds-accent);
+  color: var(--ds-accent-ink);
+}
+.sup-badge.admin {
+  background: var(--ds-blue-chip);
+  color: #ffffff;
 }
 
 /* One player, two jobs: the rename row and the membership row belong to the SAME

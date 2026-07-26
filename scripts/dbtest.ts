@@ -83,6 +83,7 @@ async function main(): Promise<void> {
   ).rows.map((r) => r.column_name);
   check('migrations: profiles.supporter_until exists', cols.includes('supporter_until'));
   check('migrations: profiles.kofi_email exists', cols.includes('kofi_email'));
+  check('migrations: 0020 added profiles.role', cols.includes('role'));
 
   // re-running must be a no-op, not an error — every regional machine boots this
   await migrate();
@@ -282,6 +283,74 @@ async function main(): Promise<void> {
   check('badge: a LAPSED membership reads as not-a-supporter', !(await repo.getSupporter('user-a')).supporter);
   check('badge: and drops out of supportersAmong', !(await repo.supportersAmong(['user-a'])).has('user-a'));
   await db.query(`update profiles set supporter_until = now() + interval '30 days' where user_id = 'user-a'`);
+
+  // ------------------------------------------------------- staff roles (10)
+  // `profiles.role` is a PROJECTION of ADMIN_USER_IDS/OWNER_USER_ID, and the two
+  // things worth proving are that the projection is SYMMETRIC (losing the env
+  // entry loses the role) and that staff are entitled to the supporter perks by
+  // exactly the same predicate everything else reads.
+  await repo.ensureProfile('user-own', 'Owner');
+  await repo.ensureProfile('user-adm', 'Admin');
+  await repo.ensureProfile('user-nob', 'Nobody');
+
+  await repo.syncStaffRoles('user-own', ['user-own', 'user-adm']);
+  check('staff: the owner gets the owner role', (await repo.getProfile('user-own'))?.role === 'owner');
+  check('staff: the others get admin', (await repo.getProfile('user-adm'))?.role === 'admin');
+  check('staff: everyone else keeps no role', (await repo.getProfile('user-nob'))?.role === undefined);
+
+  // the owner appears in ADMIN_USER_IDS too (that is what gates the admin API),
+  // and must NOT be demoted to admin by being listed twice
+  check(
+    'staff: an owner also listed as an admin stays the owner',
+    (await repo.getProfile('user-own'))?.role === 'owner',
+  );
+
+  // THE PERK, and the reason the predicate is shared: no payment anywhere here
+  const admEnt = await repo.getSupporter('user-adm');
+  check('staff: an admin is entitled without paying', admEnt.supporter === true);
+  check('staff: ...with no expiry, because nothing was bought', admEnt.supporterUntil === null);
+  check('staff: ...and reports the role so the UI can say why', admEnt.role === 'admin');
+  check('staff: the badge query agrees', (await repo.supportersAmong(['user-adm'])).has('user-adm'));
+  check(
+    'staff: a non-staff account with no membership is still not a supporter',
+    !(await repo.getSupporter('user-nob')).supporter,
+  );
+
+  const staff = await repo.staffAmong(['user-own', 'user-adm', 'user-nob']);
+  check('staff: staffAmong maps ids to roles', staff.get('user-own') === 'owner' && staff.get('user-adm') === 'admin');
+  check('staff: and omits everyone else', !staff.has('user-nob'));
+
+  // SYMMETRY — the sweep must revoke, not just grant. An id dropped from the env
+  // that kept its badge and its free membership is the failure mode that matters.
+  await repo.syncStaffRoles('user-own', ['user-own']);
+  check('staff: dropping an id from the env clears the role', (await repo.getProfile('user-adm'))?.role === undefined);
+  check(
+    'staff: ...and takes the free entitlement with it',
+    !(await repo.getSupporter('user-adm')).supporter,
+  );
+
+  // demotion of the owner themselves (handover), and the no-owner case
+  await repo.syncStaffRoles(null, ['user-own']);
+  check('staff: an owner demoted to admin becomes an admin', (await repo.getProfile('user-own'))?.role === 'admin');
+  await repo.syncStaffRoles(null, []);
+  check('staff: an empty env leaves nobody staff', (await repo.getProfile('user-own'))?.role === undefined);
+
+  // the column is constrained, so a hand-edited row cannot invent a role
+  let rejected = false;
+  try {
+    await db.query(`update profiles set role = 'superuser' where user_id = 'user-nob'`);
+  } catch {
+    rejected = true;
+  }
+  check('staff: the check constraint rejects an unknown role', rejected);
+
+  // a staff member who ALSO paid keeps their real expiry — the role grants the
+  // perks, it does not overwrite the purchase
+  await repo.syncStaffRoles('user-a', []);
+  const paidStaff = await repo.getSupporter('user-a');
+  check('staff: a paying owner still reports the paid expiry', paidStaff.supporterUntil !== null);
+  check('staff: ...and is a supporter either way', paidStaff.supporter === true);
+  await repo.syncStaffRoles(null, []);
 
   // -------------------------------------------------- account deletion (9)
   await repo.ensureProfile('user-c', 'Cy');

@@ -249,6 +249,11 @@ const serverPairs = (t) => {
     // renders on the leaderboard panel, the lobby roster tile, AND a profile
     // header, and no single coloured-text value clears AA on all three grounds.
     ['SupporterBadge glyph', t('--ds-gold-ink'), t('--ds-gold'), AA],
+    // ...and the staff variants of the same badge. Unlike gold, both of these
+    // fills INVERT between themes, so checking them in each theme is the whole
+    // point: the assertion is that the PAIR stays legible, not that the hex does.
+    ['SupporterBadge owner glyph', t('--ds-accent-ink'), t('--ds-accent'), AA],
+    ['SupporterBadge admin glyph', '#ffffff', t('--ds-blue-chip'), AA],
     // .legal-warn paints --ds-warn as TEXT on a 9% tint of itself over the page
     ['Legal unfinished-terms warning', t('--ds-warn'), composite(t('--ds-warn'), 0.09, bg), AA],
     ['Leaderboard .lb-standing.placing text', t('--ds-warn'), composite(t('--ds-gold'), 0.09, panel), AA],

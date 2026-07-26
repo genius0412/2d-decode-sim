@@ -83,6 +83,11 @@ export function localizeCommand(c: RobotCommand): RobotCommand {
 /** max drivers per room (2v2) */
 export const ROOM_CAPACITY = 4;
 
+/** who runs the service — the staff badge beside a name. Lives here rather than
+ * in the UI because it travels on the wire (`LobbyPlayer`, the leaderboard rows,
+ * the entitlements payload) and `src/net` must not depend on `src/ui`. */
+export type StaffRole = 'owner' | 'admin';
+
 /** what a room runs. 'versus' = the existing PvP match (ELO). 'record' =
  * opponent-free score-attack for the record boards; solo = 1 robot (1v0), duo =
  * 2 co-op robots on one alliance (2v0). A duo may mix drivetrains — a mixed pair
@@ -151,6 +156,14 @@ export interface LobbyPlayer {
    * that ignores it both keep working against this build.
    */
   supporter?: boolean;
+  /**
+   * 'owner' | 'admin' — renders the staff badge instead of the supporter one.
+   *
+   * Server-authored on exactly the same terms as `supporter` above, and for a
+   * sharper version of the same reason: a self-declared "owner" badge beside a
+   * driver's name in a lobby is an impersonation primitive, not a cosmetic.
+   */
+  role?: StaffRole;
 }
 
 /** a driver's pre-match ranked intro data (ELO, keyed by the robot id the server

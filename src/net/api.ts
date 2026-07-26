@@ -1,5 +1,5 @@
 import type { Replay } from '../sim/replay';
-import type { LiveRoom } from './protocol';
+import type { LiveRoom, StaffRole } from './protocol';
 import type { AssistConfig, GameId, RobotSpec } from '../types';
 import { gameServerHttpUrl } from './env';
 import { getAuthToken } from '../lib/authClient';
@@ -38,6 +38,8 @@ export interface RecordRow {
   /** active supporter membership — renders the badge. Absent from a server older
    *  than the perk, which renders identically to false. */
   supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge in place of the supporter one */
+  role?: StaffRole;
 }
 
 export interface EloRow {
@@ -120,6 +122,8 @@ export interface UserStats {
   /** active supporter membership — the profile header badge. Absent from a
    *  server older than the perk, which renders identically to false. */
   supporter?: boolean;
+  /** 'owner' | 'admin' — the staff badge, which replaces the supporter one */
+  role?: StaffRole;
   season: number;
   elo: UserEloStat[];
   records: UserRecordStat[];
@@ -613,10 +617,15 @@ export interface AdminUserRow {
   userId: string;
   handle: string;
   username?: string | null;
+  /** a PAID membership. Deliberately not the entitled-or-staff predicate the rest
+   *  of the app uses: this row is where an admin decides whether to grant months,
+   *  and a colleague showing as a supporter with no expiry would mislead exactly
+   *  there. Staff are identified by `role` instead. */
   supporter?: boolean;
   supporterUntil?: string | null;
   /** a Ko-fi payer address is linked, so this account renews automatically */
   autoRenews?: boolean;
+  role?: StaffRole | null;
 }
 
 /** search profiles by handle (substring), exact userId, or exact username */
@@ -926,8 +935,13 @@ export interface TierPrice {
 export interface Entitlements {
   /** an active supporter membership — removes ads, unlocks cosmetic perks */
   supporter: boolean;
-  /** ISO instant the membership lapses, or null if not a supporter */
+  /** ISO instant the membership lapses, or null if not a supporter — and always
+   *  null for staff, who are entitled by role rather than by a purchase */
   supporterUntil: string | null;
+  /** 'owner' | 'admin'. Staff get the supporter perks without paying, so
+   *  `supporter` is true while `supporterUntil` stays null; this is what lets the
+   *  UI say "included with your role" instead of rendering a lapsed membership. */
+  role?: StaffRole;
   /** a Ko-fi payer address is linked, so payments renew with no manual claim */
   autoRenews: boolean;
   /** absent when talking to a server older than the pricing route */
@@ -953,6 +967,7 @@ export async function fetchEntitlements(): Promise<Entitlements> {
     return {
       supporter: !!r.supporter,
       supporterUntil: r.supporterUntil ?? null,
+      role: r.role === 'owner' || r.role === 'admin' ? r.role : undefined,
       autoRenews: !!r.autoRenews,
       price: r.price,
     };

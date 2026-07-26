@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { APP_NAME, LINKS } from '../seasons';
 import { SUPPORT_ENABLED } from '../net/env';
 import { claimKofiPayment, fetchEntitlements, fetchPricing, type TierPrice } from '../net/api';
+import type { StaffRole } from '../net/protocol';
 import { useAds } from '../ads/AdsProvider';
 import { isElectron } from '../ads/adsense';
 import { authEnabled } from '../lib/authClient';
@@ -35,6 +36,8 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [price, setPrice] = useState<TierPrice | null>(null);
   const [until, setUntil] = useState<string | null>(null);
+  // staff hold the perks by role rather than by purchase — see the panel below
+  const [role, setRole] = useState<StaffRole | null>(null);
   const [autoRenews, setAutoRenews] = useState(false);
 
   // Funnel step 1. Fires once per mount, and carries only WHETHER the visitor is
@@ -55,6 +58,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
         if (cancelled) return;
         setUntil(e.supporterUntil);
         setAutoRenews(e.autoRenews);
+        setRole(e.role ?? null);
         if (e.price) {
           setPrice(e.price);
           return;
@@ -145,7 +149,29 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
         </p>
       )}
 
-      {checked && supporter && (
+      {/* Staff hold the perks by role, with no purchase and therefore no expiry.
+          The supporter panel below would tell them their membership runs "through
+          -" and nag them to link a Ko-fi account that will never pay, so they get
+          their own panel. They can still buy a membership if they want to; it just
+          isn't what is granting the benefits. */}
+      {checked && role && (
+        <section className="ds-panel">
+          <div className="ds-panel-h">
+            <span className="ds-panel-title">
+              {role === 'owner' ? "You run this place" : "You're on the team"}
+            </span>
+            <span className="ds-count">{role}</span>
+          </div>
+          <div style={{ padding: 16 }}>
+            <p className="ds-hint">
+              Every supporter benefit is included with your {role === 'owner' ? 'ownership' : 'admin role'} -
+              ads are off, and your {role} badge shows on your profile, the leaderboards, and in the lobby.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {checked && supporter && !role && (
         <section className="ds-panel">
           <div className="ds-panel-h">
             <span className="ds-panel-title">You're a supporter</span>

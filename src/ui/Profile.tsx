@@ -55,11 +55,20 @@ export function Profile({
       <p className="ds-eyebrow">{APP_NAME} · Player</p>
       <h1 className="ds-h1">
         {stats?.handle ?? `@${username}`}
-        <SupporterBadge supporter={stats?.supporter} size="md" />
+        <SupporterBadge supporter={stats?.supporter} role={stats?.role} size="md" />
       </h1>
       <p className="ds-sub">
         {stats?.username ? `@${stats.username} · ` : ''}
-        {stats?.supporter ? 'Supporter · ' : ''}
+        {/* Same precedence as the badge. Staff are entitled to the supporter
+            perks, so `supporter` is true for them too — without this an admin's
+            profile would introduce them as a Supporter rather than as staff. */}
+        {stats?.role === 'owner'
+          ? 'Owner · '
+          : stats?.role === 'admin'
+            ? 'Admin · '
+            : stats?.supporter
+              ? 'Supporter · '
+              : ''}
         Public profile
       </p>
     </>

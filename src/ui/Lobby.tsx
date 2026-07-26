@@ -400,7 +400,7 @@ export function Lobby({
                   <span className="pdot" />
                   <span className="pnm">
                     {p.name}
-                    <SupporterBadge supporter={p.supporter} />
+                    <SupporterBadge supporter={p.supporter} role={p.role} />
                     {isMe ? ' (you)' : ''}
                   </span>
                   <span className="ptm">

@@ -508,6 +508,18 @@ export function Admin() {
                 </div>
                 <div className="admin-row admin-sub">
                   <span className="ds-hint admin-grow">
+                    {/* Staff first, and stated separately from the membership:
+                        this row is where months get granted, and `supporter` here
+                        is deliberately the PAID predicate (see AdminUserRow), so a
+                        colleague reads as "not a supporter" while still holding
+                        every perk by role. Saying so avoids granting them months
+                        they do not need. */}
+                    {u.role && (
+                      <>
+                        <strong>{u.role === 'owner' ? 'Owner' : 'Admin'}</strong> · perks by role
+                        {' · '}
+                      </>
+                    )}
                     {u.supporter ? (
                       <>
                         <strong>Supporter</strong> until{' '}
@@ -515,7 +527,7 @@ export function Admin() {
                         {u.autoRenews ? ' · auto-renews' : ' · manual claims only'}
                       </>
                     ) : (
-                      <>Not a supporter{u.autoRenews ? ' · Ko-fi linked (lapsed)' : ''}</>
+                      <>No paid membership{u.autoRenews ? ' · Ko-fi linked (lapsed)' : ''}</>
                     )}
                   </span>
                   <input

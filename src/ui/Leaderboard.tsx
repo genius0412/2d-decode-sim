@@ -15,7 +15,7 @@ import {
 import { gameServerConfigured } from '../net/env';
 import { periodLabel } from '../seasons';
 import { PeriodPicker } from './PeriodPicker';
-import { SupporterBadge } from './SupporterBadge';
+import { SupporterBadge, type StaffRole } from './SupporterBadge';
 import { PLACEMENT_GAMES } from '../config';
 import { CHAIN_MODE_LABELS, CHAIN_INTAKE_LABELS } from '../games/chain/labels';
 import {
@@ -58,11 +58,13 @@ function DriverName({
   handle,
   username,
   supporter,
+  role,
   onOpenProfile,
 }: {
   handle: string | null;
   username: string | null;
   supporter?: boolean;
+  role?: StaffRole;
   onOpenProfile?: (username: string) => void;
 }) {
   const label = handle ?? (username ? `@${username}` : 'Player');
@@ -78,7 +80,7 @@ function DriverName({
       >
         <span className="lb-name-h">
           {label}
-          <SupporterBadge supporter={supporter} />
+          <SupporterBadge supporter={supporter} role={role} />
         </span>
         <span className="lb-at">@{username}</span>
       </button>
@@ -87,7 +89,7 @@ function DriverName({
   return (
     <span className="lb-name-h">
       {label}
-      <SupporterBadge supporter={supporter} />
+      <SupporterBadge supporter={supporter} role={role} />
     </span>
   );
 }
@@ -387,6 +389,7 @@ export function Leaderboard({
                             handle={r.handle}
                             username={r.username}
                             supporter={(r as { supporter?: boolean }).supporter}
+                            role={(r as { role?: StaffRole }).role}
                             onOpenProfile={onOpenProfile}
                           />
                           {isRecords && rec.partnerId && (

@@ -38,6 +38,7 @@ import {
   upsertPresence,
   globalPresence,
   challengeParty,
+  syncStaffRoles,
   type GlobalPresence,
 } from './db/repo';
 
@@ -140,12 +141,24 @@ const PARTY_SIZE = 2;
 
 // accounts allowed to use the admin API (their auth-JWT `sub`/userId). Set as a
 // Fly secret: ADMIN_USER_IDS="uuid1,uuid2". Empty => admin API is locked to nobody.
-const ADMIN_IDS = new Set(
-  (process.env.ADMIN_USER_IDS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean),
-);
+const ADMIN_LIST = (process.env.ADMIN_USER_IDS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const ADMIN_IDS = new Set(ADMIN_LIST);
+
+/**
+ * The OWNER — one account, badged apart from the admins it otherwise sits with.
+ *
+ * Defaults to the FIRST id in `ADMIN_USER_IDS` rather than requiring a second
+ * secret, because that list has always been owner-first in practice and a feature
+ * that silently does nothing until someone sets an env var they were never told
+ * about is worse than a documented default. Set `OWNER_USER_ID` explicitly to
+ * override it.
+ *
+ * Owner implies admin: the gate above is `ADMIN_IDS`, and the owner is in it.
+ */
+const OWNER_ID = (process.env.OWNER_USER_ID ?? '').trim() || ADMIN_LIST[0] || null;
 
 // a pending admin notice (scheduled restart / info) broadcast to every client and
 // re-sent to anyone who connects while it's still live, so late joiners see it too
@@ -967,6 +980,9 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       if (dbEnabled) {
         const ent = await getSupporter(user.userId).catch(() => null);
         if (ent?.supporter) client.player.supporter = true;
+        // staff badge rides the same read — `getSupporter` already returns the
+        // role, so this costs nothing extra
+        if (ent?.role) client.player.role = ent.role;
       }
       markAuthed(user.userId);
     }
@@ -1131,7 +1147,18 @@ initPhysics()
 // apply DB migrations at boot (off the hot path; no-ops without DATABASE_URL). A
 // DB failure must NOT take the game server down — records just won't persist.
 migrate()
-  .then(() => console.log('[server] database ready'))
+  .then(async () => {
+    console.log('[server] database ready');
+    // Project ADMIN_USER_IDS / OWNER_USER_ID onto profiles.role. The env stays the
+    // source of truth; this is what lets a badge be JOINED by the leaderboard and
+    // roster queries instead of post-processed row by row (0020_staff_roles.sql).
+    // Symmetric — an id removed from the env loses its role here.
+    if (!dbEnabled) return;
+    await syncStaffRoles(OWNER_ID, ADMIN_LIST);
+    console.log(
+      `[server] staff synced: ${OWNER_ID ? '1 owner' : 'no owner'}, ${Math.max(0, ADMIN_LIST.filter((id) => id !== OWNER_ID).length)} admin(s)`,
+    );
+  })
   .catch((e) => console.error('[server] migration failed (records disabled):', e));
 
 /*

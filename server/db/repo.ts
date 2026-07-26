@@ -314,17 +314,98 @@ export interface PublicProfile {
    * means "not asked", which the client renders identically to false.
    */
   supporter?: boolean;
+  /**
+   * 'owner' | 'admin' for staff, absent otherwise — drives the staff badge.
+   *
+   * Optional for the same reason `supporter` is: only the surfaces that render a
+   * badge pay for the column. `undefined` means "not asked" and renders as no
+   * badge, identically to a null role.
+   */
+  role?: StaffRole;
 }
 
-/** the badge predicate, written once. `supporter_until` is an instant, and the
- *  comparison must happen in Postgres — the five regional machines do not share
- *  a clock, and a skewed one would show a badge that has already lapsed. */
-const SUPPORTER_COL = `(supporter_until is not null and supporter_until > now()) as supporter`;
+/** who runs the service. Projected from `ADMIN_USER_IDS` / `OWNER_USER_ID` into
+ *  `profiles.role` at boot — see 0020_staff_roles.sql for why it is a column. */
+export type StaffRole = 'owner' | 'admin';
+
+/** is this row staff? Shared so "staff" means one thing in every query. */
+const STAFF_PRED = `role in ('owner', 'admin')`;
+
+/** narrow whatever the column holds. A value outside the check constraint could
+ *  only come from a hand-edited row, and reads as no role. */
+export const asRole = (v: unknown): StaffRole | undefined =>
+  v === 'owner' || v === 'admin' ? v : undefined;
+
+/**
+ * The badge/perk predicate, written once. `supporter_until` is an instant, and the
+ * comparison must happen in Postgres — the five regional machines do not share a
+ * clock, and a skewed one would show a badge that has already lapsed.
+ *
+ * STAFF COUNT AS SUPPORTERS, and this expression is the only place that says so.
+ * Every perk — no ads, the cosmetic robot fill, the entitlements endpoint — is
+ * derived from it, so folding the role in here grants all of them at once and
+ * makes it impossible for one surface to disagree with another about whether an
+ * admin is entitled.
+ */
+const SUPPORTER_COL = `((supporter_until is not null and supporter_until > now()) or ${STAFF_PRED}) as supporter`;
+
+/**
+ * Reconcile `profiles.role` with the environment. Called once per boot, after
+ * migrations.
+ *
+ * The env is the source of truth and this is a projection of it, so the sweep
+ * must be SYMMETRIC: an id removed from `ADMIN_USER_IDS` has to lose the badge
+ * and the perks, not keep them because nothing ever cleared the row. All five
+ * machines run this on boot with the same input, so it is idempotent and
+ * order-independent, and it only touches rows whose role is actually wrong.
+ *
+ * A staff id with no profile row yet is simply not updated; they pick up the role
+ * on the next boot after they first sign in (`ensureProfile`), which is soon
+ * enough for a badge.
+ */
+export async function syncStaffRoles(ownerId: string | null, adminIds: string[]): Promise<void> {
+  const owner = ownerId && ownerId.trim() ? ownerId.trim() : null;
+  // the owner is never also a plain admin — one row, one role
+  const admins = [...new Set(adminIds.map((s) => s.trim()).filter((s) => s && s !== owner))];
+  const want = `case
+      when user_id = $1 then 'owner'
+      when user_id = any($2::text[]) then 'admin'
+      else null
+    end`;
+  await q(
+    `update profiles set role = ${want}, updated_at = now()
+      where role is distinct from (${want})`,
+    [owner, admins],
+  );
+}
+
+/** the staff among `userIds`, as id → role. The parallel of `supportersAmong`,
+ *  for badges on a board or roster that was assembled in Node rather than by one
+ *  query that could just join `profiles`. */
+export async function staffAmong(userIds: string[]): Promise<Map<string, StaffRole>> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return new Map();
+  const rows = await q<{ user_id: string; role: string }>(
+    `select user_id, role from profiles where user_id = any($1::text[]) and ${STAFF_PRED}`,
+    [ids],
+  );
+  const out = new Map<string, StaffRole>();
+  for (const r of rows) {
+    const role = asRole(r.role);
+    if (role) out.set(r.user_id, role);
+  }
+  return out;
+}
 
 /** a user's public profile (display handle + unique username), or null */
 export async function getProfile(userId: string): Promise<PublicProfile | null> {
-  const rows = await q<{ handle: string; username: string | null; supporter: boolean }>(
-    `select handle, username, ${SUPPORTER_COL} from profiles where user_id = $1`,
+  const rows = await q<{
+    handle: string;
+    username: string | null;
+    supporter: boolean;
+    role: string | null;
+  }>(
+    `select handle, username, role, ${SUPPORTER_COL} from profiles where user_id = $1`,
     [userId],
   );
   return rows[0]
@@ -333,6 +414,7 @@ export async function getProfile(userId: string): Promise<PublicProfile | null> 
         handle: rows[0].handle,
         username: rows[0].username,
         supporter: !!rows[0].supporter,
+        role: asRole(rows[0].role),
       }
     : null;
 }
@@ -344,13 +426,20 @@ export async function getProfileByUsername(username: string): Promise<PublicProf
     handle: string;
     username: string | null;
     supporter: boolean;
+    role: string | null;
   }>(
-    `select user_id, handle, username, ${SUPPORTER_COL} from profiles where username = $1`,
+    `select user_id, handle, username, role, ${SUPPORTER_COL} from profiles where username = $1`,
     [username],
   );
   const r = rows[0];
   return r
-    ? { userId: r.user_id, handle: r.handle, username: r.username, supporter: !!r.supporter }
+    ? {
+        userId: r.user_id,
+        handle: r.handle,
+        username: r.username,
+        supporter: !!r.supporter,
+        role: asRole(r.role),
+      }
     : null;
 }
 
@@ -418,6 +507,10 @@ export interface SupporterState {
   supporterUntil: string | null;
   /** a Ko-fi payer address is linked, so payments renew without a manual claim */
   autoRenews: boolean;
+  /** staff get the perks without paying — `supporter` is true with no expiry, and
+   *  this is what lets the UI say "included with your role" rather than render a
+   *  membership that appears to have already run out */
+  role?: StaffRole;
 }
 
 const NOT_A_SUPPORTER: SupporterState = {
@@ -427,9 +520,19 @@ const NOT_A_SUPPORTER: SupporterState = {
 };
 
 export async function getSupporter(userId: string): Promise<SupporterState> {
-  const rows = await q<{ until: string | null; active: boolean; linked: boolean }>(
-    `select supporter_until as until,
-            (supporter_until is not null and supporter_until > now()) as active,
+  const rows = await q<{
+    until: string | null;
+    active: boolean;
+    linked: boolean;
+    role: string | null;
+  }>(
+    // `active` folds in the role deliberately: this is what the ad gate and the
+    // cosmetics read, so staff must come back entitled here exactly as they do in
+    // every badge query. `until` stays the REAL paid expiry (null for staff who
+    // never paid) — conflating the two would show an admin a membership date they
+    // do not have.
+    `select supporter_until as until, role,
+            ((supporter_until is not null and supporter_until > now()) or ${STAFF_PRED}) as active,
             (kofi_email is not null) as linked
        from profiles where user_id = $1`,
     [userId],
@@ -439,6 +542,7 @@ export async function getSupporter(userId: string): Promise<SupporterState> {
     supporter: !!rows[0].active,
     supporterUntil: rows[0].until,
     autoRenews: !!rows[0].linked,
+    role: asRole(rows[0].role),
   };
 }
 
@@ -448,8 +552,10 @@ export async function supportersAmong(userIds: string[]): Promise<Set<string>> {
   const ids = [...new Set(userIds.filter(Boolean))];
   if (ids.length === 0) return new Set();
   const rows = await q<{ user_id: string }>(
+    // staff are entitled without paying — same rule as SUPPORTER_COL, or a roster
+    // would badge an admin on the leaderboard and not in the lobby
     `select user_id from profiles
-      where user_id = any($1::text[]) and supporter_until > now()`,
+      where user_id = any($1::text[]) and (supporter_until > now() or ${STAFF_PRED})`,
     [ids],
   );
   return new Set(rows.map((r) => r.user_id));
@@ -865,6 +971,8 @@ export interface BoardRow {
   config: RecordConfig | null;
   /** active supporter membership — renders a small badge beside the name */
   supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
+  role?: StaffRole;
 }
 
 /** best score per player within a season × mode × drivetrain, ranked. Pass
@@ -892,8 +1000,9 @@ export async function recordLeaderboard(opts: {
        where r.balance_version = $1 and r.mode = $2 and r.game = $3 ${dtFilter}
        order by r.user_id, r.score desc, r.created_at asc
      )
-     select b.user_id as "userId", p.handle, p.username,
-            (p.supporter_until is not null and p.supporter_until > now()) as supporter,
+     select b.user_id as "userId", p.handle, p.username, p.role,
+            ((p.supporter_until is not null and p.supporter_until > now())
+              or p.role in ('owner', 'admin')) as supporter,
             b.partner_id as "partnerId",
             pp.handle as "partnerHandle", pp.username as "partnerUsername",
             b.score, b.replay_id as "replayId", b.created_at as "createdAt", b.config
@@ -1043,10 +1152,16 @@ export async function searchProfiles(
     supporterUntil: string | null;
     /** a Ko-fi payer address is linked, so this account renews automatically */
     autoRenews: boolean;
+    role: StaffRole | null;
   }[]
 > {
   return q(
-    `select user_id as "userId", handle, username,
+    // DELIBERATELY the PAID predicate, not the entitled one the rest of the file
+    // uses. This is the admin console's grant/revoke row: an admin deciding
+    // whether to add months needs to see the membership actually bought, and
+    // showing every colleague as a supporter with no expiry would be misleading
+    // exactly where precision matters. `role` is surfaced separately instead.
+    `select user_id as "userId", handle, username, role,
             (supporter_until is not null and supporter_until > now()) as supporter,
             supporter_until as "supporterUntil",
             (kofi_email is not null) as "autoRenews"
@@ -1377,6 +1492,8 @@ export interface UserStats {
   username: string | null;
   /** active supporter membership — the profile header badge */
   supporter?: boolean;
+  /** 'owner' | 'admin' — the staff badge, which replaces the supporter one */
+  role?: StaffRole;
   season: number;
   elo: UserEloStat[];
   records: UserRecordStat[];
@@ -1406,8 +1523,8 @@ export async function getUserStats(
   const eloKeyCol = isLive ? 'act' : 'balance_version';
   const eloKeyVal = isLive ? act : balanceVersion;
   const [profile, elo, recPb, recRank, match, recent] = await Promise.all([
-    q<{ handle: string; username: string | null; supporter: boolean }>(
-      `select handle, username, ${SUPPORTER_COL} from profiles where user_id = $1`,
+    q<{ handle: string; username: string | null; supporter: boolean; role: string | null }>(
+      `select handle, username, role, ${SUPPORTER_COL} from profiles where user_id = $1`,
       [userId],
     ),
     q<{ mode: '1v1' | '2v2'; rating: number; games: number; rnk: string | null }>(
@@ -1484,6 +1601,7 @@ export async function getUserStats(
     userId,
     handle: profile[0]?.handle ?? null,
     supporter: !!profile[0]?.supporter,
+    role: asRole(profile[0]?.role),
     username: profile[0]?.username ?? null,
     season: balanceVersion,
     elo: elos,
