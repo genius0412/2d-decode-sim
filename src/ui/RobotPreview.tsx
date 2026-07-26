@@ -231,7 +231,15 @@ export function RobotPreview({
     >
       {chain ? cIntakeEl : intakeEl}
 
-      {/* chassis */}
+      {/* chassis.
+
+          DELIBERATELY still `--ds-panel`, not the supporter chassis colour. This
+          preview lives on a THEMED UI panel, while the in-game sprite sits on the
+          hardcoded-dark field — and every `CHASSIS_COLORS` value is tuned for that
+          dark ground. Painting one here would put `--ds-accent` wheels and pods
+          (a DARK green in light theme) on a dark chassis fill, which is the exact
+          fill-vs-text collision shell.css warns about. The colour is previewed by
+          its swatch in the builder instead. */}
       <rect
         x={-w / 2}
         y={-len / 2}

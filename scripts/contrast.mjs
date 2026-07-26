@@ -232,6 +232,7 @@ const hudPairs = (t) => {
  *  because a `npm run dev` without VITE_GAME_SERVER_URL never draws them. */
 const serverPairs = (t) => {
   const panel = t('--ds-panel');
+  const bg = t('--ds-bg');
   const tile = t('--ds-tile');
   return [
     ['ServerPicker .ping-dot.good (1.4.11)', t('--ds-ok-ink'), tile, NON_TEXT],
@@ -244,6 +245,17 @@ const serverPairs = (t) => {
     ['UsernameField hint / taken', t('--ds-danger'), panel, AA],
     ['Account id <code>', t('--ds-mut'), panel, AA],
     ['Leaderboard .lb-standing-badge', t('--ds-gold-ink'), t('--ds-gold'), AA],
+    // The supporter badge is a FILL with fixed ink for exactly this reason: it
+    // renders on the leaderboard panel, the lobby roster tile, AND a profile
+    // header, and no single coloured-text value clears AA on all three grounds.
+    ['SupporterBadge glyph', t('--ds-gold-ink'), t('--ds-gold'), AA],
+    // ...and the staff variants of the same badge. Unlike gold, both of these
+    // fills INVERT between themes, so checking them in each theme is the whole
+    // point: the assertion is that the PAIR stays legible, not that the hex does.
+    ['SupporterBadge owner glyph', t('--ds-accent-ink'), t('--ds-accent'), AA],
+    ['SupporterBadge admin glyph', '#ffffff', t('--ds-blue-chip'), AA],
+    // .legal-warn paints --ds-warn as TEXT on a 9% tint of itself over the page
+    ['Legal unfinished-terms warning', t('--ds-warn'), composite(t('--ds-warn'), 0.09, bg), AA],
     ['Leaderboard .lb-standing.placing text', t('--ds-warn'), composite(t('--ds-gold'), 0.09, panel), AA],
     ['ds-opt-del hover glyph', t('--ds-red-ink'), panel, AA],
 

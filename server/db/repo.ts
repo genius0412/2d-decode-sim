@@ -27,11 +27,26 @@ export interface RecordConfig {
 // ------------------------------------------------------------- seasons ------
 // Periods are PER GAME: each game runs its own Act → Season progression, so DECODE
 // and Chain Reaction never share a live season or an act. `game` defaults to DECODE.
+/**
+ * (game, balanceVersion) pairs this process has already seeded. `ensureSeason` is
+ * two WRITES, and `GET /api/seasons` - the leaderboard's season picker, hit on
+ * every visit to Records - ran it on every request. In production that made
+ * `seasons` the second busiest table in the whole database (121k updates against
+ * 8 inserts), all of it re-asserting a row that was already correct.
+ *
+ * Memoizing is safe precisely because the key IS the season: when an admin rolls a
+ * new one, `currentSeasonNumber` returns the new number, which is a new key, so
+ * the seed-and-deactivate runs again exactly when it has something to do.
+ */
+const seasonEnsured = new Set<string>();
+
 export async function ensureSeason(
   balanceVersion: number,
   game?: Game,
   initialAct = 0,
 ): Promise<void> {
+  const key = `${g(game)}:${balanceVersion}`;
+  if (seasonEnsured.has(key)) return;
   // No baked-in name — the structured "Act X · Season Y" label is derived in
   // listSeasons. A brand-new game's first row seeds `initialAct` (Chain Reaction
   // starts at Act 1); on conflict we only re-activate — act is left untouched.
@@ -44,6 +59,7 @@ export async function ensureSeason(
     g(game),
     balanceVersion,
   ]);
+  seasonEnsured.add(key);
 }
 
 /**
@@ -253,12 +269,28 @@ export async function deleteAnnouncement(id: string): Promise<boolean> {
 }
 
 // ------------------------------------------------------------ profiles ------
+
+/**
+ * Users whose profile row this process has already created. The insert below is
+ * `on conflict do nothing` and deliberately never touches `handle` (renames go
+ * through `setHandle`), so once it has succeeded for a user it can never do
+ * anything again - which makes skipping it exactly equivalent, not merely cheaper.
+ *
+ * Worth memoizing because `/api/friends` calls this on EVERY poll and a signed-in
+ * player polls every 6s: a third of the queries on the busiest authenticated path
+ * were provably no-ops. Bounded by the distinct users a machine sees before it
+ * auto-stops; a restart simply re-learns them.
+ */
+const profileEnsured = new Set<string>();
+
 export async function ensureProfile(userId: string, handle: string): Promise<void> {
+  if (profileEnsured.has(userId)) return;
   await q(
     `insert into profiles (user_id, handle) values ($1, $2)
      on conflict (user_id) do nothing`,
     [userId, handle],
   );
+  profileEnsured.add(userId);
 }
 
 export async function setHandle(userId: string, handle: string): Promise<void> {
@@ -273,25 +305,142 @@ export interface PublicProfile {
   handle: string;
   /** unique lowercase [a-z0-9] slug, or null for a legacy profile with none yet */
   username: string | null;
+  /**
+   * active supporter membership — drives the badge.
+   *
+   * OPTIONAL because only the surfaces that actually render a badge pay for the
+   * extra column: the profile page and the leaderboards do, the friends-list
+   * queries (three per poll, every few seconds) deliberately do not. `undefined`
+   * means "not asked", which the client renders identically to false.
+   */
+  supporter?: boolean;
+  /**
+   * 'owner' | 'admin' for staff, absent otherwise — drives the staff badge.
+   *
+   * Optional for the same reason `supporter` is: only the surfaces that render a
+   * badge pay for the column. `undefined` means "not asked" and renders as no
+   * badge, identically to a null role.
+   */
+  role?: StaffRole;
+}
+
+/** who runs the service. Projected from `ADMIN_USER_IDS` / `OWNER_USER_ID` into
+ *  `profiles.role` at boot — see 0020_staff_roles.sql for why it is a column. */
+export type StaffRole = 'owner' | 'admin';
+
+/** is this row staff? Shared so "staff" means one thing in every query. */
+const STAFF_PRED = `role in ('owner', 'admin')`;
+
+/** narrow whatever the column holds. A value outside the check constraint could
+ *  only come from a hand-edited row, and reads as no role. */
+export const asRole = (v: unknown): StaffRole | undefined =>
+  v === 'owner' || v === 'admin' ? v : undefined;
+
+/**
+ * The badge/perk predicate, written once. `supporter_until` is an instant, and the
+ * comparison must happen in Postgres — the five regional machines do not share a
+ * clock, and a skewed one would show a badge that has already lapsed.
+ *
+ * STAFF COUNT AS SUPPORTERS, and this expression is the only place that says so.
+ * Every perk — no ads, the cosmetic robot fill, the entitlements endpoint — is
+ * derived from it, so folding the role in here grants all of them at once and
+ * makes it impossible for one surface to disagree with another about whether an
+ * admin is entitled.
+ */
+const SUPPORTER_COL = `((supporter_until is not null and supporter_until > now()) or ${STAFF_PRED}) as supporter`;
+
+/**
+ * Reconcile `profiles.role` with the environment. Called once per boot, after
+ * migrations.
+ *
+ * The env is the source of truth and this is a projection of it, so the sweep
+ * must be SYMMETRIC: an id removed from `ADMIN_USER_IDS` has to lose the badge
+ * and the perks, not keep them because nothing ever cleared the row. All five
+ * machines run this on boot with the same input, so it is idempotent and
+ * order-independent, and it only touches rows whose role is actually wrong.
+ *
+ * A staff id with no profile row yet is simply not updated; they pick up the role
+ * on the next boot after they first sign in (`ensureProfile`), which is soon
+ * enough for a badge.
+ */
+export async function syncStaffRoles(ownerId: string | null, adminIds: string[]): Promise<void> {
+  const owner = ownerId && ownerId.trim() ? ownerId.trim() : null;
+  // the owner is never also a plain admin — one row, one role
+  const admins = [...new Set(adminIds.map((s) => s.trim()).filter((s) => s && s !== owner))];
+  const want = `case
+      when user_id = $1 then 'owner'
+      when user_id = any($2::text[]) then 'admin'
+      else null
+    end`;
+  await q(
+    `update profiles set role = ${want}, updated_at = now()
+      where role is distinct from (${want})`,
+    [owner, admins],
+  );
+}
+
+/** the staff among `userIds`, as id → role. The parallel of `supportersAmong`,
+ *  for badges on a board or roster that was assembled in Node rather than by one
+ *  query that could just join `profiles`. */
+export async function staffAmong(userIds: string[]): Promise<Map<string, StaffRole>> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return new Map();
+  const rows = await q<{ user_id: string; role: string }>(
+    `select user_id, role from profiles where user_id = any($1::text[]) and ${STAFF_PRED}`,
+    [ids],
+  );
+  const out = new Map<string, StaffRole>();
+  for (const r of rows) {
+    const role = asRole(r.role);
+    if (role) out.set(r.user_id, role);
+  }
+  return out;
 }
 
 /** a user's public profile (display handle + unique username), or null */
 export async function getProfile(userId: string): Promise<PublicProfile | null> {
-  const rows = await q<{ handle: string; username: string | null }>(
-    `select handle, username from profiles where user_id = $1`,
+  const rows = await q<{
+    handle: string;
+    username: string | null;
+    supporter: boolean;
+    role: string | null;
+  }>(
+    `select handle, username, role, ${SUPPORTER_COL} from profiles where user_id = $1`,
     [userId],
   );
-  return rows[0] ? { userId, handle: rows[0].handle, username: rows[0].username } : null;
+  return rows[0]
+    ? {
+        userId,
+        handle: rows[0].handle,
+        username: rows[0].username,
+        supporter: !!rows[0].supporter,
+        role: asRole(rows[0].role),
+      }
+    : null;
 }
 
 /** resolve a public username → profile (the /profile/<username> read path), or null */
 export async function getProfileByUsername(username: string): Promise<PublicProfile | null> {
-  const rows = await q<{ user_id: string; handle: string; username: string | null }>(
-    `select user_id, handle, username from profiles where username = $1`,
+  const rows = await q<{
+    user_id: string;
+    handle: string;
+    username: string | null;
+    supporter: boolean;
+    role: string | null;
+  }>(
+    `select user_id, handle, username, role, ${SUPPORTER_COL} from profiles where username = $1`,
     [username],
   );
   const r = rows[0];
-  return r ? { userId: r.user_id, handle: r.handle, username: r.username } : null;
+  return r
+    ? {
+        userId: r.user_id,
+        handle: r.handle,
+        username: r.username,
+        supporter: !!r.supporter,
+        role: asRole(r.role),
+      }
+    : null;
 }
 
 /** thrown by setUsername when the requested username is already taken */
@@ -342,6 +491,384 @@ export async function saveUserSettings(userId: string, settings: unknown): Promi
     userId,
     JSON.stringify(settings),
   ]);
+}
+
+// ---------------------------------------------- supporter entitlements ------
+/**
+ * Supporter membership, backed by Ko-fi. See 0018_supporter.sql for why this is
+ * an expiry INSTANT on `profiles` rather than a boolean or a separate table.
+ *
+ * Every read compares against `now()` IN POSTGRES rather than in Node: the five
+ * regional machines do not share a clock, and a skewed one would otherwise grant
+ * or revoke a membership early.
+ */
+export interface SupporterState {
+  supporter: boolean;
+  supporterUntil: string | null;
+  /** a Ko-fi payer address is linked, so payments renew without a manual claim */
+  autoRenews: boolean;
+  /** staff get the perks without paying — `supporter` is true with no expiry, and
+   *  this is what lets the UI say "included with your role" rather than render a
+   *  membership that appears to have already run out */
+  role?: StaffRole;
+}
+
+const NOT_A_SUPPORTER: SupporterState = {
+  supporter: false,
+  supporterUntil: null,
+  autoRenews: false,
+};
+
+export async function getSupporter(userId: string): Promise<SupporterState> {
+  const rows = await q<{
+    until: string | null;
+    active: boolean;
+    linked: boolean;
+    role: string | null;
+  }>(
+    // `active` folds in the role deliberately: this is what the ad gate and the
+    // cosmetics read, so staff must come back entitled here exactly as they do in
+    // every badge query. `until` stays the REAL paid expiry (null for staff who
+    // never paid) — conflating the two would show an admin a membership date they
+    // do not have.
+    `select supporter_until as until, role,
+            ((supporter_until is not null and supporter_until > now()) or ${STAFF_PRED}) as active,
+            (kofi_email is not null) as linked
+       from profiles where user_id = $1`,
+    [userId],
+  );
+  if (!rows[0]) return NOT_A_SUPPORTER;
+  return {
+    supporter: !!rows[0].active,
+    supporterUntil: rows[0].until,
+    autoRenews: !!rows[0].linked,
+    role: asRole(rows[0].role),
+  };
+}
+
+/** the currently-active supporters among `userIds` — one query, for badges on a
+ *  leaderboard page or an in-match roster (a per-row lookup would not do). */
+export async function supportersAmong(userIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return new Set();
+  const rows = await q<{ user_id: string }>(
+    // staff are entitled without paying — same rule as SUPPORTER_COL, or a roster
+    // would badge an admin on the leaderboard and not in the lobby
+    `select user_id from profiles
+      where user_id = any($1::text[]) and (supporter_until > now() or ${STAFF_PRED})`,
+    [ids],
+  );
+  return new Set(rows.map((r) => r.user_id));
+}
+
+/** the SQL that extends a membership. Shared by every grant path so the
+ *  extend-don't-overwrite rule can only ever be written once.
+ *
+ *  EXTENDS rather than overwrites: `greatest(supporter_until, now())` means a
+ *  renewal that arrives before the current period ends stacks on the remaining
+ *  time instead of silently truncating it to one month from today. Someone who
+ *  pays for a year up front, or whose renewal fires a day early, does not lose
+ *  what they already bought. */
+const EXTEND_SQL = `update profiles
+     set supporter_until = greatest(coalesce(supporter_until, now()), now())
+                           + ($2 || ' months')::interval,
+         updated_at = now()
+   where user_id = $1
+   returning supporter_until as until`;
+
+/** where a change to `supporter_until` came from — recorded in supporter_grants */
+export type GrantSource = 'kofi' | 'admin' | 'revoke';
+
+/**
+ * Extend a membership by `months` and write the audit row.
+ *
+ * Two things can now move `supporter_until` — a Ko-fi payment and an admin — so
+ * "why does this account have a membership?" stops being answerable from the
+ * profile alone. Every write lands in `supporter_grants` with its source, which
+ * is what makes a chargeback investigation possible after the fact.
+ */
+export async function grantSupporter(
+  userId: string,
+  months: number,
+  source: GrantSource = 'admin',
+  note?: string,
+): Promise<string | null> {
+  const n = Math.max(1, Math.floor(months));
+  const rows = await q<{ until: string }>(EXTEND_SQL, [userId, String(n)]);
+  const until = rows[0]?.until ?? null;
+  if (rows[0]) await logGrant(userId, source, n, until, note ?? null);
+  return until;
+}
+
+/**
+ * End a membership immediately — a chargeback, a refund, or a mistaken comp.
+ *
+ * Clears the instant rather than winding it back, because there is no honest
+ * "before" to restore to: a revoked membership is revoked, and if some of it was
+ * legitimately paid for the correct remedy is a fresh admin grant for the part
+ * that was. Returns false if there was nothing to revoke.
+ */
+export async function revokeSupporter(userId: string, note?: string): Promise<boolean> {
+  const rows = await q<{ user_id: string }>(
+    `update profiles set supporter_until = null, updated_at = now()
+      where user_id = $1 and supporter_until is not null
+      returning user_id`,
+    [userId],
+  );
+  if (rows.length === 0) return false;
+  await logGrant(userId, 'revoke', 0, null, note ?? null);
+  return true;
+}
+
+async function logGrant(
+  userId: string,
+  source: GrantSource,
+  months: number,
+  until: string | null,
+  note: string | null,
+): Promise<void> {
+  await q(
+    `insert into supporter_grants (user_id, source, months, until, note)
+     values ($1, $2, $3, $4, $5)`,
+    [userId, source, months, until, note],
+  );
+}
+
+/** audit trail for one account, newest first (admin console) */
+export interface SupporterGrantRow {
+  source: GrantSource;
+  months: number;
+  until: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+export async function listSupporterGrants(
+  userId: string,
+  limit = 20,
+): Promise<SupporterGrantRow[]> {
+  return q<SupporterGrantRow>(
+    `select source, months, until, note, created_at as "createdAt"
+       from supporter_grants where user_id = $1
+      order by created_at desc limit $2`,
+    [userId, limit],
+  );
+}
+
+// ------------------------------------------------------- Ko-fi payments -----
+/** a Ko-fi webhook event, already parsed and priced by `server/kofi.ts` */
+export interface KofiEventRow {
+  messageId: string;
+  kind: string;
+  email: string | null;
+  transactionId: string | null;
+  amount: string | null;
+  currency: string | null;
+  isSubscription: boolean;
+  tierName: string | null;
+  /** months this payment is worth — 0 for a tip below the tier */
+  months: number;
+}
+
+export interface KofiRecordResult {
+  /** false when Ko-fi retried an event we already stored */
+  fresh: boolean;
+  /** user id this was auto-granted to by matching `profiles.kofi_email`, if any */
+  autoGrantedTo: string | null;
+  /** supporter_until after an auto-grant */
+  until: string | null;
+}
+
+/**
+ * Record a Ko-fi webhook event and, when the payer is already known, grant it.
+ *
+ * IDEMPOTENCY: `message_id` is the primary key and Ko-fi retries delivery, so the
+ * insert itself is the guard — there is no read-then-write race between the five
+ * regional machines, and a retry cannot grant a second month. Everything below
+ * the insert is skipped unless the insert actually took.
+ *
+ * AUTO-RENEWAL is the whole point of the email link. A membership's second month
+ * arrives as a brand-new event with a new transaction id; without matching it to
+ * the account that claimed the first one, the supporter silently lapses and has
+ * to paste a new id every 30 days. `profiles.kofi_email` (set by the first manual
+ * claim) closes that loop. A payer we have never seen still parks the payment for
+ * a manual claim, which is how the FIRST one always works.
+ */
+export async function recordKofiPayment(p: KofiEventRow): Promise<KofiRecordResult> {
+  return tx(async (query) => {
+    const inserted = await query<{ message_id: string }>(
+      `insert into kofi_payments
+         (message_id, kind, email, transaction_id, amount, currency,
+          is_subscription, tier_name, months)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       on conflict (message_id) do nothing
+       returning message_id`,
+      [
+        p.messageId,
+        p.kind,
+        p.email ? p.email.trim().toLowerCase() : null,
+        p.transactionId,
+        p.amount,
+        p.currency,
+        p.isSubscription,
+        p.tierName,
+        Math.max(0, Math.floor(p.months)),
+      ],
+    );
+    if (inserted.length === 0) return { fresh: false, autoGrantedTo: null, until: null };
+    if (!p.email || p.months <= 0) return { fresh: true, autoGrantedTo: null, until: null };
+
+    const owner = await query<{ user_id: string }>(
+      `select user_id from profiles where kofi_email = $1`,
+      [p.email.trim().toLowerCase()],
+    );
+    if (!owner[0]) return { fresh: true, autoGrantedTo: null, until: null };
+    const userId = owner[0].user_id;
+
+    await query(
+      `update kofi_payments
+          set claimed_by = $1, claimed_at = now(), auto_claimed = true
+        where message_id = $2`,
+      [userId, p.messageId],
+    );
+    const granted = await query<{ until: string }>(EXTEND_SQL, [userId, String(p.months)]);
+    const until = granted[0]?.until ?? null;
+    await query(
+      `insert into supporter_grants (user_id, source, months, until, note)
+       values ($1, 'kofi', $2, $3, $4)`,
+      [userId, p.months, until, `auto: ${p.messageId}`],
+    );
+    return { fresh: true, autoGrantedTo: userId, until };
+  });
+}
+
+export type ClaimOutcome =
+  | 'ok'
+  | 'not-found'
+  | 'already-claimed'
+  | 'below-tier'
+  | 'email-taken'
+  | 'refunded';
+
+export interface ClaimResult {
+  outcome: ClaimOutcome;
+  until?: string | null;
+  /** months granted (outcome 'ok') */
+  months?: number;
+  /** the payment, so the caller can explain a 'below-tier' rejection precisely */
+  payment?: { kind: string; amount: string | null; currency: string | null; isSubscription: boolean; tierName: string | null };
+}
+
+/**
+ * Attach an unclaimed payment to an account, grant the membership, and LINK the
+ * payer's email so every future payment from it renews automatically.
+ *
+ * One transaction throughout. The claiming UPDATE matches only
+ * `claimed_by is null`, so two accounts racing the same transaction id cannot
+ * both win — the loser updates zero rows and gets 'already-claimed'.
+ *
+ * The email link is the part that needs care: it is UNIQUE across profiles, so a
+ * second account claiming a payment from an address already linked elsewhere is
+ * rejected ('email-taken') rather than allowed to quietly steal the renewal
+ * stream of the first. That is also the only thing stopping one $3 subscription
+ * from removing ads on an unlimited number of accounts.
+ */
+export async function claimKofiPayment(
+  userId: string,
+  transactionId: string,
+): Promise<ClaimResult> {
+  return tx(async (query) => {
+    const found = await query<{
+      message_id: string;
+      claimed_by: string | null;
+      email: string | null;
+      months: number;
+      kind: string;
+      amount: string | null;
+      currency: string | null;
+      is_subscription: boolean;
+      tier_name: string | null;
+      refunded_at: string | null;
+    }>(
+      `select message_id, claimed_by, email, months, kind, amount, currency,
+              is_subscription, tier_name, refunded_at
+         from kofi_payments where transaction_id = $1`,
+      [transactionId],
+    );
+    const row = found[0];
+    if (!row) return { outcome: 'not-found' as const };
+
+    const payment = {
+      kind: row.kind,
+      amount: row.amount,
+      currency: row.currency,
+      isSubscription: row.is_subscription,
+      tierName: row.tier_name,
+    };
+    if (row.refunded_at) return { outcome: 'refunded' as const, payment };
+    if (row.claimed_by) return { outcome: 'already-claimed' as const, payment };
+    // Recorded, but it bought nothing. Deliberately NOT claimed — leaving it open
+    // means an admin can still comp it, and the buyer can top up to the tier and
+    // claim the larger payment instead.
+    if (row.months <= 0) return { outcome: 'below-tier' as const, payment };
+
+    // Link the payer address for auto-renewal. `where kofi_email is null` keeps
+    // this from clobbering an address the account already linked (someone whose
+    // second subscription came from a different PayPal keeps their first link and
+    // simply claims by hand — annoying, but never silently redirecting renewals).
+    const email = row.email ? row.email.trim().toLowerCase() : null;
+    if (email) {
+      const taken = await query<{ user_id: string }>(
+        `select user_id from profiles where kofi_email = $1`,
+        [email],
+      );
+      if (taken[0] && taken[0].user_id !== userId) {
+        return { outcome: 'email-taken' as const, payment };
+      }
+      if (!taken[0]) {
+        await query(
+          `update profiles set kofi_email = $2, updated_at = now()
+            where user_id = $1 and kofi_email is null`,
+          [userId, email],
+        );
+      }
+    }
+
+    // `returning` is how we detect whether the row was still unclaimed — the Tx
+    // helper hands back rows, not a rowCount, so a bare UPDATE would look the
+    // same whether it matched or not.
+    const claimed = await query<{ message_id: string }>(
+      `update kofi_payments set claimed_by = $1, claimed_at = now()
+        where transaction_id = $2 and claimed_by is null
+        returning message_id`,
+      [userId, transactionId],
+    );
+    if (claimed.length === 0) return { outcome: 'already-claimed' as const, payment };
+
+    const granted = await query<{ until: string }>(EXTEND_SQL, [userId, String(row.months)]);
+    const until = granted[0]?.until ?? null;
+    await query(
+      `insert into supporter_grants (user_id, source, months, until, note)
+       values ($1, 'kofi', $2, $3, $4)`,
+      [userId, row.months, until, `claim: ${row.message_id}`],
+    );
+    return { outcome: 'ok' as const, until, months: row.months, payment };
+  });
+}
+
+/**
+ * Mark a payment refunded/charged back. Does NOT revoke on its own — the
+ * entitlement is a running instant that may also cover other payments, so the
+ * admin decides whether to revoke as a separate act.
+ */
+export async function refundKofiPayment(transactionId: string): Promise<boolean> {
+  const rows = await q<{ message_id: string }>(
+    `update kofi_payments set refunded_at = now()
+      where transaction_id = $1 and refunded_at is null
+      returning message_id`,
+    [transactionId],
+  );
+  return rows.length > 0;
 }
 
 // ------------------------------------------------------------- replays ------
@@ -442,6 +969,10 @@ export interface BoardRow {
   replayId: string | null;
   createdAt: string;
   config: RecordConfig | null;
+  /** active supporter membership — renders a small badge beside the name */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
+  role?: StaffRole;
 }
 
 /** best score per player within a season × mode × drivetrain, ranked. Pass
@@ -469,7 +1000,9 @@ export async function recordLeaderboard(opts: {
        where r.balance_version = $1 and r.mode = $2 and r.game = $3 ${dtFilter}
        order by r.user_id, r.score desc, r.created_at asc
      )
-     select b.user_id as "userId", p.handle, p.username,
+     select b.user_id as "userId", p.handle, p.username, p.role,
+            ((p.supporter_until is not null and p.supporter_until > now())
+              or p.role in ('owner', 'admin')) as supporter,
             b.partner_id as "partnerId",
             pp.handle as "partnerHandle", pp.username as "partnerUsername",
             b.score, b.replay_id as "replayId", b.created_at as "createdAt", b.config
@@ -610,13 +1143,81 @@ export async function deleteUserRecords(userId: string): Promise<number> {
 export async function searchProfiles(
   query: string,
   limit = 25,
-): Promise<{ userId: string; handle: string }[]> {
-  return q<{ userId: string; handle: string }>(
-    `select user_id as "userId", handle from profiles
-     where handle ilike $1 or user_id = $2
-     order by handle limit $3`,
+): Promise<
+  {
+    userId: string;
+    handle: string;
+    username: string | null;
+    supporter: boolean;
+    supporterUntil: string | null;
+    /** a Ko-fi payer address is linked, so this account renews automatically */
+    autoRenews: boolean;
+    role: StaffRole | null;
+  }[]
+> {
+  return q(
+    // DELIBERATELY the PAID predicate, not the entitled one the rest of the file
+    // uses. This is the admin console's grant/revoke row: an admin deciding
+    // whether to add months needs to see the membership actually bought, and
+    // showing every colleague as a supporter with no expiry would be misleading
+    // exactly where precision matters. `role` is surfaced separately instead.
+    `select user_id as "userId", handle, username, role,
+            (supporter_until is not null and supporter_until > now()) as supporter,
+            supporter_until as "supporterUntil",
+            (kofi_email is not null) as "autoRenews"
+       from profiles
+      where handle ilike $1 or user_id = $2 or username = lower($2)
+      order by handle limit $3`,
     [`%${query}%`, query, limit],
   );
+}
+
+// ------------------------------------------------------ account deletion ----
+/**
+ * Delete an account and everything attached to it.
+ *
+ * The privacy policy promises this, so it has to be a real code path rather than
+ * a manual `psql` session someone half-remembers. Most tables hang off
+ * `profiles(user_id) on delete cascade` (presets, records, ELO, match
+ * participation, invites, friendships, blocks, presence), so deleting the profile
+ * row does the bulk of the work in one statement.
+ *
+ * Three things do NOT cascade and are handled explicitly, in this order:
+ *
+ *  - `replays` has no user column at all — it is reached only through
+ *    `records.replay_id`. Cascading the records first would orphan the replay
+ *    rows permanently, so they are collected and deleted BEFORE the profile goes.
+ *  - `elo_history` deliberately has no foreign key (it is a per-season snapshot
+ *    that must survive a season roll), so it needs its own delete.
+ *  - `kofi_payments.claimed_by` is `on delete set null`, which is correct — the
+ *    payment record is financial history and outlives the account — but the payer
+ *    EMAIL is personal data, so it is scrubbed here rather than left behind.
+ *
+ * Returns false if there was no such profile.
+ */
+export async function deleteAccount(userId: string): Promise<boolean> {
+  return tx(async (query) => {
+    const exists = await query<{ user_id: string }>(
+      `select user_id from profiles where user_id = $1`,
+      [userId],
+    );
+    if (!exists[0]) return false;
+
+    // replays first — see the note above about the missing back-reference
+    await query(
+      `delete from replays
+        where id in (select replay_id from records
+                      where user_id = $1 and replay_id is not null)`,
+      [userId],
+    );
+    await query(`delete from elo_history where user_id = $1`, [userId]);
+    await query(
+      `update kofi_payments set email = null where claimed_by = $1`,
+      [userId],
+    );
+    await query(`delete from profiles where user_id = $1`, [userId]);
+    return true;
+  });
 }
 
 // -------------------------------------------------------- robot presets -----
@@ -889,6 +1490,10 @@ export interface UserStats {
   userId: string;
   handle: string | null;
   username: string | null;
+  /** active supporter membership — the profile header badge */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — the staff badge, which replaces the supporter one */
+  role?: StaffRole;
   season: number;
   elo: UserEloStat[];
   records: UserRecordStat[];
@@ -918,8 +1523,8 @@ export async function getUserStats(
   const eloKeyCol = isLive ? 'act' : 'balance_version';
   const eloKeyVal = isLive ? act : balanceVersion;
   const [profile, elo, recPb, recRank, match, recent] = await Promise.all([
-    q<{ handle: string; username: string | null }>(
-      `select handle, username from profiles where user_id = $1`,
+    q<{ handle: string; username: string | null; supporter: boolean; role: string | null }>(
+      `select handle, username, role, ${SUPPORTER_COL} from profiles where user_id = $1`,
       [userId],
     ),
     q<{ mode: '1v1' | '2v2'; rating: number; games: number; rnk: string | null }>(
@@ -995,6 +1600,8 @@ export async function getUserStats(
   return {
     userId,
     handle: profile[0]?.handle ?? null,
+    supporter: !!profile[0]?.supporter,
+    role: asRole(profile[0]?.role),
     username: profile[0]?.username ?? null,
     season: balanceVersion,
     elo: elos,
@@ -1380,6 +1987,10 @@ export interface FriendsPayload {
   outgoing: PublicProfile[];
   blocked: PublicProfile[];
   invites: RoomInvite[];
+  /** challenges the CALLER sent that are still live — so the sender can see
+   * "waiting for @x", cancel it, and be told once when it was declined. Without
+   * this a sent challenge was invisible to the person who sent it. */
+  sent: SentInvite[];
   status: PresenceStatus | null;
 }
 
@@ -1421,38 +2032,121 @@ export async function setPresenceStatus(
   );
 }
 
-/** the caller's whole friends view in one round trip. Every row is reached
- * through the caller's own friendships/requests/blocks, so this cannot be
- * coaxed into returning a stranger's presence. */
+/**
+ * The caller's whole friends view in ONE round trip. Every row is reached through
+ * the caller's own friendships/requests/blocks, so this cannot be coaxed into
+ * returning a stranger's presence.
+ *
+ * It genuinely is one trip now. This used to be six sequential `q()` calls, each
+ * taking its own connection from the pool and paying its own latency to Neon, and
+ * it is the single most-called authenticated query on the site — the friends panel
+ * polls it on a timer for as long as anyone has the app open. Six trips became one
+ * by aggregating each result set to JSON in the same statement: the row counts here
+ * are tiny (your friends, your pending requests, your blocks), so the aggregation
+ * costs nothing next to five extra round trips.
+ *
+ * Ordering lives inside each `json_agg` on purpose — an `order by` in a CTE is not
+ * guaranteed to survive aggregation, so the sort has to be attached to the
+ * aggregate itself, not to the subquery feeding it.
+ */
 export async function listFriends(userId: string): Promise<FriendsPayload> {
-  const friendRows = await q<{
-    user_id: string;
-    handle: string;
-    username: string | null;
-    status: string | null;
-    since: string | null;
-    activity: string | null;
-    activity_game: string | null;
+  const rows = await q<{
+    friends: {
+      user_id: string;
+      handle: string;
+      username: string | null;
+      status: string | null;
+      since: number | string | null;
+      activity: string | null;
+      activity_game: string | null;
+    }[];
+    incoming: ProfileCols[];
+    outgoing: ProfileCols[];
+    blocked: ProfileCols[];
+    invites: InviteCols[];
+    sent: SentCols[];
+    own_status: string | null;
   }>(
     `with pairs as (
        select case when user_low = $1 then user_high else user_low end as friend_id
          from friendships
         where user_low = $1 or user_high = $1
+     ),
+     f as (
+       select p.user_id, p.handle, p.username,
+              case when up.status = 'invisible' then null else up.status end as status,
+              case when up.status = 'invisible' then null
+                   else extract(epoch from (now() - up.last_seen_at)) end as since,
+              case when up.status = 'invisible' then null else up.activity end as activity,
+              case when up.status = 'invisible' then null else up.activity_game end as activity_game
+         from pairs
+         join profiles p on p.user_id = pairs.friend_id
+         left join user_presence up on up.user_id = pairs.friend_id
+     ),
+     inc as (
+       select p.user_id, p.handle, p.username, fr.created_at
+         from friend_requests fr join profiles p on p.user_id = fr.from_user_id
+        where fr.to_user_id = $1
+     ),
+     outg as (
+       select p.user_id, p.handle, p.username, fr.created_at
+         from friend_requests fr join profiles p on p.user_id = fr.to_user_id
+        where fr.from_user_id = $1
+     ),
+     blk as (
+       select p.user_id, p.handle, p.username
+         from friend_blocks b join profiles p on p.user_id = b.blocked_id
+        where b.blocker_id = $1
+     ),
+     inv as (
+       select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
+              ri.record, ri.format, ri.created_at
+         from room_invites ri join profiles p on p.user_id = ri.from_user_id
+        -- a DECLINED challenge is gone for its recipient the instant they decline;
+        -- the row lingers only so the SENDER can be told (see the snt CTE below)
+        where ri.to_user_id = $1 and not ri.declined
+          and ri.created_at > now() - $2::interval
+     ),
+     snt as (
+       select ri.id, ri.to_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
+              ri.record, ri.format, ri.declined, ri.created_at
+         from room_invites ri join profiles p on p.user_id = ri.to_user_id
+        where ri.from_user_id = $1 and ri.created_at > now() - $2::interval
      )
-     select p.user_id, p.handle, p.username,
-            case when up.status = 'invisible' then null else up.status end as status,
-            case when up.status = 'invisible' then null
-                 else extract(epoch from (now() - up.last_seen_at)) end as since,
-            case when up.status = 'invisible' then null else up.activity end as activity,
-            case when up.status = 'invisible' then null else up.activity_game end as activity_game
-       from pairs
-       join profiles p on p.user_id = pairs.friend_id
-       left join user_presence up on up.user_id = pairs.friend_id
-      order by p.handle`,
-    [userId],
+     select
+       coalesce((select json_agg(f order by f.handle) from f), '[]'::json) as friends,
+       coalesce((select json_agg(json_build_object(
+         'user_id', inc.user_id, 'handle', inc.handle, 'username', inc.username)
+         order by inc.created_at desc) from inc), '[]'::json) as incoming,
+       coalesce((select json_agg(json_build_object(
+         'user_id', outg.user_id, 'handle', outg.handle, 'username', outg.username)
+         order by outg.created_at desc) from outg), '[]'::json) as outgoing,
+       coalesce((select json_agg(json_build_object(
+         'user_id', blk.user_id, 'handle', blk.handle, 'username', blk.username)
+         order by blk.handle) from blk), '[]'::json) as blocked,
+       -- created_at is formatted EXPLICITLY rather than let json_agg serialize the
+       -- timestamptz: Postgres would emit '...798296+00:00' where the pg driver's
+       -- Date gives '...798Z'. Same instant, different string, and this one is
+       -- handed to clients verbatim - so match the old wire format exactly.
+       coalesce((select json_agg(json_build_object(
+         'id', inv.id, 'from_user_id', inv.from_user_id, 'handle', inv.handle,
+         'username', inv.username, 'room', inv.room, 'game', inv.game,
+         'kind', inv.kind, 'record', inv.record, 'format', inv.format,
+         'created_at', to_char(inv.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+         order by inv.created_at desc) from inv), '[]'::json) as invites,
+       coalesce((select json_agg(json_build_object(
+         'id', snt.id, 'to_user_id', snt.to_user_id, 'handle', snt.handle,
+         'username', snt.username, 'room', snt.room, 'game', snt.game,
+         'kind', snt.kind, 'record', snt.record, 'format', snt.format,
+         'declined', snt.declined,
+         'created_at', to_char(snt.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+         order by snt.created_at desc) from snt), '[]'::json) as sent,
+       (select status from user_presence where user_id = $1) as own_status`,
+    [userId, `${INVITE_TTL_S} seconds`],
   );
 
-  const friends: FriendRow[] = friendRows.map((r) => {
+  const row = rows[0];
+  const friends: FriendRow[] = (row?.friends ?? []).map((r) => {
     const since = r.since === null ? null : Number(r.since);
     const online = since !== null && since <= ONLINE_WINDOW_S;
     // activity is meaningful only while online — an offline friend's LAST activity
@@ -1473,36 +2167,14 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
     };
   });
 
-  const incoming = await q<ProfileCols>(
-    `select p.user_id, p.handle, p.username
-       from friend_requests fr join profiles p on p.user_id = fr.from_user_id
-      where fr.to_user_id = $1 order by fr.created_at desc`,
-    [userId],
-  );
-  const outgoing = await q<ProfileCols>(
-    `select p.user_id, p.handle, p.username
-       from friend_requests fr join profiles p on p.user_id = fr.to_user_id
-      where fr.from_user_id = $1 order by fr.created_at desc`,
-    [userId],
-  );
-  const blocked = await q<ProfileCols>(
-    `select p.user_id, p.handle, p.username
-       from friend_blocks b join profiles p on p.user_id = b.blocked_id
-      where b.blocker_id = $1 order by p.handle`,
-    [userId],
-  );
-  const own = await q<{ status: string | null }>(
-    `select status from user_presence where user_id = $1`,
-    [userId],
-  );
-
-  const st = own[0]?.status;
+  const st = row?.own_status ?? null;
   return {
     friends,
-    incoming: incoming.map(shapeProfile),
-    outgoing: outgoing.map(shapeProfile),
-    blocked: blocked.map(shapeProfile),
-    invites: await listRoomInvites(userId),
+    incoming: (row?.incoming ?? []).map(shapeProfile),
+    outgoing: (row?.outgoing ?? []).map(shapeProfile),
+    blocked: (row?.blocked ?? []).map(shapeProfile),
+    invites: (row?.invites ?? []).map(shapeInvite),
+    sent: (row?.sent ?? []).map(shapeSent),
     status: st === 'online' || st === 'dnd' || st === 'invisible' ? st : null,
   };
 }
@@ -1519,6 +2191,50 @@ const shapeProfile = (r: ProfileCols): PublicProfile => ({
   userId: r.user_id,
   handle: r.handle,
   username: r.username,
+});
+
+/** the invite row shape, shared by `listFriends` (aggregated to JSON in one trip)
+ * and `listRoomInvites` (its own query) so the two can never drift apart. */
+interface InviteCols {
+  id: string;
+  from_user_id: string;
+  handle: string;
+  username: string | null;
+  room: string;
+  game: string;
+  kind: string;
+  record: string | null;
+  format: string | null;
+  created_at: string;
+}
+const shapeInvite = (r: InviteCols): RoomInvite => ({
+  id: r.id,
+  from: { userId: r.from_user_id, handle: r.handle, username: r.username },
+  room: r.room,
+  game: r.game === 'chain' ? 'chain' : 'decode',
+  kind: r.kind,
+  record: r.record,
+  format: r.format,
+  createdAt: r.created_at,
+});
+
+/** the same row seen from the SENDER's side: the other party is the recipient,
+ * and `declined` is meaningful (the recipient's own list never shows a declined
+ * challenge at all). */
+interface SentCols extends Omit<InviteCols, 'from_user_id'> {
+  to_user_id: string;
+  declined: boolean;
+}
+const shapeSent = (r: SentCols): SentInvite => ({
+  id: r.id,
+  to: { userId: r.to_user_id, handle: r.handle, username: r.username },
+  room: r.room,
+  game: r.game === 'chain' ? 'chain' : 'decode',
+  kind: r.kind,
+  record: r.record,
+  format: r.format,
+  declined: !!r.declined,
+  createdAt: r.created_at,
 });
 
 export type RequestOutcome = 'sent' | 'accepted' | 'already-friends' | 'blocked' | 'duplicate';
@@ -1666,11 +2382,25 @@ export async function unblockUser(callerId: string, targetId: string): Promise<b
 export interface RoomInvite {
   id: string;
   from: PublicProfile;
+  /** for a casual/record challenge, the room code to join. For a RATED format
+   * there is no room to join — this is the party token both sides hand the
+   * matchmaker, which pairs them and stages the ranked match. */
   room: string;
   game: Game;
   kind: string;
   record: string | null;
+  /** what was offered: 'casual1v1' | 'casual2v2' | 'rated1v1' | 'ranked2v2' |
+   * 'duorecord'. Null on rows written before challenges carried a format, which
+   * the client reads as the historical casual-versus meaning. */
+  format: string | null;
   createdAt: string;
+}
+
+/** a challenge as its SENDER sees it — same row, other party, and `declined`
+ * carries the one piece of news the sender is waiting on. */
+export interface SentInvite extends Omit<RoomInvite, 'from'> {
+  to: PublicProfile;
+  declined: boolean;
 }
 
 const INVITE_TTL_S = 10 * 60;
@@ -1687,6 +2417,7 @@ export async function inviteToRoom(
   game: Game,
   kind: string,
   record: string | null,
+  format: string | null = null,
 ): Promise<InviteOutcome> {
   const [low, high] = fromId < toId ? [fromId, toId] : [toId, fromId];
   const friend = await q(
@@ -1694,12 +2425,73 @@ export async function inviteToRoom(
     [low, high],
   );
   if (friend.length === 0) return 'not-friends';
+  // One live challenge per direction. Spamming Challenge used to stack a row per
+  // click, and for a RATED format that is worse than untidy: each row carries its
+  // own party token, so the recipient could accept a stale one and sit in a
+  // private queue waiting for a challenger who is already waiting under a
+  // different token. Replacing keeps exactly one token in play.
+  await q(`delete from room_invites where from_user_id = $1 and to_user_id = $2`, [fromId, toId]);
   await q(
-    `insert into room_invites (from_user_id, to_user_id, room, game, kind, record)
-     values ($1, $2, $3, $4, $5, $6)`,
-    [fromId, toId, room, game, kind, record],
+    `insert into room_invites (from_user_id, to_user_id, room, game, kind, record, format)
+     values ($1, $2, $3, $4, $5, $6, $7)`,
+    [fromId, toId, room, game, kind, record, format],
   );
   return 'sent';
+}
+
+/**
+ * Decline a challenge addressed to the caller. MARKS rather than deletes: the row
+ * is what tells the sender their challenge was answered at all, and deleting it
+ * makes a decline indistinguishable from being ignored. The sender's client
+ * collects the news and then cancels it for real; one never collected falls out
+ * of the read TTL like anything else here.
+ */
+export async function declineRoomInvite(userId: string, id: string): Promise<boolean> {
+  const upd = await q(
+    `update room_invites set declined = true where id = $1 and to_user_id = $2 returning 1`,
+    [id, userId],
+  );
+  return upd.length > 0;
+}
+
+/** withdraw a challenge the caller SENT. Scoped to the sender, mirroring
+ * `dismissRoomInvite`'s scoping to the recipient — neither can touch the other's
+ * view of a row they don't own. */
+export async function cancelRoomInvite(userId: string, id: string): Promise<boolean> {
+  const del = await q(
+    `delete from room_invites where id = $1 and from_user_id = $2 returning 1`,
+    [id, userId],
+  );
+  return del.length > 0;
+}
+
+/**
+ * Resolve a party token to the two accounts it belongs to, for a caller claiming
+ * to be one of them. Returns null if there is no live challenge on that token
+ * naming the caller.
+ *
+ * This is the matchmaker's gate for a RATED friend match, and it is not optional.
+ * A party token is otherwise just a string two clients agreed on: without this
+ * check any pair of clients could hand each other one and stage themselves a
+ * rated, leaderboard-affecting match with no friendship, no challenge, and no
+ * invite the other person ever saw. Returning the PAIR (rather than a yes/no) is
+ * what lets the matchmaker also refuse to pair a token with anyone but its two
+ * rightful members.
+ */
+export async function challengeParty(
+  userId: string,
+  token: string,
+  format: string,
+): Promise<{ from: string; to: string } | null> {
+  const rows = await q<{ from_user_id: string; to_user_id: string }>(
+    `select from_user_id, to_user_id from room_invites
+      where room = $2 and format = $3 and created_at > now() - $4::interval
+        and (from_user_id = $1 or to_user_id = $1)
+      limit 1`,
+    [userId, token, format, `${INVITE_TTL_S} seconds`],
+  );
+  const r = rows[0];
+  return r ? { from: r.from_user_id, to: r.to_user_id } : null;
 }
 
 /** invites addressed to `userId`, freshest first, older than the TTL dropped. */
@@ -1713,25 +2505,19 @@ export async function listRoomInvites(userId: string): Promise<RoomInvite[]> {
     game: string;
     kind: string;
     record: string | null;
+    format: string | null;
     created_at: string;
   }>(
     `select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind, ri.record,
-            ri.created_at
+            ri.format, ri.created_at
        from room_invites ri
        join profiles p on p.user_id = ri.from_user_id
-      where ri.to_user_id = $1 and ri.created_at > now() - $2::interval
+      where ri.to_user_id = $1 and not ri.declined
+        and ri.created_at > now() - $2::interval
       order by ri.created_at desc`,
     [userId, `${INVITE_TTL_S} seconds`],
   );
-  return rows.map((r) => ({
-    id: r.id,
-    from: { userId: r.from_user_id, handle: r.handle, username: r.username },
-    room: r.room,
-    game: r.game === 'chain' ? 'chain' : 'decode',
-    kind: r.kind,
-    record: r.record,
-    createdAt: r.created_at,
-  }));
+  return rows.map(shapeInvite);
 }
 
 /** dismiss (or consume, on join) an invite. Scoped to the RECIPIENT, so a

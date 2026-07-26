@@ -24,11 +24,12 @@ export const CHAIN_INTAKE_MOUNT_LABELS: Record<ChainIntakeMount, string> = {
   frontback: 'FRONT+BACK',
 };
 
-export const CHAIN_INTAKE_MOUNT_BLURBS: Record<ChainIntakeMount, string> = {
-  front: 'Grabs from the front',
-  back: 'Grabs from the back',
-  side: 'Both flanks · least storage',
-  frontback: 'Both ends · less storage',
+/** Blurbs are PARTIAL on purpose (main's caption sweep): a mount only gets one when it says
+ * something the label does not — i.e. the hopper-volume cost of an open edge. "FRONT · grabs
+ * from the front" is noise; "SIDES · least storage" is the tradeoff you are actually picking. */
+export const CHAIN_INTAKE_MOUNT_BLURBS: Partial<Record<ChainIntakeMount, string>> = {
+  side: 'Least storage',
+  frontback: 'Less storage',
 };
 
 export const CHAIN_SHOOTER_MOUNT_LABELS: Record<ChainShooterMount, string> = {
@@ -38,9 +39,6 @@ export const CHAIN_SHOOTER_MOUNT_LABELS: Record<ChainShooterMount, string> = {
   right: 'RIGHT',
 };
 
-export const CHAIN_SHOOTER_MOUNT_BLURBS: Record<ChainShooterMount, string> = {
-  front: 'Shoots from the front',
-  back: 'Shoots from the back',
-  left: 'Fires off the left flank',
-  right: 'Fires off the right flank',
-};
+/** The shooter mounts cost nothing and the label already names the edge, so none of them
+ * carry a blurb — see the note on the intake blurbs above. */
+export const CHAIN_SHOOTER_MOUNT_BLURBS: Partial<Record<ChainShooterMount, string>> = {};

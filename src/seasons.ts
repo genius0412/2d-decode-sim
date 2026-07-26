@@ -13,11 +13,21 @@
 
 export const APP_NAME = 'DSIM';
 export const APP_TAGLINE = '2D Driver Practice';
+/** One plain sentence saying what this is. Shown on the home menu and reused as
+ * the first sentence of the meta description (`src/seo.ts`) — so it is also the
+ * line that shows up in a search result and a pasted-link preview. The static
+ * copy in `index.html` and the web manifest repeat it verbatim (they ship before
+ * any JS runs); keep all three in step, and keep it a description, not a pitch. */
+export const APP_BLURB = 'An online 2D driving simulator for FIRST Tech Challenge.';
 
 /** external links surfaced in the footer / download page */
 export const LINKS = {
-  repo: 'https://github.com/genius0412/2d-decode-sim',
+  repo: 'https://github.com/genius0412/dsim',
   discord: 'https://discord.gg/YB4tXnx7Pj',
+  /** Ko-fi page - donations + the supporter membership tier. The Donate screen
+   *  reads it from this one place; the webhook (server/api.ts) is what actually
+   *  grants the tier once a payment is claimed. */
+  kofi: 'https://ko-fi.com/playdsim',
 } as const;
 
 import type { GameId } from './games/types';
@@ -27,8 +37,13 @@ export interface Season {
   key: GameId;
   /** short game name, e.g. "DECODE" */
   name: string;
-  /** full presenting name, e.g. "DECODE presented by RTX" */
-  fullName: string;
+  /**
+   * Presenting sponsor, e.g. "RTX" — omitted when a game has none. Kept as its
+   * own field rather than baked into a `fullName` string because the home-menu
+   * eyebrow is CSS-uppercased, and a brand that styles itself in mixed case
+   * (goBILDA) must survive that. `fullNameOf` reassembles the two.
+   */
+  presenter?: string;
   /** competition program */
   program: string;
   /** playing years, e.g. "2025–26" */
@@ -43,7 +58,7 @@ export const SEASONS: readonly Season[] = [
   {
     key: 'decode',
     name: 'DECODE',
-    fullName: 'DECODE presented by RTX',
+    presenter: 'RTX',
     program: 'FIRST Tech Challenge',
     years: '2025–26',
     blurb: 'Classify artifacts into cross-court goals, match the motif, park on base.',
@@ -52,13 +67,23 @@ export const SEASONS: readonly Season[] = [
   {
     key: 'chain',
     name: 'Chain Reaction',
-    fullName: 'Chain Reaction',
+    presenter: 'goBILDA',
     program: 'Unofficial FTC · CAD Competition',
     years: '2026',
-    blurb: 'The 2026 Unofficial FTC CAD-competition game — a new shooter (rules to come).',
+    blurb: 'The 2026 Unofficial FTC CAD-competition game - a new shooter (rules to come).',
     playable: true,
   },
 ] as const;
+
+/**
+ * "DECODE presented by RTX" — the game's name plus its presenting sponsor, or
+ * just the name when it has none. For plain-text surfaces (the <title>, meta
+ * descriptions). Anything that UPPERCASES its text should render `name` and
+ * `presenter` separately instead, so a mixed-case brand isn't flattened.
+ */
+export function fullNameOf(s: Season): string {
+  return s.presenter ? `${s.name} presented by ${s.presenter}` : s.name;
+}
 
 /** the season the sim is currently built for (the first playable game) */
 export const CURRENT_SEASON: Season =

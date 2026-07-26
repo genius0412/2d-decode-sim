@@ -55,7 +55,7 @@ export function ProfileFriendActions({
             className="ds-btn primary"
             disabled={busy}
             title={`Challenge @${username} to a match`}
-            onClick={() => run(() => friends.challenge(username))}
+            onClick={() => friends.openChallenge(username)}
           >
             Challenge
           </button>

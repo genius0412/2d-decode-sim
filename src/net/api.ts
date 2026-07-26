@@ -1,5 +1,5 @@
 import type { Replay } from '../sim/replay';
-import type { LiveRoom } from './protocol';
+import type { LiveRoom, StaffRole } from './protocol';
 import type { AssistConfig, GameId, RobotSpec } from '../types';
 import { gameServerHttpUrl } from './env';
 import { getAuthToken } from '../lib/authClient';
@@ -35,6 +35,11 @@ export interface RecordRow {
   replayId: string | null;
   createdAt: string;
   config: RecordConfig | null;
+  /** active supporter membership — renders the badge. Absent from a server older
+   *  than the perk, which renders identically to false. */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge in place of the supporter one */
+  role?: StaffRole;
 }
 
 export interface EloRow {
@@ -114,6 +119,11 @@ export interface UserStats {
   userId: string;
   handle: string | null;
   username: string | null;
+  /** active supporter membership — the profile header badge. Absent from a
+   *  server older than the perk, which renders identically to false. */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — the staff badge, which replaces the supporter one */
+  role?: StaffRole;
   season: number;
   elo: UserEloStat[];
   records: UserRecordStat[];
@@ -163,12 +173,47 @@ export interface Presence {
   /** the live admin notice (scheduled restart / info), or null — mirrors the
    * WebSocket `serverNotice` so disconnected pages can show the banner too */
   notice?: { kind: 'restart' | 'info'; message: string; until?: number } | null;
+  /** what THIS deploy can honour (see SERVER_CAPS in protocol.ts). One Fly app
+   * serves every client build, so a new client checks here before offering
+   * something an older server would mishandle rather than ignore. */
+  caps?: string[];
 }
 
-/** live presence: who's online + how deep each ranked queue is, so a player can
- * see it BEFORE queueing. Cheap JSON off the same host; poll it (usePresence). */
-export function fetchPresence(): Promise<Presence> {
-  return getJson(`/api/presence`);
+/**
+ * One-shot, cached read of the server's capabilities.
+ *
+ * Cached for the page's lifetime because the answer can't change under a running
+ * client: a redeploy drops every socket, and the version gate reloads the page on
+ * a new build. A FAILED read resolves to no capabilities and is not cached, so a
+ * later call retries — and the safe direction is exactly that one, since every
+ * caller uses this to decide whether to OFFER something. A hidden feature is
+ * recoverable; a silently mismatched ranked match is not.
+ */
+let capsCache: Promise<string[]> | null = null;
+export function serverCaps(): Promise<string[]> {
+  if (!capsCache) {
+    capsCache = fetchPresence()
+      .then((p) => (Array.isArray(p.caps) ? p.caps : []))
+      .catch(() => {
+        capsCache = null;
+        return [];
+      });
+  }
+  return capsCache;
+}
+
+/**
+ * Live presence: who's online + how deep each ranked queue is, so a player can
+ * see it BEFORE queueing. Cheap JSON off the same host; poll it (usePresence).
+ *
+ * `full` asks for a FRESH aggregate rather than a cached one. The count is always
+ * real either way; a server with nobody connected just holds its last read longer
+ * (~45s) so one browsing visitor costs about a query a minute instead of one every
+ * 8 seconds. Pass `full` where the number drives a decision rather than decorating
+ * one - ranked queue depth - and leave it off for the ambient chip.
+ */
+export function fetchPresence(full = false): Promise<Presence> {
+  return getJson(`/api/presence${full ? '?full=1' : ''}`);
 }
 
 export interface PublicProfile {
@@ -567,8 +612,24 @@ export async function adminClearUserRecords(userId: string): Promise<number | nu
   return data.removed ?? 0;
 }
 
-/** search profiles by handle (substring) or exact userId, for renaming */
-export async function adminSearchUsers(query: string): Promise<{ userId: string; handle: string }[]> {
+/** one row of the admin user search — now also the supporter console */
+export interface AdminUserRow {
+  userId: string;
+  handle: string;
+  username?: string | null;
+  /** a PAID membership. Deliberately not the entitled-or-staff predicate the rest
+   *  of the app uses: this row is where an admin decides whether to grant months,
+   *  and a colleague showing as a supporter with no expiry would mislead exactly
+   *  there. Staff are identified by `role` instead. */
+  supporter?: boolean;
+  supporterUntil?: string | null;
+  /** a Ko-fi payer address is linked, so this account renews automatically */
+  autoRenews?: boolean;
+  role?: StaffRole | null;
+}
+
+/** search profiles by handle (substring), exact userId, or exact username */
+export async function adminSearchUsers(query: string): Promise<AdminUserRow[]> {
   const base = gameServerHttpUrl();
   const token = await getAuthToken();
   if (!base || !token || !query.trim()) return [];
@@ -576,8 +637,66 @@ export async function adminSearchUsers(query: string): Promise<{ userId: string;
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) return [];
-  const data = (await res.json().catch(() => ({}))) as { users?: { userId: string; handle: string }[] };
+  const data = (await res.json().catch(() => ({}))) as { users?: AdminUserRow[] };
   return data.users ?? [];
+}
+
+/** POST to an admin route with the signed-in token; null when not authorized */
+async function adminPost<T>(path: string, params: Record<string, string>): Promise<T | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  const res = await fetch(base + path + '?' + new URLSearchParams(params).toString(), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  return (await res.json().catch(() => null)) as T | null;
+}
+
+/** comp a supporter membership (contributor, botched payment, goodwill) */
+export function adminGrantSupporter(
+  userId: string,
+  months: number,
+  note = '',
+): Promise<{ until: string | null } | null> {
+  return adminPost('/api/admin/supporter/grant', { userId, months: String(months), note });
+}
+
+/** end a membership now — chargeback, refund, or a comp given in error */
+export function adminRevokeSupporter(
+  userId: string,
+  note = '',
+): Promise<{ revoked: boolean } | null> {
+  return adminPost('/api/admin/supporter/revoke', { userId, note });
+}
+
+/** flag a Ko-fi payment as charged back. Does NOT revoke — that is a second,
+ *  deliberate decision, because the membership may cover other payments too. */
+export function adminRefundPayment(txn: string): Promise<{ ok: boolean } | null> {
+  return adminPost('/api/admin/supporter/refund', { txn });
+}
+
+export interface SupporterGrantRow {
+  source: 'kofi' | 'admin' | 'revoke';
+  months: number;
+  until: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+/** why does this account have a membership? (audit trail, newest first) */
+export async function adminSupporterHistory(userId: string): Promise<SupporterGrantRow[]> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return [];
+  const res = await fetch(
+    base + '/api/admin/supporter/history?userId=' + encodeURIComponent(userId),
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json().catch(() => ({}))) as { grants?: SupporterGrantRow[] };
+  return data.grants ?? [];
 }
 
 /** force a user's display name to a clean value; returns the saved handle or null */
@@ -628,11 +747,23 @@ export type PresenceStatus = 'online' | 'dnd' | 'invisible';
 export interface RoomInvite {
   id: string;
   from: PublicProfile;
+  /** the room code to join — EXCEPT for a rated format, where there is no room to
+   * join and this is the party token both sides hand the matchmaker instead */
   room: string;
   game: GameId;
   kind: 'versus' | 'record';
   record: 'solo' | 'duo' | null;
+  /** what was offered (see ChallengeFormat). Null on challenges sent by a client
+   * older than formats — read as the historical casual-versus meaning. */
+  format: string | null;
   createdAt: string;
+}
+
+/** a challenge the CALLER sent, as they see it: the other party is the recipient,
+ * and `declined` is the answer they've been waiting for. */
+export interface SentInvite extends Omit<RoomInvite, 'from'> {
+  to: PublicProfile;
+  declined: boolean;
 }
 
 export interface FriendsPayload {
@@ -641,6 +772,9 @@ export interface FriendsPayload {
   outgoing: PublicProfile[];
   blocked: PublicProfile[];
   invites: RoomInvite[];
+  /** challenges the caller SENT and that are still live. Absent from an older
+   * server, so every consumer must tolerate undefined. */
+  sent?: SentInvite[];
   /** the caller's own self-set status (null = automatic) */
   status: PresenceStatus | null;
 }
@@ -664,16 +798,29 @@ export class FriendsUnavailableError extends Error {
 async function authedJson<T>(path: string, init?: RequestInit): Promise<T> {
   const base = gameServerHttpUrl();
   if (!base) throw new FriendsUnavailableError();
-  const token = await getAuthToken();
-  if (!token) throw new Error('Please sign in again.');
-  const res = await fetch(base + path, {
-    ...init,
-    headers: {
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      authorization: `Bearer ${token}`,
-      ...init?.headers,
-    },
-  });
+
+  const send = async (force: boolean): Promise<Response> => {
+    const token = await getAuthToken(force);
+    if (!token) throw new Error('Please sign in again.');
+    return fetch(base + path, {
+      ...init,
+      headers: {
+        ...(init?.body ? { 'content-type': 'application/json' } : {}),
+        authorization: `Bearer ${token}`,
+        ...init?.headers,
+      },
+    });
+  };
+
+  // The token is cached in memory until it nears expiry (see getAuthToken), which
+  // is what keeps a polling client off Neon Auth — and therefore off the database
+  // it reads. The one case a cache can't predict is a session revoked server-side:
+  // the token is still unexpired but no longer accepted. A 401 is exactly that
+  // signal, so retry ONCE with a forced refresh before surfacing an error. Only
+  // once, so a genuinely signed-out client fails fast instead of looping.
+  let res = await send(false);
+  if (res.status === 401) res = await send(true);
+
   // 404 = this server predates the friends API. Distinguished from other errors
   // so the caller can degrade instead of showing a failure.
   if (res.status === 404 && !init?.method) throw new FriendsUnavailableError();
@@ -728,16 +875,34 @@ export function inviteToRoom(
   game: GameId,
   kind: 'versus' | 'record',
   record?: 'solo' | 'duo' | null,
+  format?: string | null,
 ): Promise<unknown> {
   return authedJson('/api/friends/invite', {
     method: 'POST',
-    body: JSON.stringify({ username, room, game, kind, record: record ?? null }),
+    body: JSON.stringify({ username, room, game, kind, record: record ?? null, format: format ?? null }),
   });
 }
 
 /** dismiss (or consume, on join) an invite addressed to the caller */
 export function dismissRoomInvite(id: string): Promise<unknown> {
   return authedJson('/api/friends/invite/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  });
+}
+
+/** DECLINE a challenge sent to me. Unlike dismiss, the sender is told: the row is
+ * marked rather than deleted so their client can say "@you declined" once. */
+export function declineRoomInvite(id: string): Promise<unknown> {
+  return authedJson('/api/friends/invite/decline', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  });
+}
+
+/** withdraw a challenge I sent (or clear one I've been told was declined) */
+export function cancelRoomInvite(id: string): Promise<unknown> {
+  return authedJson('/api/friends/invite/cancel', {
     method: 'POST',
     body: JSON.stringify({ id }),
   });
@@ -755,4 +920,106 @@ export async function searchUsers(query: string): Promise<PublicProfile[]> {
   } catch {
     return []; // server asleep or older than this client — no results, not an error
   }
+}
+
+/** the supporter tier's price, as the SERVER charges it (server/kofi.ts). Read
+ *  from the server rather than hardcoded in the UI so the number on the Donate
+ *  page can never drift from the number the grant policy actually enforces. */
+export interface TierPrice {
+  amount: number;
+  /** ISO 4217, e.g. 'USD' */
+  currency: string;
+}
+
+/** an account's paid entitlements. Extend the shape (never replace it) as tiers grow. */
+export interface Entitlements {
+  /** an active supporter membership — removes ads, unlocks cosmetic perks */
+  supporter: boolean;
+  /** ISO instant the membership lapses, or null if not a supporter — and always
+   *  null for staff, who are entitled by role rather than by a purchase */
+  supporterUntil: string | null;
+  /** 'owner' | 'admin'. Staff get the supporter perks without paying, so
+   *  `supporter` is true while `supporterUntil` stays null; this is what lets the
+   *  UI say "included with your role" instead of rendering a lapsed membership. */
+  role?: StaffRole;
+  /** a Ko-fi payer address is linked, so payments renew with no manual claim */
+  autoRenews: boolean;
+  /** absent when talking to a server older than the pricing route */
+  price?: TierPrice;
+}
+
+const NO_ENTITLEMENTS: Entitlements = {
+  supporter: false,
+  supporterUntil: null,
+  autoRenews: false,
+};
+
+/**
+ * The caller's entitlements. NEVER throws — an ad gate that fails loudly would
+ * break the menu for a signed-out player, and a server older than this client
+ * (the one Fly app serves every client version) simply 404s this route. Both
+ * degrade to "not a supporter", which shows ads; the server independently
+ * enforces every perk, so a wrong answer here costs nothing but a few pixels.
+ */
+export async function fetchEntitlements(): Promise<Entitlements> {
+  try {
+    const r = await authedJson<Partial<Entitlements>>('/api/user/entitlements');
+    return {
+      supporter: !!r.supporter,
+      supporterUntil: r.supporterUntil ?? null,
+      role: r.role === 'owner' || r.role === 'admin' ? r.role : undefined,
+      autoRenews: !!r.autoRenews,
+      price: r.price,
+    };
+  } catch {
+    return NO_ENTITLEMENTS;
+  }
+}
+
+/** the tier price for a SIGNED-OUT visitor. Same never-throws contract: the
+ *  Donate page falls back to "see Ko-fi for the price" rather than breaking. */
+export async function fetchPricing(): Promise<TierPrice | null> {
+  try {
+    const base = gameServerHttpUrl();
+    if (!base) return null;
+    const res = await fetch(base + '/api/pricing');
+    if (!res.ok) return null;
+    const data = (await res.json()) as { price?: TierPrice };
+    return data.price && typeof data.price.amount === 'number' ? data.price : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete the signed-in account and everything DSIM stores about it.
+ *
+ * Irreversible, so the server demands the literal string `DELETE` in the body —
+ * a value no accidental or replayed request carries. Throws on failure: someone
+ * who asked for deletion must never be told "done" when it was not.
+ */
+export async function deleteMyAccount(): Promise<boolean> {
+  const r = await authedJson<{ deleted?: boolean }>('/api/user/delete', {
+    method: 'POST',
+    body: JSON.stringify({ confirm: 'DELETE' }),
+  });
+  return !!r.deleted;
+}
+
+/**
+ * Attach a Ko-fi payment to the signed-in account by its transaction id.
+ *
+ * Unlike `fetchEntitlements` this DOES throw — the user is actively waiting on
+ * the result of a payment they made, and silently swallowing "already claimed"
+ * or "not found" would leave them staring at a page that never changes. The
+ * caller shows the message.
+ */
+export async function claimKofiPayment(
+  transactionId: string,
+): Promise<{ ok: boolean; supporterUntil: string | null; months: number }> {
+  const r = await authedJson<{ ok?: boolean; supporterUntil?: string | null; months?: number }>(
+    '/api/user/claim-kofi',
+    { method: 'POST', body: JSON.stringify({ transactionId }) },
+  );
+  return { ok: !!r.ok, supporterUntil: r.supporterUntil ?? null, months: r.months ?? 0 };
 }

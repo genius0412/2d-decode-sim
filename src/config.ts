@@ -762,6 +762,25 @@ export const START_POSES = [
 /** how many of the player's OWN custom start positions per category (close/far) */
 export const MAX_SAVED_STARTS = 2;
 
+/**
+ * The same cap for a SUPPORTER — one of the membership's convenience perks.
+ *
+ * Two rules follow from this being a PAID tier, and both matter more than the
+ * number itself:
+ *
+ *  1. SANITIZE against this, never against the free cap. `coerceSettings` slices
+ *     the saved list on every load, and slicing to 2 would silently DESTROY a
+ *     supporter's poses on any load where the entitlement had not resolved yet,
+ *     and again the moment a membership lapsed. Data loss is not an acceptable
+ *     way to say "your subscription ended", so the PERSISTED ceiling is always
+ *     the high one and only the Save button respects the entitlement.
+ *  2. It is deliberately NOT enforced server-side. Hand-editing localStorage to
+ *     get six slots is possible and fine: this is a convenience that cannot
+ *     affect how a robot drives or scores (product rule, and the terms say so),
+ *     and there is nothing here worth defending with a round-trip.
+ */
+export const MAX_SAVED_STARTS_SUPPORTER = 6;
+
 /** G304 "touching the GOAL or FIELD perimeter" slack (inches): a start pose
  * whose footprint is within this of the goal face or a wall counts as touching.
  * Also the snap distance the drag editor uses to pull a robot onto a surface. */
@@ -851,6 +870,45 @@ export const COLORS = {
   green: '#22c55e',
   launchTint: 'rgba(229,231,235,0.05)',
 } as const;
+
+/**
+ * Supporter cosmetic: the robot's CHASSIS FILL.
+ *
+ * Scoped to the fill on purpose. A robot's alliance is carried entirely by its
+ * OUTLINE (`COLORS.red` / `COLORS.blue` — see `drawRobot`), and the fill has
+ * always been one flat `#1f242c`. Recolouring only the fill therefore cannot make
+ * a red robot read as blue, which is the one thing a cosmetic must never do in a
+ * game where you identify targets at a glance.
+ *
+ * An ALLOWLIST rather than a free hex picker, for three reasons that all matter
+ * more than the extra choice would:
+ *  - sanitizing a free colour string means parsing untrusted CSS on the wire;
+ *  - every entry is chosen dark enough to keep the alliance outline readable
+ *    against it, and distinct from the mat (#23262b) and tile (#2c3038) so a
+ *    robot never camouflages into the field;
+ *  - nobody can pick the artifact green/purple and fake a scoring element.
+ *
+ * The KEY is what goes over the wire and into replays, never the hex — so these
+ * values can be retuned later without invalidating a single saved robot.
+ */
+export const CHASSIS_COLORS = {
+  default: '#1f242c',
+  slate: '#374151',
+  plum: '#3b2b45',
+  moss: '#25382c',
+  rust: '#452b25',
+  navy: '#1f2d45',
+  cocoa: '#3a2f28',
+} as const;
+
+export type ChassisColor = keyof typeof CHASSIS_COLORS;
+export const CHASSIS_COLOR_KEYS = Object.keys(CHASSIS_COLORS) as ChassisColor[];
+
+/** the chassis fill for a spec — the default for everyone without the perk, and
+ *  for any key an older or spoofed spec carries that we no longer recognise. */
+export function chassisFill(key: string | undefined): string {
+  return (key && CHASSIS_COLORS[key as ChassisColor]) || CHASSIS_COLORS.default;
+}
 export const VIEW_MARGIN = 14; // in of world margin around the field when fitting (just clears the obelisk)
 
 // ------------------------------------------------------------ off-field ----

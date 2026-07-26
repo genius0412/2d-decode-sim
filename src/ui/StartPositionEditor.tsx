@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Alliance, RobotSpec, RobotState, StartCat, StartPose, World } from '../types';
-import { FIELD_HALF, MAX_SAVED_STARTS } from '../config';
+import { FIELD_HALF } from '../config';
+import { useAds } from '../ads/AdsProvider';
 import { createWorld, DEFAULT_ASSISTS } from '../sim/spawn';
 import { drawField } from '../render/drawField';
 import { drawRobot } from '../render/drawRobot';
@@ -13,7 +14,7 @@ import {
   presetPose,
   snapStartToLegal,
 } from '../sim/field';
-import { categoryPresets, samePose } from './startPositions';
+import { categoryPresets, samePose, savedStartCap } from './startPositions';
 
 /**
  * Drag-and-drop editor for a robot's match START POSITION, constrained to a
@@ -74,7 +75,7 @@ export function StartPositionEditor({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drag = useRef<'move' | 'rotate' | null>(null);
-  const [snapOn, setSnapOn] = useState(false); // OFF by default — free placement
+  const [snapOn, setSnapOn] = useState(false); // OFF by default - free placement
   // an in-progress (possibly ILLEGAL) working pose, actual frame. Rendered live,
   // but only COMMITTED to the parent when legal — an illegal pose never saves.
   const [draft, setDraft] = useState<StartPose | null>(null);
@@ -82,6 +83,12 @@ export function StartPositionEditor({
   const cat: StartCat = lockedCategory ?? category; // a 2v2 role locks the category
   const presets = categoryPresets(cat);
   const savedList = saved[cat] ?? [];
+  // extra saved-start slots are a supporter perk. Read here rather than passed in
+  // by each of the three call sites (MatchSetup / Lobby / MatchStrategy) so the
+  // cap cannot end up different depending on which screen you saved from. A
+  // LAPSED supporter keeps every pose they already saved — this only hides the
+  // button — because deleting someone's work is not how a subscription ends.
+  const maxSaved = savedStartCap(useAds().supporter);
 
   // the SAVED pose (actual frame), always legal. A custom `value` is mirrored to
   // the actual frame; a preset is resolved DYNAMICALLY for this chassis so it's
@@ -272,7 +279,7 @@ export function StartPositionEditor({
 
       <div className="ds-startpos-side">
         <div className={`ds-startpos-status ${legality.legal ? 'ok' : 'bad'}`}>
-          {legality.legal ? reason : `${reason} — won't save`}
+          {legality.legal ? reason : `${reason} - won't save`}
         </div>
 
         <div className="ds-startpos-inputs">
@@ -369,7 +376,7 @@ export function StartPositionEditor({
               </button>
             );
           })}
-          {savedList.length < MAX_SAVED_STARTS && (
+          {savedList.length < maxSaved && (
             <button
               type="button"
               className="ds-opt mini add"
@@ -381,7 +388,6 @@ export function StartPositionEditor({
             </button>
           )}
         </div>
-        <p className="ds-startpos-hint">Drag the robot to place it, drag the dot to aim. Save up to {MAX_SAVED_STARTS} of your own {cat === 'close' ? 'Close' : 'Far'} positions (★). Must sit on a launch line and touch your goal or a wall (G304).</p>
       </div>
     </div>
   );

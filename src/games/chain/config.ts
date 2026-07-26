@@ -418,7 +418,7 @@ export const chainDefaultIndex = (cat: StartCat): number => {
   return i >= 0 ? i : 0;
 };
 export const chainRoleLabel = (cat: StartCat | undefined): string =>
-  cat === 'close' ? 'TOP' : cat === 'far' ? 'BOTTOM' : '—';
+  cat === 'close' ? 'TOP' : cat === 'far' ? 'BOTTOM' : '-';
 
 /**
  * PRE-MATCH FIELD RANDOMIZATION (manual §"auto-score and reject" — the Accelerators launch all

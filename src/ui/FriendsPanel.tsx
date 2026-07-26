@@ -10,6 +10,7 @@ import {
 } from '../net/api';
 import type { FriendsApi } from './useFriends';
 import { useFriendsCtx } from './friendsContext';
+import { challengeLine, formatLabel } from './challenge';
 import { Select, type SelectOption } from './Select';
 
 /** compact game name for an activity line ("In a match · DECODE") */
@@ -118,6 +119,8 @@ export function FriendsPanel({
 
   const friends = useFriendsCtx();
   const { incoming, outgoing, blocked, invites, friends: list } = friends.data;
+  // challenges I sent that are still live (absent on an older server)
+  const sent = friends.data.sent ?? [];
   const waiting = incoming.length + invites.length;
 
   const [online, offline] = useMemo(() => {
@@ -169,19 +172,42 @@ export function FriendsPanel({
           {friends.error && <p className="fr-error">{friends.error}</p>}
 
           {invites.length > 0 && (
-            <Section title="Invites" count={invites.length}>
+            <Section title="Challenges" count={invites.length}>
               {invites.map((inv) => (
                 <div className="fr-row" key={inv.id}>
                   <span className="fr-who static">
                     <span className="fr-name">{inv.from.handle}</span>
-                    <span className="fr-sub">invited you to a room</span>
+                    <span className="fr-sub">{challengeLine(inv.format)}</span>
                   </span>
                   <span className="fr-actions">
                     <button className="ds-btn small primary" onClick={() => onJoinInvite(inv)}>
-                      Join
+                      Accept
                     </button>
-                    <button className="ds-btn small ghost" onClick={() => void friends.dismissInvite(inv.id)}>
-                      Dismiss
+                    {/* Decline TELLS them; the row is only marked so their client
+                        can say so once. Dismissing silently would leave them
+                        watching a challenge that is never going to be answered. */}
+                    <button className="ds-btn small ghost" onClick={() => void friends.declineInvite(inv.id)}>
+                      Decline
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </Section>
+          )}
+
+          {sent.length > 0 && (
+            <Section title="Sent" count={sent.length}>
+              {sent.map((s) => (
+                <div className="fr-row" key={s.id}>
+                  <span className="fr-who static">
+                    <span className="fr-name">{s.to.handle}</span>
+                    <span className="fr-sub">
+                      {s.declined ? `declined · ${formatLabel(s.format)}` : `waiting · ${formatLabel(s.format)}`}
+                    </span>
+                  </span>
+                  <span className="fr-actions">
+                    <button className="ds-btn small ghost" onClick={() => void friends.cancelInvite(s.id)}>
+                      {s.declined ? 'Clear' : 'Cancel'}
                     </button>
                   </span>
                 </div>
@@ -225,7 +251,7 @@ export function FriendsPanel({
                     aria-hidden
                   />
                   {canChallenge(f) && f.username && (
-                    <ChallengeButton username={f.username} challenge={friends.challenge} />
+                    <ChallengeButton username={f.username} onChallenge={friends.openChallenge} />
                   )}
                   <RowMenu username={f.username} friends={friends} />
                 </Row>
@@ -476,28 +502,20 @@ function Row({
   );
 }
 
-/** the chess.com "play a friend" affordance: one click sends them a challenge and
- * drops you into the room as host. Shows a brief spinner-ish disabled state while
- * the invite goes out (the click also navigates away, so it's momentary). */
+/** the chess.com "play a friend" affordance: opens the format picker (1v1 / 2v2 /
+ * co-op record). The picker itself sends the invite + hosts the room. */
 function ChallengeButton({
   username,
-  challenge,
+  onChallenge,
 }: {
   username: string;
-  challenge: (username: string) => Promise<void>;
+  onChallenge: (username: string) => void;
 }) {
-  const [busy, setBusy] = useState(false);
   return (
     <button
       className="ds-btn small primary fr-challenge"
-      disabled={busy}
       title={`Challenge @${username} to a match`}
-      onClick={() => {
-        setBusy(true);
-        // navigation happens inside challenge(); on failure re-enable so they can
-        // retry (the hook surfaces the reason in friends.error)
-        void challenge(username).catch(() => setBusy(false));
-      }}
+      onClick={() => onChallenge(username)}
     >
       Challenge
     </button>
@@ -644,9 +662,12 @@ function AddFriend({
   );
 }
 
-function PeopleGlyph() {
+/** monoline people glyph, `currentColor` — the one people-icon this app uses,
+ * so a chip that needs the concept (InviteFlyout's "Friends" toggle) reaches for
+ * this instead of a platform emoji (colourful, off-theme, inconsistent across OSes). */
+export function PeopleGlyph({ size = 20 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true">
       <path d="M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm-8 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm0 2c-2.33 0-7 1.17-7 3.5V20h7v-2.5c0-.98.5-1.86 1.3-2.55A11.6 11.6 0 0 0 8 14Zm8 0c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4Z" />
     </svg>
   );

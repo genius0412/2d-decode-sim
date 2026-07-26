@@ -9,6 +9,7 @@ import { ChainStartSelector } from './ChainStartSelector';
 import { selectStart, switchCategory, saveStart, deleteSavedStart, indexCategory } from './startPositions';
 import { useRoleSwap, useDismissable } from './useRoleSwap';
 import { RoleSwapBar } from './RoleSwapBar';
+import { SupporterBadge } from './SupporterBadge';
 import { gameServerUrl, gameServerUrlWith, gameServers, multiServer, selectedServer } from '../net/env';
 import { WebSocketTransport } from '../net/transport';
 import { LobbyClient, type MatchStart } from '../net/lobbyClient';
@@ -21,6 +22,7 @@ import { APP_NAME } from '../seasons';
 import { Logo } from './Logo';
 import { useEscape } from './useEscape';
 import { InviteFlyout } from './InviteFlyout';
+import type { RoomInvite } from '../net/api';
 
 interface Props {
   settings: GameSettings;
@@ -40,6 +42,10 @@ interface Props {
   /** fired once `autoJoin` has been consumed, so the caller can clear its
    * one-shot pending state and a later normal visit doesn't re-trigger it */
   onAutoJoinConsumed?: () => void;
+  /** a RATED challenge was accepted from the friend flyout. It has no room code
+   * to join, so this leaves the lobby entirely for the ranked queue — the app
+   * shell owns that navigation, not us. */
+  onAcceptChallenge?: (inv: RoomInvite) => void;
 }
 
 type Phase = 'entry' | 'connecting' | 'room' | 'error';
@@ -61,6 +67,7 @@ export function Lobby({
   signedIn = false,
   autoJoin,
   onAutoJoinConsumed,
+  onAcceptChallenge,
 }: Props) {
   const isRecord = config.kind === 'record';
   const capacity = roomCapacity(config);
@@ -250,7 +257,7 @@ export function Lobby({
               {APP_NAME}
             </span>
             <span className="ds-head-spacer" />
-            <InviteFlyout signedIn={signedIn} onJoinRoom={join} />
+            <InviteFlyout signedIn={signedIn} onJoinRoom={join} onAcceptChallenge={onAcceptChallenge} />
           </div>
           <div className="ds-title">
             <h1>
@@ -261,11 +268,6 @@ export function Lobby({
               )}
             </h1>
           </div>
-          <p className="ds-sub" style={{ marginTop: -10 }}>
-            {isRecord
-              ? '2v0 co-op score attack · any drivetrains · share a room code.'
-              : 'Up to 2v2 · share a room code.'}
-          </p>
           <div className="ds-panelbox">
             <label className="ds-field">
               <span className="cap">Your name</span>
@@ -298,14 +300,12 @@ export function Lobby({
                 onClick={() => setEntryMode('create')}
               >
                 <span className="ot">Create room</span>
-                <span className="od">Get a code to share</span>
               </button>
               <button
                 className={`ds-opt ${entryMode === 'join' ? 'on' : ''}`}
                 onClick={() => setEntryMode('join')}
               >
                 <span className="ot">Join room</span>
-                <span className="od">Enter a friend’s code</span>
               </button>
             </div>
             {entryMode === 'join' && (
@@ -338,12 +338,9 @@ export function Lobby({
                 </button>
               )}
             </div>
-            <p className="ds-hint">
-              {isRecord
-                ? 'Matching drivetrains rank on that drivetrain’s board; a MIXED pair counts on the OVERALL board only.'
-                : 'Codes are auto-generated — share yours with your friends.'}
-              {multiServer() && ' Both players must pick the same region.'}
-            </p>
+            {multiServer() && (
+              <p className="ds-hint">Both players must pick the same region.</p>
+            )}
           </div>
         </div>
       </div>
@@ -366,6 +363,7 @@ export function Lobby({
             signedIn={signedIn}
             room={{ code, config: { kind: config.kind, record: config.record, game: config.game ?? settings.game } }}
             onJoinRoom={join}
+            onAcceptChallenge={onAcceptChallenge}
           />
         </div>
         <div className="ds-title">
@@ -402,10 +400,11 @@ export function Lobby({
                   <span className="pdot" />
                   <span className="pnm">
                     {p.name}
+                    <SupporterBadge supporter={p.supporter} role={p.role} />
                     {isMe ? ' (you)' : ''}
                   </span>
                   <span className="ptm">
-                    {p.spec.name} · {p.teamNumber || '—'}
+                    {p.spec.name} · {p.teamNumber || '-'}
                   </span>
                   {p.clientId === hostId && (
                     <span className="ds-chip on">★ HOST</span>
@@ -415,8 +414,8 @@ export function Lobby({
                     {p.startPose
                       ? 'CUSTOM'
                       : settings.game === 'chain'
-                        ? (CHAIN_START_POSES[p.startIndex]?.name ?? '—')
-                        : (START_POSES[p.startIndex]?.label ?? '—')}
+                        ? (CHAIN_START_POSES[p.startIndex]?.name ?? '-')
+                        : (START_POSES[p.startIndex]?.label ?? '-')}
                   </span>
                   <span className={`ds-chip ${p.ready ? 'on' : 'off'}`}>
                     {p.ready ? 'READY' : 'NOT READY'}
@@ -501,7 +500,7 @@ export function Lobby({
         </div>
         {!startLegal && (
           <p className="ds-hint">
-            ⚠ Your start position isn’t legal for this chassis — fix it above (or pick a preset) to
+            ⚠ Your start position isn’t legal for this chassis - fix it above (or pick a preset) to
             ready up.
           </p>
         )}
@@ -512,7 +511,7 @@ export function Lobby({
           <p className="ds-hint">START unlocks when everyone is ready.</p>
         )}
         {isHost && restartPending && (
-          <p className="ds-hint">Server is restarting shortly — starting is paused for a moment.</p>
+          <p className="ds-hint">Server is restarting shortly - starting is paused for a moment.</p>
         )}
       </div>
     </div>

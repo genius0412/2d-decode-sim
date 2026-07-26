@@ -210,7 +210,7 @@ export function MatchStrategy({
           }}
         >
           <span>
-            {mode.toUpperCase()} · coordinate then ready up · {readyCount}/{players.length} ready
+            {mode.toUpperCase()} · {readyCount}/{players.length} ready
           </span>
           <span className={`ds-chip ${secsLeft <= STRAT_TICK_FROM ? 'off' : 'on'}`} title="Match cancels if not everyone readies in time">
             ⏱ {secsLeft}s
@@ -226,7 +226,7 @@ export function MatchStrategy({
                 <div key={p.clientId} className={`ds-player ${p.alliance}`}>
                   <span className="pdot" />
                   <span className="pnm">{p.name}</span>
-                  <span className="ptm">Team {p.teamNumber || '—'}</span>
+                  <span className="ptm">Team {p.teamNumber || '-'}</span>
                   <span className={`ds-chip ${p.alliance}`}>{p.alliance.toUpperCase()}</span>
                   <span className="ds-chip">ELO {eloOf(p)}</span>
                   <span className={`ds-chip ${p.ready ? 'on' : 'off'}`}>
@@ -257,7 +257,7 @@ export function MatchStrategy({
                       {isMe ? ' (you)' : ''}
                     </span>
                     <span className="ptm">
-                      {spec.name} · Team {pl.teamNumber || '—'}
+                      {spec.name} · Team {pl.teamNumber || '-'}
                     </span>
                     {buildRow(spec)}
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
@@ -266,8 +266,8 @@ export function MatchStrategy({
                         {pl.startPose
                           ? 'CUSTOM'
                           : settings.game === 'chain'
-                            ? (CHAIN_START_POSES[pl.startIndex]?.name ?? '—')
-                            : (START_POSES[pl.startIndex]?.label ?? '—')}
+                            ? (CHAIN_START_POSES[pl.startIndex]?.name ?? '-')
+                            : (START_POSES[pl.startIndex]?.label ?? '-')}
                       </span>
                       <span className="ds-chip">ELO {eloOf(pl)}</span>
                       <span className={`ds-chip ${pl.ready ? 'on' : 'off'}`}>
@@ -284,7 +284,7 @@ export function MatchStrategy({
         {/* start position — drag to place, constrained to a legal G304 setup */}
         {me && (
           <section className="ds-sec">
-            <h2>Start position {mates.length > 0 && <span className="ds-note">— agree who goes where</span>}</h2>
+            <h2>Start position {mates.length > 0 && <span className="ds-note">- agree who goes where</span>}</h2>
             {rs.canSwap && (
               <RoleSwapBar
                 role={startRole}
@@ -361,9 +361,9 @@ export function MatchStrategy({
         </div>
         <p className="ds-hint">
           {!startLegal
-            ? '⚠ Your start position isn’t legal for this chassis — fix it above (or pick a preset) to ready up.'
+            ? '⚠ Your start position isn’t legal for this chassis - fix it above (or pick a preset) to ready up.'
             : allReady
-              ? 'Everyone ready — starting…'
+              ? 'Everyone ready - starting…'
               : `The match starts when all ${players.length} drivers are ready. It CANCELS if anyone isn’t ready in ${secsLeft}s.`}
         </p>
       </div>

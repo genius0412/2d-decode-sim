@@ -10,7 +10,8 @@ import {
   type RoomInvite,
 } from '../net/api';
 import { FriendsProvider } from './friendsContext';
-import type { RoomConfig } from '../net/protocol';
+import { challengeOf, type PendingChallenge } from './challenge';
+import type { RoomConfig, RoomKind } from '../net/protocol';
 import { useNewVersion } from '../net/version';
 import { useServerNotice } from '../net/notice';
 import { Admin } from './Admin';
@@ -31,6 +32,8 @@ import { ReplayView } from './ReplayView';
 import { ProfileMenu } from './ProfileMenu';
 import { Download } from './Download';
 import { Contributors } from './Contributors';
+import { Privacy, Terms } from './Legal';
+import { Donate } from './Donate';
 import { Changelog } from './Changelog';
 import { Profile } from './Profile';
 import { UsernameGate } from './UsernameGate';
@@ -45,7 +48,7 @@ import { encodeMsg } from '../net/protocol';
 import { activeStartLegal } from '../sim/field';
 import { loadActiveGame, saveActiveGame, clearActiveGame, type ActiveGameRef } from '../net/activeGame';
 import type { Replay } from '../sim/replay';
-import { seasonFor, APP_NAME } from '../seasons';
+import { applyRouteMeta } from '../seo';
 import type { GameId } from '../games/types';
 import { chainDisclaimerSeen, markChainDisclaimerSeen } from '../chainDisclaimer';
 
@@ -63,6 +66,9 @@ type Screen =
   | 'game'
   | 'download'
   | 'contributors'
+  | 'privacy'
+  | 'terms'
+  | 'donate'
   | 'changelogs'
   | 'profile'
   | 'account'
@@ -95,6 +101,24 @@ const NO_ARGS: RouteArgs = { replayId: null, username: null, sub: null };
  */
 const isWebHistory = typeof window !== 'undefined' && window.location.protocol !== 'file:';
 
+/**
+ * Did this document OPEN on a game-prefixed URL? Captured at module load, before
+ * the mount effect canonicalizes `/` to `/decode` in the address bar.
+ *
+ * It decides the home route's canonical. `/` and `/decode` render the same
+ * screen, so one has to point at the other, and which one depends on the URL
+ * that was actually requested: arrive at `/` and the canonical is `/`, arrive at
+ * `/decode` and it is `/decode`. Reading `location.pathname` from the effect
+ * can't tell the two apart (the rewrite has already run), so every visit would
+ * canonicalize to `/decode` and quietly deindex the homepage.
+ *
+ * A crawler renders exactly one URL and never navigates, so a value fixed at
+ * load is right for the only consumer that reads canonicals; in-app navigation
+ * back to home just keeps whichever form the tab was opened with.
+ */
+const ENTRY_HAS_GAME =
+  isWebHistory && /^\/(decode|chain)(?=\/|$)/.test(window.location.pathname);
+
 /** the screen part of a path (no game prefix); '' for home. */
 function screenSuffix(screen: Screen, a: RouteArgs): string {
   switch (screen) {
@@ -126,6 +150,12 @@ function screenSuffix(screen: Screen, a: RouteArgs): string {
       return '/download';
     case 'contributors':
       return '/contributors';
+    case 'privacy':
+      return '/privacy';
+    case 'terms':
+      return '/terms';
+    case 'donate':
+      return '/donate';
     case 'changelogs':
       return '/changelogs';
     case 'account':
@@ -172,6 +202,9 @@ function parseScreen(rest: string): { screen: Screen } & RouteArgs {
   if (rest.startsWith('/watch')) return at('watch');
   if (rest.startsWith('/download')) return at('download');
   if (rest.startsWith('/contributors')) return at('contributors');
+  if (rest.startsWith('/privacy')) return at('privacy');
+  if (rest.startsWith('/terms')) return at('terms');
+  if (rest.startsWith('/donate')) return at('donate');
   if (rest.startsWith('/changelogs')) return at('changelogs');
   if (rest.startsWith('/account')) return at('account');
   if (rest.startsWith('/admin')) return at('admin');
@@ -293,10 +326,12 @@ export function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // the tab title names the selected game so the two games read as separate apps
+  // keep <title>/description/canonical/og:url pointed at the CURRENT route. The
+  // static tags in index.html describe the homepage (all a social scraper ever
+  // gets); this is the rendering-crawler + browser-tab half of the same job.
   useEffect(() => {
-    if (typeof document !== 'undefined') document.title = `${seasonFor(settings.game).name} · ${APP_NAME}`;
-  }, [settings.game]);
+    applyRouteMeta(screen, pathFor(screen, route, settings.game), settings.game, ENTRY_HAS_GAME);
+  }, [screen, route, settings.game]);
 
   // surface the one-time Chain Reaction disclaimer the first time CR is selected
   useEffect(() => {
@@ -326,7 +361,29 @@ export function App() {
   const [pendingAutoJoin, setPendingAutoJoin] = useState<{ room: string; config: RoomConfig } | null>(
     null,
   );
+  // a RATED challenge waiting to be queued under its party token. Same one-shot
+  // shape as pendingAutoJoin and for the same reason: the Matchmaking screen
+  // consumes it on mount, so a later ordinary visit to /ranked is an ordinary
+  // ranked queue rather than a resurrected challenge.
+  const [pendingChallenge, setPendingChallenge] = useState<PendingChallenge | null>(null);
+  const startChallenge = (c: PendingChallenge): void => {
+    setPendingChallenge(c);
+    navigate('matchmaking');
+  };
+
+  /**
+   * ACCEPT a challenge. The two rated formats have no room to join — they resolve
+   * through the matchmaker — so this is the fork between "open a lobby" and "go
+   * wait in the ranked queue under this token". `challengeOf` owns that decision,
+   * so the sender's path and this one can't drift into disagreeing about what a
+   * format means.
+   */
   const onJoinInvite = (invite: RoomInvite): void => {
+    const challenge = challengeOf(invite, invite.from.username ?? invite.from.handle ?? '');
+    if (challenge) {
+      startChallenge(challenge);
+      return;
+    }
     const config: RoomConfig = { kind: invite.kind, game: invite.game };
     if (invite.kind === 'record' && invite.record) config.record = invite.record;
     setPendingAutoJoin({ room: invite.room, config });
@@ -335,10 +392,17 @@ export function App() {
 
   // "Challenge a friend": the invite has already gone out (FriendsProvider) — drop
   // the challenger into the freshly-created room as host, waiting for them to join.
-  // Same one-shot pendingAutoJoin the invite-recipient path uses.
-  const hostForChallenge = (code: string, game: GameId): void => {
-    setPendingAutoJoin({ room: code, config: { kind: 'versus', game } });
-    navigate('lobby');
+  // Same one-shot pendingAutoJoin the invite-recipient path uses. `kind` picks the
+  // destination: a `record` challenge is a duo co-op run, everything else is a
+  // custom versus match — mirroring `onJoinInvite`'s routing for the recipient.
+  const hostForChallenge = (code: string, game: GameId, kind: RoomKind): void => {
+    if (kind === 'record') {
+      setPendingAutoJoin({ room: code, config: { kind: 'record', record: 'duo', game } });
+      navigate('duorecord');
+    } else {
+      setPendingAutoJoin({ room: code, config: { kind: 'versus', game } });
+      navigate('lobby');
+    }
   };
 
   // when signed in, mirror settings to the account (debounced) as well as local
@@ -356,33 +420,19 @@ export function App() {
   // is this account an admin? (server-authorized against ADMIN_USER_IDS) — gates the
   // Admin entry; the server independently enforces every admin action
   const [isAdmin, setIsAdmin] = useState(false);
-  // has the admin-status check settled? (so we don't bounce a real admin off an
-  // admin-only deep-link before the async check resolves)
-  const [adminChecked, setAdminChecked] = useState(false);
   useEffect(() => {
     if (!accountUserId) {
       setIsAdmin(false);
-      setAdminChecked(true);
       return;
     }
     let cancelled = false;
-    setAdminChecked(false);
     fetchAdminStatus().then((s) => {
-      if (!cancelled) {
-        setIsAdmin(s.isAdmin);
-        setAdminChecked(true);
-      }
+      if (!cancelled) setIsAdmin(s.isAdmin);
     });
     return () => {
       cancelled = true;
     };
   }, [accountUserId]);
-  // the Download page is admin-only for now — bounce a non-admin who deep-links or
-  // refreshes on /download back home (once the admin check has actually settled)
-  useEffect(() => {
-    if (screen === 'download' && adminChecked && !isAdmin) navigate('home');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen, adminChecked, isAdmin]);
 
   // load the account's display handle once per sign-in. Kept out of AccountSync's
   // effect on purpose: that one is guarded by a module-level `syncedUser` so settings
@@ -648,6 +698,7 @@ export function App() {
         signedIn={signedIn}
         autoJoin={auto?.room}
         onAutoJoinConsumed={() => setPendingAutoJoin(null)}
+        onAcceptChallenge={onJoinInvite}
       />
     );
   }
@@ -673,6 +724,7 @@ export function App() {
         signedIn={signedIn}
         autoJoin={auto?.room}
         onAutoJoinConsumed={() => setPendingAutoJoin(null)}
+        onAcceptChallenge={onJoinInvite}
       />
     );
   }
@@ -685,6 +737,8 @@ export function App() {
         onCancel={() => navigate('modes')}
         onSignIn={() => navigate('account')}
         onSettingsChange={update}
+        challenge={pendingChallenge ?? undefined}
+        onChallengeConsumed={() => setPendingChallenge(null)}
       />
     );
   }
@@ -732,6 +786,7 @@ export function App() {
       game={settings.game}
       sound={settings.audio.volume.master > 0}
       onHostRoom={hostForChallenge}
+      onQueueChallenge={startChallenge}
     >
       <AppShell
         active={navFor(screen)}
@@ -742,6 +797,9 @@ export function App() {
         onDownload={() => navigate('download')}
         onContributors={() => navigate('contributors')}
         onChangelog={() => navigate('changelogs')}
+        onPrivacy={() => navigate('privacy')}
+        onTerms={() => navigate('terms')}
+        onDonate={() => navigate('donate')}
         signedIn={signedIn}
         onOpenProfile={openProfile}
         onJoinInvite={onJoinInvite}
@@ -750,9 +808,6 @@ export function App() {
       >
       {authEnabled && <AccountSync onUser={onSyncUser} onLoad={onSyncLoad} seed={onSyncSeed} />}
       {authEnabled && <UsernameGate />}
-      {/* patch notes / new-season + new-act reveals — shown once on the menu shell,
-          never over a live match (the game screen returns before this) */}
-      <Announcements muted={settings.audio.volume.master <= 0} />
 
       {screen === 'home' && (
         <HomeMenu
@@ -805,7 +860,7 @@ export function App() {
             <h2>About this simulation</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 420 }}>
               Chain Reaction is a game for the <b>Unofficial FTC Discord’s CAD Competition</b>.
-              This simulator is just a rough, for-fun approximation of it — <b>the simulation is
+              This simulator is just a rough, for-fun approximation of it - <b>the simulation is
               not realistic</b>, so how robots drive, shoot, and score here shouldn’t drive your
               CAD-competition design decisions. Build for the real game, not for this sim.
             </p>
@@ -829,8 +884,7 @@ export function App() {
           <div className="overlay-panel">
             <h2>You’re already in a game</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              You can only be in one game at a time. Rejoin the one you’re in, or abandon it to
-              start something new.
+              You can only be in one game at a time.
             </p>
             <div className="overlay-buttons">
               <button
@@ -855,9 +909,8 @@ export function App() {
           <div className="overlay-panel">
             <h2>Start position invalid</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              Your saved custom start position isn’t legal for the chassis you’ve got selected —
-              a different-sized robot doesn’t fit where it was placed. Fix the start position (or
-              pick a preset) for this chassis before starting.
+              Your saved start position isn’t legal for the selected chassis. Fix it (or pick a
+              preset) before starting.
             </p>
             <div className="overlay-buttons">
               <button
@@ -880,8 +933,7 @@ export function App() {
           <div className="overlay-panel">
             <h2>Server restarting soon</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              A scheduled server update is about to happen, so new games are paused for a moment —
-              you’d only get dropped by the restart. Hang tight; it’ll be back in a minute.
+              A scheduled server update is about to happen, so new games are paused for a moment.
             </p>
             <div className="overlay-buttons">
               <button onClick={() => setStartBlocked(false)}>OK</button>
@@ -894,8 +946,7 @@ export function App() {
           <div className="overlay-panel">
             <h2>Update required</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              A newer version of the sim has shipped. Everyone has to be on the same version to
-              play — especially for multiplayer — so refresh to update before starting a run.
+              A newer version has shipped. Refresh to update before starting.
             </p>
             <div className="overlay-buttons">
               <button onClick={() => window.location.reload()}>REFRESH &amp; UPDATE</button>
@@ -937,14 +988,32 @@ export function App() {
         />
       )}
       {screen === 'watch' && <WatchLive onWatch={spectateRoom} onBack={() => navigate('modes')} />}
-      {screen === 'download' && isAdmin && <Download />}
-      {/* public, unlike Download — no admin gate */}
+      {screen === 'download' && <Download />}
       {screen === 'contributors' && <Contributors onOpenProfile={openProfile} />}
+      {/* legal pages are public and must stay reachable without an account —
+          AdSense review fetches /privacy directly */}
+      {screen === 'privacy' && <Privacy />}
+      {screen === 'terms' && <Terms />}
+      {screen === 'donate' && <Donate signedIn={signedIn} />}
       {screen === 'changelogs' && <Changelog />}
       {screen === 'account' && (
-        <Account settings={settings} onChange={update} onHandleSaved={setHandle} />
+        <Account
+          settings={settings}
+          onChange={update}
+          onHandleSaved={setHandle}
+          onDonate={() => navigate('donate')}
+        />
       )}
       {screen === 'admin' && isAdmin && <Admin />}
+
+      {/* Patch notes / new-season + new-act reveals — shown once on the menu shell,
+          never over a live match (the game screen returns before this). Mounted
+          LAST on purpose: it renders an overlay, so its position in the tree is
+          cosmetically irrelevant but semantically load-bearing — first-in-DOM is
+          what a crawler reads as the page's main content, and patch notes were
+          winning that slot over the homepage itself. (Fresh visitors never see
+          it at all now — see `useAnnouncements`.) */}
+      <Announcements muted={settings.audio.volume.master <= 0} />
       </AppShell>
     </FriendsProvider>
   );

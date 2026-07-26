@@ -9,6 +9,7 @@ import { gameServerConfigured } from '../net/env';
 import { APP_NAME } from '../seasons';
 import { CareerView } from './CareerView';
 import { ShareButton } from './ShareButton';
+import { SupporterBadge } from './SupporterBadge';
 import { ProfileFriendActions } from './ProfileFriendActions';
 import { useFriendsCtx } from './friendsContext';
 import type { CareerNav } from './Stats';
@@ -52,10 +53,23 @@ export function Profile({
   const head = (stats: UserStats | null) => (
     <>
       <p className="ds-eyebrow">{APP_NAME} · Player</p>
-      <h1 className="ds-h1">{stats?.handle ?? `@${username}`}</h1>
+      <h1 className="ds-h1">
+        {stats?.handle ?? `@${username}`}
+        <SupporterBadge supporter={stats?.supporter} role={stats?.role} size="md" />
+      </h1>
       <p className="ds-sub">
         {stats?.username ? `@${stats.username} · ` : ''}
-        Public profile — ranked ELO, personal bests, and match history.
+        {/* Same precedence as the badge. Staff are entitled to the supporter
+            perks, so `supporter` is true for them too — without this an admin's
+            profile would introduce them as a Supporter rather than as staff. */}
+        {stats?.role === 'owner'
+          ? 'Owner · '
+          : stats?.role === 'admin'
+            ? 'Admin · '
+            : stats?.supporter
+              ? 'Supporter · '
+              : ''}
+        Public profile
       </p>
     </>
   );

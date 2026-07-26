@@ -30,8 +30,8 @@ export function ChainStartSelector({
     <>
       <p className="ds-hint">
         {role
-          ? `You are the ${chainRoleLabel(role)} robot — start in your Lab corner, on the floor or up on a ring stand.`
-          : 'Your robot starts in the lab area — on the floor or up on a ring stand.'}
+          ? `You are the ${chainRoleLabel(role)} robot - start in your Lab corner, on the floor or up on a ring stand.`
+          : 'Your robot starts in the lab area - on the floor or up on a ring stand.'}
       </p>
       <div className="ds-opts two" style={{ marginTop: 8 }}>
         {anchors.map(({ p, index }) => (
@@ -41,9 +41,6 @@ export function ChainStartSelector({
             onClick={() => onPick(index)}
           >
             <span className="ot">{p.name}</span>
-            <span className="od">
-              {p.name.startsWith('RING') ? 'Start up on the ring stand' : 'Start on the floor'}
-            </span>
           </button>
         ))}
       </div>

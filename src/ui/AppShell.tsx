@@ -1,6 +1,9 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { cmpEnabled, showConsentSettings } from '../ads/adsense';
 import { APP_NAME, seasonFor, LINKS } from '../seasons';
+import { SUPPORT_ENABLED } from '../net/env';
 import type { GameId } from '../games/types';
+import { MenuAd } from './AdSlot';
 import { FriendsPanel } from './FriendsPanel';
 import { FriendToasts } from './friendsContext';
 import { Logo } from './Logo';
@@ -65,6 +68,9 @@ export function AppShell({
   showRail = true,
   onDownload,
   onContributors,
+  onPrivacy,
+  onTerms,
+  onDonate,
   onChangelog,
   signedIn,
   onOpenProfile,
@@ -84,6 +90,12 @@ export function AppShell({
   onDownload: () => void;
   /** Contributors, likewise a footer destination (but public, unlike Download) */
   onContributors: () => void;
+  /** Privacy policy — public, and a hard prerequisite for the AdSense application */
+  onPrivacy: () => void;
+  /** Terms of use — public, paired with the privacy policy */
+  onTerms: () => void;
+  /** Support/donate page — Ko-fi link + the supporter-membership claim flow */
+  onDonate: () => void;
   /** Changelog, likewise a footer destination (public) — replaces the old bare GitHub link */
   onChangelog: () => void;
   /** drives the friends panel: signed out it shows a sign-in prompt and never polls */
@@ -116,7 +128,15 @@ export function AppShell({
       {showRail ? (
         <div className="ds-body">
           <NavRail active={active} onNav={onNav} showAdmin={showAdmin} />
-          <main className="ds-main">{children}</main>
+          <main className="ds-main">
+            {children}
+            {/* The SAFE ad inventory: a shell page is not a gameplay page, so
+                there is no clearance rule and no frame budget to protect. It
+                sits BELOW the page content, after the thing the visitor came
+                for — an ad above the leaderboard would be the interstitial
+                pattern AdSense's own policies discourage. */}
+            <MenuAd />
+          </main>
           <FriendsPanel
             signedIn={signedIn}
             onOpenProfile={onOpenProfile}
@@ -125,6 +145,9 @@ export function AppShell({
           />
         </div>
       ) : (
+        // The home screen deliberately gets NO ad. It is the first thing a new
+        // visitor sees and the page an AdSense reviewer lands on; it should read
+        // as a product, not as inventory.
         <main className="ds-main ds-main-home">{children}</main>
       )}
 
@@ -144,6 +167,23 @@ export function AppShell({
           <button className="ds-foot-link" onClick={onContributors}>
             Contributors
           </button>
+          {/* hidden until the tier is actually open for business - see
+              SUPPORT_ENABLED. A link to a page that cannot take a payment is a
+              dead end, and a broken purchase path is a cited AdSense rejection. */}
+          {SUPPORT_ENABLED && (
+            <button className="ds-foot-link" onClick={onDonate}>
+              Support
+            </button>
+          )}
+          <button className="ds-foot-link" onClick={onPrivacy}>
+            Privacy
+          </button>
+          <button className="ds-foot-link" onClick={onTerms}>
+            Terms
+          </button>
+          <ConsentLink />
+          {/* main replaced the bare GitHub link with Changes — keep that, plus
+              monetization's Support/Privacy/Terms destinations */}
           <button className="ds-foot-link bold" onClick={onChangelog}>
             Changes
           </button>
@@ -153,5 +193,32 @@ export function AppShell({
         </span>
       </footer>
     </div>
+  );
+}
+
+/**
+ * "Privacy & cookie settings" — reopens the consent message.
+ *
+ * Required rather than a nicety: consent that cannot be withdrawn as easily as
+ * it was given is not valid consent, and the privacy policy points at this exact
+ * link by name, so it has to exist wherever that policy is served.
+ *
+ * Rendered only when the build actually ships a CMP (`cmpEnabled`), and it
+ * disappears if the message cannot be opened — which is the normal case outside
+ * the EEA/UK/CH, where there is no consent dialog to reopen. A footer link that
+ * silently does nothing is worse than no link.
+ */
+function ConsentLink() {
+  const [gone, setGone] = useState(false);
+  if (!cmpEnabled() || gone) return null;
+  return (
+    <button
+      className="ds-foot-link"
+      onClick={() => {
+        if (!showConsentSettings()) setGone(true);
+      }}
+    >
+      Privacy &amp; cookie settings
+    </button>
   );
 }

@@ -21,7 +21,7 @@ import { accelMultiplier as chainAccelMultiplier, type EndgameState } from './ga
 import { chainHopperCap } from './games/chain/config';
 import { chainCatalystPrompt } from './games/chain/play';
 import { beamRide } from './games/chain/beams';
-import { startMatch } from './sim/match';
+import { startMatch, robotsEnabled } from './sim/match';
 import { robotInLaunchZone } from './sim/robot';
 import { InputManager } from './input/input';
 import { Renderer } from './render/renderer';
@@ -177,6 +177,9 @@ export class GameController {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly audio = new MatchAudio();
   private raf = 0;
+  /** re-fits the camera when the canvas resizes without the window doing so
+   *  (ad columns mounting/unmounting) — see the constructor */
+  private canvasObserver: ResizeObserver | null = null;
   private lastT = 0;
   private acc = 0;
   private lastCmd: RobotCommand | null = null;
@@ -296,6 +299,16 @@ export class GameController {
     session?.onRestart(() => this.rebuildFromNet());
     this.input.attach();
     window.addEventListener('resize', this.onResize);
+    // The window `resize` event is not enough on its own: the ad columns flanking
+    // the field appear and disappear WITHOUT the window changing size (the supporter
+    // entitlement resolves asynchronously after sign-in, and an ad blocker can
+    // collapse a column at any moment). Either changes the canvas's client width
+    // while the viewport is untouched, and without this observer the camera would
+    // keep its stale fit and render the field stretched until the user resized.
+    if (typeof ResizeObserver === 'function') {
+      this.canvasObserver = new ResizeObserver(() => this.onResize());
+      this.canvasObserver.observe(this.canvas);
+    }
     this.onResize();
     // Multiplayer must keep simulating + producing inputs even when the tab is
     // unfocused (else every peer stalls waiting on it), so drive the sim from a
@@ -502,11 +515,11 @@ export class GameController {
     return n; // > 3 means the "Match begins in" lead-in
   }
 
-  /** can park mode be turned ON right now? Last ENDGAME_START seconds of
-   * teleop, or anywhere in free drive (which has no match clock) */
+  /** can park mode be turned ON right now? Any time the robot can actually move —
+   * auto, teleop, or free drive — so precision/slow-drive is available throughout
+   * a match, not only in the endgame window. */
   private canPark(): boolean {
-    const m = this.world.match;
-    return m.phase === 'freeplay' || (m.phase === 'teleop' && m.phaseTimeLeft <= C.ENDGAME_START);
+    return robotsEnabled(this.world);
   }
 
   /** everything a frame does EXCEPT render: sample input, step, audio, toasts */
@@ -521,9 +534,10 @@ export class GameController {
         cmd.driveY = -cmd.driveY;
       }
     }
-    // park mode: toggle on press. Turning it ON is gated to endgame/free drive;
-    // turning it back OFF is always allowed. While on, cap the drive command's
-    // magnitude to the configured percentage for precision, low-speed control.
+    // park mode: toggle on press. Turning it ON is gated to when the robot can
+    // drive (auto/teleop/free drive); turning it back OFF is always allowed. While
+    // on, cap the drive command's magnitude to the configured percentage for
+    // precision, low-speed control.
     if (this.input.parkPressed) {
       if (this.parked) this.parked = false;
       else if (this.canPark()) this.parked = true;
@@ -581,8 +595,40 @@ export class GameController {
     // robots + balls INTERPOLATED (smooth) with the local robot predicted
     const world = this.session ? this.displayWorld(dtMs) : this.world;
     this.renderer.render(this.ctx, world, this.lastCmd, this.localRobotId);
+    this.sampleFrame(dtMs);
     this.raf = requestAnimationFrame(this.loop);
   };
+
+  /**
+   * Rolling frame-time samples, surfaced by `?perf=1`.
+   *
+   * Exists to answer one question with a number instead of a guess: what does an
+   * AdSense creative parked beside a 60 Hz canvas actually cost? An ad iframe can
+   * run video, and "it feels fine" is not a measurement you can compare before
+   * and after. Load the game with `?perf=1`, drive for ten seconds with the ad
+   * columns off, then again with them on, and compare p95 — that is the sign-off
+   * the in-game unit needs before `VITE_ADSENSE_SLOT_GAME` is ever set on a live
+   * deploy.
+   *
+   * One array write per frame and nothing else when the flag is off, so it ships
+   * always-on rather than being a rebuild somebody has to remember how to do.
+   */
+  private frames: number[] = [];
+  private sampleFrame(dtMs: number): void {
+    // ~4s at 60fps: long enough for a stable p95, short enough to react to a
+    // creative that only starts misbehaving once it has finished loading.
+    if (this.frames.length >= 240) this.frames.shift();
+    this.frames.push(dtMs);
+  }
+
+  /** p50 / p95 frame time in ms, or null until enough samples exist */
+  getFrameStats(): { p50: number; p95: number; fps: number } | null {
+    if (this.frames.length < 30) return null;
+    const s = [...this.frames].sort((a, b) => a - b);
+    const at = (q: number): number => s[Math.min(s.length - 1, Math.floor(s.length * q))];
+    const p50 = at(0.5);
+    return { p50, p95: at(0.95), fps: p50 > 0 ? 1000 / p50 : 0 };
+  }
 
   /** multiplayer sim driver — a timer (not rAF) so a backgrounded tab keeps
    * stepping and feeding inputs to its peers instead of freezing the match */
@@ -1024,5 +1070,6 @@ export class GameController {
     if (this.simTimer) window.clearInterval(this.simTimer);
     this.input.detach();
     window.removeEventListener('resize', this.onResize);
+    this.canvasObserver?.disconnect();
   }
 }

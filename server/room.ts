@@ -54,6 +54,13 @@ const SNAPSHOT_INTERVAL = 2;
 /** how many ticks to keep re-applying a robot's last command when its next input
  * hasn't arrived (absorbs jitter without freezing); past this it coasts to ZERO */
 const HOLD_TICKS = 15;
+/** a client whose CONFIRMED snapshot baseline (its piggybacked `ack`) is more than
+ * this many ticks behind the live tick is force-resynced with a full keyframe. Wide
+ * enough that normal ack round-trip (a few ticks) never trips it — it catches a
+ * genuinely wedged/far-behind client (or, later, one that lost a run of unreliable
+ * snapshots) rather than letting it drift on deltas keyed to a baseline it no longer
+ * has. ~4 s at 60 Hz. */
+const ACK_STALE_TICKS = 240;
 /** hold a disconnected driver's slot this long for a reconnect before dropping. Long
  * enough to cover a full page reload / navigate-away-and-come-back (the "rejoin your
  * match" flow), not just a transient socket blip. The robot coasts to ZERO meanwhile. */
@@ -164,6 +171,13 @@ export class Room {
   // delta-snapshot state: last-sent balls (id -> JSON) + clients holding a baseline
   private prevBalls = new Map<number, string>();
   private readonly snapPrimed = new Set<string>();
+  // clientId -> newest snapshot serverTick the client has confirmed APPLIED (its
+  // ball baseline, piggybacked on `input`). The happy-path delta is still against
+  // the last broadcast; this only drives a self-healing keyframe when a client's
+  // CONFIRMED baseline falls > ACK_STALE_TICKS behind (a wedged / far-behind client
+  // resyncs from a full frame instead of drifting on deltas it can't apply). It is
+  // also the hook the future unreliable (QUIC-datagram) lane keys its delta to.
+  private readonly snapAck = new Map<string, number>();
   // the command each robot ran on the latest tick (sent so clients predict remotes)
   private lastFrame = new Map<number, RobotCommand>();
   // recording: captures the input log for this match; finalized once at phase 'post'
@@ -337,6 +351,7 @@ export class Room {
     if (this.spectators.has(id)) {
       this.spectators.delete(id);
       this.snapPrimed.delete(id);
+      this.snapAck.delete(id);
       this.broadcastRoster();
       return;
     }
@@ -352,11 +367,12 @@ export class Room {
       // pre-match departure CANCELS the staged match (both drivers requeue). Full
       // strategy-phase reconnection is deferred (see docs/netcodeplan.md).
       if (this.pendingMatch && this.phase === 'strategy') {
-        this.cancelPending('Match cancelled — a player disconnected.');
+        this.cancelPending('Match cancelled - a player disconnected.');
         return;
       }
       this.clients.delete(id);
       this.snapPrimed.delete(id);
+      this.snapAck.delete(id);
       if (this.hostId === id) this.hostId = this.clients.keys().next().value ?? '';
       this.robotOf.delete(id);
       this.broadcastRoster();
@@ -387,6 +403,7 @@ export class Room {
     c.disconnectAt = 0;
     c.conn = ++this.connSeq; // this socket now owns the slot (stale old close ignored)
     this.snapPrimed.delete(id); // lost its baseline — force a full keyframe
+    this.snapAck.delete(id); // drop its stale pre-drop ack so it doesn't re-keyframe
     send({ t: 'welcome', clientId: id });
     send({ t: 'rejoined', ok: true });
     if (this.world) this.sendSnapshotTo(c); // immediate full resync (re-primes)
@@ -427,6 +444,7 @@ export class Room {
       }
       this.clients.delete(c.id);
       this.snapPrimed.delete(c.id);
+      this.snapAck.delete(c.id);
       this.robotOf.delete(c.id);
       this.ackTick.delete(c.id);
     }
@@ -471,7 +489,7 @@ export class Room {
         // rather than throw inside step() (which would kill the tick loop)
         if (id === this.hostId && this.world === null) {
           if (physicsReady()) this.startMatch();
-          else c.send({ t: 'error', message: 'Server is starting up — try again in a moment.' });
+          else c.send({ t: 'error', message: 'Server is starting up - try again in a moment.' });
         }
         break;
       case 'restart':
@@ -481,14 +499,17 @@ export class Room {
         // to the lobby to start a fresh match instead.
         break;
       case 'input':
-        this.onInput(id, msg.tick, msg.q);
+        this.onInput(id, msg.tick, msg.q, msg.ack);
         break;
       case 'join':
         break; // join is handled at the connection layer
     }
   }
 
-  private onInput(id: string, tick: number, q: QCommand): void {
+  private onInput(id: string, tick: number, q: QCommand, ack?: number): void {
+    // record the client's confirmed snapshot baseline (piggybacked ack). Kept even
+    // for a dropped/spectating robot below — it's transport bookkeeping, not a command.
+    if (typeof ack === 'number' && ack > (this.snapAck.get(id) ?? -1)) this.snapAck.set(id, ack);
     const rid = this.robotOf.get(id);
     if (rid === undefined || this.dropped.has(rid)) return;
     const cmd = dequantizeCommand(q);
@@ -541,7 +562,7 @@ export class Room {
         if (!activeStartLegal(c.player.spec, a, c.player.startPose)) {
           this.broadcast({
             t: 'error',
-            message: 'A driver’s start position is invalid for their chassis — fix it to start.',
+            message: 'A driver’s start position is invalid for their chassis - fix it to start.',
           });
           return;
         }
@@ -612,6 +633,7 @@ export class Room {
     this.dropped.clear();
     this.prevBalls.clear();
     this.snapPrimed.clear();
+    this.snapAck.clear();
     // start recording the input log; finalized once at phase 'post'. Stamp the game so
     // the replay re-sims through the right module (CR vs DECODE).
     this.recorder = new ReplayRecorder(seed, setups, 'match', this.game);
@@ -772,7 +794,7 @@ export class Room {
     if (connected.length === p.roster.length && connected.every((c) => c.player.ready)) {
       this.beginRanked();
     } else {
-      this.cancelPending('Match cancelled — not everyone readied up in time.');
+      this.cancelPending('Match cancelled - not everyone readied up in time.');
     }
   }
 
@@ -794,7 +816,7 @@ export class Room {
     const byUser = new Map<string, Client>();
     for (const c of this.clients.values()) if (c.connected && c.userId) byUser.set(c.userId, c);
     if (!p.roster.every((r) => r.userId && byUser.has(r.userId))) {
-      this.cancelPending('Match cancelled — an opponent disconnected.');
+      this.cancelPending('Match cancelled - an opponent disconnected.');
       return;
     }
     // roster index = robotId; keep start poses distinct per alliance as an AFK fallback
@@ -825,7 +847,7 @@ export class Room {
 
   /** a staged ranked match no player (or not everyone) showed up for: tell whoever
    * did connect and tear the room down (no rated match runs). */
-  private cancelPending(message = 'Match cancelled — an opponent did not connect.'): void {
+  private cancelPending(message = 'Match cancelled - an opponent did not connect.'): void {
     if (this.world !== null) return; // already started
     if (this.pendingTimer) {
       clearTimeout(this.pendingTimer);
@@ -1046,6 +1068,11 @@ export class Room {
     const slim = slimWorld(w);
     const cmds = this.frameCmds(w);
     const sendTo = (c: Client): void => {
+      // A client whose CONFIRMED baseline (its ack) has fallen too far behind can't
+      // apply an incremental delta — drop it back to unprimed so it gets a full
+      // keyframe and resyncs. Normal ack lag (a few ticks) never trips this.
+      const ack = this.snapAck.get(c.id);
+      if (ack !== undefined && w.tick - ack > ACK_STALE_TICKS) this.snapPrimed.delete(c.id);
       const primed = this.snapPrimed.has(c.id);
       const balls: BallDelta = { order, upd: primed ? changed : w.balls };
       c.send({

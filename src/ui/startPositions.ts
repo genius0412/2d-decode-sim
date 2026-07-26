@@ -1,6 +1,6 @@
 import type { GameId, GameSettings, StartCat, StartPose, StartSel } from '../types';
 import type { LobbyPlayer } from '../net/protocol';
-import { START_POSES, MAX_SAVED_STARTS } from '../config';
+import { START_POSES, MAX_SAVED_STARTS, MAX_SAVED_STARTS_SUPPORTER } from '../config';
 import { chainAnchorCat, chainDefaultIndex } from '../games/chain/config';
 
 export const otherCat = (c: StartCat): StartCat => (c === 'close' ? 'far' : 'close');
@@ -90,11 +90,26 @@ export function selectStart(s: GameSettings, sel: StartSel): Partial<GameSetting
   return { ...activeFromSel(cat, sel, s.game), startMemory: { ...s.startMemory, [cat]: sel } };
 }
 
-/** patch: save a custom pose into the current category's library (cap, drop oldest) */
+/**
+ * patch: save a custom pose into the current category's library.
+ *
+ * The slice is a RUNAWAY GUARD, not the entitlement gate — hence the supporter
+ * ceiling rather than the free one. `StartPositionEditor` is the single place
+ * that decides whether the "＋ Save" button appears at all (via `savedStartCap`),
+ * and if this also enforced the free cap it would silently truncate a supporter's
+ * six poses down to two on their very next save. Same reasoning as
+ * `coerceSettings`: the persisted ceiling is always the high one.
+ */
 export function saveStart(s: GameSettings, pose: StartPose): Partial<GameSettings> {
   const cat = s.startCat;
-  const list = [...s.savedStartPoses[cat], pose].slice(-MAX_SAVED_STARTS);
+  const list = [...s.savedStartPoses[cat], pose].slice(-MAX_SAVED_STARTS_SUPPORTER);
   return { savedStartPoses: { ...s.savedStartPoses, [cat]: list } };
+}
+
+/** how many saved starts per category this player gets — the ONE place the perk
+ *  is decided. */
+export function savedStartCap(supporter: boolean): number {
+  return supporter ? MAX_SAVED_STARTS_SUPPORTER : MAX_SAVED_STARTS;
 }
 
 /** patch: delete a saved pose from a category */

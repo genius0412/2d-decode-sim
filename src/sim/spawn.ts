@@ -189,6 +189,11 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   out.chainIntake = (CHAIN_INTAKE_STYLES as readonly string[]).includes(sp.chainIntake as string)
     ? (sp.chainIntake as RobotSpec['chainIntake'])
     : (base.chainIntake ?? CHAIN_DEFAULT_INTAKE);
+  // SUPPORTER COSMETIC: an allowlisted key, never a free colour string, so a
+  // spoofed spec can only ever select one of the vetted fills (or the default).
+  out.chassisColor = (C.CHASSIS_COLOR_KEYS as readonly string[]).includes(sp.chassisColor as string)
+    ? (sp.chassisColor as string)
+    : base.chassisColor;
   // MECHANISM MOUNTS. Enum-checked, with the legacy `intakeSide`/`shooterRear` booleans as the
   // fallback so old saves + older peers migrate (see games/chain/mounts.ts). `intakeMountOf`/
   // `shooterMountOf` do exactly that resolution, so run them on the RAW input first, then fall

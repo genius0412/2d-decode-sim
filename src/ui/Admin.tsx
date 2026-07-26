@@ -9,6 +9,11 @@ import {
   adminClearUserRecords,
   adminSearchUsers,
   adminRenameUser,
+  adminGrantSupporter,
+  adminRevokeSupporter,
+  adminSupporterHistory,
+  type AdminUserRow,
+  type SupporterGrantRow,
   adminPublishAnnouncement,
   adminDeleteAnnouncement,
   fetchAnnouncements,
@@ -57,8 +62,13 @@ export function Admin() {
 
   // moderation — user display names
   const [userQuery, setUserQuery] = useState('');
-  const [users, setUsers] = useState<{ userId: string; handle: string }[]>([]);
+  const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [rename, setRename] = useState<Record<string, string>>({});
+  // supporter memberships — comps and chargebacks, on the same rows as the name
+  // moderation above (one search, two jobs; a second search box would just be a
+  // second place to paste the same user id).
+  const [grantMonths, setGrantMonths] = useState<Record<string, string>>({});
+  const [history, setHistory] = useState<Record<string, SupporterGrantRow[]>>({});
   const [userStatus, setUserStatus] = useState<string | null>(null);
   const [userBusy, setUserBusy] = useState(false);
 
@@ -76,7 +86,7 @@ export function Admin() {
     const ok = await adminDeleteRecord(row.recordId);
     setRecBusy(false);
     if (ok) setRecords((rs) => rs.filter((r) => r.recordId !== row.recordId));
-    setRecStatus(ok ? `Deleted ${row.handle}'s run.` : 'Failed — check admin sign-in.');
+    setRecStatus(ok ? `Deleted ${row.handle}'s run.` : 'Failed - check admin sign-in.');
   };
 
   const clearUser = async (row: AdminRecordRow): Promise<void> => {
@@ -85,7 +95,7 @@ export function Admin() {
     const removed = await adminClearUserRecords(row.userId);
     setRecBusy(false);
     if (removed != null) setRecords((rs) => rs.filter((r) => r.userId !== row.userId));
-    setRecStatus(removed != null ? `Cleared ${removed} run${removed === 1 ? '' : 's'} by ${row.handle}.` : 'Failed — check admin sign-in.');
+    setRecStatus(removed != null ? `Cleared ${removed} run${removed === 1 ? '' : 's'} by ${row.handle}.` : 'Failed - check admin sign-in.');
   };
 
   const searchUsers = async (): Promise<void> => {
@@ -109,14 +119,66 @@ export function Admin() {
     const saved = await adminRenameUser(userId, next);
     setUserBusy(false);
     if (saved) setUsers((us) => us.map((u) => (u.userId === userId ? { ...u, handle: saved } : u)));
-    setUserStatus(saved ? `Renamed to "${saved}".` : 'Failed — check admin sign-in.');
+    setUserStatus(saved ? `Renamed to "${saved}".` : 'Failed - check admin sign-in.');
+  };
+
+  /** comp a membership. Confirmed because it costs real money to honour. */
+  const grantSupporter = async (u: AdminUserRow): Promise<void> => {
+    const months = Math.floor(Number(grantMonths[u.userId] ?? '1'));
+    if (!Number.isFinite(months) || months < 1 || months > 60) {
+      setUserStatus('Months must be 1–60.');
+      return;
+    }
+    const reason = window.prompt(`Give ${u.handle} ${months} month(s) of supporter. Reason?`, '');
+    if (reason === null) return;
+    setUserBusy(true);
+    const r = await adminGrantSupporter(u.userId, months, reason);
+    setUserBusy(false);
+    if (!r) {
+      setUserStatus('Failed - check admin sign-in.');
+      return;
+    }
+    setUsers((us) =>
+      us.map((x) =>
+        x.userId === u.userId ? { ...x, supporter: true, supporterUntil: r.until } : x,
+      ),
+    );
+    setUserStatus(
+      `${u.handle} is a supporter until ${r.until ? new Date(r.until).toLocaleDateString() : '-'}.`,
+    );
+    void loadHistory(u.userId);
+  };
+
+  /** end a membership now — a chargeback, or a comp given in error */
+  const revokeSupporter = async (u: AdminUserRow): Promise<void> => {
+    const reason = window.prompt(`Revoke ${u.handle}'s supporter membership. Reason?`, 'chargeback');
+    if (reason === null) return;
+    setUserBusy(true);
+    const r = await adminRevokeSupporter(u.userId, reason);
+    setUserBusy(false);
+    if (!r) {
+      setUserStatus('Failed - check admin sign-in.');
+      return;
+    }
+    setUsers((us) =>
+      us.map((x) =>
+        x.userId === u.userId ? { ...x, supporter: false, supporterUntil: null } : x,
+      ),
+    );
+    setUserStatus(r.revoked ? `Revoked ${u.handle}'s membership.` : 'Nothing to revoke.');
+    void loadHistory(u.userId);
+  };
+
+  const loadHistory = async (userId: string): Promise<void> => {
+    const grants = await adminSupporterHistory(userId);
+    setHistory((h) => ({ ...h, [userId]: grants }));
   };
 
   const run = async (fn: () => Promise<boolean>, okMsg: string): Promise<void> => {
     setBusy(true);
     const ok = await fn();
     setBusy(false);
-    setStatus(ok ? okMsg : 'Failed — are you still signed in as an admin?');
+    setStatus(ok ? okMsg : 'Failed - are you still signed in as an admin?');
   };
 
   const startSeason = async (newAct: boolean): Promise<void> => {
@@ -134,7 +196,7 @@ export function Admin() {
     setSeasonStatus(
       season != null
         ? `Started a new ${what}. New runs now score onto it; older periods are archived but still viewable.`
-        : 'Failed — are you still signed in as an admin (and is the DB configured)?',
+        : 'Failed - are you still signed in as an admin (and is the DB configured)?',
     );
   };
 
@@ -144,7 +206,7 @@ export function Admin() {
     const freed = await adminPurgeReplays();
     setSeasonBusy(false);
     setSeasonStatus(
-      freed != null ? `Purged ${freed} archived-season replay${freed === 1 ? '' : 's'}.` : 'Failed — check admin sign-in / DB.',
+      freed != null ? `Purged ${freed} archived-season replay${freed === 1 ? '' : 's'}.` : 'Failed - check admin sign-in / DB.',
     );
   };
 
@@ -176,9 +238,9 @@ export function Admin() {
       setAnnTitle('');
       setAnnTagline('');
       setAnnBody('');
-      setAnnStatus(`Published — players see it on their next load. ${created.kind === 'patch' ? '' : 'It plays a cinematic reveal.'}`);
+      setAnnStatus(`Published - players see it on their next load. ${created.kind === 'patch' ? '' : 'It plays a cinematic reveal.'}`);
     } else {
-      setAnnStatus('Failed — check admin sign-in / DB.');
+      setAnnStatus('Failed - check admin sign-in / DB.');
     }
   };
 
@@ -188,7 +250,7 @@ export function Admin() {
     const ok = await adminDeleteAnnouncement(a.id);
     setAnnBusy(false);
     if (ok) setAnnouncements((rows) => rows.filter((r) => r.id !== a.id));
-    setAnnStatus(ok ? `Retired "${a.title}".` : 'Failed — check admin sign-in.');
+    setAnnStatus(ok ? `Retired "${a.title}".` : 'Failed - check admin sign-in.');
   };
 
   const isCinematic = annKind !== 'patch';
@@ -222,7 +284,7 @@ export function Admin() {
           <button
             className="ds-btn"
             disabled={busy}
-            onClick={() => run(() => adminAnnounce(minutes * 60, message), `Announced — restart in ${minutes} min.`)}
+            onClick={() => run(() => adminAnnounce(minutes * 60, message), `Announced - restart in ${minutes} min.`)}
           >
             ANNOUNCE RESTART
           </button>
@@ -237,13 +299,13 @@ export function Admin() {
         {status && <p className="ds-hint" style={{ marginTop: 12 }}>{status}</p>}
       </div>
       <p className="ds-hint" style={{ marginTop: 16 }}>
-        Reminder: this only warns players — it doesn’t restart the server. Run your deploy when
+        Reminder: this only warns players - it doesn’t restart the server. Run your deploy when
         the countdown reaches 0.
       </p>
 
       <h2 className="ds-h2" style={{ marginTop: 32 }}>Announcements</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
-        Publish patch notes, bug-fix summaries, or a new season / act. Each player sees it once —
+        Publish patch notes, bug-fix summaries, or a new season / act. Each player sees it once -
         the first time they open the app after you publish. A new season or act plays a full-screen
         cinematic reveal; patch notes show in a “What’s new” panel.
       </p>
@@ -262,7 +324,7 @@ export function Admin() {
             type="text"
             value={annTitle}
             maxLength={80}
-            placeholder={isCinematic ? 'e.g. Act II — The Rising Tide' : 'e.g. Build 42 — gate + intake fixes'}
+            placeholder={isCinematic ? 'e.g. Act II - The Rising Tide' : 'e.g. Build 42 - gate + intake fixes'}
             onChange={(e) => setAnnTitle(e.target.value)}
           />
         </label>
@@ -279,13 +341,13 @@ export function Admin() {
           </label>
         )}
         <label className="admin-field col">
-          <span>{isCinematic ? 'Details (shown in “What’s new”) — Markdown' : 'Notes — Markdown'}</span>
+          <span>{isCinematic ? 'Details (shown in “What’s new”) - Markdown' : 'Notes - Markdown'}</span>
           <textarea
             className="admin-textarea"
             value={annBody}
             maxLength={8000}
             rows={8}
-            placeholder={'## Gate & Intake\n- Fixed the gate lever swinging closed on a **resting** robot\n- Faster basin drain\n\n## Drivetrain\n- New swerve pod wobble tuning — see [the notes](https://example.com)'}
+            placeholder={'## Gate & Intake\n- Fixed the gate lever swinging closed on a **resting** robot\n- Faster basin drain\n\n## Drivetrain\n- New swerve pod wobble tuning - see [the notes](https://example.com)'}
             onChange={(e) => setAnnBody(e.target.value)}
           />
           <span className="ds-hint" style={{ marginTop: 4 }}>
@@ -340,7 +402,7 @@ export function Admin() {
             type="text"
             value={seasonName}
             maxLength={40}
-            placeholder="e.g. Spring Showdown — blank ⇒ Act X · Season Y"
+            placeholder="e.g. Spring Showdown - blank ⇒ Act X · Season Y"
             onChange={(e) => setSeasonName(e.target.value)}
           />
         </label>
@@ -358,10 +420,10 @@ export function Admin() {
         {seasonStatus && <p className="ds-hint" style={{ marginTop: 12 }}>{seasonStatus}</p>}
       </div>
 
-      <h2 className="ds-h2" style={{ marginTop: 32 }}>Moderation — records</h2>
+      <h2 className="ds-h2" style={{ marginTop: 32 }}>Moderation - records</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Inspect a leaderboard bucket (live season) and remove cheated or invalid runs. Deleting a
-        run also deletes its replay. “Clear all” wipes every run by that player — for confirmed
+        run also deletes its replay. “Clear all” wipes every run by that player - for confirmed
         cheaters.
       </p>
       <div className="admin-card">
@@ -402,10 +464,13 @@ export function Admin() {
         {recStatus && <p className="ds-hint" style={{ marginTop: 12 }}>{recStatus}</p>}
       </div>
 
-      <h2 className="ds-h2" style={{ marginTop: 32 }}>Moderation — display names</h2>
+      {/* main's heading was "Moderation - display names"; this section now does
+          memberships too. Hyphen, not an em dash, per main's site-wide copy pass. */}
+      <h2 className="ds-h2" style={{ marginTop: 32 }}>Players - names &amp; memberships</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
-        Find a player by display name (or exact user id) and force an inappropriate name to
-        something clean. The change is immediate across the leaderboards.
+        Find a player by display name, username, or exact user id. Force an inappropriate name to
+        something clean, comp a supporter membership, or revoke one after a chargeback. Every
+        membership change is written to an audit trail with your account id and your reason.
       </p>
       <div className="admin-card">
         <div className="admin-field">
@@ -424,21 +489,87 @@ export function Admin() {
         {users.length > 0 && (
           <div className="admin-list" style={{ marginTop: 12 }}>
             {users.map((u) => (
-              <div key={u.userId} className="admin-row">
-                <input
-                  type="text"
-                  className="admin-grow"
-                  maxLength={24}
-                  value={rename[u.userId] ?? ''}
-                  onChange={(e) => setRename((m) => ({ ...m, [u.userId]: e.target.value }))}
-                />
-                <button
-                  className="ds-btn ghost sm"
-                  disabled={userBusy || (rename[u.userId] ?? '').trim() === u.handle}
-                  onClick={() => renameUser(u.userId, u.handle)}
-                >
-                  RENAME
-                </button>
+              <div key={u.userId} className="admin-user">
+                <div className="admin-row">
+                  <input
+                    type="text"
+                    className="admin-grow"
+                    maxLength={24}
+                    value={rename[u.userId] ?? ''}
+                    onChange={(e) => setRename((m) => ({ ...m, [u.userId]: e.target.value }))}
+                  />
+                  <button
+                    className="ds-btn ghost sm"
+                    disabled={userBusy || (rename[u.userId] ?? '').trim() === u.handle}
+                    onClick={() => renameUser(u.userId, u.handle)}
+                  >
+                    RENAME
+                  </button>
+                </div>
+                <div className="admin-row admin-sub">
+                  <span className="ds-hint admin-grow">
+                    {/* Staff first, and stated separately from the membership:
+                        this row is where months get granted, and `supporter` here
+                        is deliberately the PAID predicate (see AdminUserRow), so a
+                        colleague reads as "not a supporter" while still holding
+                        every perk by role. Saying so avoids granting them months
+                        they do not need. */}
+                    {u.role && (
+                      <>
+                        <strong>{u.role === 'owner' ? 'Owner' : 'Admin'}</strong> · perks by role
+                        {' · '}
+                      </>
+                    )}
+                    {u.supporter ? (
+                      <>
+                        <strong>Supporter</strong> until{' '}
+                        {u.supporterUntil ? new Date(u.supporterUntil).toLocaleDateString() : '-'}
+                        {u.autoRenews ? ' · auto-renews' : ' · manual claims only'}
+                      </>
+                    ) : (
+                      <>No paid membership{u.autoRenews ? ' · Ko-fi linked (lapsed)' : ''}</>
+                    )}
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    className="admin-months"
+                    aria-label={`Months to grant ${u.handle}`}
+                    value={grantMonths[u.userId] ?? '1'}
+                    onChange={(e) =>
+                      setGrantMonths((m) => ({ ...m, [u.userId]: e.target.value }))
+                    }
+                  />
+                  <button className="ds-btn ghost sm" disabled={userBusy} onClick={() => grantSupporter(u)}>
+                    GRANT
+                  </button>
+                  <button
+                    className="ds-btn ghost sm"
+                    disabled={userBusy || !u.supporter}
+                    onClick={() => revokeSupporter(u)}
+                  >
+                    REVOKE
+                  </button>
+                  <button className="ds-btn ghost sm" disabled={userBusy} onClick={() => loadHistory(u.userId)}>
+                    HISTORY
+                  </button>
+                </div>
+                {history[u.userId] && (
+                  <div className="admin-history">
+                    {history[u.userId].length === 0 ? (
+                      <p className="ds-hint">No membership changes recorded.</p>
+                    ) : (
+                      history[u.userId].map((g, i) => (
+                        <p key={i} className="ds-hint">
+                          {new Date(g.createdAt).toLocaleString()} · <strong>{g.source}</strong>
+                          {g.months ? ` +${g.months}mo` : ''}
+                          {g.note ? ` · ${g.note}` : ''}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

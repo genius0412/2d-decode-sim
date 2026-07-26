@@ -49,7 +49,7 @@ export function awardFoul(
   const tally = world.match.fouls[offender];
   if (severity === 'major') tally.major += 1;
   else tally.minor += 1;
-  world.events.push(`${severity === 'major' ? 'MAJOR' : 'MINOR'} FOUL — ${victim.toUpperCase()} +${pts} (${rule})`);
+  world.events.push(`${severity === 'major' ? 'MAJOR' : 'MINOR'} FOUL - ${victim.toUpperCase()} +${pts} (${rule})`);
 }
 
 /** Rule A: assessment of CLASSIFIED/OVERFLOW happens throughout the match and

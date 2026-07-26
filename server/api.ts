@@ -1,14 +1,18 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { GameId } from '../src/types';
 import { BALANCE_VERSION } from '../src/config';
+import { monthsFor, policyFromEnv, whyNoMonths } from './kofi';
+import { CHALLENGE_FORMATS } from '../src/net/protocol';
 import { dbEnabled } from './db/pool';
 import {
   acceptFriendRequest,
   actForSeason,
   blockUser,
   cancelFriendRequest,
+  cancelRoomInvite,
   currentSeasonNumber,
   declineFriendRequest,
+  declineRoomInvite,
   dismissRoomInvite,
   ensureProfile,
   ensureSeason,
@@ -33,6 +37,10 @@ import {
   getReplay,
   getUserSettings,
   getUserStats,
+  getSupporter,
+  claimKofiPayment,
+  recordKofiPayment,
+  deleteAccount,
   listSeasons,
   recordLeaderboard,
   saveUserSettings,
@@ -75,9 +83,11 @@ import { DEPLOY_REGIONS, interRegionMs } from './regions';
  *   POST /api/friends/remove   {username}
  *   POST /api/friends/block    {username} / /api/friends/unblock {username}
  *   POST /api/friends/status   {status}      — your own online/dnd/invisible
- *   POST /api/friends/invite   {username,room,game,kind,record?} — invite a friend
- *                                               to a room (must be friends)
+ *   POST /api/friends/invite   {username,room,game,kind,record?,format?} — challenge
+ *                                               a friend (must be friends)
  *   POST /api/friends/invite/dismiss {id}    — dismiss/consume an invite sent to you
+ *   POST /api/friends/invite/decline {id}    — decline one sent to you (sender is told)
+ *   POST /api/friends/invite/cancel  {id}    — withdraw one you sent
  *   GET  /api/users/search?q=<prefix>        — public username-PREFIX search
  */
 
@@ -244,6 +254,225 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       return json(200, { ok: true }), true;
     }
 
+    // ---- supporter entitlements --------------------------------------------
+    // Read your OWN entitlement. The client uses this only to decide whether to
+    // draw ads and perk UI; every perk that actually matters is enforced
+    // server-side, so a lie here buys nothing.
+    if (url.pathname === '/api/user/entitlements' && req.method === 'GET') {
+      const user = await verifyAuthToken(bearer(req));
+      if (!user) return json(401, { error: 'sign in required' }), true;
+      if (!dbEnabled) {
+        return json(200, { supporter: false, supporterUntil: null, autoRenews: false }), true;
+      }
+      // the price is served alongside the entitlement so the Donate page can state
+      // it without a second round trip, and so it can never drift from the number
+      // the grant policy actually charges (see server/kofi.ts).
+      const policy = policyFromEnv();
+      return (
+        json(200, {
+          ...(await getSupporter(user.userId)),
+          price: { amount: policy.monthlyPrice, currency: policy.currency },
+        }),
+        true
+      );
+    }
+
+    // Price + tier facts for a SIGNED-OUT visitor. Same numbers, no auth, no DB —
+    // the Donate page has to state a price before anyone signs in.
+    if (url.pathname === '/api/pricing' && req.method === 'GET') {
+      const policy = policyFromEnv();
+      return (
+        json(200, {
+          price: { amount: policy.monthlyPrice, currency: policy.currency },
+          maxMonths: policy.maxMonths,
+        }),
+        true
+      );
+    }
+
+    // Claim a Ko-fi payment against this account.
+    //
+    // Ko-fi identifies buyers by the email they paid with, which need not match
+    // the Neon Auth email (and often will not — a student paying through a
+    // parent's PayPal is the common case). Rather than guess, the webhook parks
+    // the payment and the buyer pastes the transaction id Ko-fi showed them.
+    // `claimKofiPayment` does the whole thing in one transaction so two accounts
+    // cannot claim the same payment.
+    if (url.pathname === '/api/user/claim-kofi' && req.method === 'POST') {
+      const user = await verifyAuthToken(bearer(req));
+      if (!user) return json(401, { error: 'sign in required' }), true;
+      if (!dbEnabled) return json(503, { error: 'payments unavailable' }), true;
+
+      let txn: unknown;
+      try {
+        txn = JSON.parse(await readBody(req)).transactionId;
+      } catch {
+        return json(400, { error: 'bad request' }), true;
+      }
+      if (typeof txn !== 'string' || !txn.trim()) {
+        return json(400, { error: 'transaction id required' }), true;
+      }
+      await ensureProfile(user.userId, user.handle);
+      const r = await claimKofiPayment(user.userId, txn.trim());
+      if (r.outcome === 'not-found') {
+        return (
+          json(404, {
+            error: "We can't find that transaction. Ko-fi payments can take a minute to arrive - try again shortly.",
+          }),
+          true
+        );
+      }
+      if (r.outcome === 'already-claimed') {
+        return json(409, { error: 'That payment has already been claimed.' }), true;
+      }
+      // Below the tier: say exactly WHY, with the real numbers. A bare "no" on a
+      // payment someone genuinely made is the worst possible support experience,
+      // and the payment stays unclaimed so an admin can still comp it.
+      if (r.outcome === 'below-tier') {
+        return (
+          json(400, {
+            error: r.payment
+              ? whyNoMonths(
+                  {
+                    kind: r.payment.kind,
+                    amount: r.payment.amount,
+                    currency: r.payment.currency,
+                    isSubscription: r.payment.isSubscription,
+                    tierName: r.payment.tierName,
+                  },
+                  policyFromEnv(),
+                )
+              : "That payment doesn't meet the membership tier.",
+          }),
+          true
+        );
+      }
+      if (r.outcome === 'email-taken') {
+        return (
+          json(409, {
+            error:
+              'That payment came from a Ko-fi account already linked to a different DSIM account. One membership covers one account - email us if this is wrong.',
+          }),
+          true
+        );
+      }
+      if (r.outcome === 'refunded') {
+        return json(409, { error: 'That payment was refunded.' }), true;
+      }
+      return (
+        json(200, { ok: true, supporterUntil: r.until ?? null, months: r.months ?? 0 }),
+        true
+      );
+    }
+
+    // ---- delete your own account -------------------------------------------
+    // The privacy policy promises deletion on request, so it is a route, not an
+    // inbox commitment. Destructive and irreversible, hence the typed
+    // confirmation: the body must carry `confirm: 'DELETE'`, which no accidental
+    // fetch or replayed request will ever contain.
+    //
+    // Auth deliberately does NOT include the Neon Auth identity itself — that
+    // lives in the provider and is deleted from the account settings there. This
+    // removes everything DSIM stores; the policy says so in the same words.
+    if (url.pathname === '/api/user/delete' && req.method === 'POST') {
+      const user = await verifyAuthToken(bearer(req));
+      if (!user) return json(401, { error: 'sign in required' }), true;
+      if (!dbEnabled) return json(503, { error: 'unavailable' }), true;
+      let confirm: unknown;
+      try {
+        confirm = JSON.parse(await readBody(req)).confirm;
+      } catch {
+        return json(400, { error: 'bad request' }), true;
+      }
+      if (confirm !== 'DELETE') return json(400, { error: 'confirmation required' }), true;
+      const gone = await deleteAccount(user.userId);
+      console.log(`[api] account deleted: ${user.userId} -> ${gone}`);
+      return json(200, { ok: true, deleted: gone }), true;
+    }
+
+    // ---- Ko-fi webhook ------------------------------------------------------
+    // NOT an authenticated route: Ko-fi has no user JWT, so `verifyAuthToken` is
+    // deliberately absent. Authenticity rests entirely on the shared
+    // verification token Ko-fi sends in the payload, compared against
+    // KOFI_VERIFICATION_TOKEN. With that env unset the endpoint is CLOSED rather
+    // than open — an unauthenticated grant path is worse than no grant path.
+    //
+    // Ko-fi posts application/x-www-form-urlencoded with a single `data` field
+    // holding the JSON, which is why this does not just JSON.parse the body.
+    if (url.pathname === '/api/kofi/webhook' && req.method === 'POST') {
+      const secret = process.env.KOFI_VERIFICATION_TOKEN;
+      if (!secret) return json(503, { error: 'not configured' }), true;
+
+      let payload: {
+        verification_token?: string;
+        message_id?: string;
+        type?: string;
+        email?: string;
+        kofi_transaction_id?: string;
+        amount?: string;
+        currency?: string;
+        is_subscription_payment?: boolean;
+        tier_name?: string;
+      };
+      try {
+        const body = await readBody(req);
+        const raw = new URLSearchParams(body).get('data');
+        payload = JSON.parse(raw ?? body);
+      } catch {
+        return json(400, { error: 'bad request' }), true;
+      }
+
+      // Constant-time-ish compare is overkill for a webhook token, but bail on a
+      // mismatch before touching the DB either way.
+      // Token check comes BEFORE the dbEnabled guard on purpose: an
+      // unauthenticated caller should not be able to probe whether the database
+      // is up, and it keeps the auth decision independent of deploy state.
+      if (payload.verification_token !== secret) {
+        return json(401, { error: 'bad token' }), true;
+      }
+      if (!payload.message_id) return json(400, { error: 'missing message_id' }), true;
+      if (!dbEnabled) return json(503, { error: 'db unavailable' }), true;
+
+      // What the payment is WORTH is decided here, once, and stored on the row —
+      // not recomputed at claim time against env that may since have changed.
+      const event = {
+        kind: payload.type ?? 'Donation',
+        amount: payload.amount ?? null,
+        currency: payload.currency ?? null,
+        isSubscription: !!payload.is_subscription_payment,
+        tierName: payload.tier_name ?? null,
+      };
+      const months = monthsFor(event, policyFromEnv());
+
+      // `fresh` is false when Ko-fi retried an event we already stored — the
+      // insert's primary key is the idempotency guard, so a retry cannot grant a
+      // second month. Always answer 200 so Ko-fi stops retrying.
+      //
+      // `autoGrantedTo` is set when the payer's email is already linked to an
+      // account: that is the RENEWAL path, and it is why a monthly membership no
+      // longer needs the buyer to paste a new transaction id every 30 days.
+      const r = await recordKofiPayment({
+        ...event,
+        messageId: payload.message_id,
+        email: payload.email ?? null,
+        transactionId: payload.kofi_transaction_id ?? null,
+        months,
+      });
+      if (r.autoGrantedTo) {
+        console.log(
+          `[kofi] auto-renewed ${r.autoGrantedTo} +${months}mo -> ${r.until} (${payload.message_id})`,
+        );
+      } else if (r.fresh) {
+        console.log(
+          `[kofi] parked ${payload.message_id} (${event.kind}, ${event.amount ?? '?'} ${event.currency ?? '?'}, ${months}mo) - awaiting claim`,
+        );
+      }
+      return (
+        json(200, { ok: true, recorded: r.fresh, granted: !!r.autoGrantedTo, months }),
+        true
+      );
+    }
+
     // ---- friends ------------------------------------------------------------
     // Friendship is MUTUAL CONSENT and presence is behavioural data about a real
     // person, so every rule here is enforced server-side. Two invariants hold
@@ -267,7 +496,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       const user = await verifyAuthToken(bearer(req));
       if (!user) return json(401, { error: 'sign in required' }), true;
       if (!dbEnabled) {
-        return json(200, { friends: [], incoming: [], outgoing: [], blocked: [], invites: [], status: null }), true;
+        return json(200, { friends: [], incoming: [], outgoing: [], blocked: [], invites: [], sent: [], status: null }), true;
       }
 
       // the friends READ doubles as the presence heartbeat: the poll that
@@ -306,12 +535,24 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         return json(200, { status }), true;
       }
 
-      // dismiss (or consume, on join) a room invite ADDRESSED TO the caller — not
-      // "names another player", so it doesn't fit the username-resolution block below
-      if (url.pathname === '/api/friends/invite/dismiss') {
+      // The three challenge-lifecycle routes act on an invite BY ID rather than by
+      // naming a player, so they sit above the username-resolution block below.
+      // Each is scoped to the side that owns that view of the row: dismiss and
+      // decline to the recipient, cancel to the sender. Neither side can reach
+      // into the other's.
+      if (
+        url.pathname === '/api/friends/invite/dismiss' ||
+        url.pathname === '/api/friends/invite/decline' ||
+        url.pathname === '/api/friends/invite/cancel'
+      ) {
         const id = typeof body.id === 'string' ? body.id : null;
         if (!id) return json(400, { error: 'bad request' }), true;
-        const ok = await dismissRoomInvite(user.userId, id);
+        const ok =
+          url.pathname === '/api/friends/invite/cancel'
+            ? await cancelRoomInvite(user.userId, id)
+            : url.pathname === '/api/friends/invite/decline'
+              ? await declineRoomInvite(user.userId, id)
+              : await dismissRoomInvite(user.userId, id);
         if (!ok) return json(404, { error: 'no such invite' }), true;
         return json(200, { ok: true }), true;
       }
@@ -383,7 +624,15 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
           const game: GameId = body.game === 'chain' ? 'chain' : 'decode';
           const kind = body.kind === 'record' ? 'record' : 'versus';
           const record = body.record === 'duo' || body.record === 'solo' ? (body.record as string) : null;
-          const outcome = await inviteToRoom(user.userId, other, room, game, kind, record);
+          // The format is what the challenge OFFERED, and for the rated formats it
+          // is load-bearing rather than cosmetic: the matchmaker only honours a
+          // party token that a challenge of the matching format actually created
+          // (`challengeParty`). Validated against the allowlist here so a client
+          // can't invent one.
+          const format = (CHALLENGE_FORMATS as readonly string[]).includes(body.format as string)
+            ? (body.format as string)
+            : null;
+          const outcome = await inviteToRoom(user.userId, other, room, game, kind, record, format);
           if (outcome === 'not-friends') return json(409, { error: 'Not friends with that player.' }), true;
           return json(200, { ok: true }), true;
         }

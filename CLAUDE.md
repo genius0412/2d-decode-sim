@@ -31,14 +31,26 @@ reverse-chronological log; prepend a new dated section and demote the old "READ 
 ## Commands
 
 - `npm run dev` — dev server (localhost:5173)
-- `npm test` — **headless sim verification** (`scripts/smoke.ts`, 544 checks, BOTH games).
+- `npm test` — **headless sim verification** (`scripts/smoke.ts`, 564 checks, BOTH games).
   Run this after ANY change to `src/sim/`, `src/config.ts`, or `src/games/`. It is fast and
   catches almost everything. **Add a check per behavior change.**
+- `npm run test:mm` — **matchmaker verification** (`scripts/mmsmoke.ts`, 36 checks, no DB or
+  sockets — injected clock + `stage`). Run after ANY change to `server/matchmaking.ts`. Kept
+  out of `npm test` on purpose, same reasoning as `contrast`: a red `npm test` must keep
+  meaning "physics broke".
 - `npm run build` — tsc (strict) + vite build. Run before claiming work done.
 - `npm run server:check` — typecheck the server against the shared sim (`tsconfig.server.json`).
-- `npm run contrast` — WCAG audit of the palette (`scripts/contrast.mjs`, 167 pairs, light +
+- `npm run contrast` — WCAG audit of the palette (`scripts/contrast.mjs`, 175 pairs, light +
   dark, no deps). Run after ANY colour/token edit. Not wired into `npm test` on purpose: a red
   `npm test` must keep meaning "physics broke".
+- `npm run dbtest` — **database + payments verification** (`scripts/dbtest.ts`, ~61 checks).
+  Boots **PGlite** (Postgres 17 in WASM, a devDependency — there is no Postgres on a dev box),
+  runs the REAL migrations and the REAL `server/db/repo.ts` against it, and asserts the Ko-fi
+  webhook's idempotency, the claim race, the auto-renewal path, the tier policy, admin
+  grant/revoke, and account deletion's cascade. Run after ANY change to `server/db/`,
+  `server/kofi.ts`, or a migration. Same rule as `contrast`: deliberately NOT in `npm test`.
+  `server/db/pool.ts` exposes a structural `DbPool` + `setPoolForTests` so the swap is possible;
+  production still builds a real `pg.Pool`.
 - `npm run shiftaudit` — layout-shift audit (`scripts/shiftaudit.cjs`, Electron). Needs a
   build + `npx vite preview --port 4173` in another shell. Forces `:hover`/`:active` and the
   `on`/`primary` state classes on every interactive element across 10 routes + the live HUD,
@@ -288,6 +300,117 @@ periods are **keyed per game**, so DECODE and CR never share a leaderboard.
 the server enforces every action independently). **VERSION GATE**: a new build is detected
 (`__BUILD_ID__` → `/version.json` poll) and forces a refresh when a player STARTS a run
 (never mid-run) — no "play anyway", everyone must be on the same version for multiplayer.
+
+**STAFF ROLES — owner + admin badges, and perks, DONE.** `profiles.role`
+(`0020_staff_roles.sql`) is null | 'owner' | 'admin'. It is a **PROJECTION** of
+`ADMIN_USER_IDS` / `OWNER_USER_ID` (`OWNER_USER_ID` defaults to the FIRST id in
+`ADMIN_USER_IDS`), reconciled by `syncStaffRoles` once per boot after `migrate()` — the
+env stays the source of truth; the column exists so the badge can be JOINED by the
+leaderboard/roster queries instead of post-processed row by row (or the admin list
+leaked to clients). **The sweep is SYMMETRIC** — an id removed from the env loses the
+badge and the perks. **THE PERK IS ONE PREDICATE**: `SUPPORTER_COL` in repo.ts is read
+by the ad gate, the cosmetic chassis colours, the saved-start cap, `/api/user/
+entitlements` AND the badge, so `role in ('owner','admin')` is folded into that single
+expression — never add a second "is staff entitled" check, extend that one. TWO places
+deliberately keep the PAID predicate instead, because the entitled one would mislead
+there: `searchProfiles` (the admin console's grant/revoke row — a colleague must not
+read as a supporter with no expiry when you are deciding whether to comp months) and
+the Donate page (staff get their own panel; the supporter one would say "through -"
+and nag them to link a Ko-fi account that will never pay). `getSupporter` returns
+`supporter: true` with `supporterUntil: null` for staff — that shape is intentional.
+`LobbyPlayer.role` is **server-authored** exactly like `supporter` (a self-declared
+"owner" beside a driver's name is an impersonation primitive). UI: ONE
+`SupporterBadge` renders owner ★ > admin ◆ > supporter ♥ — exactly one, since staff are
+also `supporter: true`. **Badge colours must be SATURATED IN BOTH THEMES**: the audit
+checks the glyph against its own fill, NOT the badge against the card behind it, so the
+lavender pastel (#34305c in dark) passed contrast while being invisible on the dark
+panel. Distinguish by SHAPE as well as hue. Tests: 18 checks in `npm run dbtest`.
+
+**PLAY A FRIEND — challenges (chess.com's model), DONE.** A challenge (`room_invites` +
+migration `0019`) carries a **`format`**: `casual1v1`/`casual2v2` (a `versus` room),
+`duorecord` (a `record`/`duo` room), or the two RATED ones. Rating is only ever applied to a
+matchmaker-STAGED room (`Room.ranked` ← `pending_matches`), so a code-joined room can NEVER
+rate — the rated formats therefore resolve through the MATCHMAKER, not through a room code.
+The challenge's `room` column doubles as a **party token** both sides send on `queue`
+(`party`/`partyOnly`/`partyFormat`; `RATED_FORMATS` in protocol.ts maps format → mode +
+partyOnly). The matchmaker pairs on **UNITS** (`groupUnits`), never individual entries:
+`rated1v1` is a CLOSED party (the token IS the match — no strangers, and the search radius is
+skipped since they chose each other; the channel+build bucket still applies), `ranked2v2` is a
+PREMADE that queues into the OPEN pool and is kept on one alliance by `allianceOrder`. That
+same ordering needs NO 1v1 exception: there the party is the two opponents and half=1 splits
+them correctly. **`partySize` (2) is load-bearing** — the members enqueue seconds apart, and
+without it the first arrival reads as a complete unit and is swallowed by an open group.
+**The token is VERIFIED, never trusted** (`challengeParty` → `verifyParty`): it resolves
+against the real challenge row and only answers for an account named on it, so two clients
+can't agree on a string and stage themselves a rated match, and a guessed token can't join a
+pair. A token that fails is REFUSED, never downgraded to an open queue. Rated formats are
+gated on **`SERVER_CAPS`** (`/api/presence` `caps`, read via `serverCaps()`) — the first
+server→client capability, and NOT optional: an older server IGNORES the party fields rather
+than rejecting them, silently matching two friends against strangers. Lifecycle is
+Accept/**Decline** (decline MARKS `declined` so the sender is told once, then their client
+cancels the row; dismiss stays a silent clear), the sender SEES their outgoing challenge
+(`listFriends`'s `snt` CTE → `sent`) and can cancel it, and one live challenge per direction
+(`inviteToRoom` replaces — stacked rated rows would let someone accept an abandoned token).
+`src/ui/challenge.ts` `challengeOf` is the ONE place deciding lobby-vs-queue. Tests:
+**`npm run test:mm`** (`scripts/mmsmoke.ts`, 36 checks, injected clock + `stage`, no DB) —
+party pairing fails SILENTLY, so it is covered there rather than by a live two-account run.
+NOTE `enqueue` matches synchronously but STAGES asynchronously; assertions must await a
+microtask flush. Rated friend games are farmable by a colluding pair and deliberately
+unmitigated (as chess.com); damp repeat-opponent deltas in `ranked.ts` if it shows up.
+
+
+---
+
+## Monetization (branch `monetization`) — ads + supporter tier
+
+Not yet deployed. `HANDOFF.md` has the full write-up; the load-bearing rules:
+
+- **`src/ads/adsense.ts` is the single gate.** Ads are OFF unless `VITE_ADSENSE_CLIENT`
+  is set, and are suppressed unconditionally in the Electron build (AdSense forbids app
+  wrappers), on touch, and for supporters. `AdsProvider` FAILS CLOSED — ads stay off
+  until the entitlement check settles, so a supporter never sees a flash of them.
+- **Ads are NON-PERSONALIZED by default and tagged TFUAC.** DSIM simulates FTC
+  (grades 7–12) and the sim is fully playable SIGNED OUT, so most impressions carry no
+  age signal. `VITE_ADSENSE_PERSONALIZED=1` is a deliberate opt-in. TFCD (COPPA) stays
+  off: the terms set 13+, so asserting child-directed would be inaccurate, not cautious.
+- **A CMP (Google Funding Choices) is REQUIRED, not optional** — without a certified CMP
+  Google serves EEA/UK/CH users no ads at all. It loads with the client id; the message
+  itself is authored in the AdSense dashboard. The footer "Privacy & cookie settings"
+  link must keep existing (consent you can't withdraw isn't consent).
+- **Three ad units, each with its own slot id**: `menu` (shell pages) and `results`
+  (post-match) are SAFE; `game` (columns flanking the live field) is the risky one —
+  60 Hz canvas + AdSense's 150px game-clearance rule. **Do not enable
+  `VITE_ADSENSE_SLOT_GAME` without first comparing p95 frame time via `?perf=1`**
+  (`GameController.getFrameStats`).
+- **`/ads.txt` is GENERATED** from `VITE_ADSENSE_CLIENT` in `vite.config.ts` — never
+  commit one, it would drift.
+- **Supporter tier is Ko-fi.** `server/kofi.ts` is a PURE policy module (no DB, no
+  import-time env) deciding what a payment buys: a subscription payment is always
+  exactly 1 month; a one-off buys `floor(amount/price)` months, capped; a foreign
+  currency buys nothing. Months are priced ONCE at webhook time and stored on the row.
+- **`profiles.kofi_email` is what makes a membership RENEW.** The first manual claim
+  links the payer address; every later webhook from it grants automatically. The UNIQUE
+  index is also the only thing stopping one subscription covering many accounts.
+- **Every write to `supporter_until` logs a `supporter_grants` audit row** (source =
+  kofi/admin/revoke). Two actors can move that column; "why does this account have a
+  membership?" has to stay answerable.
+- **Perks are cosmetic/convenience ONLY** — never anything affecting how a robot drives
+  or scores. That is a product rule AND a statement in the terms. All four advertised
+  perks are BUILT (badge, ads-off, 6 saved starts, chassis colours); **do not list a
+  perk on the Donate page before it exists.**
+- **The saved-start PERSIST cap is the SUPPORTER ceiling**
+  (`MAX_SAVED_STARTS_SUPPORTER`), in `coerceSettings` AND `saveStart`. Only the editor's
+  Save button applies the free cap. Sanitizing to the free cap would DELETE a supporter's
+  poses before the entitlement resolved, and on every lapse.
+- **The chassis colour is an ALLOWLIST key** (`CHASSIS_COLORS`), never a free colour
+  string on the wire, and it recolours only the FILL — alliance identity is the OUTLINE.
+- **`LobbyPlayer.supporter` is SERVER-AUTHORED** (set at join). `sanitizePlayer` is an
+  allowlist and `PlayerPatch` is a `Pick`, so a client cannot self-declare a paid badge.
+- ⚠️ **`LEGAL_OPERATOR`/`LEGAL_JURISDICTION` in `src/legalText.ts` are PLACEHOLDERS.**
+  Until filled, the Terms page shows a visible warning to every visitor. Fill them
+  before taking a payment; do not guess them from a timezone or an email domain.
+- Analytics (`src/analytics.ts`, `VITE_ANALYTICS=1`, Vercel Web Analytics — cookieless).
+  **Rule: no identifiers in any event payload** — counts and enums only.
 
 ---
 
@@ -775,9 +898,8 @@ Glicko-2 ranked, leaderboards, records, admin, version gate) are LIVE.
    tests (`gateZone`/`gateTapeSegments`, `tunnelStrip`, `allianceArea`, `pinnedAgainstWall`
    slop, the SAT `rrContacts` test) against the manual figures. Tighten with smoke cases.
 3. **Chain Reaction manual refinement** — replace the `APPROX` constants (ring-stand inset,
-   Lab-Area size/geometry, exact zone coordinates) with measured manual values.
-4. **CR presets** — `CHAIN_PRESETS` all still use the default front/front mounts; a card
-   showcasing a flank shooter or a front+back sweeper would be cheap and instructive.
-5. Deferred: WebTransport (needs TLS-deploy validation + an ACK-keyed delta), full-reload
+   Lab-Area size/geometry, exact zone coordinates) with measured manual values. This is the
+   last real gap in CR; everything else there is feature-complete.
+4. Deferred: WebTransport (needs TLS-deploy validation + an ACK-keyed delta), full-reload
    reconnect, obelisk AprilTag visuals, DECODE deferred fouls (G408 possession>3 / plowing),
    matchmaking polish, replay UI, leaderboard tiers.

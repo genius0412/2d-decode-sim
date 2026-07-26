@@ -15,6 +15,7 @@ import {
 import { gameServerConfigured } from '../net/env';
 import { periodLabel } from '../seasons';
 import { PeriodPicker } from './PeriodPicker';
+import { SupporterBadge, type StaffRole } from './SupporterBadge';
 import { PLACEMENT_GAMES } from '../config';
 import {
   CHAIN_MODE_LABELS,
@@ -62,10 +63,14 @@ const INTAKE_LABEL: Record<IntakeStyle, string> = {
 function DriverName({
   handle,
   username,
+  supporter,
+  role,
   onOpenProfile,
 }: {
   handle: string | null;
   username: string | null;
+  supporter?: boolean;
+  role?: StaffRole;
   onOpenProfile?: (username: string) => void;
 }) {
   const label = handle ?? (username ? `@${username}` : 'Player');
@@ -79,12 +84,22 @@ function DriverName({
         }}
         title={`View @${username}`}
       >
+        {/* the badge is a SIBLING of the name, not a child of it. `.lb-name-h`
+            carries the hover underline, so a badge inside it got underlined
+            along with the name — and a badge is decoration beside a name, not
+            part of it. */}
         <span className="lb-name-h">{label}</span>
+        <SupporterBadge supporter={supporter} role={role} />
         <span className="lb-at">@{username}</span>
       </button>
     );
   }
-  return <span className="lb-name-h">{label}</span>;
+  return (
+    <>
+      <span className="lb-name-h">{label}</span>
+      <SupporterBadge supporter={supporter} role={role} />
+    </>
+  );
 }
 
 /** one robot's spec stats (shared by solo + each half of a duo). Game-aware: a
@@ -184,7 +199,7 @@ function MyStanding({ me }: { me: EloStanding }) {
           <strong>{remaining}</strong> {remaining === 1 ? 'match' : 'matches'} until placement
         </span>
         <span className="lb-standing-sub">
-          {me.games}/{PLACEMENT_GAMES} placement matches played — finish them to join the leaderboard.
+          {me.games}/{PLACEMENT_GAMES} placement matches played - finish them to join the leaderboard.
         </span>
         <span className="lb-standing-bar" aria-hidden>
           <span style={{ width: `${Math.min(100, (me.games / PLACEMENT_GAMES) * 100)}%` }} />
@@ -385,6 +400,8 @@ export function Leaderboard({
                           <DriverName
                             handle={r.handle}
                             username={r.username}
+                            supporter={(r as { supporter?: boolean }).supporter}
+                            role={(r as { role?: StaffRole }).role}
                             onOpenProfile={onOpenProfile}
                           />
                           {isRecords && rec.partnerId && (
@@ -417,7 +434,7 @@ export function Leaderboard({
                               <span className="tw">{isOpen ? '▴' : '▾'}</span>
                             </button>
                           ) : (
-                            <span style={{ color: 'var(--ds-mut)' }}>—</span>
+                            <span style={{ color: 'var(--ds-mut)' }}>-</span>
                           )}
                         </td>
                       )}

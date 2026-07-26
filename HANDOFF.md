@@ -1,4 +1,4 @@
-# HANDOFF — 2026-07-25b (CR presets showcase the mounts · mounts are chain-only · assists ride the robot) — READ FIRST
+# HANDOFF — 2026-07-25b (CR presets showcase the mounts · mounts are chain-only · assists ride the robot) — alpha only
 
 Branch **alpha** (worktree `../2d-decode-sim-alpha` — see the isolation note below). Follows the
 mount work in the section below, which is still accurate. 554 smoke checks, build, contrast 167,
@@ -238,9 +238,493 @@ never a bare `flyctl deploy`).
 
 ---
 
+# HANDOFF — 2026-07-27b (owner + admin badges, staff perks) — READ FIRST
+
+## This session (latest) — staff roles
+
+Owner gets a green **★**, admins a blue **◆**, supporters keep the gold **♥**.
+Exactly ONE renders, in rank order owner > admin > supporter — staff are entitled to
+the supporter perks, so `supporter` comes back true for them and without the
+precedence every admin would wear two badges saying overlapping things.
+
+### The one idea worth remembering
+
+**The perk is a single SQL predicate.** `SUPPORTER_COL` in `server/db/repo.ts` is read
+by everything that asks "is this account entitled?" — the ad gate, the cosmetic chassis
+colours, the saved-start cap, `/api/user/entitlements`, and the badge itself. Folding
+`role in ('owner','admin')` into that one expression grants every perk at once, and
+makes it impossible for one surface to disagree with another. Do not add a second
+"is staff entitled" check anywhere; extend that predicate.
+
+### `profiles.role` is a PROJECTION, not a source of truth
+
+`ADMIN_USER_IDS` (and the new optional `OWNER_USER_ID`) stay authoritative.
+`syncStaffRoles(owner, admins)` runs once per boot after `migrate()` and writes the
+column. The column exists because the badge has to appear beside a name on a 100-row
+leaderboard — one SQL statement that already joins `profiles` — and answering that from
+a Node Set would mean post-processing every row set by hand at each call site, or
+leaking the admin list to clients.
+
+**The sweep is SYMMETRIC.** An id removed from the env loses the badge AND the free
+membership on the next boot. That is the case worth not breaking; `npm run dbtest`
+asserts it in both directions.
+
+`OWNER_USER_ID` defaults to the FIRST id in `ADMIN_USER_IDS` — a feature that silently
+does nothing until you set an env var you were never told about is worse than a
+documented default. Set it explicitly if the first entry is not the owner.
+
+### Two places deliberately keep the PAID predicate
+
+Not an oversight — the entitled-or-staff predicate would actively mislead there:
+
+- **Admin console** (`searchProfiles` → `AdminUserRow.supporter`): an admin deciding
+  whether to comp months must not see a colleague as a supporter with no expiry. Staff
+  are surfaced separately as `role`, and the row now reads "Admin · perks by role".
+- **Donate page**: staff get their own panel. The supporter panel would tell them their
+  membership runs "through -" and nag them to link a Ko-fi account that will never pay.
+  `getSupporter` returns `supporter: true` with `supporterUntil: null` for staff, which
+  is exactly the shape that needs the separate panel.
+
+### Colour, and a mistake worth not repeating
+
+The admin badge started on `--ds-lavender` and was changed after LOOKING at it: that
+pastel is `#c9c3f0` in light but `#34305c` in dark, so the badge was a dark blob on the
+`#272e35` dark panel — while `npm run contrast` passed, because the audit checks the
+GLYPH against its own fill, not the BADGE against the card behind it. All three fills
+are now saturated in both themes (gold / accent / blue-chip), and the three are told
+apart by SHAPE as well as hue, since 1.15em of colour is not something a colour-blind
+reader can rely on. Contrast is 175 checks.
+
+`--ds-blue-chip` is the alliance-blue colour, so an admin badge in a lobby roster sits
+near alliance colouring. Judged acceptable (a small disc beside a name is not a row
+tint, and staff are rare) but it is the one cosmetic call to revisit if it reads badly.
+
+### Files
+
+`server/db/migrations/0020_staff_roles.sql` (NEW) · `server/db/repo.ts` (`StaffRole`,
+`STAFF_PRED`, `syncStaffRoles`, `staffAmong`, `role` on `PublicProfile`/`UserStats`/
+`SupporterState`/board rows) · `server/index.ts` (`OWNER_ID`, boot sync, roster role) ·
+`src/net/protocol.ts` (`StaffRole`, `LobbyPlayer.role` — server-authored, like
+`supporter`: a self-declared "owner" beside a driver's name is an impersonation
+primitive) · `SupporterBadge.tsx` (all three variants, precedence) · `styles.css` ·
+`contrast.mjs` · `Leaderboard` / `Profile` / `Lobby` / `Donate` / `Admin`.
+
+### Testing
+
+**18 new `npm run dbtest` checks**: the projection, owner-also-listed-as-admin staying
+owner, the entitlement with no payment, `staffAmong`, the symmetric revoke (role AND
+entitlement), owner demotion + empty env, the check constraint rejecting an unknown
+role, and a paying owner keeping their real expiry. Everything green: build + tsc +
+`npm test` + `test:mm` (36) + `contrast` (175) + `dbtest`.
+
+### Not verified
+
+- **Which account actually got `role = 'owner'`** depends on the order of
+  `ADMIN_USER_IDS`, which is a Fly secret I cannot read. Verify after deploy by
+  checking which handle holds the role, and set `OWNER_USER_ID` if it picked wrong.
+- No live signed-in render of the badges — they were verified against the real
+  stylesheet in a browser with injected markup, in both themes, not on a real account.
+
+---
+
+# HANDOFF — 2026-07-25 (monetization: ship-readiness pass) — READ FIRST
+
+Branch `monetization`, in its own worktree at `../2d-decode-sim-monetization`
+(two other agents share this repo — do NOT work from the primary checkout).
+
+**All green:** `npm run build` · `npm test` (ALL PASS) · `npm run server:check` ·
+`npm run contrast` (171) · **`npm run dbtest` (NEW, 61 checks, ALL PASS)**.
+GUI boot-verified in Electron: Support / Privacy / Terms / Profile / Configure→Robot
+all render, no console errors.
+
+## What this session fixed, and why each one was blocking
+
+The branch previously had ads, legal pages and a Ko-fi tier, but the tier had three
+defects that made it unshippable and the ad layer had no compliance story.
+
+### 1. A monthly membership never renewed (the big one)
+
+`claimKofiPayment` granted a flat one month and was the ONLY path that wrote
+`supporter_until`. Ko-fi sends each cycle as a new webhook with a new
+`message_id`/`transaction_id` and nothing tied it back to the account that claimed
+cycle one — so a supporter silently lapsed and had to hunt down a new transaction id
+every 30 days.
+
+**Fix:** `profiles.kofi_email` (migration `0019_supporter_billing.sql`, UNIQUE partial
+index). The first manual claim records WHO paid; every later payment from that address
+is granted by the webhook itself (`recordKofiPayment` → `autoGrantedTo`). The unique
+index is also what stops one $3 subscription removing ads on unlimited accounts —
+a second account claiming from a linked address gets `email-taken`.
+
+### 2. Grants were amount-blind — a $1 tip bought the same month as the tier
+
+**Fix:** `server/kofi.ts` (NEW, pure, no DB, no import-time env — so it is testable).
+A SUBSCRIPTION payment is always exactly 1 month regardless of amount (it IS the
+billing cycle; reading the amount would double-count an annual tier). A ONE-OFF buys
+`floor(amount / price)` months, capped at `KOFI_MAX_MONTHS`. A currency we do not
+settle in grants NOTHING rather than guessing a rate. Months are priced ONCE at
+webhook time and stored on the row, so a later env change cannot retroactively
+re-price a payment. Below-tier payments stay UNCLAIMED (an admin can still comp them)
+and the claim form explains why with the real numbers.
+
+### 3. No revoke, no comp — `grantSupporter` had ZERO callers
+
+**Fix:** `grantSupporter`/`revokeSupporter`/`refundKofiPayment`/`listSupporterGrants`,
+four admin routes, and UI folded into Admin's existing player search (one search, two
+jobs). Every change to `supporter_until` writes a `supporter_grants` audit row with
+the acting admin's id and their typed reason — because two things can now move that
+column and "why does this account have a membership?" has to stay answerable.
+
+### 4. Three of four advertised perks did not exist — now all four are built
+
+- **Badge** (`SupporterBadge.tsx`) on leaderboards, public profiles, and the lobby
+  roster. SERVER-AUTHORED (`LobbyPlayer.supporter`, set at join): `sanitizePlayer` is
+  an allowlist and `PlayerPatch` is a `Pick`, so a client cannot self-declare it.
+  A gold FILL with fixed ink, not coloured text — it lands on three different grounds
+  and no single text colour clears AA on all of them.
+- **Extra saved starts** — `MAX_SAVED_STARTS_SUPPORTER` 6 vs 2. **The persist cap is
+  now the SUPPORTER ceiling in BOTH `coerceSettings` sites and in `saveStart`**; only
+  the editor's "＋ Save" button respects the entitlement. Sanitizing to 2 would delete
+  a paying supporter's poses on any load before the entitlement resolved, and again the
+  moment they lapsed. (A smoke check asserted the old cap; it is updated, not deleted.)
+- **Cosmetic chassis colours** — `CHASSIS_COLORS`, an ALLOWLIST of 7 keys (never a free
+  hex on the wire). Scoped to the chassis FILL: alliance identity lives entirely in the
+  OUTLINE, so a cosmetic can never make a red robot read as blue. Shown-but-locked to
+  non-supporters. `RobotPreview` deliberately keeps its themed panel fill — see the
+  comment there.
+- Ads-off already worked.
+
+### 5–7. Ads compliance
+
+- **CMP** — Google Funding Choices loads automatically whenever `VITE_ADSENSE_CLIENT`
+  is set, including the `googlefcPresent` iframe signal (inlined, CSP-safe) so the ad
+  tag holds the auction until consent is known. **Required, not optional:** without a
+  certified CMP Google serves EEA/UK/CH users no ads at all. Plus a footer
+  "Privacy & cookie settings" link (`showConsentSettings`) — consent you cannot
+  withdraw is not consent. The link hides itself if the message cannot be opened
+  (the normal case outside the EEA), rather than being a button that does nothing.
+- **Audience signals** — ads are **non-personalized by default** and tagged TFUAC.
+  DSIM simulates FTC (grades 7–12), the sim is fully playable SIGNED OUT, so most
+  impressions have no age signal at all. `VITE_ADSENSE_PERSONALIZED=1` is the
+  deliberate opt-in. TFCD (COPPA) is left OFF by default because the terms set a 13+
+  minimum and asserting child-directed would be inaccurate rather than cautious.
+- **ads.txt** — GENERATED at build time from `VITE_ADSENSE_CLIENT` (`vite.config.ts`),
+  so there is no stale hand-written pub- id to drift. No env ⇒ no file, which is the
+  correct answer for a site serving no ads. Vercel serves it because `rewrites` are
+  applied only after a filesystem miss (same reason `/version.json` works).
+
+### 8. The payment paths had never been RUN — now they are, against real Postgres
+
+`npm run dbtest` (`scripts/dbtest.ts`, **61 checks**) boots **PGlite** (Postgres 17 in
+WASM, a devDependency), runs the REAL migrations and the REAL repo code, and asserts:
+migrations apply to a virgin DB and re-run clean; webhook retry idempotency (one row
+survives, no second grant); claim races; the renewal path adds exactly one month and
+EXTENDS; the email-hijack rejection; below-tier; admin comp/revoke/refund + audit
+rows; badge reads incl. a LAPSED membership; and account deletion's cascade.
+
+`server/db/pool.ts` gained a structural `DbPool` interface + `setPoolForTests` so a
+test can substitute a pool. Production is unchanged (`pg.Pool` satisfies it
+structurally). **`npm run dbtest` is deliberately NOT wired into `npm test`** — a red
+`npm test` must keep meaning "physics broke".
+
+### 9. Legal + a REAL account-deletion path
+
+The privacy policy promised deletion by email; there was no code path at all. Now
+`deleteAccount` (repo) + `POST /api/user/delete` (typed `confirm: 'DELETE'`) + a
+Delete-account card on Profile. Handles the three things that do NOT cascade:
+`replays` (reached only via `records.replay_id` — deleted FIRST or they orphan),
+`elo_history` (no FK by design), and the payer email on `kofi_payments` (scrubbed;
+the payment row survives as a financial record). Both policy pages now say exactly
+what survives rather than over-promising.
+
+Also added: a real cookies section, the payment-data inventory, a **14-day
+no-questions refund**, and a governing-law clause.
+
+⚠️ **`LEGAL_OPERATOR` and `LEGAL_JURISDICTION` in `src/legalText.ts` are PLACEHOLDERS
+and MUST be filled before the first payment.** While they are, the Terms page renders
+a visible `role="alert"` warning to every visitor — an unfinished contract cannot
+quietly go live. Do not guess these from a timezone or an email domain.
+
+### 10–12. Placement, perf, analytics, a11y
+
+- **Placement inverted.** The in-game rails were the ONLY inventory and also the
+  riskiest (60 Hz canvas + AdSense's 150px game-clearance rule). Added `menu`
+  (shell pages, below the content) and `results` (post-match, AFTER the
+  REMATCH/MENU buttons so they stay first in tab order). Each unit has its own slot
+  id, so the SAFE units can ship while the game unit stays off. Home page gets no ad.
+- **Perf measurement** — `?perf=1` shows p50/p95 frame time + whether ads are on
+  (`GameController.getFrameStats`). Measure with the columns off, then on, and compare
+  p95 BEFORE ever setting `VITE_ADSENSE_SLOT_GAME` on a live deploy.
+- **Analytics** — `@vercel/analytics`, gated on `VITE_ANALYTICS=1`. Cookieless, no
+  consent banner needed. Funnel: `support_view` → `support_kofi_click` →
+  `support_claim_ok`/`_fail`, plus `ads_shown` and `account_deleted`. **Rule: no
+  identifiers in any payload** — counts and enums only, never a user id, username,
+  email, or transaction id.
+- **a11y** — the in-game ad `<aside>`s were `aria-hidden`, which hid the required
+  "Advertisement" label from exactly the users who cannot see the visual difference.
+  Now `aria-label="Advertisement"`.
+- Price is now STATED on-site, served from `/api/pricing` (same setting the grant
+  policy enforces, so the two cannot drift). Membership status + expiry + a
+  "won't renew" warning live on Profile. The desktop build gets an honest one-liner
+  that it shows no ads.
+
+## Files added
+
+`server/kofi.ts` · `server/db/migrations/0019_supporter_billing.sql` ·
+`scripts/dbtest.ts` · `src/analytics.ts` · `src/ui/SupporterBadge.tsx`
+
+## NEXT STEPS, in order
+
+1. **Fill `LEGAL_OPERATOR` + `LEGAL_JURISDICTION`.** Blocks taking money.
+2. **Merge-time follow-up:** `main` has since gained `public/robots.txt`,
+   `public/sitemap.xml`, `src/seo.ts` (commits `58f0d49`, `11bedd6`). Crawlability is
+   therefore COVERED and was deliberately not duplicated here — but after merging,
+   add `/privacy`, `/terms`, `/donate` to `sitemap.xml` and give them route meta in
+   `src/seo.ts`. Robots already allows `/ads.txt`.
+3. **Deploy client first** (ads dormant without `VITE_ADSENSE_CLIENT`; entitlements
+   404 degrade to "not a supporter"), so `/privacy` is live for the AdSense
+   application.
+4. **Deploy server** via `./scripts/fly-deploy.sh` — NEVER a bare `flyctl deploy`.
+   Migration `0019` is additive. Set `KOFI_VERIFICATION_TOKEN` (+ optionally
+   `KOFI_MONTHLY_PRICE`/`KOFI_CURRENCY`/`KOFI_MAX_MONTHS`) as Fly secrets and point
+   the Ko-fi webhook at `/api/kofi/webhook`.
+5. **Ko-fi setup before the first payment**: a PayPal **Business** account (a personal
+   one exposes your legal name on every receipt, and Ko-fi binds subscriptions to
+   whichever account was connected at signup). Skip Ko-fi Gold until membership
+   revenue clears ~$240/mo.
+6. **Apply to AdSense.** Then set `VITE_ADSENSE_CLIENT` + `VITE_ADSENSE_SLOT_MENU` /
+   `_RESULTS` first; hold `_GAME` until the `?perf=1` comparison is done.
+7. **Still untested live:** a real Ko-fi webhook round trip (the DB logic is proven by
+   `npm run dbtest`, but Ko-fi's actual payload field names for `tier_name` /
+   `is_subscription_payment` are from their docs, not from a captured request). Send
+   one test payment before announcing.
+
+## Gotchas found this session
+
+- **PGlite `query` is the extended protocol and refuses multi-statement SQL** — a
+  migration file is dozens of statements. `exec` is the simple protocol and takes the
+  whole script but cannot bind parameters. `scripts/dbtest.ts`'s adapter splits on
+  `params.length === 0`; `pg` blurs the two, and this is the only real difference the
+  adapter has to paper over.
+- **A JSX comment cannot open an `{cond && (…)}` expression** — `{cond && ({/*…*/}<el/>)}`
+  is a syntax error, not a style issue. Put the comment above the `{cond &&`.
+- **Float division could shave a month off an exact multiple** — `9.00 / 3.00` can land
+  at 2.9999999999999996. The epsilon in `monthsFor` is on the QUOTIENT and is 1e-9; it
+  is NOT a grace on the price (a $2.99 tip is still below a $3.00 tier, and the claim
+  message says so).
+- **`npm run shiftaudit` is still FLAKY and its exit code is still masked** (see the
+  2026-07-20 entry below) — not re-run this session.
+
+---
+
+# HANDOFF — 2026-07-27 ("Play a friend" finished: rated challenges) — READ FIRST
+
+## This session — the two "Soon" formats now work, and a real challenge lifecycle
+
+Also committed first, separately: the **Google AdSense verification tag** in `index.html`
+(`0a4937c`). It carries `data-dsim-adsense` so the monetization branch's runtime loader
+(`src/ads/adsense.ts`) dedupes against it instead of pulling adsbygoogle.js twice when that
+branch merges. Two things to know: it now loads at BOOT on every page, which is at odds with
+that module's deliberate lazy-load-for-frame-budget design; and it loads before React can push
+`requestNonPersonalizedAds`. Neither bites on main (no ad units, so the tag serves nothing),
+both matter the day monetization merges or Auto Ads is switched on in the dashboard.
+
+**The feature.** The format picker shipped 2026-07-22 with **1v1 Rated** and **2v2 Ranked**
+greyed out as "Soon", because rating is only ever applied to a matchmaker-STAGED room —
+`Room.ranked` comes from a `pending_matches` row and nothing else, so a room you join by code
+can never rate, whoever invited you. Both now work, THROUGH the matchmaker rather than around
+it.
+
+### The mechanism: a verified party token
+
+A challenge carries a token (the `room_invites.room` column, doing a second job). Both sides
+hand it to the matchmaker on `queue`, which pairs entries holding the same one:
+
+- **`rated1v1` — a CLOSED party.** The token IS the match: no stranger can be pulled in, the
+  challenger can't be spent on someone else, and the search radius is skipped entirely (they
+  already chose each other; there is nothing to widen toward). The compatibility bucket
+  (channel + build) still applies — a mixed-build match desyncs whoever asked for it.
+- **`ranked2v2` — a PREMADE.** Queues into the OPEN 2v2 pool and waits for two more like
+  anyone else; the only privilege is landing on one alliance.
+
+Pairing was rewritten to work on **units** (`groupUnits`) instead of individual entries, so a
+party is added all-or-nothing. `allianceOrder` makes parties contiguous and front-loaded so
+`assign`'s positional `i < half` split puts them together — and the 1v1 case needs no
+exception, because there the party IS the two opponents and half=1 splits them correctly.
+`partySize` (2) is load-bearing: the members enqueue seconds apart, and without a known target
+size the first arrival looks like a complete unit and gets swallowed by an open group.
+
+**The token is verified, never trusted** (`challengeParty` in repo.ts, called from
+`verifyParty` in index.ts). It resolves the token against the real challenge row and only
+answers for an account NAMED on it, so two clients can't agree on a string and stage
+themselves a leaderboard-moving match having never been friends — and a third client that
+guesses a live token still can't join the pair. A token that doesn't check out is REFUSED,
+never quietly downgraded to an open queue: matching someone against a stranger for rating
+when they asked to play one person is worse than telling them it failed.
+
+### Version gating (this one is not optional)
+
+Rated formats are hidden behind a new **`SERVER_CAPS`** advertisement on `/api/presence`
+(client reads it via the cached one-shot `serverCaps()`). One Fly app serves every client
+build, and an older server IGNORES the party fields rather than rejecting them — it would
+silently drop two friends into the open pool and match them against whoever was waiting. This
+is the first server→client capability; `CLIENT_CAPS` is the existing mirror image.
+
+### The lifecycle is chess.com's now
+
+- **Accept / Decline**, not Join / dismiss. Declining TELLS the sender: the row is marked
+  (`declined`) rather than deleted, the sender's client announces it once and then cancels the
+  row for real. Dismiss stays a silent clear.
+- **A sent challenge is visible to its sender** — `listFriends` gained a `snt` CTE and a
+  `sent: SentInvite[]` array; the panel shows "waiting · Rated 1v1" with Cancel. Previously a
+  sent challenge vanished into nothing.
+- **One live challenge per direction** — `inviteToRoom` deletes prior rows for the pair first.
+  Stacking is worse than untidy for a rated format: each row carries its own token, so the
+  recipient could accept a stale one and wait under a token the challenger has abandoned.
+
+### Files
+
+`server/db/migrations/0019_challenges.sql` (NEW, additive: `format`, `declined`, a
+`from_user_id` index) · `server/db/repo.ts` (`sent`/`SentInvite`, `declineRoomInvite`,
+`cancelRoomInvite`, `challengeParty`) · `server/api.ts` (`format` allowlist,
+`/invite/decline`, `/invite/cancel`) · `server/matchmaking.ts` (units, `partyReady`,
+`allianceOrder`, party-aware `queueSizes`/`broadcastStatus`) · `server/index.ts`
+(`verifyParty`, `SERVER_CAPS` on presence) · `src/net/protocol.ts` (`SERVER_CAPS`,
+`CHALLENGE_FORMATS`, `RATED_FORMATS`, party fields on `queue`) · `src/ui/challenge.ts` (NEW —
+`challengeOf` is the ONE place that decides lobby-vs-queue) · `ChallengePicker` (5 live tiles,
+caps-gated) · `Matchmaking` (challenge mode: auto-queue on mount, "Waiting for @x") ·
+`friendsContext` / `FriendsPanel` / `InviteFlyout` / `Lobby` / `App`.
+
+### Testing
+
+**`scripts/mmsmoke.ts` (NEW, `npm run test:mm`, 36 checks)** — deterministic, no DB, no
+sockets, using `Matchmaker`'s injected clock + `stage`. It exists because every failure mode
+in party pairing is SILENT (a split party, a challenge quietly matched against a stranger, a
+friend stranded because their partner was consumed) and the only other way to exercise it is
+two accounts on two machines. **It caught a real bug**: the first party member to arrive could
+be taken by an open group before their partner connected. Note `enqueue` matches synchronously
+but STAGES asynchronously — assertions must await a microtask flush or they always read empty.
+
+Migration 0019 + every new query verified against PRODUCTION with a real friend pair: both
+directions' reads, the sender/recipient scoping guards (a sender can't dismiss, a recipient
+can't cancel), decline→sender-sees-declined, and a stranger holding a guessed token getting
+null. Test rows rolled back, row count restored. build + tsc + `npm test` + `test:mm` +
+`contrast` (167) all green.
+
+### Not verified / open
+
+- **No live two-account run.** Same limitation as all the friends work — the pairing logic is
+  covered by mmsmoke, but the full send→accept→stage→play round trip on two real accounts
+  has not been driven.
+- **ELO farming is possible and deliberately unmitigated**, matching chess.com (which allows
+  rated friend games and polices them separately). Two accounts can now RELIABLY pair, where
+  before they could only hope to. Glicko-2 damps it — beating a much lower rating gains almost
+  nothing, and repeat opponents converge — but a determined pair could still pump one account
+  up the leaderboard. The cheap fix if it shows up: damp the rating delta for repeat opponents
+  inside a window, in `server/ranked.ts`.
+- **The admin restart notice is PER-MACHINE.** `broadcastAll` and `currentNotice` are
+  per-process, and `/api/presence` reads the local one, so one POST reaches only the machine
+  anycast happened to route it to. Notifying everyone means POSTing each machine with a
+  `fly-force-instance-id` header (that is how this session's notice went out). Worth folding
+  into the Admin UI.
+- A rated challenge accepted from the **Lobby** flyout leaves the lobby for the queue
+  (`onAcceptChallenge` threaded App→Lobby→InviteFlyout). Untested in a live lobby.
+
+---
+
+# HANDOFF — 2026-07-25 (desktop = thin shell over the live site + baked env) — READ FIRST
+
+## This session — downloaded app now (a) auto-updates content by loading the live site and (b) can actually play online
+
+Two fixes to the Electron desktop build, no sim/web-UI changes:
+
+1. **Thin-shell load model** (`electron/main.cjs`). `createWindow` no longer `loadFile`s
+   the bundled `dist` unconditionally. New `loadApp(win)`: a fast `siteReachable()` HEAD
+   probe of `https://www.playdsim.com/version.json` (2.5 s timeout, dead host fails in
+   ~11 ms) decides — **online → `loadURL(SITE)`** (the app is always the current Vercel
+   deploy, so game content updates with every web deploy, no re-download), **offline →
+   `loadLocal(win)`** (the bundled copy; the common case for a downloaded build). A
+   `loadURL().catch` (ignoring benign `ERR_ABORTED`) is the safety net → falls back to
+   local if a reachable-but-failing load happens. Added `setWindowOpenHandler` → external
+   browser for `target=_blank`/`window.open` (all the app's external links use `_blank`).
+   **Deliberately NO `will-navigate` guard** — Google `signIn.social` is a full-page
+   redirect to the provider and back; blocking it would break in-app auth.
+
+2. **Baked public env into the desktop bundle** (`vite.config.ts`). The Electron build gets
+   NO Vercel env injection, so the old bundled build shipped with `VITE_GAME_SERVERS`/
+   `VITE_NEON_AUTH_URL` ABSENT → `SERVERS=[]` → multiplayer hidden, auth off (the bug the
+   user hit: "downloaded apps can't play online"). Now, behind an `if (process.env.ELECTRON
+   === '1')` guard, vite sets those two vars (the EXACT public values already in the deployed
+   web bundle — extracted from the live JS; nothing secret) via `process.env.X ??= …` so an
+   explicit override still wins. **The web build (ELECTRON unset) is provably untouched** —
+   hard `if` gate; Vercel keeps supplying its own env. `.env.*` is gitignored so a committed
+   dotenv would never reach CI — hence baking in vite.config, the single source that covers
+   both CI (`release.yml` runs `npm run build` with `ELECTRON=1`) and local `npm run dist`.
+
+**Verified** (real Electron drive, temp drivers deleted): online load → URL
+`https://www.playdsim.com/decode`, `window.dsim` bridge present, real app renders. Offline
+fallback → `file://…/dist/index.html` renders, and its menu shows live **"online · 3 signed
+in"**, **525 PLAYERS / 8,396 GAMES PLAYED**, solo/duo/1v1/2v2 counts — i.e. the bundle now
+reaches the game server + auth. Bundle grep confirms all 5 regions + the neon-auth URL baked
+in. `ELECTRON=1 npm run build` green (tsc strict + vite). No new release cut yet — this ships
+in the next tagged desktop build; existing v0.1.2 web/proxy/update flow unchanged.
+
+**Follow-up (not done):** true auto-INSTALL (electron-updater) still needs code-signing
+(Apple $99/yr is the hard gate; Windows unsigned works with SmartScreen warnings; Linux
+AppImage free). The thin-shell model above makes CONTENT updates instant regardless, so a
+shell rebuild is only needed for Electron/native changes. In-app Google sign-in may still hit
+Google's `disallowed_useragent` block in the Electron webview (email/password unaffected) —
+untested in-app; the existing `isEmbeddedBrowser` guidance applies.
+
+---
+
+# HANDOFF — 2026-07-22 ("Play a friend" format picker) — READ FIRST
+
+## This session (latest) — the deferred "Play a friend" mode-picker (client-only)
+
+Built the "Play a friend" format picker the 2026-07-21 handoff deferred (its TODO +
+feasibility map is below, still accurate). **Client-only — rides entirely on existing
+pipes, NO server/DB/protocol change** (the deployed server already accepts
+`record`/`duo` room invites via `inviteToRoom`), so Vercel auto-deploys. `npm run build`
+green, `npm run contrast` 167 (unchanged — new CSS reuses audited token pairs), menu
+shell boot-verified in Electron (no render crash from the new provider child).
+
+**What it does:** clicking **Challenge** on a friend (panel row, profile, or toast source)
+now opens a modal FORMAT picker instead of instantly hosting a 1v1 versus room. Tiles:
+- **1v1 · Casual** and **2v2 · Team up** → a custom `versus` room (the 1v1-vs-2v2 split is
+  emergent — a versus room admits up to 4; you sort alliances/add drivers in the lobby).
+- **2v0 · Co-op record** → a `record`/`duo` co-op run.
+- **1v1 · Rated** and **2v2 · Ranked** → shown DISABLED ("Soon"): rating is only applied
+  to matchmaker-staged rooms and there's no premade/party concept yet (see feasibility map
+  below — these need server work, deliberately not faked).
+
+**How it's wired:**
+- `src/ui/ChallengePicker.tsx` (NEW) — the modal + `ChallengeFormat` type
+  (`'casual1v1' | 'casual2v2' | 'duorecord'`). Reuses `.ds-modal-backdrop`/`.ds-modal` +
+  `.ds-opt` tiles. Success navigates away (unmounts the modal); only a failed invite lands
+  back with an inline error + re-enabled tiles.
+- `src/ui/friendsContext.tsx` — `challenge` now takes `(username, format)` and maps
+  `duorecord`→`inviteToRoom(...,'record','duo')` else `versus`. New `openChallenge(username)`
+  opens the picker (provider owns `challengeTarget` state + renders `<ChallengePicker>` once,
+  so panel/profile/anywhere just call it). `onHostRoom` gained a `kind: RoomKind` arg.
+- `src/ui/App.tsx` — `hostForChallenge(code, game, kind)` routes `record`→`duorecord`
+  screen, else `lobby` (mirrors `onJoinInvite`'s recipient routing, already correct).
+- `src/ui/FriendsPanel.tsx` / `ProfileFriendActions.tsx` — Challenge buttons call
+  `friends.openChallenge(username)` (was `challenge`); `ChallengeButton` lost its busy state
+  (opening the modal is synchronous now).
+- `src/ui/shell.css` — `.ds-chal*` (modal width, tile list) + `.ds-opt:disabled` neutralised
+  hover + `.oz.soon` muted badge.
+
+**Recipient path was already complete** — a `record` invite's toast/panel "Join" routes to
+`duorecord` via the existing `onJoinInvite`. **Not verified:** live two-account
+send/receive/host for each format (needs live accounts — same limitation as all friends work).
+Left open (needs server work, per the feasibility map): 1v1 rated + 2v2 ranked-with-friend.
+
+---
+
 # HANDOFF — 2026-07-21c (Google sign-in in-app-browser guard)
 
-## This session (latest) — fix Google OAuth `disallowed_useragent` in in-app browsers (client-only)
+## This session — fix Google OAuth `disallowed_useragent` in in-app browsers (client-only)
 
 User hit Google's **`Error 403: disallowed_useragent`** ("Access blocked … Use secure
 browsers") on mobile but not desktop. Cause: opening the sim link from inside a social
@@ -300,11 +784,13 @@ server:check + `npm test` green.
 
 # HANDOFF — 2026-07-21 (friend system: challenge / rich presence / notifications / recently-played) — READ FIRST
 
-## TODO (deferred, not started) — "Play a friend" mode-picker menu
+## "Play a friend" mode-picker menu — BUILDABLE SLICE DONE (2026-07-22, see top of file)
 
-User wants a **"Play a friend"** flow where, when challenging a friend, you pick the FORMAT:
-1v1 unrated, 1v1 rated, 2v2 ranked (friend as your teammate), 2v0 duo record, etc. Deferred
-mid-session for something more pressing. Feasibility (mapped this session — see below):
+User wanted a **"Play a friend"** flow where, when challenging a friend, you pick the FORMAT:
+1v1 unrated, 1v1 rated, 2v2 ranked (friend as your teammate), 2v0 duo record, etc. **The
+buildable formats (1v1/2v2 casual + 2v0 duo record) SHIPPED 2026-07-22** (`ChallengePicker.tsx`;
+see the top-of-file handoff). **1v1 rated + 2v2 ranked-with-friend remain OPEN** (shown disabled
+"Soon" in the picker) — they need the server work the feasibility map below describes:
 - **1v1 unrated (custom), 2v2 unrated (friend as teammate), 2v0 duo record** — all buildable
   today with existing pipes. The current `FriendsCtx.challenge` already does 1v1-unrated; duo
   record just needs `inviteToRoom(..., 'record', 'duo')` + route to `duorecord`.
@@ -441,6 +927,89 @@ dropdown bug turns up later, it's still open — this session didn't find one to
 
 **Not committed.** `git status` is clean except the new/changed UI files listed above —
 nothing has been staged or committed this session.
+
+---
+# HANDOFF — 2026-07-20 (monetization: ads + privacy policy + Ko-fi supporter tier)
+
+## This session (latest) — MONETIZATION, on branch `monetization` (pushed, NOT merged)
+
+Build + smoke + contrast (167) + `server:check` all green. Two commits:
+`5fb0288` legal pages, `b556718` ads + supporter tier.
+
+### What shipped
+
+**Legal (`5fb0288`)** — `src/legalText.ts` (privacy policy + terms as template-literal
+strings), `src/ui/Legal.tsx`, routes `/privacy` + `/terms`, footer links. The policy was
+written against the REAL schema (`server/db/migrations/`) and the REAL localStorage keys,
+not from a template — if you add a table or a synced field, update it. Terms set a 13+
+minimum age. **A live privacy policy is a hard prerequisite for the AdSense application.**
+
+**Ads (`b556718`)** — `src/ads/adsense.ts` is the single gate. Ads are OFF unless
+`VITE_ADSENSE_CLIENT` is set, and are never shown in Electron (AdSense forbids app
+wrappers), on touch, or to supporters. `AdsProvider` fails CLOSED — ads stay off until the
+supporter check settles, so a paying supporter never sees a flash of them.
+
+Side columns flank the field in space the renderer already left empty: `camera.ts:59` fits
+with `min(w/spanW, usableH/spanH)` and DECODE's field is SQUARE, so on landscape desktop
+the HEIGHT term binds. **Measured: with both columns in, the field stays bit-identical at
+3.8547 px/in and the HUD still registers to the field, not the window.**
+
+Two non-obvious constraints, both encoded in `styles.css` comments:
+- AdSense requires **>=150px clearance** between an ad and a game. That is why the units
+  are 160px, not the better-earning 300px — only 160 leaves the gutter on a 1366/1440
+  laptop. Columns are 310px (160 + 150 gutter), hidden below 1280px wide.
+- `.game-root` had to STAY the positioning context (every HUD overlay is absolute against
+  it), so a new `.game-shell` flex row wraps it rather than re-parenting 140 lines.
+- `game.ts` gained a **ResizeObserver** on the canvas: the columns appear/disappear
+  without the window resizing (async entitlement, ad blockers) and the camera would
+  otherwise keep a stale fit and render the field stretched.
+
+**Supporter tier (`b556718`)** — `0018_supporter.sql`: `supporter_until` on `profiles`
+(an expiry INSTANT, so no nightly expiry job) plus a `kofi_payments` table. Grants EXTEND
+rather than overwrite, so an early renewal loses nothing. `GET /api/user/entitlements`,
+`POST /api/user/claim-kofi`, `POST /api/kofi/webhook`. Ko-fi page is
+**https://ko-fi.com/playdsim** (`LINKS.kofi` in `src/seasons.ts`).
+
+### Gotchas found this session
+
+- **`npm run shiftaudit` is FLAKY and its exit code is masked.** Three runs of the same
+  code gave 34 / 46 / 3 "problems" (check counts 1062/1054/1126). It reads rects 60ms
+  apart, so a slow frame is a false positive. Worse, `app.on('window-all-closed')` at
+  `scripts/shiftaudit.cjs:230` calls `process.exit(0)` and RACES the real
+  `process.exit(problems === 0 ? 0 : 1)` at :228 — so it reports exit 0 even when it
+  found problems. **Do not treat a green exit as a pass; read the summary line.** Worth
+  fixing (drop the window-all-closed handler, or set a flag before quitting).
+- `.ds-cta` is styled for `<button>`. On an `<a>` it stays inline and its 16px padding
+  overlaps the paragraph above. Fixed with an `a.ds-cta { display:inline-block }` rule.
+- `DSIM_OUT` for shiftaudit must be an EXISTING directory — the script appends to
+  `$DSIM_OUT/shiftaudit.log` without creating it, so a fresh path crashes the run.
+- `.game-ad` background must track `COLORS.backdrop`/`backdropDark` (`#f9faf7`/`#20262c`),
+  which are exactly the light/dark values of `--ds-bg`, or a seam shows at the column edge.
+
+### NEXT STEPS (in order)
+
+1. **Nothing earns until AdSense is approved.** Sequence: merge + deploy so `/privacy` is
+   live → apply to AdSense → wait days-to-weeks → set `VITE_ADSENSE_CLIENT` +
+   `VITE_ADSENSE_SLOT_GAME` on Vercel. The code is dormant until then, so it is safe to
+   merge now.
+2. **Ko-fi setup, before the first payment.** Connect a PayPal **Business** account: a
+   personal one exposes your legal name/email on every supporter's receipt, and Ko-fi
+   binds existing subscriptions to whichever account was connected at signup, so
+   switching later strands them. Skip Ko-fi Gold until membership revenue clears
+   ~$240/mo (0% vs 5% only beats ~$12/mo above that).
+3. Set `KOFI_VERIFICATION_TOKEN` as a Fly secret and point the Ko-fi webhook at
+   `https://dohun-sim-decode.fly.dev/api/kofi/webhook`.
+4. **Phase 4 perks NOT started**: supporter badge (`PublicProfile` in `repo.ts` +
+   `server/index.ts:739` for in-match labels), extra saved starts
+   (`MAX_SAVED_STARTS` is 2 at `config.ts:763`, baked into `coerceSettings` at
+   `settings.ts:110,225` — needs an effective-cap parameter), cosmetic robot colours.
+   Replay retention was deliberately deferred: retention today is per-season bulk purge
+   (`purgeSeasonReplays`), per-user TTL is a new concept with ongoing storage cost.
+5. **The DB paths are UNTESTED** — there is no local Postgres, so the webhook's
+   idempotency (`message_id` PK) and the claim race were verified by reading, not by
+   running. Test them against a real database before announcing the tier.
+
+---
 
 ---
 

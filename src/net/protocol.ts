@@ -83,6 +83,11 @@ export function localizeCommand(c: RobotCommand): RobotCommand {
 /** max drivers per room (2v2) */
 export const ROOM_CAPACITY = 4;
 
+/** who runs the service — the staff badge beside a name. Lives here rather than
+ * in the UI because it travels on the wire (`LobbyPlayer`, the leaderboard rows,
+ * the entitlements payload) and `src/net` must not depend on `src/ui`. */
+export type StaffRole = 'owner' | 'admin';
+
 /** what a room runs. 'versus' = the existing PvP match (ELO). 'record' =
  * opponent-free score-attack for the record boards; solo = 1 robot (1v0), duo =
  * 2 co-op robots on one alliance (2v0). A duo may mix drivetrains — a mixed pair
@@ -140,6 +145,25 @@ export interface LobbyPlayer {
   // neutralized placeholders so an opponent can't be counter-picked pre-match).
   slot?: number;
   hidden?: boolean;
+  /**
+   * active supporter membership — renders the badge beside this driver's name.
+   *
+   * ALSO server-authored, set once at join from the signed-in account.
+   * `sanitizePlayer` builds an allowlisted object and `PlayerPatch` is a `Pick`,
+   * so a client cannot put this on the wire itself — which matters, because the
+   * badge is the visible half of a paid tier and a self-declared one is worth
+   * nothing. Optional, so an older server that never sets it and an older client
+   * that ignores it both keep working against this build.
+   */
+  supporter?: boolean;
+  /**
+   * 'owner' | 'admin' — renders the staff badge instead of the supporter one.
+   *
+   * Server-authored on exactly the same terms as `supporter` above, and for a
+   * sharper version of the same reason: a self-declared "owner" badge beside a
+   * driver's name in a lobby is an impersonation primitive, not a cosmetic.
+   */
+  role?: StaffRole;
 }
 
 /** a driver's pre-match ranked intro data (ELO, keyed by the robot id the server
@@ -185,6 +209,50 @@ export type PlayerPatch = Partial<
  * protocol grows. */
 export const CLIENT_CAPS: string[] = ['strategy', 'startpose', 'game'];
 
+/**
+ * Capabilities the SERVER advertises, reported on `GET /api/presence`.
+ *
+ * The mirror image of `CLIENT_CAPS`, pointed the other way and for the same
+ * reason: one Fly app serves every client build, so a NEW client can find itself
+ * talking to a server that predates the feature it wants to offer. That is
+ * harmless for anything the server would simply ignore — but not for `party`. An
+ * older server ignores the party fields on `queue` and drops both friends into the
+ * open ranked pool as strangers, which silently produces the wrong thing: two
+ * people who asked to play each other get matched against whoever else is waiting.
+ *
+ * So the rated challenge formats stay hidden until the server says it can honour
+ * them. No `caps` in the response at all (an older deploy) ⇒ no capabilities.
+ */
+export const SERVER_CAPS: string[] = ['party'];
+
+/** the formats a "play a friend" challenge can be issued in. Shared so the API's
+ * allowlist, the matchmaker's gate, and the picker's tiles can't drift apart. */
+export const CHALLENGE_FORMATS = [
+  'casual1v1',
+  'casual2v2',
+  'rated1v1',
+  'ranked2v2',
+  'duorecord',
+] as const;
+export type ChallengeFormat = (typeof CHALLENGE_FORMATS)[number];
+
+/**
+ * The formats that resolve through the MATCHMAKER instead of through a joinable
+ * room code — which is exactly what makes them rated, since `Room.ranked` is only
+ * ever set from a staged `pending_matches` row (see server/room.ts).
+ *
+ * `partyOnly` is the difference between the two:
+ *  - `rated1v1` is a CLOSED pair. The token is the whole match; it never admits a
+ *    stranger and never waits on the search radius, because the two of them
+ *    already chose each other.
+ *  - `ranked2v2` is a PREMADE that queues into the OPEN 2v2 pool. It waits for two
+ *    more like anyone else; the only privilege is landing on one alliance.
+ */
+export const RATED_FORMATS: Record<string, { mode: QueueMode; partyOnly: boolean }> = {
+  rated1v1: { mode: '1v1', partyOnly: true },
+  ranked2v2: { mode: '2v2', partyOnly: false },
+};
+
 export type ClientMsg =
   // `authToken` is the Neon Auth JWT; the server verifies it to attribute the
   // run to a real user (absent/invalid ⇒ anonymous). See server/auth.ts.
@@ -210,7 +278,18 @@ export type ClientMsg =
   | { t: 'update'; patch: PlayerPatch }
   | { t: 'start' } // host only: build + broadcast the match world
   | { t: 'restart' } // host only: re-author the match with a fresh seed
-  | { t: 'input'; tick: number; q: QCommand }
+  // `ack` (optional) is the newest authoritative snapshot `serverTick` this client
+  // has APPLIED as its ball baseline — a client→server snapshot ACK piggybacked on
+  // the per-tick input (drivers send input every tick, so it costs nothing). The
+  // server uses it to know which baseline the client actually holds. Over the
+  // reliable WebSocket the happy-path delta is still against the last broadcast;
+  // the ack only drives a self-healing keyframe when a client's CONFIRMED baseline
+  // falls too far behind (a wedged/way-behind client resyncs instead of drifting).
+  // It is ALSO the seam the future unreliable (QUIC-datagram) lane needs: there a
+  // dropped snapshot means last-sent != last-received, so the delta must be keyed
+  // to this ack. Absent from older clients ⇒ the server simply never force-resyncs
+  // them (unchanged behaviour).
+  | { t: 'input'; tick: number; q: QCommand; ack?: number }
   // ranked matchmaking: enter/leave a queue. Sent over a `?mm=1` connection that
   // fly-replay pins to the designated matchmaker machine. `homeRegion` is the region
   // Fly routed this client to (from the /health x-region header) and `accessMs` is
@@ -237,6 +316,18 @@ export type ClientMsg =
        * "same code" invariant (channel is only a coarse, manual proxy). Absent ⇒ the
        * server falls back to channel-only separation. */
       build?: string;
+      /** "Play a friend": the challenge token both sides of a rated challenge hand
+       * the matchmaker. Entries sharing one are matched as a UNIT — never split
+       * across alliances, never matched apart. The server does NOT take this on
+       * trust: it resolves the token against the actual challenge row and refuses
+       * one the caller isn't a party to (`challengeParty`). */
+      party?: string;
+      /** this party is the WHOLE match — pair its members with each other and no
+       * one else (`rated1v1`). Ignored unless `party` is set and verified. */
+      partyOnly?: boolean;
+      /** the challenge format the token was issued in, so the server can verify
+       * the token against a challenge of that exact format */
+      partyFormat?: string;
     }
   // widen my search radius NOW (impatient player), instead of waiting for the timed
   // auto-widen. Idempotent; ignored once the ceiling is already at max.
@@ -447,6 +538,48 @@ function backfillRobot(r: RobotState): RobotState {
         ? r.moduleTargets.map((a) => finiteOr(a, 0))
         : [0, 0, 0, 0],
   };
+}
+
+/**
+ * Ball-delta codec — ONE tested encode/decode pair used by both ends so the
+ * server's encoder and the client's decoder can never silently drift apart.
+ *
+ * `encodeBallDelta` diffs the live balls against a `baseline` (id → the ball the
+ * client is known to hold); `applyBallDelta` reconstructs the array from a running
+ * baseline the client mutates in place. The `order` (every id, every frame) is what
+ * keeps it deterministic — array position drives collision/scoring iteration and
+ * `worldHash`, so it must match the server exactly. A `null` baseline (or one that
+ * has been reset) yields a full KEYFRAME (`upd` == every ball).
+ *
+ * The reconstruction is baseline-agnostic in a way the unreliable lane relies on:
+ * any ball NOT in `upd` is, by construction, byte-identical between the baseline
+ * and now, so a client holding ANY intermediate state for it rebuilds correctly —
+ * which is why a delta keyed to an older ACKed baseline survives a dropped frame.
+ */
+export function encodeBallDelta(
+  baseline: Map<number, Artifact> | null,
+  balls: Artifact[],
+): BallDelta {
+  const order = balls.map((b) => b.id);
+  if (!baseline) return { order, upd: balls.slice() };
+  const upd: Artifact[] = [];
+  for (const b of balls) {
+    const prev = baseline.get(b.id);
+    if (prev === undefined || JSON.stringify(prev) !== JSON.stringify(b)) upd.push(b);
+  }
+  return { order, upd };
+}
+
+/** Reconstruct the ball array from a running `baseline` (MUTATED in place: patched
+ * with `upd`, then pruned to exactly `order`). Byte-identical to the server's
+ * `world.balls`. Returns the rebuilt array in the authoritative order. */
+export function applyBallDelta(baseline: Map<number, Artifact>, delta: BallDelta): Artifact[] {
+  for (const b of delta.upd) baseline.set(b.id, b);
+  const keep = new Set(delta.order);
+  for (const id of baseline.keys()) if (!keep.has(id)) baseline.delete(id);
+  return delta.order
+    .map((id) => baseline.get(id))
+    .filter((b): b is Artifact => b !== undefined);
 }
 
 /** rebuild a full World from a slim world + reconstructed ball array, re-injecting

@@ -5,6 +5,10 @@ import { ServerNoticeBanner } from './ui/ServerNoticeBanner';
 import { NoticePoller } from './ui/NoticePoller';
 import { initPhysics } from './sim/physicsEngine';
 import { initTheme } from './theme';
+import { AdsProvider } from './ads/AdsProvider';
+import { loadCmp } from './ads/adsense';
+import { Analytics } from '@vercel/analytics/react';
+import { analyticsEnabled } from './analytics';
 // Self-hosted (not a CDN <link>): the Electron build runs from file:// with
 // vite `base: './'`, so fingerprinted woff2 must be bundled to resolve offline.
 // Variable cuts, because shell.css asks for weights off the 100 grid (750).
@@ -18,15 +22,28 @@ import './ui/shell.css';
 // prefers-color-scheme listener so an OS switch is picked up live.
 initTheme();
 
+// Consent BEFORE the auction. index.html hardcodes the adsbygoogle tag so the
+// AdSense crawler finds it on every route, which means the tag is already parsing
+// by the time React mounts - a CMP that waited for the first ad slot would arrive
+// far too late to gate anything. No-ops without a publisher id, and under Electron.
+loadCmp();
+
 // Init the Rapier physics WASM (shared src/sim) before the first sim step. It
 // inlines its WASM as base64 (no separate asset), so this is a fast local
 // decode — block the initial render on it so no GameController steps early.
 initPhysics().then(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <App />
+      {/* Wraps everything because the game screen renders OUTSIDE the app shell
+          (App returns it early), and that is where the ad columns live. */}
+      <AdsProvider>
+        <App />
+      </AdsProvider>
       <ServerNoticeBanner />
       <NoticePoller />
+      {/* Cookieless page views. Gated on VITE_ANALYTICS so a self-hosted or
+          Electron build never beacons a host it does not run on. */}
+      {analyticsEnabled() && <Analytics />}
     </StrictMode>,
   );
 });

@@ -12,6 +12,26 @@ const BUILD_ID = (() => {
   }
 })();
 
+// The desktop (Electron) build gets NO Vercel env injection, so without this the
+// bundled offline-fallback bundle would ship with multiplayer + accounts disabled
+// (`VITE_GAME_SERVERS`/`VITE_NEON_AUTH_URL` absent → SERVERS=[] → the Multiplayer
+// menu is hidden). Bake the PUBLIC client config into the Electron build only
+// (`ELECTRON=1`). These EXACT values already ship in the deployed web bundle —
+// nothing secret (server DB/auth secrets are never VITE_-prefixed). The web build
+// (ELECTRON unset) is untouched: it still reads these from Vercel's env, and an
+// explicitly-set env var wins here too (Vite: process.env VITE_* overrides), so a
+// local `ELECTRON=1` build can still point at localhost by exporting its own.
+if (process.env.ELECTRON === '1') {
+  process.env.VITE_GAME_SERVERS ??=
+    '[{"id":"iad","label":"US East","region":"iad","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"sjc","label":"US West","region":"sjc","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"lhr","label":"Europe","region":"lhr","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"syd","label":"Oceania","region":"syd","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"nrt","label":"Asia","region":"nrt","url":"wss://dohun-sim-decode.fly.dev"}]';
+  process.env.VITE_NEON_AUTH_URL ??=
+    'https://ep-lingering-pine-ahq640vd.neonauth.c-3.us-east-1.aws.neon.tech/neondb/auth';
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -22,6 +42,95 @@ export default defineConfig({
           type: 'asset',
           fileName: 'version.json',
           source: JSON.stringify({ build: BUILD_ID }),
+        });
+      },
+    },
+    // ads.txt — the IAB authorized-sellers file. AdSense flags an account with no
+    // ads.txt as "earnings at risk" and some demand simply will not bid without
+    // it, so it is not optional once ads are live.
+    //
+    // GENERATED rather than committed to `public/`, for two reasons: it must
+    // contain the real publisher id (which lives in env, not in git), and a stale
+    // hand-written copy pointing at the wrong pub- id is worse than none at all.
+    // With VITE_ADSENSE_CLIENT unset no file is emitted — a 404 is the correct
+    // answer for a site that serves no ads.
+    // AdSense SITE VERIFICATION.
+    //
+    // The review is a chicken-and-egg step that the ad code alone does not cover:
+    // Google issues the publisher id at SIGNUP, then needs to confirm you own the
+    // site before it will approve (or serve) anything. But `<AdSlot>` only loads
+    // the ad tag once a UNIT has a slot id, and you cannot create ad units until
+    // you are approved — so with `VITE_ADSENSE_CLIENT` set and no slots, nothing
+    // whatsoever appears on the page and there is nothing for Google to find.
+    //
+    // This meta tag is Google's own no-ads verification method, and it is the
+    // right one here: it proves ownership without pulling a third-party script
+    // into a 60 Hz game for zero user benefit. Together with the generated
+    // ads.txt below, it satisfies verification twice over.
+    {
+      name: 'adsense-verification-meta',
+      transformIndexHtml(html: string) {
+        // ---- 1. the desktop build must never carry the ad tag ---------------
+        // index.html hardcodes the adsbygoogle script so AdSense's crawler finds
+        // it on every route of this client-rendered SPA. That is right for the
+        // WEB, and a policy violation for the DESKTOP app: AdSense does not
+        // permit serving inside a non-browser application wrapper, and the
+        // Electron build ships this exact file. `src/ads/adsense.ts` already
+        // refuses to render units under Electron, but a hardcoded <script> tag
+        // sails straight past every runtime gate, so it is stripped at build.
+        let out = html;
+        if (process.env.ELECTRON === '1') {
+          out = out.replace(
+            /\s*<script[^>]*data-dsim-adsense[^>]*>\s*<\/script>/g,
+            '\n    <!-- AdSense tag stripped: not permitted in an app wrapper -->',
+          );
+        }
+
+        // ---- 2. the publisher id must not disagree with itself --------------
+        // The id now lives in TWO places: the hardcoded tag above, and
+        // VITE_ADSENSE_CLIENT (which drives ads.txt, the runtime loader, and the
+        // CMP). If they ever drift, ads.txt would authorize a different seller
+        // than the tag requesting the ads - which is precisely the mismatch
+        // ads.txt exists to detect, and it silently kills fill rate. Fail the
+        // build instead of shipping it.
+        const client = (process.env.VITE_ADSENSE_CLIENT ?? '').trim();
+        const inTag = html.match(/adsbygoogle\.js\?client=(ca-pub-\d+)/)?.[1];
+        if (client && inTag && client !== inTag) {
+          throw new Error(
+            `AdSense publisher id mismatch: VITE_ADSENSE_CLIENT is "${client}" but ` +
+              `index.html hardcodes "${inTag}". They must match.`,
+          );
+        }
+
+        // The meta tag is a SECOND verification signal, and free: Google accepts
+        // the script snippet, this tag, or ads.txt. Belt and braces while the
+        // review is pending; harmless afterwards.
+        const tags =
+          /^ca-pub-\d{10,}$/.test(client) && process.env.ELECTRON !== '1'
+            ? [
+                {
+                  tag: 'meta',
+                  attrs: { name: 'google-adsense-account', content: client },
+                  injectTo: 'head' as const,
+                },
+              ]
+            : [];
+        return { html: out, tags };
+      },
+    },
+    {
+      name: 'emit-ads-txt',
+      generateBundle() {
+        const client = (process.env.VITE_ADSENSE_CLIENT ?? '').trim();
+        // the file wants the bare publisher id; the tag wants the `ca-` prefix
+        const pub = client.replace(/^ca-/, '');
+        if (!/^pub-\d{10,}$/.test(pub)) return;
+        this.emitFile({
+          type: 'asset',
+          fileName: 'ads.txt',
+          // f08c47fec0942fa0 is Google's fixed certification-authority id — the
+          // same literal for every AdSense publisher, not a per-account secret.
+          source: `google.com, ${pub}, DIRECT, f08c47fec0942fa0\n`,
         });
       },
     },

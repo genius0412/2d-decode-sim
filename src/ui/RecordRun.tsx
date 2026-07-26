@@ -158,8 +158,7 @@ export function RecordRun({
     `${kind} · ${status}`,
     <>
       <p className="ds-hint">
-        Your run records on the server for the leaderboard. First run after a quiet spell waits a
-        few seconds for the server to wake.
+        First run after a quiet spell waits a few seconds for the server to wake.
       </p>
       <div className="ds-actions">
         <button className="ds-cta ghost" onClick={onCancel}>

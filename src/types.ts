@@ -69,6 +69,10 @@ export interface RobotSpec {
    * (which the UI fills from here), so the spawn seam and the wire are unchanged.
    * Optional so old saves omit it (defaulted in `coerceSpec`). */
   assists?: AssistConfig;
+  /** SUPPORTER COSMETIC: a `CHASSIS_COLORS` key for the chassis fill. Purely
+   * decorative — the alliance is carried by the OUTLINE, never this — and
+   * optional, so every existing spec, save, and replay stays valid. */
+  chassisColor?: string;
   /** Chain Reaction: how many Particles the robot's hopper holds (1–30 slider).
    * Optional so DECODE specs/old saves omit it (defaulted in coerceSpec). */
   ballStorage?: number;

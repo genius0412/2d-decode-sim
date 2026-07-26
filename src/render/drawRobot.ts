@@ -13,13 +13,16 @@ export function drawRobot(
   const hl = r.spec.length / 2;
   const hw = r.spec.width / 2;
   const color = r.alliance === 'blue' ? C.COLORS.blue : C.COLORS.red;
+  // The alliance lives in `color` (the OUTLINE). `fill` is the supporter cosmetic
+  // and can never change which alliance a robot reads as.
+  const fill = C.chassisFill(r.spec.chassisColor);
 
   ctx.save();
   ctx.translate(r.pos.x, r.pos.y);
   ctx.rotate(r.heading);
 
   // chassis
-  ctx.fillStyle = '#1f242c';
+  ctx.fillStyle = fill;
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, 1.6);
@@ -60,7 +63,7 @@ export function drawRobot(
     ctx.fill();
     // two right triangles (right angle at the chassis front-outer corner; the
     // hypotenuse from the front corner in to the throat is the slope)
-    ctx.fillStyle = '#1f242c';
+    ctx.fillStyle = fill;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
     for (const s of [1, -1] as const) {

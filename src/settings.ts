@@ -8,7 +8,7 @@ import {
   defaultAssistsFor,
   PLAYER_ASSISTS,
 } from './sim/spawn';
-import { START_POSES, MAX_SAVED_ROBOTS, MAX_SAVED_AUTOS, MAX_SAVED_STARTS } from './config';
+import { START_POSES, MAX_SAVED_ROBOTS, MAX_SAVED_AUTOS, MAX_SAVED_STARTS_SUPPORTER } from './config';
 import { CHAIN_START_POSES } from './games/chain/config';
 import type { StartSel, StartPose } from './types';
 
@@ -106,7 +106,10 @@ function coerceLoadout(raw: unknown, game: GameId): GameLoadout {
   const r = raw as Record<string, unknown>;
   const saves = (x: unknown): StartPose[] =>
     Array.isArray(x)
-      ? x.map((p) => coerceStartPose(p)).filter((p): p is StartPose => p !== null).slice(0, MAX_SAVED_STARTS)
+      // capped at the SUPPORTER ceiling, never the free one — see the comment on
+      // MAX_SAVED_STARTS_SUPPORTER. Slicing to 2 here would delete a paying
+      // supporter's saved poses on any load before the entitlement resolves.
+      ? x.map((p) => coerceStartPose(p)).filter((p): p is StartPose => p !== null).slice(0, MAX_SAVED_STARTS_SUPPORTER)
       : [];
   const sp = typeof r.savedStartPoses === 'object' && r.savedStartPoses !== null
     ? (r.savedStartPoses as Record<string, unknown>)
@@ -217,7 +220,7 @@ export function coerceSettings(raw: unknown): GameSettings {
     // saved start-position library: coerce each pose, cap per category
     const coerceSaves = (raw: unknown): StartPose[] =>
       Array.isArray(raw)
-        ? raw.map((p) => coerceStartPose(p)).filter((p): p is StartPose => p !== null).slice(0, MAX_SAVED_STARTS)
+        ? raw.map((p) => coerceStartPose(p)).filter((p): p is StartPose => p !== null).slice(0, MAX_SAVED_STARTS_SUPPORTER)
         : [];
     if (typeof s.savedStartPoses === 'object' && s.savedStartPoses !== null) {
       const sp = s.savedStartPoses as Record<string, unknown>;

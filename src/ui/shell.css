@@ -349,6 +349,14 @@
   font-size: 13px;
   padding: 4px 10px;
 }
+/* the Ping button is a bare `.ds-seg` (intrinsic ~25px tall) sitting next to the
+   32px listbox trigger — match the trigger's height and center its label so the
+   two read as ONE control instead of a short button floating beside a taller one. */
+.ds-server-menu .ds-seg {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+}
 .ds-server-menu .ds-seg:disabled {
   opacity: 0.6;
   cursor: default;
@@ -1072,6 +1080,16 @@
 .ds-home-loadout b {
   color: var(--ds-ink);
 }
+/* the landing line — the one sentence saying what this is (APP_BLURB), between
+   the title and the game switcher. It is here for the person (or crawler) who
+   arrived with no idea what DSIM is; keep it to a sentence. */
+.ds-home-lead {
+  margin: -8px 0 20px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ds-mut);
+  text-wrap: pretty;
+}
 
 /* ---- section sub-nav (Configure) + tab strip (Records) ---------------- */
 .ds-subnav-layout {
@@ -1226,6 +1244,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Static status label (e.g. "✓ Friends") meant to sit INLINE with real `.ds-btn`
+   actions (Share/Unfriend/Block) — DESIGN.md reserves pill corners for chips and
+   high-action buttons; a status badge is neither, and a pill dropped into a row of
+   rectangular action buttons reads as a mismatched shape, not a deliberate accent.
+   Same footprint as `.ds-btn.small` so it sits flush with its row-mates. */
+.ds-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: var(--ds-round-sm);
+  border: 1px solid color-mix(in srgb, var(--ds-ok) 55%, var(--ds-line));
+  color: var(--ds-ok-ink);
+  background: var(--ds-panel);
+}
+
 /* KEYCAP: a solid cap sitting 3px above its own darker edge. Hover sinks 1px,
    press sinks the full 3px so the cap meets the edge — a physical click. The
    cap moves with `transform`, never `margin`, so nothing around it reflows. */
@@ -1293,6 +1329,7 @@
   border-radius: var(--ds-round-sm);
 }
 .ds-btn:focus-visible,
+.ds-back:focus-visible,
 .ds-tile:focus-visible,
 .ds-seg:focus-visible,
 .ds-mark:focus-visible,
@@ -1315,6 +1352,11 @@
   text-transform: uppercase;
   color: var(--ds-accent);
   margin: 0 0 10px;
+}
+/* A brand that owns its capitalization opts out of the uppercasing above:
+   goBILDA is not GOBILDA. Only ever wraps a trademark, never label text. */
+.ds-brand {
+  text-transform: none;
 }
 .ds-h1 {
   font-size: clamp(26px, 4vw, 38px);
@@ -1410,10 +1452,16 @@
   background: var(--ds-tile);
   color: var(--ds-ink);
   padding: 16px 18px;
-  min-height: 94px;
+  /* Top-aligned, NOT space-between: with the descriptions removed a tile is just a
+     kicker + title (+ an optional disabled-reason). space-between bottom-pinned the
+     title, so a tile with a reason (taller) and one without landed their titles at
+     DIFFERENT heights across a row. Stacking from the top keeps every title on the
+     same line; `min-height` matches the natural kicker+title height so a label-only
+     tile has no dead space, while a row-mate carrying a reason simply grows taller. */
+  min-height: 78px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   cursor: pointer;
   font: inherit;
   /* Level-1 card: flat fill, 1px stroke, hard offset block toward the bottom-right
@@ -1511,14 +1559,6 @@
 
 /* the aside in a panel header (e.g. Match setup's "Ranked and Custom set …").
    The rest of the old <details>/<summary> collapse rules went with the panel. */
-.ds-collapse-hint {
-  font-family: var(--ds-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ds-mut);
-}
-
 /* ---- panels + tables ------------------------------------------------- */
 .ds-panel {
   border: 1px solid var(--ds-line);
@@ -1526,6 +1566,12 @@
   background: var(--ds-panel);
   overflow: hidden;
   box-shadow: var(--ds-block);
+}
+/* opt-out of the corner-clipping `overflow: hidden` for panels that host a
+   popup (the region-picker listbox) which must extend past the card edge.
+   Safe here because nothing inside reaches the rounded corners with a fill. */
+.ds-panel.ds-panel-open {
+  overflow: visible;
 }
 .ds-panel-h {
   display: flex;
@@ -2392,19 +2438,37 @@ tr.lb-detail td {
   gap: 14px;
   flex-wrap: wrap;
 }
+/* Same "pressable keycap" language as `.ds-btn` — a bare bordered rect with no
+   shadow read as an unstyled AI-card leftover next to every other control in the
+   system, which all carry `--ds-edge-soft` and a press motion. Standalone uses
+   (WatchLive) get breathing room from the copy below via `margin-bottom`; the
+   `.ds-head` flex row (Lobby/Matchmaking/RecordRun/MatchStrategy) cancels it since
+   `.ds-console-in`'s own `gap` already spaces the whole header block. */
 .ds-back {
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   padding: 7px 13px;
+  margin-bottom: 24px;
   border-radius: var(--ds-round);
   border: 1px solid var(--ds-line);
   background: var(--ds-panel);
   color: var(--ds-ink);
   cursor: pointer;
+  box-shadow: var(--ds-edge-soft);
+  transition: transform 0.06s ease, box-shadow 0.06s ease, border-color 0.15s;
 }
 .ds-back:hover {
   border-color: color-mix(in srgb, var(--ds-accent) 50%, var(--ds-line));
+  transform: translateY(1px);
+  box-shadow: 0 2px 0 var(--ds-line);
+}
+.ds-back:active {
+  transform: translateY(3px);
+  box-shadow: 0 0 0 var(--ds-line);
+}
+.ds-head .ds-back {
+  margin-bottom: 0;
 }
 .ds-head .ds-mark {
   font-size: 17px;
@@ -2522,6 +2586,21 @@ tr.lb-detail td {
   font: inherit;
   box-shadow: var(--ds-block-sm);
   transition: transform 0.08s ease, border-color 0.14s, background 0.14s, box-shadow 0.08s ease;
+}
+/* Label-only option toggles (those whose helper `.od` line was removed) would
+   otherwise sit ~20px shorter than their descriptive siblings, leaving a visible
+   dip where a two-line row meets a one-line one. Give them a floor height and
+   center the label so mixed sections keep an even rhythm. `.mini` cards (e.g. the
+   drivetrain grid) are deliberately compact and keep their natural chip height. */
+.ds-opt:not(.mini):not(:has(.od)) {
+  min-height: 62px;
+  justify-content: center;
+}
+/* Drivetrain grid (the only `.ds-opts.four`): now label-only chips — center the
+   label so the four read as an even segmented row instead of top-left labels. */
+.ds-opts.four .ds-opt {
+  justify-content: center;
+  text-align: center;
 }
 /* count badge next to a section title, e.g. "Saved robots 2/3" */
 .ds-count {
@@ -2733,6 +2812,32 @@ tr.lb-detail td {
   border: 1px solid color-mix(in srgb, var(--ds-accent) 40%, var(--ds-line));
   border-radius: 999px;
   padding: 2px 9px;
+}
+/* "Play a friend" format picker — a column of .ds-opt tiles in a modal. */
+.ds-chal {
+  max-width: 420px;
+}
+.ds-chal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+  /* five formats is taller than a laptop modal on a short viewport — scroll the
+     list rather than the page, so the title and any error stay put */
+  max-height: min(58vh, 460px);
+  overflow-y: auto;
+}
+/* a format tile the server can't run: flat, non-interactive — neutralise the
+   .ds-opt hover/active lift so it never looks pressable. */
+.ds-opt:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.ds-opt:disabled:hover {
+  transform: none;
+  background: var(--ds-panel);
+  border-color: var(--ds-line-strong);
+  box-shadow: var(--ds-block-sm);
 }
 .ds-opt.mini {
   padding: 10px 13px;
@@ -3022,8 +3127,12 @@ input[type='range']:focus-visible {
   /* `.ds-body` is a COLUMN here, so the friends panel would otherwise land at
      the very bottom, below the content. Order it directly under the rail and
      let it span the width, matching how the rail itself degrades — an expanded
-     panel is a strip above the content rather than a side column. */
-  .ds-rail {
+     panel is a strip above the content rather than a side column.
+     SCOPE the order to `.ds-body`'s children: on home (`showRail={false}`) the
+     content is `.ds-main.ds-main-home`, a DIRECT flex child of `.ds-app`, and an
+     unscoped `.ds-main { order: 3 }` pushed it BELOW the order:0 footer — the
+     footer rendered at the very top of the page on phones. */
+  .ds-body > .ds-rail {
     order: 1;
   }
   .ds-friends {
@@ -3039,7 +3148,7 @@ input[type='range']:focus-visible {
     align-items: flex-start;
     padding: 8px 12px;
   }
-  .ds-main {
+  .ds-body > .ds-main {
     order: 3;
   }
 
@@ -3086,6 +3195,13 @@ input[type='range']:focus-visible {
   cursor: pointer;
   box-shadow: var(--ds-edge);
   transition: transform 0.06s ease, box-shadow 0.06s ease, background 0.15s, border-color 0.15s;
+}
+/* Works on an <a> as well as a <button>. An anchor is inline by default, so its
+   16px padding collapses into the neighbouring lines and the pill overlaps the
+   paragraph above it — inline-block gives it its own box. */
+a.ds-cta {
+  display: inline-block;
+  text-decoration: none;
 }
 .ds-cta:hover {
   background: color-mix(in srgb, var(--ds-accent) 88%, white);
@@ -3396,6 +3512,12 @@ button.ds-key:active {
   font-size: 12px;
   color: var(--ds-mut);
 }
+/* the featured "Download for <your OS>" button inside the platform hero card —
+   shown only when we recognise the visitor's OS */
+.ds-dl-get {
+  align-self: flex-start;
+  margin-top: 8px;
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -3579,12 +3701,6 @@ button.ds-key:active {
 .ds-startpos-presets .ds-opt.mini {
   flex: 1 1 auto;
 }
-.ds-startpos-hint {
-  margin: 0;
-  font: 400 11px/1.4 inherit;
-  color: var(--ds-mut);
-}
-
 /* ---- 2v2 start-role swap bar ---------------------------------------------- */
 .ds-roleswap {
   display: flex;
@@ -3616,3 +3732,49 @@ button.ds-key:active {
   font: 500 12px/1.3 inherit;
   color: var(--ds-mut);
 }
+
+/* ---- support / donate page --------------------------------------------- */
+/* Perk list inside a panel. Uses --ds-ink-dim like other body copy; the marker
+   is the accent so the list reads as benefits rather than prose. */
+.ds-perks {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--ds-ink-dim);
+  font-size: 14px;
+}
+.ds-perks li {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.ds-perks li::before {
+  content: '✓';
+  color: var(--ds-accent);
+  font-weight: 800;
+  flex: none;
+}
+
+/* Claim row: the transaction-ID field plus its button. Wraps rather than
+   squashing the input on narrow viewports. */
+.ds-claim-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.ds-claim-row .ds-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* Claim result. --ds-ok-ink / --ds-red-ink rather than the raw fills: both are
+   the text-safe siblings, and this is status text on a panel. */
+.ds-claim-msg {
+  margin-top: 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.ds-claim-msg.ok { color: var(--ds-ok-ink); }
+.ds-claim-msg.err { color: var(--ds-red-ink); }

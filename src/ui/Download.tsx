@@ -1,5 +1,5 @@
-import { DESKTOP_BUILDS, releasesUrl, appVersion, detectOS, OS_LABEL, type DesktopBuild } from '../download';
-import { APP_NAME, LINKS } from '../seasons';
+import { DESKTOP_BUILDS, releasesUrl, appVersion, detectOS, isMobile, OS_LABEL, type DesktopBuild } from '../download';
+import { APP_NAME } from '../seasons';
 
 /**
  * Download page — where users get the Electron desktop build of the sim (Windows
@@ -25,11 +25,34 @@ export function Download() {
     </a>
   );
 
+  const mobile = isMobile();
+  // when we recognise the visitor's desktop OS, feature its PRIMARY build (the
+  // first DESKTOP_BUILDS entry for that OS — Windows Installer / mac dmg / Linux
+  // AppImage) as a one-click card at the top. `builds` still lists everything below.
+  const featured = os && !mobile ? DESKTOP_BUILDS.find((b) => b.os === os) ?? null : null;
+  const osName = featured ? featured.label.split(' · ')[0] : '';
+
   return (
     <>
-      <p className="ds-eyebrow">{APP_NAME} · Desktop</p>
-      <h1 className="ds-h1">Download for desktop</h1>
-      <p className="ds-sub">The full offline sim in a native window. Windows, macOS, and Linux.</p>
+      <p className="ds-eyebrow">{APP_NAME} · {mobile ? 'On mobile' : 'Desktop'}</p>
+      <h1 className="ds-h1">{mobile ? 'Play on your phone' : 'Download for desktop'}</h1>
+      {mobile ? (
+        <div className="ds-panel" style={{ marginBottom: 18 }}>
+          <div className="ds-panel-h">
+            <span className="ds-panel-title">Runs in your browser</span>
+          </div>
+          <div style={{ padding: 16 }}>
+            <p className="ds-hint" style={{ margin: 0 }}>
+              No download needed - DSIM plays right here in your mobile browser. For a full-screen,
+              app-like experience, add it to your home screen: open your browser’s <b>Share</b> menu
+              and tap <b>Add to Home Screen</b>. The desktop builds below are for Windows, macOS, and
+              Linux.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <p className="ds-sub">The full offline sim in a native window.</p>
+      )}
 
       {/* `.ds-dl` owns the gaps: these cards cast hard offset shadows, and headings are
           the only elements in the design system that carry their own bottom margin. */}
@@ -45,6 +68,11 @@ export function Download() {
             <span>Installer or portable</span>
             <span>{version ? version : 'latest release'}</span>
           </div>
+          {featured && (
+            <a className="ds-btn primary ds-dl-get" href={featured.url} download>
+              Download for {osName} ↓
+            </a>
+          )}
         </div>
 
         <div className="ds-opts two">{builds.map(card)}</div>
@@ -52,18 +80,6 @@ export function Download() {
         <a className="ds-btn ghost" href={releasesUrl()} target="_blank" rel="noreferrer">
           All releases →
         </a>
-
-        <div className="ds-panelbox">
-          <div className="ds-panel-title">Build it yourself</div>
-          <p className="ds-hint" style={{ marginTop: -4 }}>
-            Clone the{' '}
-            <a href={LINKS.repo} target="_blank" rel="noreferrer" style={{ color: 'var(--ds-accent)' }}>
-              repository
-            </a>{' '}
-            and run <code style={{ fontFamily: 'var(--ds-font-mono)' }}>npm run dist</code>. Artifacts
-            land in <code style={{ fontFamily: 'var(--ds-font-mono)' }}>release/</code>.
-          </p>
-        </div>
       </div>
     </>
   );
