@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RoomConfig } from '../net/protocol';
+import type { RoomInvite } from '../net/api';
 import { useFriends } from './useFriends';
+import { challengeLine, challengeOf } from './challenge';
 import { PeopleGlyph } from './FriendsPanel';
 
 /**
@@ -18,12 +20,16 @@ export function InviteFlyout({
   signedIn,
   room,
   onJoinRoom,
+  onAcceptChallenge,
 }: {
   signedIn: boolean;
   room?: { code: string; config: RoomConfig };
   /** Join clicked on an incoming invite — calls the SAME join(roomCode) the
    * manual code-entry path uses, so this can never diverge from it. */
   onJoinRoom: (code: string) => void;
+  /** accept a RATED challenge, which has no room to join: it leaves this lobby and
+   * queues under the challenge token instead. */
+  onAcceptChallenge?: (inv: RoomInvite) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -79,26 +85,49 @@ export function InviteFlyout({
             <>
               {invites.length > 0 && (
                 <div className="fr-section">
-                  <h3 className="fr-sec-h">Invites</h3>
-                  {invites.map((inv) => (
-                    <div className="fr-row" key={inv.id}>
-                      <span className="fr-who static">
-                        <span className="fr-name">{inv.from.handle}</span>
-                        <span className="fr-sub">invited you to a room</span>
-                      </span>
-                      <span className="fr-actions">
-                        <button className="ds-btn small primary" onClick={() => join(inv.room, inv.id)}>
-                          Join
-                        </button>
-                        <button
-                          className="ds-btn small ghost"
-                          onClick={() => void friends.dismissInvite(inv.id)}
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    </div>
-                  ))}
+                  <h3 className="fr-sec-h">Challenges</h3>
+                  {invites.map((inv) => {
+                    // a RATED challenge has no room to join — accepting it means
+                    // leaving this lobby for the ranked queue, which only the app
+                    // shell can do
+                    const rated = !!challengeOf(inv, '');
+                    return (
+                      <div className="fr-row" key={inv.id}>
+                        <span className="fr-who static">
+                          <span className="fr-name">{inv.from.handle}</span>
+                          <span className="fr-sub">{challengeLine(inv.format)}</span>
+                        </span>
+                        <span className="fr-actions">
+                          <button
+                            className="ds-btn small primary"
+                            disabled={rated && !onAcceptChallenge}
+                            onClick={() => {
+                              if (rated) {
+                                setOpen(false);
+                                // deliberately NOT dismissed: the server verifies
+                                // the party token against this very row on every
+                                // `queue`, including the re-queue a transport
+                                // reconnect sends. Deleting it here would fail the
+                                // challenge the moment the socket blipped. It ages
+                                // out on the read TTL instead.
+                                onAcceptChallenge?.(inv);
+                              } else {
+                                join(inv.room, inv.id);
+                              }
+                            }}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            className="ds-btn small ghost"
+                            onClick={() => void friends.declineInvite(inv.id)}
+                          >
+                            Decline
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -135,7 +164,7 @@ export function InviteFlyout({
                 </div>
               )}
 
-              {invites.length === 0 && !room && <p className="fr-empty">No pending invites.</p>}
+              {invites.length === 0 && !room && <p className="fr-empty">No pending challenges.</p>}
             </>
           )}
         </div>

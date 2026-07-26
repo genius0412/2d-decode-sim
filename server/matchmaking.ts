@@ -70,6 +70,30 @@ export interface QueueEntry {
    * enforced authoritatively here. Absent (old client that predates this) ⇒ falls
    * back to channel-only separation. */
   build?: string;
+  /**
+   * "Play a friend": the verified challenge token this entry queued under. Entries
+   * sharing one form a UNIT — the matchmaker adds them to a group all-or-nothing
+   * and never splits them across alliances.
+   *
+   * VERIFIED, not claimed: `server/index.ts` resolves the token against the actual
+   * challenge row before it reaches here, so an entry carrying one is known to be
+   * a party to it. Two people who never challenged each other cannot hand each
+   * other a string and stage themselves a rated match.
+   */
+  party?: string;
+  /**
+   * How many entries this party is waiting to be (2 for a friend challenge).
+   *
+   * Load-bearing, not bookkeeping. The two members enqueue SECONDS apart — one
+   * accepts, the other is already waiting — and without a known target size the
+   * matchmaker sees the first arrival as a complete unit of one and can hand them
+   * to an open group before their partner ever connects. The friend then arrives
+   * to a challenge whose other half is already in someone else's match.
+   */
+  partySize?: number;
+  /** this party is the WHOLE match: pair it with itself and nobody else, and skip
+   * the search radius (they chose each other; there is nothing to widen toward) */
+  partyOnly?: boolean;
   /** set by enqueue (this.now()); drives the widening ceiling */
   enqueuedAt: number;
   /** extra manual widen steps from `expandSearch` */
@@ -181,29 +205,54 @@ export class Matchmaker {
   }
 
   /**
-   * FIFO-anchored greedy pairing: for the oldest waiting entry, add later entries
-   * that keep the group hostable under EVERY member's current radius, until the
-   * bucket is full. Returns the group + its fair host region, or null.
+   * FIFO-anchored greedy pairing over UNITS: for the oldest waiting unit, add later
+   * units that keep the group hostable under EVERY member's current radius, until
+   * the bucket is full. Returns the group + its fair host region, or null.
+   *
+   * A unit is normally one player. A "play a friend" party is one unit of two, and
+   * pairing at unit granularity is what makes that work: a party is added
+   * all-or-nothing, so it can never be half-matched into a group with no room left
+   * for its other member.
    */
   private findMatch(mode: QueueMode): { group: QueueEntry[]; hostRegion: string } | null {
     const need = QUEUE_NEED[mode];
-    const q = this.queues[mode];
+    const units = this.units(mode);
     const now = this.now();
-    for (let i = 0; i < q.length; i++) {
-      const group = [q[i]];
-      for (let j = 0; j < q.length && group.length < need; j++) {
+    for (let i = 0; i < units.length; i++) {
+      const anchor = units[i];
+      if (anchor.length > need) continue; // malformed party — never stage it
+      if (!partyReady(anchor)) continue; // still waiting on its other member
+      const group = [...anchor];
+      if (anchor.some((e) => e.partyOnly)) {
+        // a CLOSED party (rated 1v1): it is the whole match or it waits. No
+        // strangers, and no radius gate — two people who challenged each other
+        // have already decided they'll play across whatever distance separates
+        // them. The compatibility bucket still applies: same channel + build or no
+        // match, because a mixed-build match desyncs no matter who asked for it.
+        if (group.length !== need) continue;
+        if (group.some((e) => bucketKey(e) !== bucketKey(anchor[0]))) continue;
+        return { group, hostRegion: bestHost(group.map(toPing)).hostRegion };
+      }
+      for (let j = 0; j < units.length && group.length < need; j++) {
         if (j === i) continue;
+        const cand = units[j];
+        // a closed party never joins someone else's group
+        if (cand.some((e) => e.partyOnly)) continue;
+        // and a half-arrived party is not available to be taken
+        if (!partyReady(cand)) continue;
+        // all-or-nothing: a party that doesn't fit in the remaining slots is skipped
+        if (group.length + cand.length > need) continue;
         // never pair across compatibility buckets (channel + build) — different
         // src/sim (alpha vs stable) OR different builds run different code, so a
         // shared authoritative match would desync both clients
-        if (bucketKey(q[j]) !== bucketKey(q[i])) continue;
+        if (bucketKey(cand[0]) !== bucketKey(anchor[0])) continue;
         // never put the same account in a group twice (backstop for the userId
         // dedup above) — a self-pair produces a frozen "ghost" robot
-        if (q[j].userId && group.some((g) => g.userId === q[j].userId)) continue;
-        const trial = [...group, q[j]];
+        if (cand.some((c) => c.userId && group.some((g) => g.userId === c.userId))) continue;
+        const trial = [...group, ...cand];
         const { spread } = bestHost(trial.map(toPing));
         const ceiling = Math.min(...trial.map((e) => this.ceilingOf(e, now)));
-        if (spread <= ceiling) group.push(q[j]);
+        if (spread <= ceiling) group.push(...cand);
       }
       if (group.length === need) {
         const { hostRegion } = bestHost(group.map(toPing));
@@ -211,6 +260,15 @@ export class Matchmaker {
       }
     }
     return null;
+  }
+
+  /**
+   * Group a queue into matchable units, preserving FIFO: a party takes the queue
+   * position of its FIRST member, so waiting together never jumps the line and
+   * never loses your place either.
+   */
+  private units(mode: QueueMode): QueueEntry[][] {
+    return groupUnits(this.queues[mode]);
   }
 
   /** current overall ELO for a driver's intro card (best-effort; null on DB-off /
@@ -233,7 +291,8 @@ export class Matchmaker {
   }
 
   /** stage the roster for the host region + tell each client to reconnect there */
-  private async assign(mode: QueueMode, group: QueueEntry[], hostRegion: string): Promise<void> {
+  private async assign(mode: QueueMode, rawGroup: QueueEntry[], hostRegion: string): Promise<void> {
+    const group = allianceOrder(rawGroup);
     const half = group.length / 2;
     const seed = (this.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
     const code = `${hostRegion}-${mode}${roomSeq++}${rand6()}`;
@@ -263,7 +322,8 @@ export class Matchmaker {
    * the SAME staged-roster path (`applyPending`) as production so the pre-match
    * STRATEGY window runs in dev too — dev clients may be anonymous, so synthesize a
    * stable per-connection id for the userId→slot mapping. */
-  private localStart(mode: QueueMode, group: QueueEntry[]): void {
+  private localStart(mode: QueueMode, rawGroup: QueueEntry[]): void {
+    const group = allianceOrder(rawGroup);
     const code = `mm-${mode}-${roomSeq++}`;
     const room = new Room(code, () => this.rooms.delete(room), { kind: 'versus', game: group[0].game }, persistMatch);
     this.rooms.add(room);
@@ -297,9 +357,12 @@ export class Matchmaker {
     room.applyPending({ code, hostRegion: '', mode, seed, roster, ranked: true });
   }
 
-  /** live queue depth per bucket, for the public presence endpoint */
+  /** live queue depth per bucket, for the public presence endpoint. CLOSED parties
+   * are excluded: they can never pair with anyone reading this number, so counting
+   * them would advertise a pool that isn't there. */
   queueSizes(): Record<QueueMode, number> {
-    return { '1v1': this.queues['1v1'].length, '2v2': this.queues['2v2'].length };
+    const open = (m: QueueMode): number => this.queues[m].reduce((n, e) => n + (e.partyOnly ? 0 : 1), 0);
+    return { '1v1': open('1v1'), '2v2': open('2v2') };
   }
 
   private broadcastStatus(mode: QueueMode): void {
@@ -307,14 +370,78 @@ export class Matchmaker {
     // bucket-scoped, so a mixed count would falsely read "enough players" and never
     // match (a lone alpha queuer must not be told a pool of stable/older builds is ready)
     for (const e of this.queues[mode]) {
-      const key = bucketKey(e);
-      const size = this.queues[mode].reduce((n, x) => n + (bucketKey(x) === key ? 1 : 0), 0);
+      // a closed party isn't waiting on the pool, it's waiting on one person — so
+      // count only its own members. Otherwise a friend challenge would read "6/2"
+      // off a busy open queue it can never be matched from.
+      const size = e.partyOnly
+        ? this.queues[mode].reduce((n, x) => n + (x.party === e.party ? 1 : 0), 0)
+        : this.queues[mode].reduce((n, x) => n + (!x.partyOnly && bucketKey(x) === bucketKey(e) ? 1 : 0), 0);
       e.send({ t: 'queued', mode, size, need: QUEUE_NEED[mode] });
     }
   }
 }
 
 const toPing = (e: QueueEntry): PingInfo => ({ homeRegion: e.homeRegion, accessMs: e.accessMs });
+
+/**
+ * Split a queue into matchable UNITS: each "play a friend" party is one unit,
+ * everyone else is a unit of one. A party takes the queue position of its first
+ * member, so the whole thing keeps that member's place in line.
+ *
+ * Exported for the matchmaker test script — this and `allianceOrder` are the two
+ * pieces of party logic that a live two-account test would otherwise be the only
+ * way to exercise.
+ */
+/**
+ * Is this unit matchable yet? A solo always is; a party only once every member it
+ * is waiting for has actually connected.
+ *
+ * The two members of a challenge enqueue seconds apart, and treating the first
+ * arrival as a complete unit lets an open group swallow them — their friend then
+ * accepts into a challenge whose other half is already playing someone else.
+ */
+export function partyReady(unit: QueueEntry[]): boolean {
+  const want = unit[0]?.partySize ?? 0;
+  return !unit[0]?.party || unit.length >= want;
+}
+
+export function groupUnits(q: QueueEntry[]): QueueEntry[][] {
+  const byParty = new Map<string, QueueEntry[]>();
+  const out: QueueEntry[][] = [];
+  for (const e of q) {
+    if (!e.party) {
+      out.push([e]);
+      continue;
+    }
+    const unit = byParty.get(e.party);
+    if (unit) unit.push(e);
+    else {
+      const fresh = [e];
+      byParty.set(e.party, fresh);
+      out.push(fresh);
+    }
+  }
+  return out;
+}
+
+/**
+ * Order a matched group so `assign`'s index split (`i < half` ⇒ red) puts each
+ * party on ONE alliance.
+ *
+ * The split is positional, so all this has to do is make parties contiguous and
+ * front-loaded — a stable sort by descending unit size does it: a 2v2 with one
+ * party becomes [P, P, S, S], red = the party.
+ *
+ * The 1v1 case looks like it should be the exception and isn't. A `rated1v1`
+ * party of two lands at indices 0 and 1 with half = 1, so it splits ACROSS the
+ * alliances — which is exactly right, because in that format the party is the two
+ * opponents, not two teammates. Same rule, both meanings.
+ */
+export function allianceOrder(group: QueueEntry[]): QueueEntry[] {
+  const units = groupUnits(group);
+  if (units.length === group.length) return group; // no parties — leave FIFO alone
+  return units.sort((a, b) => b.length - a.length).flat();
+}
 
 /** matchmaking compatibility bucket: two entries may only be paired when this key
  * matches — same release channel AND same client build. Absent build ⇒ '' (old

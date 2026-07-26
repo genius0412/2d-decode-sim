@@ -196,6 +196,50 @@ export type PlayerPatch = Partial<
  * protocol grows. */
 export const CLIENT_CAPS: string[] = ['strategy', 'startpose', 'game'];
 
+/**
+ * Capabilities the SERVER advertises, reported on `GET /api/presence`.
+ *
+ * The mirror image of `CLIENT_CAPS`, pointed the other way and for the same
+ * reason: one Fly app serves every client build, so a NEW client can find itself
+ * talking to a server that predates the feature it wants to offer. That is
+ * harmless for anything the server would simply ignore — but not for `party`. An
+ * older server ignores the party fields on `queue` and drops both friends into the
+ * open ranked pool as strangers, which silently produces the wrong thing: two
+ * people who asked to play each other get matched against whoever else is waiting.
+ *
+ * So the rated challenge formats stay hidden until the server says it can honour
+ * them. No `caps` in the response at all (an older deploy) ⇒ no capabilities.
+ */
+export const SERVER_CAPS: string[] = ['party'];
+
+/** the formats a "play a friend" challenge can be issued in. Shared so the API's
+ * allowlist, the matchmaker's gate, and the picker's tiles can't drift apart. */
+export const CHALLENGE_FORMATS = [
+  'casual1v1',
+  'casual2v2',
+  'rated1v1',
+  'ranked2v2',
+  'duorecord',
+] as const;
+export type ChallengeFormat = (typeof CHALLENGE_FORMATS)[number];
+
+/**
+ * The formats that resolve through the MATCHMAKER instead of through a joinable
+ * room code — which is exactly what makes them rated, since `Room.ranked` is only
+ * ever set from a staged `pending_matches` row (see server/room.ts).
+ *
+ * `partyOnly` is the difference between the two:
+ *  - `rated1v1` is a CLOSED pair. The token is the whole match; it never admits a
+ *    stranger and never waits on the search radius, because the two of them
+ *    already chose each other.
+ *  - `ranked2v2` is a PREMADE that queues into the OPEN 2v2 pool. It waits for two
+ *    more like anyone else; the only privilege is landing on one alliance.
+ */
+export const RATED_FORMATS: Record<string, { mode: QueueMode; partyOnly: boolean }> = {
+  rated1v1: { mode: '1v1', partyOnly: true },
+  ranked2v2: { mode: '2v2', partyOnly: false },
+};
+
 export type ClientMsg =
   // `authToken` is the Neon Auth JWT; the server verifies it to attribute the
   // run to a real user (absent/invalid ⇒ anonymous). See server/auth.ts.
@@ -259,6 +303,18 @@ export type ClientMsg =
        * "same code" invariant (channel is only a coarse, manual proxy). Absent ⇒ the
        * server falls back to channel-only separation. */
       build?: string;
+      /** "Play a friend": the challenge token both sides of a rated challenge hand
+       * the matchmaker. Entries sharing one are matched as a UNIT — never split
+       * across alliances, never matched apart. The server does NOT take this on
+       * trust: it resolves the token against the actual challenge row and refuses
+       * one the caller isn't a party to (`challengeParty`). */
+      party?: string;
+      /** this party is the WHOLE match — pair its members with each other and no
+       * one else (`rated1v1`). Ignored unless `party` is set and verified. */
+      partyOnly?: boolean;
+      /** the challenge format the token was issued in, so the server can verify
+       * the token against a challenge of that exact format */
+      partyFormat?: string;
     }
   // widen my search radius NOW (impatient player), instead of waiting for the timed
   // auto-widen. Idempotent; ignored once the ceiling is already at max.

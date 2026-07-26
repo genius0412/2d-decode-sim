@@ -188,6 +188,121 @@ quietly go live. Do not guess these from a timezone or an email domain.
 
 ---
 
+# HANDOFF — 2026-07-27 ("Play a friend" finished: rated challenges) — READ FIRST
+
+## This session — the two "Soon" formats now work, and a real challenge lifecycle
+
+Also committed first, separately: the **Google AdSense verification tag** in `index.html`
+(`0a4937c`). It carries `data-dsim-adsense` so the monetization branch's runtime loader
+(`src/ads/adsense.ts`) dedupes against it instead of pulling adsbygoogle.js twice when that
+branch merges. Two things to know: it now loads at BOOT on every page, which is at odds with
+that module's deliberate lazy-load-for-frame-budget design; and it loads before React can push
+`requestNonPersonalizedAds`. Neither bites on main (no ad units, so the tag serves nothing),
+both matter the day monetization merges or Auto Ads is switched on in the dashboard.
+
+**The feature.** The format picker shipped 2026-07-22 with **1v1 Rated** and **2v2 Ranked**
+greyed out as "Soon", because rating is only ever applied to a matchmaker-STAGED room —
+`Room.ranked` comes from a `pending_matches` row and nothing else, so a room you join by code
+can never rate, whoever invited you. Both now work, THROUGH the matchmaker rather than around
+it.
+
+### The mechanism: a verified party token
+
+A challenge carries a token (the `room_invites.room` column, doing a second job). Both sides
+hand it to the matchmaker on `queue`, which pairs entries holding the same one:
+
+- **`rated1v1` — a CLOSED party.** The token IS the match: no stranger can be pulled in, the
+  challenger can't be spent on someone else, and the search radius is skipped entirely (they
+  already chose each other; there is nothing to widen toward). The compatibility bucket
+  (channel + build) still applies — a mixed-build match desyncs whoever asked for it.
+- **`ranked2v2` — a PREMADE.** Queues into the OPEN 2v2 pool and waits for two more like
+  anyone else; the only privilege is landing on one alliance.
+
+Pairing was rewritten to work on **units** (`groupUnits`) instead of individual entries, so a
+party is added all-or-nothing. `allianceOrder` makes parties contiguous and front-loaded so
+`assign`'s positional `i < half` split puts them together — and the 1v1 case needs no
+exception, because there the party IS the two opponents and half=1 splits them correctly.
+`partySize` (2) is load-bearing: the members enqueue seconds apart, and without a known target
+size the first arrival looks like a complete unit and gets swallowed by an open group.
+
+**The token is verified, never trusted** (`challengeParty` in repo.ts, called from
+`verifyParty` in index.ts). It resolves the token against the real challenge row and only
+answers for an account NAMED on it, so two clients can't agree on a string and stage
+themselves a leaderboard-moving match having never been friends — and a third client that
+guesses a live token still can't join the pair. A token that doesn't check out is REFUSED,
+never quietly downgraded to an open queue: matching someone against a stranger for rating
+when they asked to play one person is worse than telling them it failed.
+
+### Version gating (this one is not optional)
+
+Rated formats are hidden behind a new **`SERVER_CAPS`** advertisement on `/api/presence`
+(client reads it via the cached one-shot `serverCaps()`). One Fly app serves every client
+build, and an older server IGNORES the party fields rather than rejecting them — it would
+silently drop two friends into the open pool and match them against whoever was waiting. This
+is the first server→client capability; `CLIENT_CAPS` is the existing mirror image.
+
+### The lifecycle is chess.com's now
+
+- **Accept / Decline**, not Join / dismiss. Declining TELLS the sender: the row is marked
+  (`declined`) rather than deleted, the sender's client announces it once and then cancels the
+  row for real. Dismiss stays a silent clear.
+- **A sent challenge is visible to its sender** — `listFriends` gained a `snt` CTE and a
+  `sent: SentInvite[]` array; the panel shows "waiting · Rated 1v1" with Cancel. Previously a
+  sent challenge vanished into nothing.
+- **One live challenge per direction** — `inviteToRoom` deletes prior rows for the pair first.
+  Stacking is worse than untidy for a rated format: each row carries its own token, so the
+  recipient could accept a stale one and wait under a token the challenger has abandoned.
+
+### Files
+
+`server/db/migrations/0019_challenges.sql` (NEW, additive: `format`, `declined`, a
+`from_user_id` index) · `server/db/repo.ts` (`sent`/`SentInvite`, `declineRoomInvite`,
+`cancelRoomInvite`, `challengeParty`) · `server/api.ts` (`format` allowlist,
+`/invite/decline`, `/invite/cancel`) · `server/matchmaking.ts` (units, `partyReady`,
+`allianceOrder`, party-aware `queueSizes`/`broadcastStatus`) · `server/index.ts`
+(`verifyParty`, `SERVER_CAPS` on presence) · `src/net/protocol.ts` (`SERVER_CAPS`,
+`CHALLENGE_FORMATS`, `RATED_FORMATS`, party fields on `queue`) · `src/ui/challenge.ts` (NEW —
+`challengeOf` is the ONE place that decides lobby-vs-queue) · `ChallengePicker` (5 live tiles,
+caps-gated) · `Matchmaking` (challenge mode: auto-queue on mount, "Waiting for @x") ·
+`friendsContext` / `FriendsPanel` / `InviteFlyout` / `Lobby` / `App`.
+
+### Testing
+
+**`scripts/mmsmoke.ts` (NEW, `npm run test:mm`, 36 checks)** — deterministic, no DB, no
+sockets, using `Matchmaker`'s injected clock + `stage`. It exists because every failure mode
+in party pairing is SILENT (a split party, a challenge quietly matched against a stranger, a
+friend stranded because their partner was consumed) and the only other way to exercise it is
+two accounts on two machines. **It caught a real bug**: the first party member to arrive could
+be taken by an open group before their partner connected. Note `enqueue` matches synchronously
+but STAGES asynchronously — assertions must await a microtask flush or they always read empty.
+
+Migration 0019 + every new query verified against PRODUCTION with a real friend pair: both
+directions' reads, the sender/recipient scoping guards (a sender can't dismiss, a recipient
+can't cancel), decline→sender-sees-declined, and a stranger holding a guessed token getting
+null. Test rows rolled back, row count restored. build + tsc + `npm test` + `test:mm` +
+`contrast` (167) all green.
+
+### Not verified / open
+
+- **No live two-account run.** Same limitation as all the friends work — the pairing logic is
+  covered by mmsmoke, but the full send→accept→stage→play round trip on two real accounts
+  has not been driven.
+- **ELO farming is possible and deliberately unmitigated**, matching chess.com (which allows
+  rated friend games and polices them separately). Two accounts can now RELIABLY pair, where
+  before they could only hope to. Glicko-2 damps it — beating a much lower rating gains almost
+  nothing, and repeat opponents converge — but a determined pair could still pump one account
+  up the leaderboard. The cheap fix if it shows up: damp the rating delta for repeat opponents
+  inside a window, in `server/ranked.ts`.
+- **The admin restart notice is PER-MACHINE.** `broadcastAll` and `currentNotice` are
+  per-process, and `/api/presence` reads the local one, so one POST reaches only the machine
+  anycast happened to route it to. Notifying everyone means POSTing each machine with a
+  `fly-force-instance-id` header (that is how this session's notice went out). Worth folding
+  into the Admin UI.
+- A rated challenge accepted from the **Lobby** flyout leaves the lobby for the queue
+  (`onAcceptChallenge` threaded App→Lobby→InviteFlyout). Untested in a live lobby.
+
+---
+
 # HANDOFF — 2026-07-25 (desktop = thin shell over the live site + baked env) — READ FIRST
 
 ## This session — downloaded app now (a) auto-updates content by loading the live site and (b) can actually play online

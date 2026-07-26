@@ -2,10 +2,12 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import type { ReactNode } from 'react';
 import type { GameId } from '../types';
 import type { RoomKind } from '../net/protocol';
+import { RATED_FORMATS } from '../net/protocol';
 import type { Activity, PublicProfile, RoomInvite } from '../net/api';
 import { generateRoomCode } from '../net/roomCode';
 import { useFriends, type FriendsApi } from './useFriends';
 import { ChallengePicker, type ChallengeFormat } from './ChallengePicker';
+import { challengeLine, formatLabel, type PendingChallenge } from './challenge';
 
 /**
  * ONE shared friends store for the whole menu shell.
@@ -29,9 +31,15 @@ import { ChallengePicker, type ChallengeFormat } from './ChallengePicker';
  */
 export interface FriendToast {
   id: number;
-  kind: 'request' | 'invite';
+  /** `declined` is the SENDER's side of a challenge: the one piece of news you
+   * can't get any other way, since a declined challenge simply disappears from
+   * everywhere else. */
+  kind: 'request' | 'invite' | 'declined';
   from: PublicProfile;
   invite?: RoomInvite;
+  /** for a `declined` toast: what they turned down, and the row to clear */
+  sentId?: string;
+  format?: string | null;
 }
 
 export interface FriendsCtx extends FriendsApi {
@@ -94,6 +102,7 @@ export function FriendsProvider({
   game,
   sound,
   onHostRoom,
+  onQueueChallenge,
   children,
 }: {
   signedIn: boolean;
@@ -105,6 +114,9 @@ export function FriendsProvider({
    * the destination: `versus` → the custom-match lobby, `record` → the duo record
    * lobby (a co-op run). */
   onHostRoom: (code: string, game: GameId, kind: RoomKind) => void;
+  /** a RATED challenge was sent: there is no room to host, so go wait in the
+   * ranked queue under the challenge token instead (see `challenge.ts`) */
+  onQueueChallenge: (c: PendingChallenge) => void;
   children: ReactNode;
 }) {
   const api = useFriends({ signedIn, activity, game });
@@ -115,16 +127,34 @@ export function FriendsProvider({
 
   const challenge = useCallback(
     async (username: string, format: ChallengeFormat): Promise<void> => {
+      // One random code per challenge, doing one of two jobs depending on the
+      // format: the room to join, or the party token the matchmaker pairs on.
       const code = generateRoomCode();
+      const rated = RATED_FORMATS[format];
       // a co-op record run is a `record`/`duo` room; both casual formats are a
       // `versus` room (1v1 vs 2v2 is decided by who joins + alliance in the lobby)
       const record = format === 'duorecord';
-      // send FIRST — only host the room if the invite actually went out (a
-      // not-friends/blocked failure throws, and we never navigate on it)
-      await api.inviteToRoom(username, code, game, record ? 'record' : 'versus', record ? 'duo' : null);
-      onHostRoom(code, game, record ? 'record' : 'versus');
+      const kind = record ? 'record' : 'versus';
+      // send FIRST — we only navigate if the challenge actually went out (a
+      // not-friends/blocked failure throws, and the picker shows why). For a rated
+      // format this ordering is load-bearing rather than tidy: the server verifies
+      // the party token against the challenge ROW, so queueing before the row
+      // exists would be rejected.
+      await api.inviteToRoom(username, code, game, kind, record ? 'duo' : null, format);
+      if (rated) {
+        onQueueChallenge({
+          token: code,
+          format,
+          mode: rated.mode,
+          partyOnly: rated.partyOnly,
+          game,
+          opponent: username,
+        });
+      } else {
+        onHostRoom(code, game, kind);
+      }
     },
-    [api, game, onHostRoom],
+    [api, game, onHostRoom, onQueueChallenge],
   );
 
   // ---- notification toasts: diff each poll for genuinely new arrivals --------
@@ -132,6 +162,9 @@ export function FriendsProvider({
   const nextId = useRef(0);
   const seenReq = useRef<Set<string>>(new Set());
   const seenInv = useRef<Set<string>>(new Set());
+  // declines already announced, so the news is delivered exactly once even though
+  // the row survives until the cancel lands (and one poll may overlap it)
+  const seenDec = useRef<Set<string>>(new Set());
   const primed = useRef(false);
   const soundRef = useRef(sound);
   soundRef.current = sound;
@@ -147,9 +180,11 @@ export function FriendsProvider({
       primed.current = false;
       seenReq.current = new Set();
       seenInv.current = new Set();
+      seenDec.current = new Set();
       return;
     }
     const { incoming, invites } = api.data;
+    const sent = api.data.sent ?? [];
     const reqIds = new Set(incoming.map((p) => p.userId));
     const invIds = new Set(invites.map((i) => i.id));
     if (!primed.current) {
@@ -158,6 +193,7 @@ export function FriendsProvider({
       primed.current = true;
       seenReq.current = reqIds;
       seenInv.current = invIds;
+      seenDec.current = new Set(sent.filter((s) => s.declined).map((s) => s.id));
       return;
     }
     const fresh: FriendToast[] = [];
@@ -172,6 +208,18 @@ export function FriendsProvider({
         nextId.current += 1;
         fresh.push({ id: nextId.current, kind: 'invite', from: inv.from, invite: inv });
       }
+    }
+    // a challenge you sent came back declined. Announce it once and clear the row
+    // — the mark exists only to carry this news, so once it's delivered the row
+    // has no further job.
+    for (const s of sent) {
+      if (!s.declined || seenDec.current.has(s.id)) continue;
+      seenDec.current.add(s.id);
+      nextId.current += 1;
+      fresh.push({ id: nextId.current, kind: 'declined', from: s.to, sentId: s.id, format: s.format });
+      void api.cancelInvite(s.id).catch(() => {
+        /* it'll fall out of the read TTL on its own */
+      });
     }
     seenReq.current = reqIds;
     seenInv.current = invIds;
@@ -242,32 +290,49 @@ export function FriendToasts({
           >
             <span className="fr-toast-name">{t.from.handle}</span>
             <span className="fr-toast-sub">
-              {t.kind === 'invite' ? 'wants to play' : 'sent you a friend request'}
+              {t.kind === 'invite'
+                ? challengeLine(t.invite?.format ?? null)
+                : t.kind === 'declined'
+                  ? `declined your ${formatLabel(t.format ?? null)}`
+                  : 'sent you a friend request'}
             </span>
           </button>
           <span className="fr-actions">
-            {t.kind === 'invite' && t.invite ? (
-              <button
-                className="ds-btn small primary"
-                onClick={() => {
-                  onJoinInvite(t.invite!);
-                  dismissToast(t.id);
-                }}
-              >
-                Join
-              </button>
-            ) : (
-              t.from.username && (
+            {t.kind === 'invite' && t.invite && (
+              // Accept / Decline, not Join / ✕: declining TELLS them, where
+              // dismissing just clears it off your screen. Both are offered
+              // because they mean different things to the person waiting.
+              <>
                 <button
                   className="ds-btn small primary"
                   onClick={() => {
-                    void friends.accept(t.from.username!);
+                    onJoinInvite(t.invite!);
                     dismissToast(t.id);
                   }}
                 >
                   Accept
                 </button>
-              )
+                <button
+                  className="ds-btn small"
+                  onClick={() => {
+                    void friends.declineInvite(t.invite!.id);
+                    dismissToast(t.id);
+                  }}
+                >
+                  Decline
+                </button>
+              </>
+            )}
+            {t.kind === 'request' && t.from.username && (
+              <button
+                className="ds-btn small primary"
+                onClick={() => {
+                  void friends.accept(t.from.username!);
+                  dismissToast(t.id);
+                }}
+              >
+                Accept
+              </button>
             )}
             <button className="ds-btn small ghost" aria-label="Dismiss" onClick={() => dismissToast(t.id)}>
               ✕

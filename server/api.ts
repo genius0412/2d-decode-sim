@@ -2,14 +2,17 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { GameId } from '../src/types';
 import { BALANCE_VERSION } from '../src/config';
 import { monthsFor, policyFromEnv, whyNoMonths } from './kofi';
+import { CHALLENGE_FORMATS } from '../src/net/protocol';
 import { dbEnabled } from './db/pool';
 import {
   acceptFriendRequest,
   actForSeason,
   blockUser,
   cancelFriendRequest,
+  cancelRoomInvite,
   currentSeasonNumber,
   declineFriendRequest,
+  declineRoomInvite,
   dismissRoomInvite,
   ensureProfile,
   ensureSeason,
@@ -80,9 +83,11 @@ import { DEPLOY_REGIONS, interRegionMs } from './regions';
  *   POST /api/friends/remove   {username}
  *   POST /api/friends/block    {username} / /api/friends/unblock {username}
  *   POST /api/friends/status   {status}      — your own online/dnd/invisible
- *   POST /api/friends/invite   {username,room,game,kind,record?} — invite a friend
- *                                               to a room (must be friends)
+ *   POST /api/friends/invite   {username,room,game,kind,record?,format?} — challenge
+ *                                               a friend (must be friends)
  *   POST /api/friends/invite/dismiss {id}    — dismiss/consume an invite sent to you
+ *   POST /api/friends/invite/decline {id}    — decline one sent to you (sender is told)
+ *   POST /api/friends/invite/cancel  {id}    — withdraw one you sent
  *   GET  /api/users/search?q=<prefix>        — public username-PREFIX search
  */
 
@@ -491,7 +496,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       const user = await verifyAuthToken(bearer(req));
       if (!user) return json(401, { error: 'sign in required' }), true;
       if (!dbEnabled) {
-        return json(200, { friends: [], incoming: [], outgoing: [], blocked: [], invites: [], status: null }), true;
+        return json(200, { friends: [], incoming: [], outgoing: [], blocked: [], invites: [], sent: [], status: null }), true;
       }
 
       // the friends READ doubles as the presence heartbeat: the poll that
@@ -530,12 +535,24 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         return json(200, { status }), true;
       }
 
-      // dismiss (or consume, on join) a room invite ADDRESSED TO the caller — not
-      // "names another player", so it doesn't fit the username-resolution block below
-      if (url.pathname === '/api/friends/invite/dismiss') {
+      // The three challenge-lifecycle routes act on an invite BY ID rather than by
+      // naming a player, so they sit above the username-resolution block below.
+      // Each is scoped to the side that owns that view of the row: dismiss and
+      // decline to the recipient, cancel to the sender. Neither side can reach
+      // into the other's.
+      if (
+        url.pathname === '/api/friends/invite/dismiss' ||
+        url.pathname === '/api/friends/invite/decline' ||
+        url.pathname === '/api/friends/invite/cancel'
+      ) {
         const id = typeof body.id === 'string' ? body.id : null;
         if (!id) return json(400, { error: 'bad request' }), true;
-        const ok = await dismissRoomInvite(user.userId, id);
+        const ok =
+          url.pathname === '/api/friends/invite/cancel'
+            ? await cancelRoomInvite(user.userId, id)
+            : url.pathname === '/api/friends/invite/decline'
+              ? await declineRoomInvite(user.userId, id)
+              : await dismissRoomInvite(user.userId, id);
         if (!ok) return json(404, { error: 'no such invite' }), true;
         return json(200, { ok: true }), true;
       }
@@ -607,7 +624,15 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
           const game: GameId = body.game === 'chain' ? 'chain' : 'decode';
           const kind = body.kind === 'record' ? 'record' : 'versus';
           const record = body.record === 'duo' || body.record === 'solo' ? (body.record as string) : null;
-          const outcome = await inviteToRoom(user.userId, other, room, game, kind, record);
+          // The format is what the challenge OFFERED, and for the rated formats it
+          // is load-bearing rather than cosmetic: the matchmaker only honours a
+          // party token that a challenge of the matching format actually created
+          // (`challengeParty`). Validated against the allowlist here so a client
+          // can't invent one.
+          const format = (CHALLENGE_FORMATS as readonly string[]).includes(body.format as string)
+            ? (body.format as string)
+            : null;
+          const outcome = await inviteToRoom(user.userId, other, room, game, kind, record, format);
           if (outcome === 'not-friends') return json(409, { error: 'Not friends with that player.' }), true;
           return json(200, { ok: true }), true;
         }
