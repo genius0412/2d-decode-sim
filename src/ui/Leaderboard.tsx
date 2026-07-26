@@ -78,19 +78,21 @@ function DriverName({
         }}
         title={`View @${username}`}
       >
-        <span className="lb-name-h">
-          {label}
-          <SupporterBadge supporter={supporter} role={role} />
-        </span>
+        {/* the badge is a SIBLING of the name, not a child of it. `.lb-name-h`
+            carries the hover underline, so a badge inside it got underlined
+            along with the name — and a badge is decoration beside a name, not
+            part of it. */}
+        <span className="lb-name-h">{label}</span>
+        <SupporterBadge supporter={supporter} role={role} />
         <span className="lb-at">@{username}</span>
       </button>
     );
   }
   return (
-    <span className="lb-name-h">
-      {label}
+    <>
+      <span className="lb-name-h">{label}</span>
       <SupporterBadge supporter={supporter} role={role} />
-    </span>
+    </>
   );
 }
 

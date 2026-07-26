@@ -1851,6 +1851,13 @@ button {
   border-radius: 999px;
   vertical-align: middle;
   flex: 0 0 auto;
+  /* A badge is DECORATION BESIDE a name, never part of it. Two consequences:
+     it must not be swept into a selection or copied with the name, and where it
+     sits inside a flex row (`.lb-name`, which aligns its children on the text
+     BASELINE) it centres on the line instead — `vertical-align` is ignored on a
+     flex item, so without this the badge drops back to the bottom of the text. */
+  user-select: none;
+  align-self: center;
 }
 /* the shape reads as a mark ON a disc, not as a disc-shaped hole: at much past
    60% the star's points and the heart's shoulders touch the rim */
@@ -1866,6 +1873,12 @@ button {
   /* a clear gap, so the badge reads as a separate object beside the name rather
      than as one more character in it */
   margin-left: 0.42em;
+}
+/* ...except in the leaderboard's name row, which is a flex container that
+   already spaces its children with `gap` — the margin would be added on top of
+   it and push the badge away from the name it belongs to. */
+.lb-name > .sup-badge {
+  margin-left: 0;
 }
 .sup-badge.sup-md {
   width: 0.62em;
