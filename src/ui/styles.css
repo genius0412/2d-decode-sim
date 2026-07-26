@@ -1826,13 +1826,22 @@ button {
    `--ds-blue-chip` with white. All three pairs are checked in BOTH themes by
    `npm run contrast`.
 
-   They are distinguished by SHAPE as well as colour (♥ / ◆ / ★) — at 1.15em a
-   colour difference alone is not something a colour-blind reader can rely on, and
-   the badge is ~13px of surface with no text to fall back on.
+   They are distinguished by SHAPE as well as colour (heart / diamond / star) — at
+   this size a colour difference alone is not something a colour-blind reader can
+   rely on, and the badge is ~16px of surface with no text to fall back on.
 
-   Sized to sit INSIDE a line of text without changing its height: `em` units and
-   `vertical-align` keep it from nudging the baseline, which `npm run shiftaudit`
-   would otherwise see as a row moving when a name is hovered. */
+   THE SHAPE IS AN SVG, not a text glyph, and the sizing below depends on that:
+   a glyph's size and its position inside the disc come from the FONT's metrics,
+   which is why the first cut had a star riding high and a heart overflowing the
+   circle. The SVG is drawn centred in a 24×24 box, so `width`/`height` as a
+   percentage of the disc is genuinely centred at any size.
+
+   `vertical-align: middle` puts the badge's centre on the parent's baseline plus
+   half its x-height — the optical middle of the adjacent name. It replaced
+   `baseline` + a translateY nudge, which hung the badge off the BOTTOM of the
+   text. Sizes stay in `em` so the badge tracks whatever text it sits beside
+   without changing the line's height, which `npm run shiftaudit` would otherwise
+   see as a row moving. */
 .sup-badge {
   display: inline-flex;
   align-items: center;
@@ -1840,22 +1849,52 @@ button {
   background: var(--ds-gold);
   color: var(--ds-gold-ink);
   border-radius: 999px;
-  vertical-align: baseline;
+  vertical-align: middle;
   flex: 0 0 auto;
 }
-.sup-badge.sm {
-  width: 1.15em;
-  height: 1.15em;
-  font-size: 0.72em;
-  margin-left: 0.4em;
-  transform: translateY(0.05em);
+/* the shape reads as a mark ON a disc, not as a disc-shaped hole: at much past
+   60% the star's points and the heart's shoulders touch the rim */
+.sup-badge svg {
+  display: block;
+  width: 58%;
+  height: 58%;
+  fill: currentColor;
 }
-.sup-badge.md {
-  width: 1.05em;
-  height: 1.05em;
-  font-size: 0.5em;
-  margin-left: 0.35em;
-  transform: translateY(-0.25em);
+.sup-badge.sup-sm {
+  width: 0.92em;
+  height: 0.92em;
+  /* a clear gap, so the badge reads as a separate object beside the name rather
+     than as one more character in it */
+  margin-left: 0.42em;
+}
+.sup-badge.sup-md {
+  width: 0.62em;
+  height: 0.62em;
+  margin-left: 0.3em;
+}
+
+/* The hover hint. PORTALLED to <body> and fixed-positioned (see SupporterBadge):
+   `.ds-panel` is `overflow: hidden` for its rounded corners, so a tip living in
+   the badge's own subtree is clipped away entirely on the top row of a
+   leaderboard. It replaces a native `title`, which took a second to appear and
+   was easy to miss on a 16px target.
+
+   `pointer-events: none` so the tip can never eat the hover that spawned it —
+   without it the badge flickers as the tip appears under the cursor. */
+.sup-tip {
+  position: fixed;
+  z-index: 400;
+  transform: translate(-50%, calc(-100% - 8px));
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: var(--ds-panel);
+  color: var(--ds-ink);
+  border: 1px solid var(--ds-line-strong);
+  box-shadow: var(--ds-block-sm);
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
 }
 /* Staff. Both fills are SATURATED, and that is a separate requirement from the
    one `npm run contrast` checks: the audit asks whether the glyph reads against
