@@ -60,6 +60,22 @@
     <meta name="twitter:image" content="https://www.playdsim.com/og.png" />
     <meta name="twitter:image:alt" content="DSIM: online 2D FTC driving simulator" />
     <!--
+      Google AdSense site verification. This has to sit in the served HTML of EVERY
+      page, which for a client-rendered SPA means here and only here: index.html is
+      what Vercel returns for every route, so one tag covers the whole site.
+
+      `data-dsim-adsense` is the dedupe key the runtime ad loader looks for
+      (`src/ads/adsense.ts`, monetization branch) before injecting its own copy —
+      without it a merged build would pull adsbygoogle.js twice.
+    -->
+    <script
+      async
+      src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7020325778340658"
+      crossorigin="anonymous"
+      data-dsim-adsense="1"
+    ></script>
+
+    <!--
       Stamp the theme BEFORE the stylesheet loads. React mounts after first paint, so
       reading the pref from src/ would guarantee a flash of the wrong theme. This must
       stay inline, dependency-free, and above the CSS. Mirrors src/theme.ts — CSS only
