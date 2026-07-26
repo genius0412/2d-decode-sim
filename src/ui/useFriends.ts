@@ -18,6 +18,7 @@ import {
   type PresenceStatus,
 } from '../net/api';
 import { gameServerConfigured } from '../net/env';
+import { onUserActive, userIdle } from './userActivity';
 
 /**
  * Adaptive poll cadence (only ever runs while the tab is VISIBLE — see below).
@@ -163,11 +164,15 @@ export function useFriends({
     };
     function tick(): void {
       if (!alive) return;
-      // a hidden/backgrounded tab must not poll — it would keep the caller
-      // eternally "online" while away and hammer a scale-to-zero machine. It
-      // simply falls out of the freshness window, which reads as offline (the
-      // truth). `focus`/`visibilitychange` below catch it up on return.
-      if (document.visibilityState !== 'visible') {
+      // An UNATTENDED page must not poll - a hidden/backgrounded tab, or one left
+      // visible on a second monitor with nobody at the keyboard (see
+      // userActivity.ts). Polling on would keep the caller eternally "online"
+      // while away AND hold the scale-to-zero machine and the Neon compute open
+      // indefinitely. Going quiet drops the caller out of the server's freshness
+      // window, which reads as offline - the truth. The re-check below is a bare
+      // timer, not a request, and `onUserActive`/`focus`/`visibilitychange` catch
+      // the page up the moment somebody is actually there again.
+      if (userIdle()) {
         schedule(POLL_IDLE_MS);
         return;
       }
@@ -203,11 +208,15 @@ export function useFriends({
     };
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('focus', wake);
+    // and the same the moment someone touches an idle-but-visible page: this
+    // fires only on the idle→active edge, never on every mouse move
+    const unwake = onUserActive(wake);
     return () => {
       alive = false;
       window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('focus', wake);
+      unwake();
     };
   }, [active, activity, game, nonce]);
 
