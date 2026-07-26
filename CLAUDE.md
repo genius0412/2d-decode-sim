@@ -604,6 +604,31 @@ player STARTS a run (never mid-run), forces a refresh — NO "play anyway" (ever
 the same version for multiplayer). Still open (Phase 3): matchmaking polish, replay UI,
 leaderboard tiers, the full UI redesign (`docs/netcodeplan.md`).
 
+**STAFF ROLES — owner + admin badges, and perks, DONE.** `profiles.role`
+(`0020_staff_roles.sql`) is null | 'owner' | 'admin'. It is a **PROJECTION** of
+`ADMIN_USER_IDS` / `OWNER_USER_ID` (`OWNER_USER_ID` defaults to the FIRST id in
+`ADMIN_USER_IDS`), reconciled by `syncStaffRoles` once per boot after `migrate()` — the
+env stays the source of truth; the column exists so the badge can be JOINED by the
+leaderboard/roster queries instead of post-processed row by row (or the admin list
+leaked to clients). **The sweep is SYMMETRIC** — an id removed from the env loses the
+badge and the perks. **THE PERK IS ONE PREDICATE**: `SUPPORTER_COL` in repo.ts is read
+by the ad gate, the cosmetic chassis colours, the saved-start cap, `/api/user/
+entitlements` AND the badge, so `role in ('owner','admin')` is folded into that single
+expression — never add a second "is staff entitled" check, extend that one. TWO places
+deliberately keep the PAID predicate instead, because the entitled one would mislead
+there: `searchProfiles` (the admin console's grant/revoke row — a colleague must not
+read as a supporter with no expiry when you are deciding whether to comp months) and
+the Donate page (staff get their own panel; the supporter one would say "through -"
+and nag them to link a Ko-fi account that will never pay). `getSupporter` returns
+`supporter: true` with `supporterUntil: null` for staff — that shape is intentional.
+`LobbyPlayer.role` is **server-authored** exactly like `supporter` (a self-declared
+"owner" beside a driver's name is an impersonation primitive). UI: ONE
+`SupporterBadge` renders owner ★ > admin ◆ > supporter ♥ — exactly one, since staff are
+also `supporter: true`. **Badge colours must be SATURATED IN BOTH THEMES**: the audit
+checks the glyph against its own fill, NOT the badge against the card behind it, so the
+lavender pastel (#34305c in dark) passed contrast while being invisible on the dark
+panel. Distinguish by SHAPE as well as hue. Tests: 18 checks in `npm run dbtest`.
+
 **PLAY A FRIEND — challenges (chess.com's model), DONE.** A challenge (`room_invites` +
 migration `0019`) carries a **`format`**: `casual1v1`/`casual2v2` (a `versus` room),
 `duorecord` (a `record`/`duo` room), or the two RATED ones. Rating is only ever applied to a

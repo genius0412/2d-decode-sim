@@ -1,3 +1,92 @@
+# HANDOFF — 2026-07-27b (owner + admin badges, staff perks) — READ FIRST
+
+## This session (latest) — staff roles
+
+Owner gets a green **★**, admins a blue **◆**, supporters keep the gold **♥**.
+Exactly ONE renders, in rank order owner > admin > supporter — staff are entitled to
+the supporter perks, so `supporter` comes back true for them and without the
+precedence every admin would wear two badges saying overlapping things.
+
+### The one idea worth remembering
+
+**The perk is a single SQL predicate.** `SUPPORTER_COL` in `server/db/repo.ts` is read
+by everything that asks "is this account entitled?" — the ad gate, the cosmetic chassis
+colours, the saved-start cap, `/api/user/entitlements`, and the badge itself. Folding
+`role in ('owner','admin')` into that one expression grants every perk at once, and
+makes it impossible for one surface to disagree with another. Do not add a second
+"is staff entitled" check anywhere; extend that predicate.
+
+### `profiles.role` is a PROJECTION, not a source of truth
+
+`ADMIN_USER_IDS` (and the new optional `OWNER_USER_ID`) stay authoritative.
+`syncStaffRoles(owner, admins)` runs once per boot after `migrate()` and writes the
+column. The column exists because the badge has to appear beside a name on a 100-row
+leaderboard — one SQL statement that already joins `profiles` — and answering that from
+a Node Set would mean post-processing every row set by hand at each call site, or
+leaking the admin list to clients.
+
+**The sweep is SYMMETRIC.** An id removed from the env loses the badge AND the free
+membership on the next boot. That is the case worth not breaking; `npm run dbtest`
+asserts it in both directions.
+
+`OWNER_USER_ID` defaults to the FIRST id in `ADMIN_USER_IDS` — a feature that silently
+does nothing until you set an env var you were never told about is worse than a
+documented default. Set it explicitly if the first entry is not the owner.
+
+### Two places deliberately keep the PAID predicate
+
+Not an oversight — the entitled-or-staff predicate would actively mislead there:
+
+- **Admin console** (`searchProfiles` → `AdminUserRow.supporter`): an admin deciding
+  whether to comp months must not see a colleague as a supporter with no expiry. Staff
+  are surfaced separately as `role`, and the row now reads "Admin · perks by role".
+- **Donate page**: staff get their own panel. The supporter panel would tell them their
+  membership runs "through -" and nag them to link a Ko-fi account that will never pay.
+  `getSupporter` returns `supporter: true` with `supporterUntil: null` for staff, which
+  is exactly the shape that needs the separate panel.
+
+### Colour, and a mistake worth not repeating
+
+The admin badge started on `--ds-lavender` and was changed after LOOKING at it: that
+pastel is `#c9c3f0` in light but `#34305c` in dark, so the badge was a dark blob on the
+`#272e35` dark panel — while `npm run contrast` passed, because the audit checks the
+GLYPH against its own fill, not the BADGE against the card behind it. All three fills
+are now saturated in both themes (gold / accent / blue-chip), and the three are told
+apart by SHAPE as well as hue, since 1.15em of colour is not something a colour-blind
+reader can rely on. Contrast is 175 checks.
+
+`--ds-blue-chip` is the alliance-blue colour, so an admin badge in a lobby roster sits
+near alliance colouring. Judged acceptable (a small disc beside a name is not a row
+tint, and staff are rare) but it is the one cosmetic call to revisit if it reads badly.
+
+### Files
+
+`server/db/migrations/0020_staff_roles.sql` (NEW) · `server/db/repo.ts` (`StaffRole`,
+`STAFF_PRED`, `syncStaffRoles`, `staffAmong`, `role` on `PublicProfile`/`UserStats`/
+`SupporterState`/board rows) · `server/index.ts` (`OWNER_ID`, boot sync, roster role) ·
+`src/net/protocol.ts` (`StaffRole`, `LobbyPlayer.role` — server-authored, like
+`supporter`: a self-declared "owner" beside a driver's name is an impersonation
+primitive) · `SupporterBadge.tsx` (all three variants, precedence) · `styles.css` ·
+`contrast.mjs` · `Leaderboard` / `Profile` / `Lobby` / `Donate` / `Admin`.
+
+### Testing
+
+**18 new `npm run dbtest` checks**: the projection, owner-also-listed-as-admin staying
+owner, the entitlement with no payment, `staffAmong`, the symmetric revoke (role AND
+entitlement), owner demotion + empty env, the check constraint rejecting an unknown
+role, and a paying owner keeping their real expiry. Everything green: build + tsc +
+`npm test` + `test:mm` (36) + `contrast` (175) + `dbtest`.
+
+### Not verified
+
+- **Which account actually got `role = 'owner'`** depends on the order of
+  `ADMIN_USER_IDS`, which is a Fly secret I cannot read. Verify after deploy by
+  checking which handle holds the role, and set `OWNER_USER_ID` if it picked wrong.
+- No live signed-in render of the badges — they were verified against the real
+  stylesheet in a browser with injected markup, in both themes, not on a real account.
+
+---
+
 # HANDOFF — 2026-07-25 (monetization: ship-readiness pass) — READ FIRST
 
 Branch `monetization`, in its own worktree at `../2d-decode-sim-monetization`
