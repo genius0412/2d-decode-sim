@@ -636,9 +636,12 @@ function AddFriend({
   );
 }
 
-function PeopleGlyph() {
+/** monoline people glyph, `currentColor` — the one people-icon this app uses,
+ * so a chip that needs the concept (InviteFlyout's "Friends" toggle) reaches for
+ * this instead of a platform emoji (colourful, off-theme, inconsistent across OSes). */
+export function PeopleGlyph({ size = 20 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true">
       <path d="M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm-8 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm0 2c-2.33 0-7 1.17-7 3.5V20h7v-2.5c0-.98.5-1.86 1.3-2.55A11.6 11.6 0 0 0 8 14Zm8 0c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4Z" />
     </svg>
   );

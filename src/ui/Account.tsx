@@ -89,9 +89,7 @@ function Identity({ onHandleSaved }: { onHandleSaved?: (handle: string) => void 
       {user ? (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <span className="ds-chip">
-              <b>{user.email ?? 'signed in'}</b>
-            </span>
+            <span style={{ fontWeight: 700, color: 'var(--ds-ink)' }}>{user.email ?? 'signed in'}</span>
             <span className="ds-head-spacer" />
             <button className="ds-btn ghost" onClick={() => client.signOut()}>
               Sign out
