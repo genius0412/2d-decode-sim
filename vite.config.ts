@@ -12,6 +12,26 @@ const BUILD_ID = (() => {
   }
 })();
 
+// The desktop (Electron) build gets NO Vercel env injection, so without this the
+// bundled offline-fallback bundle would ship with multiplayer + accounts disabled
+// (`VITE_GAME_SERVERS`/`VITE_NEON_AUTH_URL` absent → SERVERS=[] → the Multiplayer
+// menu is hidden). Bake the PUBLIC client config into the Electron build only
+// (`ELECTRON=1`). These EXACT values already ship in the deployed web bundle —
+// nothing secret (server DB/auth secrets are never VITE_-prefixed). The web build
+// (ELECTRON unset) is untouched: it still reads these from Vercel's env, and an
+// explicitly-set env var wins here too (Vite: process.env VITE_* overrides), so a
+// local `ELECTRON=1` build can still point at localhost by exporting its own.
+if (process.env.ELECTRON === '1') {
+  process.env.VITE_GAME_SERVERS ??=
+    '[{"id":"iad","label":"US East","region":"iad","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"sjc","label":"US West","region":"sjc","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"lhr","label":"Europe","region":"lhr","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"syd","label":"Oceania","region":"syd","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"nrt","label":"Asia","region":"nrt","url":"wss://dohun-sim-decode.fly.dev"}]';
+  process.env.VITE_NEON_AUTH_URL ??=
+    'https://ep-lingering-pine-ahq640vd.neonauth.c-3.us-east-1.aws.neon.tech/neondb/auth';
+}
+
 export default defineConfig({
   plugins: [
     react(),

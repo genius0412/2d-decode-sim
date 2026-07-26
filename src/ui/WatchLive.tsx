@@ -57,7 +57,7 @@ export function WatchLive({
         <div className="ds-panel">
           <div className="ds-empty">
             <div className="big">Spectating needs the game server</div>
-            Set <code>VITE_GAME_SERVER_URL</code> — live matches run on the match server.
+            Set <code>VITE_GAME_SERVER_URL</code> - live matches run on the match server.
           </div>
         </div>
       ) : error ? (

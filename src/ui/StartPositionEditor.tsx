@@ -272,7 +272,7 @@ export function StartPositionEditor({
 
       <div className="ds-startpos-side">
         <div className={`ds-startpos-status ${legality.legal ? 'ok' : 'bad'}`}>
-          {legality.legal ? reason : `${reason} — won't save`}
+          {legality.legal ? reason : `${reason} - won't save`}
         </div>
 
         <div className="ds-startpos-inputs">
@@ -381,7 +381,6 @@ export function StartPositionEditor({
             </button>
           )}
         </div>
-        <p className="ds-startpos-hint">Drag the robot to place it, drag the dot to aim. Save up to {MAX_SAVED_STARTS} of your own {cat === 'close' ? 'Close' : 'Far'} positions (★). Must sit on a launch line and touch your goal or a wall (G304).</p>
       </div>
     </div>
   );

@@ -72,10 +72,6 @@ export function UsernameGate() {
           <span className="ds-panel-title">Choose your username</span>
         </div>
         <form className="ds-form" onSubmit={submit}>
-          <p className="ds-sub" style={{ margin: '0 0 4px', textAlign: 'left' }}>
-            Your username is your public profile link (<code>/profile/&lt;username&gt;</code>) and
-            how you appear on the boards. Pick a permanent one to continue.
-          </p>
           <label>
             <span>Username</span>
             <UsernameInput value={value} onChange={setValue} autoFocus />

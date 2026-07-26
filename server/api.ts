@@ -21,6 +21,7 @@ import {
   setPresenceStatus,
   touchPresence,
   unblockUser,
+  type Activity,
   type PresenceStatus,
   eloLeaderboard,
   eloHistoryLeaderboard,
@@ -274,8 +275,15 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       // separate ping endpoint would double the request rate against a
       // scale-to-zero machine to say something this request already said.
       if (req.method === 'GET' && url.pathname === '/api/friends') {
+        // the heartbeat also carries WHAT the caller is doing, so friends can see
+        // "In a match"/"In a lobby". Both are coarse + validated to a small set;
+        // an old client that sends neither simply records a plain 'online' beat.
+        const a = url.searchParams.get('a');
+        const activity: Activity | null = a === 'menu' || a === 'lobby' || a === 'match' ? a : null;
+        const g = url.searchParams.get('g');
+        const activityGame: GameId | null = g === 'chain' ? 'chain' : g === 'decode' ? 'decode' : null;
         await ensureProfile(user.userId, user.handle);
-        await touchPresence(user.userId);
+        await touchPresence(user.userId, activity, activityGame);
         return json(200, await listFriends(user.userId)), true;
       }
 

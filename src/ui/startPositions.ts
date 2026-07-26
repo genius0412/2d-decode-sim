@@ -1,6 +1,7 @@
-import type { GameSettings, StartCat, StartPose, StartSel } from '../types';
+import type { GameId, GameSettings, StartCat, StartPose, StartSel } from '../types';
 import type { LobbyPlayer } from '../net/protocol';
 import { START_POSES, MAX_SAVED_STARTS } from '../config';
+import { chainAnchorCat, chainDefaultIndex } from '../games/chain/config';
 
 export const otherCat = (c: StartCat): StartCat => (c === 'close' ? 'far' : 'close');
 
@@ -59,31 +60,34 @@ export function categoryPresets(cat: StartCat): CatPreset[] {
   return out;
 }
 
-/** the fallback preset index for a category (its first preset) */
-export function categoryDefaultIndex(cat: StartCat): number {
+/** the fallback preset index for a category (its first preset) — game-aware: CR maps
+ * the category onto its TOP/BOTTOM Lab-corner anchors, DECODE onto its Close/Far presets. */
+export function categoryDefaultIndex(cat: StartCat, game?: GameId): number {
+  if (game === 'chain') return chainDefaultIndex(cat);
   return categoryPresets(cat)[0]?.index ?? 0;
 }
 
-/** the category a preset index belongs to */
-export function indexCategory(index: number): StartCat {
+/** the category a preset/anchor index belongs to (game-aware, see above) */
+export function indexCategory(index: number, game?: GameId): StartCat {
+  if (game === 'chain') return chainAnchorCat(index);
   return START_POSES[index]?.cat ?? 'close';
 }
 
 /** the ACTIVE start fields (startIndex/startPose) for a remembered selection */
-function activeFromSel(cat: StartCat, sel: StartSel): { startIndex: number; startPose: StartPose | null } {
-  const index = sel.index >= 0 ? sel.index : categoryDefaultIndex(cat);
+function activeFromSel(cat: StartCat, sel: StartSel, game?: GameId): { startIndex: number; startPose: StartPose | null } {
+  const index = sel.index >= 0 ? sel.index : categoryDefaultIndex(cat, game);
   return { startIndex: index, startPose: sel.pose };
 }
 
 /** patch: switch the active category, restoring that category's remembered pick */
 export function switchCategory(s: GameSettings, cat: StartCat): Partial<GameSettings> {
-  return { startCat: cat, ...activeFromSel(cat, s.startMemory[cat]) };
+  return { startCat: cat, ...activeFromSel(cat, s.startMemory[cat], s.game) };
 }
 
 /** patch: set the active start to `sel` within the CURRENT category + remember it */
 export function selectStart(s: GameSettings, sel: StartSel): Partial<GameSettings> {
   const cat = s.startCat;
-  return { ...activeFromSel(cat, sel), startMemory: { ...s.startMemory, [cat]: sel } };
+  return { ...activeFromSel(cat, sel, s.game), startMemory: { ...s.startMemory, [cat]: sel } };
 }
 
 /** patch: save a custom pose into the current category's library (cap, drop oldest) */

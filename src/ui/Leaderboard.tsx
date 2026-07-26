@@ -174,7 +174,7 @@ function MyStanding({ me }: { me: EloStanding }) {
           <strong>{remaining}</strong> {remaining === 1 ? 'match' : 'matches'} until placement
         </span>
         <span className="lb-standing-sub">
-          {me.games}/{PLACEMENT_GAMES} placement matches played — finish them to join the leaderboard.
+          {me.games}/{PLACEMENT_GAMES} placement matches played - finish them to join the leaderboard.
         </span>
         <span className="lb-standing-bar" aria-hidden>
           <span style={{ width: `${Math.min(100, (me.games / PLACEMENT_GAMES) * 100)}%` }} />
@@ -407,7 +407,7 @@ export function Leaderboard({
                               <span className="tw">{isOpen ? '▴' : '▾'}</span>
                             </button>
                           ) : (
-                            <span style={{ color: 'var(--ds-mut)' }}>—</span>
+                            <span style={{ color: 'var(--ds-mut)' }}>-</span>
                           )}
                         </td>
                       )}

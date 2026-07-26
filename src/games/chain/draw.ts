@@ -117,7 +117,9 @@ export function drawChainBalls(ctx: CanvasRenderingContext2D, world: World, scre
     if (st !== 'ascended' && st !== 'parked') continue;
     ctx.save();
     ctx.translate(r.pos.x, r.pos.y);
-    ctx.rotate(up);
+    // undo the camera rotation (+viewAngle) + y-flip so the badge reads upright;
+    // `up` is +viewAngle, so counter-rotate by -up (matches the DECODE label path).
+    ctx.rotate(-up);
     ctx.scale(1, -1);
     ctx.fillStyle = st === 'ascended' ? '#f5c518' : C.COLORS.white;
     ctx.font = '700 5px system-ui, sans-serif';

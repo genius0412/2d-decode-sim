@@ -9,6 +9,7 @@ import {
   decodeServerMsg,
   quantizeCommand,
   dequantizeCommand,
+  applyBallDelta,
   unslimWorld,
   type EloDelta,
   type PlayerIntro,
@@ -81,6 +82,11 @@ export class ServerSession implements NetSession {
   private readonly serverLabel: string;
   /** running ball baseline the delta-encoded snapshots patch (keyed by id) */
   private readonly baseBalls = new Map<number, Artifact>();
+  /** newest authoritative `serverTick` we've APPLIED — the baseline we ACK back to
+   * the server, and the guard that discards a stale/duplicate snapshot (a no-op on
+   * the ordered WebSocket, required once snapshots can arrive out of order on the
+   * unreliable QUIC lane). Reset to -1 on a host restart (new world, tick 0). */
+  private appliedTick = -1;
 
   // ---- connection-quality diagnostics (for the HUD net readout) --------------
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -135,9 +141,11 @@ export class ServerSession implements NetSession {
       this.failed = true;
     });
     // probe latency continuously while the match is live (a no-op send when the
-    // socket is down); each pong updates the smoothed RTT for the HUD
+    // socket is down); each pong updates the smoothed RTT for the HUD. Hot-path
+    // lane: a lost ping is simply superseded by the next 300 ms probe — no reason
+    // to head-of-line block the control stream behind it.
     this.pingTimer = setInterval(() => {
-      transport.send(encodeMsg({ t: 'ping', ts: nowMs() }));
+      transport.send(encodeMsg({ t: 'ping', ts: nowMs() }), { reliable: false });
     }, PING_INTERVAL_MS);
   }
 
@@ -155,7 +163,16 @@ export class ServerSession implements NetSession {
 
   sendInput(tick: number, cmd: RobotCommand): void {
     if (this.spectator) return; // a spectator controls nothing
-    this.transport.send(encodeMsg({ t: 'input', tick, q: quantizeCommand(cmd) }));
+    // Hot-path lane: inputs are sent every tick and the server holds-last, so a
+    // dropped input is superseded by the next one within ~16 ms. Sending it
+    // unreliable is exactly what stops one lost/late input from stalling the
+    // whole stream behind it (the head-of-line win we're after).
+    // Piggyback the snapshot ACK (newest applied serverTick) so the server knows
+    // which baseline we hold — free here, drivers send input every tick.
+    const ack = this.appliedTick >= 0 ? this.appliedTick : undefined;
+    this.transport.send(encodeMsg({ t: 'input', tick, q: quantizeCommand(cmd), ack }), {
+      reliable: false,
+    });
   }
 
   takeSnapshot(): Snapshot | null {
@@ -220,13 +237,15 @@ export class ServerSession implements NetSession {
   private onMessage(data: string): void {
     const m = decodeServerMsg(data);
     if (m.t === 'snapshot') {
-      // patch the ball baseline, then rebuild the array in the authoritative order
-      for (const b of m.balls.upd) this.baseBalls.set(b.id, b);
-      const keep = new Set(m.balls.order);
-      for (const id of this.baseBalls.keys()) if (!keep.has(id)) this.baseBalls.delete(id);
-      const balls = m.balls.order
-        .map((id) => this.baseBalls.get(id))
-        .filter((b): b is Artifact => b !== undefined);
+      // discard a stale/duplicate snapshot: the client reconciles to the NEWEST
+      // authoritative world, and a delta is keyed to a baseline at-or-before this
+      // one, so applying an older frame after a newer one would regress the balls.
+      // A no-op on the ordered WebSocket (ticks arrive monotonic); the guard the
+      // out-of-order QUIC-datagram lane will need.
+      if (m.serverTick <= this.appliedTick) return;
+      // patch the running ball baseline + rebuild the array in the authoritative
+      // order (shared codec so it can't drift from the server's encoder)
+      const balls = applyBallDelta(this.baseBalls, m.balls);
       const world = unslimWorld(m.w, balls, this.specById);
       // each robot's command this tick, so the controller can predict remotes.
       // tolerate an older server that doesn't send cmds (remotes just won't be
@@ -238,6 +257,7 @@ export class ServerSession implements NetSession {
       });
       // keep only the freshest — the controller reconciles to the newest world
       this.snapshot = { serverTick: m.serverTick, world, cmds, ackInputTick: m.ackInputTick };
+      this.appliedTick = m.serverTick; // this is now our baseline; ACK it on next input
       this.connected = true; // snapshots flowing ⇒ we're synced
       // time the gap since the last snapshot for the rate + jitter readout. A huge
       // gap (backgrounded tab / a reconnect keyframe) is discarded so it can't
@@ -280,6 +300,7 @@ export class ServerSession implements NetSession {
       this.matchResult = null;
       this.recordResult = null;
       this.baseBalls.clear();
+      this.appliedTick = -1; // fresh world starts at tick 0; don't reject its snapshots
       this.restartCb?.();
     } else if (m.t === 'rejoined' && !m.ok) {
       // the grace window lapsed / the match is gone — the held slot can't be

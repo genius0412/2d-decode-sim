@@ -33,8 +33,7 @@ export function Contributors({ onOpenProfile }: { onOpenProfile: (username: stri
             ))}
           </div>
           <p className="ds-hint" style={{ marginTop: 14 }}>
-            Everyone who has contributed to the simulator. Names link to that driver’s in-game
-            profile where they have one.
+            Names link to that driver’s in-game profile where they have one.
           </p>
         </div>
       </section>

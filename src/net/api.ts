@@ -165,10 +165,20 @@ export interface Presence {
   notice?: { kind: 'restart' | 'info'; message: string; until?: number } | null;
 }
 
-/** live presence: who's online + how deep each ranked queue is, so a player can
- * see it BEFORE queueing. Cheap JSON off the same host; poll it (usePresence). */
-export function fetchPresence(): Promise<Presence> {
-  return getJson(`/api/presence`);
+/**
+ * Live presence: who's online + how deep each ranked queue is, so a player can
+ * see it BEFORE queueing. Cheap JSON off the same host; poll it (usePresence).
+ *
+ * `full` asks for the true CROSS-REGION aggregate. Without it, a server with
+ * nobody connected answers from memory instead of querying Postgres, so an empty
+ * site costs no database time at all - which is most of why the Neon bill was what
+ * it was (see the /api/presence note in server/index.ts). The price is that an idle
+ * region reports its own zeros rather than a busy neighbour's count, so the one
+ * screen where this number drives a decision - ranked queue depth - asks for the
+ * real thing.
+ */
+export function fetchPresence(full = false): Promise<Presence> {
+  return getJson(`/api/presence${full ? '?full=1' : ''}`);
 }
 
 export interface PublicProfile {
@@ -600,6 +610,10 @@ export async function adminRenameUser(userId: string, handle: string): Promise<s
 /** a friend's presence, as resolved BY THE SERVER. `online` already accounts for
  * an 'invisible' friend (they arrive as a plain offline row with no last-seen),
  * so there is no client-side filtering to forget. */
+/** what a friend is doing right now, for a chess.com-style activity line. Only
+ * meaningful while `online`; null otherwise. */
+export type Activity = 'menu' | 'lobby' | 'match';
+
 export interface FriendRow {
   userId: string;
   handle: string;
@@ -610,6 +624,10 @@ export interface FriendRow {
   /** coarse seconds since last seen — null when online or never seen. Already
    * rounded server-side to the buckets the UI renders. */
   offlineSeconds: number | null;
+  /** 'menu' | 'lobby' | 'match' while online; null when offline/invisible/unknown */
+  activity: Activity | null;
+  /** which game the friend is in — only set alongside `activity` */
+  game: GameId | null;
 }
 
 export type PresenceStatus = 'online' | 'dnd' | 'invisible';
@@ -675,9 +693,15 @@ async function authedJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** the caller's friends, requests and blocks. This request also records the
- * caller's own presence server-side — there is no separate ping. */
-export function fetchFriends(): Promise<FriendsPayload> {
-  return authedJson<FriendsPayload>('/api/friends');
+ * caller's own presence server-side — there is no separate ping — including WHAT
+ * the caller is doing (`activity`) + which game, so friends see a live activity
+ * line. Both are optional; an old server ignores the query params. */
+export function fetchFriends(activity?: Activity, game?: GameId): Promise<FriendsPayload> {
+  const qs = new URLSearchParams();
+  if (activity) qs.set('a', activity);
+  if (game) qs.set('g', game);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return authedJson<FriendsPayload>('/api/friends' + suffix);
 }
 
 const friendPost = (path: string, username: string): Promise<{ ok?: boolean; outcome?: string }> =>

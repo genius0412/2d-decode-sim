@@ -7,6 +7,7 @@ import {
   CHAIN_HOOK_Y,
   CHAIN_LAB,
   CHAIN_RINGSTAND_XY,
+  CHAIN_ASCEND_R,
   CHAIN_INTAKES,
   CHAIN_DEFAULT_INTAKE,
 } from './config';
@@ -66,8 +67,14 @@ export interface ChainState {
   scored: Record<Alliance, number>;
   /** points earned from particles (multiplier folded in AT score time) */
   particlePoints: Record<Alliance, number>;
-  /** endgame status per robot id (park 5 / ascend 20) */
+  /** endgame status per robot id (park 5 / ascend 100) */
   endgame: Record<number, EndgameState>;
+  /** robot ids that STARTED perched on a Ring Stand — eligible for the AUTO descent
+   * award (they earn it by coming down off the stand during auto). Set once at spawn. */
+  descentArmed: Record<number, boolean>;
+  /** robot ids that have EARNED the auto descent (came down off their Ring Stand during
+   * auto = 100 pt). Latched, so the recomputed alliance total keeps the points all match. */
+  descended: Record<number, boolean>;
   /** last catalyst-button state per robot id (for edge-triggered pick/place) */
   catalystHeld: Record<number, boolean>;
   /** monotonic ball-id allocator (deterministic — no module global). Set past the
@@ -84,6 +91,8 @@ export function emptyChainState(): ChainState {
     scored: { red: 0, blue: 0 },
     particlePoints: { red: 0, blue: 0 },
     endgame: {},
+    descentArmed: {},
+    descended: {},
     catalystHeld: {},
     nextBallId: 1,
     foulEdge: {},
@@ -129,6 +138,18 @@ export function ringStands(): Vec2[] {
     { x: -CHAIN_RINGSTAND_XY, y: -CHAIN_RINGSTAND_XY },
     { x: CHAIN_RINGSTAND_XY, y: -CHAIN_RINGSTAND_XY },
   ];
+}
+
+/** is `pos` on (within the ascend radius of) any Ring Stand? Shared by the endgame
+ * ascend check and the auto-descent "came down off the stand" check. Position-only
+ * (no speed gate) — leaving the radius is what counts as descending. */
+export function onRingStand(pos: Vec2): boolean {
+  for (const rs of ringStands()) {
+    const dx = rs.x - pos.x;
+    const dy = rs.y - pos.y;
+    if (dx * dx + dy * dy < CHAIN_ASCEND_R * CHAIN_ASCEND_R) return true;
+  }
+  return false;
 }
 
 /** the Lab-Area corner squares OWNED by an alliance (its two side corners). APPROX. */

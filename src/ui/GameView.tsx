@@ -27,14 +27,14 @@ function NetQuality({ net, open, onToggle }: { net: NetStatus; open: boolean; on
   const dot = q === 'good' ? '#3ad17a' : q === 'fair' ? '#e5b567' : q === 'poor' ? '#e5636b' : '#93a1ad';
   const label =
     q === 'good' ? 'SMOOTH' : q === 'fair' ? 'OK' : q === 'poor' ? 'CHOPPY' : 'MEASURING';
-  const ping = net.rttMs === null ? '—' : `${net.rttMs}ms`;
-  const hz = net.snapHz === null ? '—' : `${net.snapHz}Hz`;
-  const jit = net.jitterMs === null ? '—' : `±${net.jitterMs}ms`;
+  const ping = net.rttMs === null ? '-' : `${net.rttMs}ms`;
+  const hz = net.snapHz === null ? '-' : `${net.snapHz}Hz`;
+  const jit = net.jitterMs === null ? '-' : `±${net.jitterMs}ms`;
   const title =
     `Connection: ${label.toLowerCase()}\n` +
     `Round-trip ping: ${ping} (you ↔ server)\n` +
     `Server updates: ${hz} (target 30)\n` +
-    `Jitter: ${jit} (unevenness — the main cause of choppiness)\n` +
+    `Jitter: ${jit} (unevenness - the main cause of choppiness)\n` +
     `Click to ${open ? 'hide' : 'show'} the ping graph`;
   return (
     <span
@@ -114,7 +114,7 @@ function PowerGauge({ draw }: { draw: number }) {
   return (
     <span
       className="power-gauge"
-      title={`Drive power draw — flywheel spin-up + intake pulling current off the drive motors (${pct}% slower right now)`}
+      title={`Drive power draw - flywheel spin-up + intake pulling current off the drive motors (${pct}% slower right now)`}
     >
       <span className="pg-label">PWR</span>
       <span className="pg-bar">
@@ -304,7 +304,7 @@ export function GameView({
               <>
                 <div className="net-spinner" />
                 <h3>Reconnecting…</h3>
-                <p>Restoring your connection — your run keeps going.</p>
+                <p>Restoring your connection - your run keeps going.</p>
               </>
             )}
           </div>
@@ -582,7 +582,7 @@ function IntroCard({ p, index }: { p: IntroPlayer; index: number }) {
       style={{ animationDelay: `${0.15 + index * 0.12}s` }}
     >
       <div className="intro-card-head">
-        <span className="intro-team">{p.teamNumber ? `#${p.teamNumber}` : '—'}</span>
+        <span className="intro-team">{p.teamNumber ? `#${p.teamNumber}` : '-'}</span>
         {p.isLocal && <span className="intro-you">YOU</span>}
       </div>
       <div className="intro-name">{p.name || 'Unnamed'}</div>
@@ -652,7 +652,7 @@ function EloRow({ r, index }: { r: EloResultRow; index: number }) {
         {r.name}
         {r.isLocal && <span className="elo-you">YOU</span>}
         {r.provisional && (
-          <span className="elo-prov" title="In placements — finish your placement matches to join the leaderboard">
+          <span className="elo-prov" title="In placements - finish your placement matches to join the leaderboard">
             ?
           </span>
         )}
@@ -794,7 +794,7 @@ function Results({
   const val = (get: (s: ScoreBreakdown) => number): [number, number] => [get(red), get(blue)];
 
   // Chain Reaction has its own scoring: Particle points (catalyst multiplier folded in) +
-  // End Game (park 5 / ascend 20) + penalty points awarded from the OPPONENT's fouls.
+  // End Game (park 5 / ascend 100) + penalty points awarded from the OPPONENT's fouls.
   const crSections = (): [string, [string, number, number][]][] => {
     const c = hud.chain;
     if (!c) return [];
@@ -805,7 +805,7 @@ function Results({
     const blueF = isRed ? c.oppFoulPts : c.foulPts;
     return [
       ['SCORING', [['Particles ×mult', redP, blueP]]],
-      ['END GAME', [['Park / Ascend', red.total - redP - redF, blue.total - blueP - blueF]]],
+      ['RING STAND / PARK', [['Descend / Ascend / Park', red.total - redP - redF, blue.total - blueP - blueF]]],
       ['PENALTIES', [['Fouls awarded', redF, blueF]]],
     ];
   };
@@ -855,14 +855,14 @@ function Results({
         <div className={`results-head ${revealed ? 'reveal' : ''}`}>
           <div className={`res-side red ${revealed && winner === 'red' ? 'win' : ''}`}>
             <span>RED</span>
-            <strong>{revealed ? redTotal : '—'}</strong>
+            <strong>{revealed ? redTotal : '-'}</strong>
           </div>
           <div className="res-verdict">
             {revealed ? (winner === 'tie' ? 'TIE' : `${winner.toUpperCase()} WINS`) : '···'}
           </div>
           <div className={`res-side blue ${revealed && winner === 'blue' ? 'win' : ''}`}>
             <span>BLUE</span>
-            <strong>{revealed ? blueTotal : '—'}</strong>
+            <strong>{revealed ? blueTotal : '-'}</strong>
           </div>
         </div>
         {!revealed && <p className="ds-hint results-wait">Tallying the score…</p>}
@@ -899,23 +899,10 @@ function Results({
           </tbody>
         </table>
         {ranked && <EloResults rows={eloResults} />}
-        {cr && hud.chain ? (
-          <p className="ds-hint">
-            Each Particle scores 1 pt × (1 + Catalysts on hooks) — RED ×
-            {hud.alliance === 'red' ? hud.chain.mult : hud.chain.oppMult}, BLUE ×
-            {hud.alliance === 'blue' ? hud.chain.mult : hud.chain.oppMult}. End Game: park 5 · ascend 20.
-            Foul points ({PTS_FOUL_MAJOR} per major) come from the opponent's violations.
-          </p>
-        ) : (
-          <p className="ds-hint">
-            Penalty points ({PTS_FOUL_MINOR} minor · {PTS_FOUL_MAJOR} major) come from the opponent's
-            fouls and are already in each total.
-          </p>
-        )}
         {matchResult && (
           <p className="ds-hint" style={{ color: 'var(--ds-accent)' }}>
             {matchResult.kind === 'record'
-              ? '✓ Recorded — sign in to save it to the leaderboard.'
+              ? '✓ Recorded - sign in to save it to the leaderboard.'
               : '✓ Match recorded.'}
           </p>
         )}
@@ -1046,7 +1033,7 @@ function RecordResults({
       <div className={`overlay-panel results record ${revealed ? 'revealed' : 'tallying'}`}>
         <h2>{revealed ? 'RUN COMPLETE' : 'FINAL SCORE'}</h2>
         <div className={`record-scoreline ${revealed ? 'reveal' : ''}`}>
-          <strong className="record-total">{revealed ? netTotal : '—'}</strong>
+          <strong className="record-total">{revealed ? netTotal : '-'}</strong>
           <span className="record-total-label">POINTS</span>
         </div>
         {!revealed && <p className="ds-hint results-wait">Tallying the score…</p>}
@@ -1083,17 +1070,6 @@ function RecordResults({
                 </tr>
               </tbody>
             </table>
-            {cr && hud.chain ? (
-              <p className="ds-hint">
-                Each Particle scores 1 pt × (1 + Catalysts on hooks, ×{hud.chain.mult}). End Game:
-                park 5 · ascend 20.
-              </p>
-            ) : (
-              <p className="ds-hint">
-                Your own fouls ({PTS_FOUL_MINOR} pt minor · {PTS_FOUL_MAJOR} pt major) subtract from
-                your score.
-              </p>
-            )}
             <div className="overlay-buttons">
               {matchResult && onWatchReplay && (
                 <button onClick={() => onWatchReplay(matchResult.replay)}>▶ WATCH REPLAY</button>

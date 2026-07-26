@@ -20,7 +20,7 @@ import type { GameModule } from './games';
 import { accelMultiplier as chainAccelMultiplier, type EndgameState } from './games/chain/state';
 import { chainHopperCap } from './games/chain/config';
 import { chainCatalystPrompt } from './games/chain/play';
-import { startMatch } from './sim/match';
+import { startMatch, robotsEnabled } from './sim/match';
 import { robotInLaunchZone } from './sim/robot';
 import { InputManager } from './input/input';
 import { Renderer } from './render/renderer';
@@ -490,11 +490,11 @@ export class GameController {
     return n; // > 3 means the "Match begins in" lead-in
   }
 
-  /** can park mode be turned ON right now? Last ENDGAME_START seconds of
-   * teleop, or anywhere in free drive (which has no match clock) */
+  /** can park mode be turned ON right now? Any time the robot can actually move —
+   * auto, teleop, or free drive — so precision/slow-drive is available throughout
+   * a match, not only in the endgame window. */
   private canPark(): boolean {
-    const m = this.world.match;
-    return m.phase === 'freeplay' || (m.phase === 'teleop' && m.phaseTimeLeft <= C.ENDGAME_START);
+    return robotsEnabled(this.world);
   }
 
   /** everything a frame does EXCEPT render: sample input, step, audio, toasts */
@@ -509,9 +509,10 @@ export class GameController {
         cmd.driveY = -cmd.driveY;
       }
     }
-    // park mode: toggle on press. Turning it ON is gated to endgame/free drive;
-    // turning it back OFF is always allowed. While on, cap the drive command's
-    // magnitude to the configured percentage for precision, low-speed control.
+    // park mode: toggle on press. Turning it ON is gated to when the robot can
+    // drive (auto/teleop/free drive); turning it back OFF is always allowed. While
+    // on, cap the drive command's magnitude to the configured percentage for
+    // precision, low-speed control.
     if (this.input.parkPressed) {
       if (this.parked) this.parked = false;
       else if (this.canPark()) this.parked = true;

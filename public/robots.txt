@@ -1,0 +1,35 @@
+# DSIM — https://www.playdsim.com
+#
+# NOTE: this file has to EXIST for /robots.txt to work at all. vercel.json
+# rewrites every unmatched path to /index.html, and Vercel only skips that
+# rewrite for paths that resolve on the filesystem — so before this file was
+# added, /robots.txt and /sitemap.xml both answered 200 with the SPA's HTML.
+
+User-agent: *
+Allow: /
+
+# Live-session and account surfaces: a URL here can't be restored without a
+# server session, so a crawler gets an empty screen or a redirect home. The `$`
+# anchors keep /decode/records (the leaderboard, worth indexing) out of the
+# /decode/record (solo run) rule.
+Disallow: /decode/play
+Disallow: /decode/lobby
+Disallow: /decode/record$
+Disallow: /decode/duo-record
+Disallow: /decode/ranked
+Disallow: /decode/watch
+Disallow: /decode/replay/
+Disallow: /decode/account
+Disallow: /decode/admin
+Disallow: /chain/play
+Disallow: /chain/lobby
+Disallow: /chain/record$
+Disallow: /chain/duo-record
+Disallow: /chain/ranked
+Disallow: /chain/watch
+Disallow: /chain/replay/
+Disallow: /chain/account
+Disallow: /chain/admin
+Disallow: /admin
+
+Sitemap: https://www.playdsim.com/sitemap.xml

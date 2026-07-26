@@ -1,4 +1,251 @@
-# HANDOFF — 2026-07-20 (profile-menu top bar + Changelog page) — READ FIRST
+# HANDOFF — 2026-07-25 (desktop = thin shell over the live site + baked env) — READ FIRST
+
+## This session — downloaded app now (a) auto-updates content by loading the live site and (b) can actually play online
+
+Two fixes to the Electron desktop build, no sim/web-UI changes:
+
+1. **Thin-shell load model** (`electron/main.cjs`). `createWindow` no longer `loadFile`s
+   the bundled `dist` unconditionally. New `loadApp(win)`: a fast `siteReachable()` HEAD
+   probe of `https://www.playdsim.com/version.json` (2.5 s timeout, dead host fails in
+   ~11 ms) decides — **online → `loadURL(SITE)`** (the app is always the current Vercel
+   deploy, so game content updates with every web deploy, no re-download), **offline →
+   `loadLocal(win)`** (the bundled copy; the common case for a downloaded build). A
+   `loadURL().catch` (ignoring benign `ERR_ABORTED`) is the safety net → falls back to
+   local if a reachable-but-failing load happens. Added `setWindowOpenHandler` → external
+   browser for `target=_blank`/`window.open` (all the app's external links use `_blank`).
+   **Deliberately NO `will-navigate` guard** — Google `signIn.social` is a full-page
+   redirect to the provider and back; blocking it would break in-app auth.
+
+2. **Baked public env into the desktop bundle** (`vite.config.ts`). The Electron build gets
+   NO Vercel env injection, so the old bundled build shipped with `VITE_GAME_SERVERS`/
+   `VITE_NEON_AUTH_URL` ABSENT → `SERVERS=[]` → multiplayer hidden, auth off (the bug the
+   user hit: "downloaded apps can't play online"). Now, behind an `if (process.env.ELECTRON
+   === '1')` guard, vite sets those two vars (the EXACT public values already in the deployed
+   web bundle — extracted from the live JS; nothing secret) via `process.env.X ??= …` so an
+   explicit override still wins. **The web build (ELECTRON unset) is provably untouched** —
+   hard `if` gate; Vercel keeps supplying its own env. `.env.*` is gitignored so a committed
+   dotenv would never reach CI — hence baking in vite.config, the single source that covers
+   both CI (`release.yml` runs `npm run build` with `ELECTRON=1`) and local `npm run dist`.
+
+**Verified** (real Electron drive, temp drivers deleted): online load → URL
+`https://www.playdsim.com/decode`, `window.dsim` bridge present, real app renders. Offline
+fallback → `file://…/dist/index.html` renders, and its menu shows live **"online · 3 signed
+in"**, **525 PLAYERS / 8,396 GAMES PLAYED**, solo/duo/1v1/2v2 counts — i.e. the bundle now
+reaches the game server + auth. Bundle grep confirms all 5 regions + the neon-auth URL baked
+in. `ELECTRON=1 npm run build` green (tsc strict + vite). No new release cut yet — this ships
+in the next tagged desktop build; existing v0.1.2 web/proxy/update flow unchanged.
+
+**Follow-up (not done):** true auto-INSTALL (electron-updater) still needs code-signing
+(Apple $99/yr is the hard gate; Windows unsigned works with SmartScreen warnings; Linux
+AppImage free). The thin-shell model above makes CONTENT updates instant regardless, so a
+shell rebuild is only needed for Electron/native changes. In-app Google sign-in may still hit
+Google's `disallowed_useragent` block in the Electron webview (email/password unaffected) —
+untested in-app; the existing `isEmbeddedBrowser` guidance applies.
+
+---
+
+# HANDOFF — 2026-07-22 ("Play a friend" format picker) — READ FIRST
+
+## This session (latest) — the deferred "Play a friend" mode-picker (client-only)
+
+Built the "Play a friend" format picker the 2026-07-21 handoff deferred (its TODO +
+feasibility map is below, still accurate). **Client-only — rides entirely on existing
+pipes, NO server/DB/protocol change** (the deployed server already accepts
+`record`/`duo` room invites via `inviteToRoom`), so Vercel auto-deploys. `npm run build`
+green, `npm run contrast` 167 (unchanged — new CSS reuses audited token pairs), menu
+shell boot-verified in Electron (no render crash from the new provider child).
+
+**What it does:** clicking **Challenge** on a friend (panel row, profile, or toast source)
+now opens a modal FORMAT picker instead of instantly hosting a 1v1 versus room. Tiles:
+- **1v1 · Casual** and **2v2 · Team up** → a custom `versus` room (the 1v1-vs-2v2 split is
+  emergent — a versus room admits up to 4; you sort alliances/add drivers in the lobby).
+- **2v0 · Co-op record** → a `record`/`duo` co-op run.
+- **1v1 · Rated** and **2v2 · Ranked** → shown DISABLED ("Soon"): rating is only applied
+  to matchmaker-staged rooms and there's no premade/party concept yet (see feasibility map
+  below — these need server work, deliberately not faked).
+
+**How it's wired:**
+- `src/ui/ChallengePicker.tsx` (NEW) — the modal + `ChallengeFormat` type
+  (`'casual1v1' | 'casual2v2' | 'duorecord'`). Reuses `.ds-modal-backdrop`/`.ds-modal` +
+  `.ds-opt` tiles. Success navigates away (unmounts the modal); only a failed invite lands
+  back with an inline error + re-enabled tiles.
+- `src/ui/friendsContext.tsx` — `challenge` now takes `(username, format)` and maps
+  `duorecord`→`inviteToRoom(...,'record','duo')` else `versus`. New `openChallenge(username)`
+  opens the picker (provider owns `challengeTarget` state + renders `<ChallengePicker>` once,
+  so panel/profile/anywhere just call it). `onHostRoom` gained a `kind: RoomKind` arg.
+- `src/ui/App.tsx` — `hostForChallenge(code, game, kind)` routes `record`→`duorecord`
+  screen, else `lobby` (mirrors `onJoinInvite`'s recipient routing, already correct).
+- `src/ui/FriendsPanel.tsx` / `ProfileFriendActions.tsx` — Challenge buttons call
+  `friends.openChallenge(username)` (was `challenge`); `ChallengeButton` lost its busy state
+  (opening the modal is synchronous now).
+- `src/ui/shell.css` — `.ds-chal*` (modal width, tile list) + `.ds-opt:disabled` neutralised
+  hover + `.oz.soon` muted badge.
+
+**Recipient path was already complete** — a `record` invite's toast/panel "Join" routes to
+`duorecord` via the existing `onJoinInvite`. **Not verified:** live two-account
+send/receive/host for each format (needs live accounts — same limitation as all friends work).
+Left open (needs server work, per the feasibility map): 1v1 rated + 2v2 ranked-with-friend.
+
+---
+
+# HANDOFF — 2026-07-21c (Google sign-in in-app-browser guard)
+
+## This session — fix Google OAuth `disallowed_useragent` in in-app browsers (client-only)
+
+User hit Google's **`Error 403: disallowed_useragent`** ("Access blocked … Use secure
+browsers") on mobile but not desktop. Cause: opening the sim link from inside a social
+app (LinkedIn/Instagram/…) runs the page in an embedded WEBVIEW, and Google refuses OAuth
+there. Not a Neon Auth misconfig — Google can't be made to allow embedded webviews.
+
+Fix: `src/lib/browserEnv.ts` `isEmbeddedBrowser()` (UA sniff — named in-app tokens +
+Android `wv` + iOS non-Safari WKWebView). In `AuthPanel.tsx`, when embedded the "Continue
+with Google" button is replaced by a hint ("open in Safari/Chrome — or use email above") +
+a **Copy link** button. Email/password sign-in is unaffected and always shown. Conservative:
+a false positive only downgrades the Google button; a false negative just re-shows Google's
+block screen. Client-only → Vercel auto-deploys, no server change. `npm run build` green.
+Possible follow-up: Android `intent://` escape to Chrome; verify the UA heuristic against a
+real LinkedIn in-app browser.
+
+**Also fixed (Chain Reaction):** the `▲ ASCENDED` / `■ PARKED` endgame badge over robots
+was drawn upside down in match views. `src/games/chain/draw.ts` counter-rotated by `+up`
+(= `+viewAngle`); with ±90° driver views that rotates the glyphs 180°. Changed to `-up` to
+match the DECODE label path (`renderer.ts` rotates `-viewAngle`). Build green.
+
+---
+
+# HANDOFF — 2026-07-21b (matchmaking reliability: ghost-socket reaper + fair-host fallback)
+
+## This session (latest) — two matchmaking bug fixes (server/index.ts only)
+
+User reported: (1) queue "often says 4/4 or 5/4 but the match doesn't start"; (2) "the
+game server is usually one-sided, not meeting in the middle." Diagnosed + fixed both in
+`server/index.ts`. Server-only change — **needs a deploy to take effect** (`fly-deploy.sh`).
+server:check + `npm test` green.
+
+1. **Ghost-socket reaper (fixes "4/4 won't start").** There was NO WS-level keepalive — a
+   half-open TCP connection (laptop sleep, wifi drop, hard-killed tab) never fires `close`
+   until the OS timeout (minutes+). Until then the socket is a GHOST: it stays in the ranked
+   QUEUE (bucket reads "4/4"/"5/4" but a match staged against it never completes) and holds
+   its room slot. Added a `socketAlive` WeakMap + `ws.on('pong')` + a 15s `ws.ping()`/
+   `terminate()` heartbeat interval (bottom of file). A reaped socket fires the normal
+   `close` teardown (`matchmaker.remove` + `room.detach`). Browsers auto-pong at the protocol
+   level, so only genuinely-dead sockets are reaped. (The pre-existing `pong` at the msg
+   handler is an APP-level RTT reply for the NetQuality HUD — unrelated.)
+2. **Server-observed home region (fixes one-sided host).** The client's `homeRegion` comes
+   from a `/health` `x-region` probe (`src/net/ping.ts`); a cold/auto-stopped satellite makes
+   Anycast fall back to the warm primary (or the probe returns `''`), so the server defaulted
+   the player to `REGION` (iad) → minimax `bestHost` hosts every such match at iad → one-sided.
+   Added `replaySrcRegion(req)` which reads Fly's `fly-replay-src` header on the replayed
+   `?mm=1` connection (Anycast lands it on the client's NEAREST region, which replays to the
+   matchmaker → server-authoritative nearest region). Used ONLY as a fallback:
+   `homeRegion: msg.homeRegion || edgeRegion || REGION`, so the working probe path is
+   unchanged. NOTE: unverified against live Fly routing — confirm post-deploy that a
+   non-US player's ranked match now hosts nearer them (`/api/presence` region on the host).
+   Remaining (design, not a bug): cross-region radius WIDENING still takes ~30–40s to reach
+   the 300 ms cap, so a genuinely far full bucket can show "N/N" for a while before it starts;
+   tune `RADIUS_INTERVAL_MS`/`RADIUS_MAX_MS` in `server/matchmaking.ts` if faster (looser)
+   cross-region pairing is wanted.
+
+---
+
+# HANDOFF — 2026-07-21 (friend system: challenge / rich presence / notifications / recently-played) — READ FIRST
+
+## "Play a friend" mode-picker menu — BUILDABLE SLICE DONE (2026-07-22, see top of file)
+
+User wanted a **"Play a friend"** flow where, when challenging a friend, you pick the FORMAT:
+1v1 unrated, 1v1 rated, 2v2 ranked (friend as your teammate), 2v0 duo record, etc. **The
+buildable formats (1v1/2v2 casual + 2v0 duo record) SHIPPED 2026-07-22** (`ChallengePicker.tsx`;
+see the top-of-file handoff). **1v1 rated + 2v2 ranked-with-friend remain OPEN** (shown disabled
+"Soon" in the picker) — they need the server work the feasibility map below describes:
+- **1v1 unrated (custom), 2v2 unrated (friend as teammate), 2v0 duo record** — all buildable
+  today with existing pipes. The current `FriendsCtx.challenge` already does 1v1-unrated; duo
+  record just needs `inviteToRoom(..., 'record', 'duo')` + route to `duorecord`.
+- **1v1 RATED / 2v2 ranked-with-friend** — NOT possible today. Rating (Glicko) is applied ONLY
+  to matchmaker-staged rooms: `Room.ranked` is set true ONLY in `applyPending()`
+  (`server/room.ts:642-644`), reached ONLY when a `pending_matches` row exists for the code
+  (`server/index.ts:704-707`), which ONLY `Matchmaker.assign` creates (`matchmaking.ts:257`).
+  A code/invite-joined room can NEVER produce a rated result. "1v1 rated with friend" needs a
+  new path to stage a rated PendingMatch for an invited pair; "2v2 ranked-with-friend"
+  additionally needs a PARTY/premade concept in the matchmaker (none exists — it actively
+  dedups same-account and splits alliances blindly by index, `matchmaking.ts:200-202,249-250`).
+- Entry-point idea: a "Play a friend" mode-select tile AND upgrade the per-friend Challenge
+  button into a format picker. `RoomInvite`/`room_invites` would need a `ranked`/mode field to
+  carry the intent (today it carries only room/game/kind/record).
+
+---
+
+## This session (latest) — chess.com-style friends overhaul
+
+Build (`ELECTRON=1`/web) + strict `tsc` + `npm run server:check` + `npm test` (~unchanged,
+no `src/sim`/`config.ts` touch) + `npm run contrast` (167, unchanged — new CSS reuses audited
+token pairs) ALL GREEN. Boot-verified via the `verify` Electron recipe: shell mounts, FRIENDS
+panel renders, no console errors, no crash (the App render now wraps in a provider — the risky
+bit — and it's clean).
+
+Four features (user asked for all four, "best-value slice" — so real-time is fast adaptive
+polling, NOT a WebSocket rebuild):
+
+1. **Direct Challenge / Play** (the headline — previously you could ONLY invite from inside a
+   lobby). A **Challenge** button on every online, non-DND, non-in-match friend row (`FriendsPanel`),
+   on a friend's **profile** (`ProfileFriendActions`), driven by `FriendsCtx.challenge(username)`:
+   generate a room code (`generateRoomCode`), send a `versus` room invite, then host that room
+   (`onHostRoom` → `App.hostForChallenge` sets `pendingAutoJoin` + navigates to `lobby`). The
+   invited friend gets the normal room invite and Joins into the same code. Reuses the existing
+   invite plumbing end-to-end — NO new invite kind, NO protocol change.
+
+2. **Rich presence** ("In a match · DECODE" / "In a lobby · Chain" / "Online"). New **migration
+   `0018_presence_activity.sql`** adds `activity` + `activity_game` to `user_presence`. The
+   `GET /api/friends` heartbeat now carries `?a=<menu|lobby|match>&g=<decode|chain>` →
+   `touchPresence(userId, activity, game)`; `listFriends` returns `activity`/`game` per online
+   friend (BLANKED for offline/invisible, same as last-seen). Client `FriendRow` gained
+   `activity`/`game`; `presenceLine()`/`canChallenge()` in FriendsPanel render it. Activity is
+   sourced from the CURRENT screen: the provider reports `'menu'` on shell screens; `InviteFlyout`
+   reports `'lobby'`; and a fire-and-forget beat in `App` (game/record/matchmaking screens, 30s)
+   reports `'match'`/`'lobby'` from the full-screen surfaces that render OUTSIDE the provider (so
+   you don't silently drop offline mid-match). Backward-compatible: old server ignores the params,
+   old client just omits them.
+
+3. **Notifications** — `FriendToasts` (bottom-right stack, `friendsContext.tsx`), rendered inside
+   `AppShell` ONLY (menu shell — never over the field, per product decision #5). The provider diffs
+   each poll for NEW incoming requests / invites (primed off the FIRST payload via the new
+   `useFriends().ready` flag, so it never announces the backlog on load) and pushes actionable
+   toasts (request → Accept/✕; challenge → Join/✕). A soft self-contained WebAudio `chime()` gated
+   on master-sound (`sound` prop). Auto-expire oldest every 9s.
+
+4. **Real-time feel (low-lift)** — `useFriends` replaced the fixed 30s/120s `collapsed` cadence
+   with ADAPTIVE polling: `POLL_HOT_MS` 6s when anything's pending (incoming/outgoing/invites),
+   `POLL_IDLE_MS` 20s otherwise; recursive `setTimeout` reschedules off the latest data; catches up
+   on `focus` + `visibilitychange`; still ONLY polls while the tab is visible.
+
+**Plus (mid-session ask): "friend recently-played people".** `RecentlyPlayed` section in
+`FriendsPanel` (client-only, NO server change): `fetchUserMatches(myUserId, {limit:25})` →
+`recentPeople()` flattens `players[]` to distinct non-self usernamed opponents+teammates, freshest
+first, minus anyone already friend/pending/blocked; one-click **Add** (≤6 shown). `myUserId`
+threaded App → AppShell → FriendsPanel.
+
+**Architecture change to know about**: `useFriends` was mounted 3× (panel, profile, invite flyout
+= triple poll where they co-mounted). Now there's ONE shared store — **`FriendsProvider` /
+`useFriendsCtx` in `src/ui/friendsContext.tsx`** — wrapping `AppShell` in `App.tsx`. `FriendsPanel`
+and `Profile`/`ProfileFriendActions` read the ctx. `Lobby`'s `InviteFlyout` DELIBERATELY keeps its
+own `useFriends` (it's a full-screen surface rendered OUTSIDE the provider — that's also what
+heartbeats `'lobby'` presence during a lobby). `useFriendsCtx()` throws outside the provider by
+design.
+
+**DEPLOY NOTE**: this includes a SERVER + DB migration change (`0018`, `server/db/repo.ts`,
+`server/api.ts`). Follow the deploy protocol — commit on the server branch → `./scripts/fly-deploy.sh`
+→ verify `/health` → clients auto-deploy. The migration is additive (`add column if not exists`) and
+the protocol stays backward-compatible (query params optional, new `FriendRow` fields tolerated), so
+old clients keep working against the new server and vice-versa. Not yet deployed/committed as of this
+writing.
+
+Files touched: `server/db/migrations/0018_presence_activity.sql` (new), `server/db/repo.ts`,
+`server/api.ts`, `src/net/api.ts`, `src/ui/useFriends.ts`, `src/ui/friendsContext.tsx` (new),
+`src/ui/FriendsPanel.tsx`, `src/ui/ProfileFriendActions.tsx`, `src/ui/Profile.tsx`,
+`src/ui/InviteFlyout.tsx`, `src/ui/AppShell.tsx`, `src/ui/App.tsx`, `src/ui/shell.css`.
+
+---
+
+# HANDOFF — 2026-07-20 (profile-menu top bar + Changelog page)
 
 ## This session (latest) — top bar consolidated into a profile avatar; footer gets a Changes page
 

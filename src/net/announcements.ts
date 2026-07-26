@@ -7,6 +7,10 @@ import { gameServerConfigured } from './env';
  * "Seen" is tracked in localStorage (works for anon + signed-in, no per-user DB
  * write), so a player sees each announcement ONCE — the first time they open the
  * app after it's published. Best-effort: any failure just shows nothing.
+ *
+ * A brand-new browser (no seen key at all) is silently caught up instead of shown
+ * the backlog — see `isFirstVisit`. The full history stays available on the
+ * Changelog page, which is where a first-time visitor should meet it.
  */
 
 const SEEN_KEY = 'decodesim.seenAnnouncements.v1';
@@ -14,6 +18,18 @@ const SEEN_KEY = 'decodesim.seenAnnouncements.v1';
 // announcements newer than this are shown. Comfortably longer than a patch cadence.
 const MAX_AGE_DAYS = 21;
 const MAX_SHOWN = 4;
+
+/** has this browser ever been here? (the key's ABSENCE, not its emptiness — a
+ * player who dismissed everything still has a key, just possibly pruned to []) */
+function isFirstVisit(): boolean {
+  try {
+    return localStorage.getItem(SEEN_KEY) === null;
+  } catch {
+    // storage disabled: treat every load as a first visit rather than opening a
+    // modal that can never be dismissed for good
+    return true;
+  }
+}
 
 function loadSeen(): Set<string> {
   try {
@@ -47,8 +63,19 @@ export function useAnnouncements(): AnnouncementsState {
   useEffect(() => {
     if (!gameServerConfigured()) return;
     let alive = true;
+    const first = isFirstVisit();
     fetchAnnouncements(12).then((all) => {
       if (!alive || all.length === 0) return;
+      // FIRST EVER load in this browser: swallow the backlog. "What's new" is
+      // meaningless to someone who has never seen what came before, and greeting
+      // a brand-new visitor with a full-screen patch-notes modal is the worst
+      // possible first impression. It is also what every crawler and social
+      // scraper is (empty localStorage, always) — before this they read the patch
+      // notes as the homepage's content. Mark the feed seen and show nothing.
+      if (first) {
+        saveSeen(new Set(all.map((a) => a.id)));
+        return;
+      }
       const seen = loadSeen();
       const cutoff = Date.now() - MAX_AGE_DAYS * 86400_000;
       const fresh = all

@@ -13,15 +13,21 @@ import {
   sendFriendRequest,
   setPresenceStatus,
   unblockUser,
+  type Activity,
   type FriendsPayload,
   type PresenceStatus,
 } from '../net/api';
 import { gameServerConfigured } from '../net/env';
 
-/** how often to re-poll while the panel is open vs. collapsed. A collapsed panel
- * only needs its request-count badge to be roughly current, so it backs right off. */
-const POLL_OPEN_MS = 30_000;
-const POLL_COLLAPSED_MS = 120_000;
+/**
+ * Adaptive poll cadence (only ever runs while the tab is VISIBLE — see below).
+ * When something is pending a resolution — an incoming request/challenge, an
+ * outgoing request, a live invite — we poll FAST so the interactive moment feels
+ * near-instant (this is the low-lift stand-in for a real WebSocket push). When
+ * nothing's in flight we back off to keep a scale-to-zero Fly machine cheap.
+ */
+const POLL_HOT_MS = 6_000;
+const POLL_IDLE_MS = 20_000;
 
 const EMPTY: FriendsPayload = {
   friends: [],
@@ -35,6 +41,10 @@ const EMPTY: FriendsPayload = {
 export interface FriendsApi {
   data: FriendsPayload;
   loading: boolean;
+  /** true once the FIRST server payload has landed — so a consumer can tell the
+   * real "no friends" from "not fetched yet" (the toast differ primes off this so
+   * it never announces the whole backlog on load) */
+  ready: boolean;
   /** the server has no friends API (older deploy than this client) — render the
    * unavailable state, never an error */
   unavailable: boolean;
@@ -79,10 +89,14 @@ export interface FriendsApi {
  */
 export function useFriends({
   signedIn,
-  collapsed,
+  activity = 'menu',
+  game,
 }: {
   signedIn: boolean;
-  collapsed: boolean;
+  /** what to report the caller is doing, for friends' activity lines */
+  activity?: Activity;
+  /** which game the caller is in (reported alongside `activity`) */
+  game?: GameId;
 }): FriendsApi {
   const [data, setData] = useState<FriendsPayload>(EMPTY);
   // mirrors `data` so an async mutation can read the pre-patch value for rollback
@@ -90,6 +104,7 @@ export function useFriends({
   const dataRef = useRef<FriendsPayload>(EMPTY);
   dataRef.current = data;
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // `refresh()` is called from mutation handlers; a counter avoids threading the
@@ -103,17 +118,38 @@ export function useFriends({
     if (!active) {
       setData(EMPTY);
       setUnavailable(false);
+      setReady(false);
       return;
     }
     let alive = true;
-    const load = (): void => {
-      if (document.visibilityState !== 'visible') return;
+    let timer: number | undefined;
+    const schedule = (ms: number): void => {
+      timer = window.setTimeout(tick, ms);
+    };
+    // reschedule off the LATEST data (via the ref): fast while anything is
+    // pending a resolution, slow when idle
+    const nextDelay = (): number => {
+      const d = dataRef.current;
+      const hot = d.incoming.length > 0 || d.outgoing.length > 0 || d.invites.length > 0;
+      return hot ? POLL_HOT_MS : POLL_IDLE_MS;
+    };
+    function tick(): void {
+      if (!alive) return;
+      // a hidden/backgrounded tab must not poll — it would keep the caller
+      // eternally "online" while away and hammer a scale-to-zero machine. It
+      // simply falls out of the freshness window, which reads as offline (the
+      // truth). `focus`/`visibilitychange` below catch it up on return.
+      if (document.visibilityState !== 'visible') {
+        schedule(POLL_IDLE_MS);
+        return;
+      }
       setLoading(true);
-      fetchFriends()
+      fetchFriends(activity, game)
         .then((d) => {
           if (!alive) return;
           setData(d);
           setUnavailable(false);
+          setReady(true);
         })
         .catch((e: unknown) => {
           if (!alive) return;
@@ -123,24 +159,29 @@ export function useFriends({
           if (e instanceof FriendsUnavailableError) setUnavailable(true);
         })
         .finally(() => {
-          if (alive) setLoading(false);
+          if (!alive) return;
+          setLoading(false);
+          schedule(nextDelay());
         });
-    };
+    }
 
-    load();
-    const iv = window.setInterval(load, collapsed ? POLL_COLLAPSED_MS : POLL_OPEN_MS);
-    // catch up immediately when a backgrounded tab comes forward, rather than
-    // showing stale presence until the next interval
-    const onVis = (): void => {
-      if (document.visibilityState === 'visible') load();
+    tick();
+    // catch up immediately when a backgrounded/blurred tab comes forward, rather
+    // than showing stale presence until the next interval
+    const wake = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      window.clearTimeout(timer);
+      tick();
     };
-    document.addEventListener('visibilitychange', onVis);
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('focus', wake);
     return () => {
       alive = false;
-      window.clearInterval(iv);
-      document.removeEventListener('visibilitychange', onVis);
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('focus', wake);
     };
-  }, [active, collapsed, nonce]);
+  }, [active, activity, game, nonce]);
 
   /**
    * Apply `patch` to the local cache immediately, then run `call`. A 30s poll is
@@ -194,6 +235,8 @@ export function useFriends({
                   online: false,
                   status: null,
                   offlineSeconds: null,
+                  activity: null,
+                  game: null,
                 },
               ]
             : d.friends,
@@ -307,6 +350,7 @@ export function useFriends({
   return {
     data,
     loading,
+    ready,
     unavailable,
     error,
     refresh,

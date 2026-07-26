@@ -12,9 +12,32 @@
  * to a budget): `onDown` fires while it's down, `onReopen` when it comes back
  * (distinct from the FIRST `onOpen`), and `onFail` if the budget is exhausted.
  * The lobby re-sends `join` on reopen; the in-match session re-sends `rejoin`.
+ *
+ * ── LANES (Phase 1 seam) ────────────────────────────────────────────────────
+ * `send` takes an optional `{ reliable }` LANE hint. It is a SEND-side concern
+ * only — a promise about delivery semantics the backend may honour:
+ *   - reliable (DEFAULT): ordered + guaranteed. The control plane (join /
+ *     matchStart / roster / restart / rejoin / results) MUST use this — losing
+ *     or reordering one breaks the match.
+ *   - unreliable (`{ reliable: false }`): fire-and-forget. The HOT PATH (`input`
+ *     upstream; `snapshot`/`pong` downstream once the server backend lands) uses
+ *     this — the next message supersedes a lost one, so head-of-line blocking on
+ *     a single drop is the thing we're eliminating.
+ * `WebSocketTransport` has ONE ordered TCP stream, so it IGNORES the hint and
+ * delivers everything reliably — tagging is a no-op on the wire today. A future
+ * `WebTransportTransport` routes `reliable: false` onto QUIC datagrams (the
+ * actual latency win) and everything else onto a reliable stream.
+ *
+ * RECEIVE stays a single unified `onMessage`: the consumer already dispatches by
+ * message `t`, and it does not care which lane a frame physically arrived on, so
+ * the WebTransport backend will merge its datagram + stream readers into this one
+ * callback. Keeping receive unified is what makes the lane hint a pure send-side
+ * addition with zero consumer churn.
  */
 export interface Transport {
-  send(data: string): void;
+  /** Send a frame. `opts.reliable` (default true) is the lane hint — see the
+   * LANES note above. Backends free to ignore it (WebSocketTransport does). */
+  send(data: string, opts?: { reliable?: boolean }): void;
   onMessage(cb: (data: string) => void): void;
   /** first successful connection */
   onOpen(cb: () => void): void;
@@ -91,7 +114,10 @@ export class WebSocketTransport implements Transport {
     this.timer = setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
   }
 
-  send(data: string): void {
+  /** The lane hint is intentionally ignored: a WebSocket is a single ordered TCP
+   * stream, so both lanes ride it reliably. Accepting the arg keeps the seam
+   * identical to the WebTransport backend (which WILL honour it). */
+  send(data: string, _opts?: { reliable?: boolean }): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(data);
   }
 

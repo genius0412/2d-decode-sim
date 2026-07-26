@@ -80,7 +80,7 @@ import { driveParams, massLimits, rpmLimits, motorStep, driveSummary, widthLimit
 import { coerceSettings, switchGame, syncAudioMirrors } from '../src/settings';
 import type { RobotSetup } from '../src/sim/spawn';
 import { DEFAULT_BINDINGS, mergeBindings } from '../src/input/bindings';
-import { quantizeCommand, dequantizeCommand, localizeCommand, slimWorld, unslimWorld } from '../src/net/protocol';
+import { quantizeCommand, dequantizeCommand, localizeCommand, slimWorld, unslimWorld, encodeBallDelta, applyBallDelta } from '../src/net/protocol';
 import type { Artifact } from '../src/types';
 import { worldHash } from '../src/net/checksum';
 import {
@@ -2831,32 +2831,63 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     );
   }
 
-  // ball delta: encode changes vs a baseline, apply to the baseline, compare
-  const baseline: Artifact[] = w.balls.map((b) => JSON.parse(JSON.stringify(b)));
-  const prevJson = new Map(baseline.map((b) => [b.id, JSON.stringify(b)]));
+  // ball delta codec (shared encodeBallDelta/applyBallDelta, PR2): encode changes
+  // vs a client baseline, apply on the client's running baseline, compare.
+  const snap = (): Artifact[] => w.balls.map((b) => JSON.parse(JSON.stringify(b)));
+  const b0 = snap();
+  const clientBase = new Map(b0.map((b) => [b.id, b])); // the client's running baseline
+  const serverBaseA = new Map(b0.map((b) => [b.id, b])); // server's view of that same baseline
   for (let i = 0; i < 6; i++) step(w, SIM_DT, cmds); // move some balls
-  const curJson = new Map(w.balls.map((b) => [b.id, JSON.stringify(b)]));
-  const order = w.balls.map((b) => b.id);
-  const upd = w.balls.filter((b) => curJson.get(b.id) !== prevJson.get(b.id));
-
-  // client-side apply: patch baseline by id, rebuild in the authoritative order
-  const base = new Map(baseline.map((b) => [b.id, b]));
-  for (const b of upd) base.set(b.id, JSON.parse(JSON.stringify(b)));
-  const keep = new Set(order);
-  for (const id of [...base.keys()]) if (!keep.has(id)) base.delete(id);
-  const applied = order.map((id) => base.get(id) as Artifact);
-
+  const d1 = encodeBallDelta(serverBaseA, w.balls);
+  const applied = applyBallDelta(clientBase, d1);
   check(
     'ball delta reconstructs the exact ball array (order + data)',
     JSON.stringify(applied) === JSON.stringify(w.balls),
-    `sent ${upd.length}/${w.balls.length} balls`,
+    `sent ${d1.upd.length}/${w.balls.length} balls`,
   );
-  const unchanged = w.balls.filter((b) => prevJson.get(b.id) === curJson.get(b.id)).length;
+  const unchanged = w.balls.length - d1.upd.length;
   check(
     'ball delta sends only the moved balls (some changed, some idle)',
-    upd.length > 0 && unchanged > 0 && upd.length < w.balls.length,
-    `${upd.length} changed, ${unchanged} idle`,
+    d1.upd.length > 0 && unchanged > 0 && d1.upd.length < w.balls.length,
+    `${d1.upd.length} changed, ${unchanged} idle`,
   );
+  check('a null baseline yields a full keyframe (every ball in upd)', encodeBallDelta(null, w.balls).upd.length === w.balls.length);
+
+  // ACK-KEYED / DROPPED-FRAME: the property the unreliable lane needs. A client sits
+  // at baseline b0 and MISSES the intermediate frame; the next delta is encoded vs
+  // b0 (the ack), NOT vs the skipped frame. It must still reconstruct the live world
+  // exactly — proof a dropped snapshot can't corrupt a baseline keyed to the ack.
+  {
+    const droppedClient = new Map(b0.map((b) => [b.id, JSON.parse(JSON.stringify(b))]));
+    const ackBaseline = new Map(b0.map((b) => [b.id, JSON.parse(JSON.stringify(b))]));
+    for (let i = 0; i < 5; i++) step(w, SIM_DT, cmds); // world advances; client got NOTHING
+    const dGap = encodeBallDelta(ackBaseline, w.balls); // server deltas vs the ACK, not last-sent
+    const recon = applyBallDelta(droppedClient, dGap);
+    check(
+      'ack-keyed delta survives a dropped frame (reconstructs vs the acked baseline)',
+      JSON.stringify(recon) === JSON.stringify(w.balls),
+      `sent ${dGap.upd.length}/${w.balls.length}`,
+    );
+  }
+
+  // ADD + REMOVE: a ball that despawns drops out of `order`; a new id shows up in
+  // `upd`. Reconstruction must add the new one and prune the gone one.
+  {
+    const start: Artifact[] = w.balls.map((b) => JSON.parse(JSON.stringify(b)));
+    const cbase = new Map(start.map((b) => [b.id, b]));
+    const sbase = new Map(start.map((b) => [b.id, JSON.parse(JSON.stringify(b))]));
+    const next = start.slice(1).map((b) => JSON.parse(JSON.stringify(b))) as Artifact[]; // drop the first
+    const added = { ...JSON.parse(JSON.stringify(start[0])), id: 999999 } as Artifact; // a brand-new id
+    next.push(added);
+    const dAR = encodeBallDelta(sbase, next);
+    const reconAR = applyBallDelta(cbase, dAR);
+    check(
+      'ball delta handles add + remove (new id sent, despawned id pruned)',
+      JSON.stringify(reconAR) === JSON.stringify(next) &&
+        dAR.upd.some((b) => b.id === 999999) &&
+        !reconAR.some((b) => b.id === start[0].id),
+    );
+  }
 }
 
 // ---- predict/reconcile parity ----------------------------------------------
@@ -3213,6 +3244,62 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   // the spectator leaving is clean and never touches the match
   room.detach('watch-1');
   check('spectate: after the watcher leaves, the match summary drops the spectator', (room.summary()?.spectators ?? 1) === 0);
+}
+
+// ---- snapshot ACK channel + self-healing keyframe (PR2) ---------------------
+// A client piggybacks its newest-applied snapshot tick as `ack` on `input`. The
+// happy path still deltas vs the last broadcast, but a client whose CONFIRMED
+// baseline falls > ACK_STALE_TICKS behind is force-resynced with a full keyframe.
+{
+  const aMsgs: ServerMsg[] = [];
+  const bMsgs: ServerMsg[] = [];
+  const mkC = (id: string, alliance: 'red' | 'blue', sink: ServerMsg[]): Client => ({
+    id,
+    send: (m) => sink.push(m),
+    player: { clientId: id, name: id, teamName: 'T', teamNumber: 1, alliance, startIndex: 0, ready: true, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } },
+    connected: true,
+    disconnectAt: 0,
+    userId: `u-${id}`,
+  });
+  const room = new Room('smoke-ack', () => {}, { kind: 'versus' });
+  room.add(mkC('a', 'red', aMsgs));
+  room.add(mkC('b', 'blue', bMsgs));
+  room.onMessage('a', { t: 'start' });
+  room.advanceForTest(4);
+
+  const q = quantizeCommand(cmd({}));
+  const lastSnap = (arr: ServerMsg[]): Extract<ServerMsg, { t: 'snapshot' }> | undefined =>
+    [...arr].reverse().find((m) => m.t === 'snapshot') as Extract<ServerMsg, { t: 'snapshot' }> | undefined;
+  aMsgs.length = 0;
+  bMsgs.length = 0;
+  // 'a' is WEDGED — it keeps acking tick 0 forever; 'b' acks the latest each round.
+  for (let round = 0; round < 22; round++) {
+    const t = lastSnap(bMsgs)?.serverTick ?? 0;
+    room.onMessage('a', { t: 'input', tick: 10_000 + round, q, ack: 0 });
+    room.onMessage('b', { t: 'input', tick: 10_000 + round, q, ack: t });
+    room.advanceForTest(30);
+  }
+  const recent = (arr: ServerMsg[], n: number): Extract<ServerMsg, { t: 'snapshot' }>[] =>
+    (arr.filter((m) => m.t === 'snapshot') as Extract<ServerMsg, { t: 'snapshot' }>[]).slice(-n);
+  const aKeyframes = recent(aMsgs, 5).every((s) => s.balls.upd.length === s.balls.order.length);
+  const bDeltas = recent(bMsgs, 5).some((s) => s.balls.upd.length < s.balls.order.length);
+  check('ack self-heal: a client whose confirmed baseline goes stale gets full keyframes', aKeyframes);
+  check('ack channel: a client that keeps acking still gets incremental deltas (no regression)', bDeltas);
+  // an OLD client that never sends `ack` must not be force-keyframed — its ack stays
+  // unknown, so the stale check never fires (it keeps getting normal deltas)
+  const cMsgs: ServerMsg[] = [];
+  const room2 = new Room('smoke-ack-legacy', () => {}, { kind: 'versus' });
+  room2.add(mkC('a', 'red', cMsgs));
+  room2.add(mkC('b', 'blue', []));
+  room2.onMessage('a', { t: 'start' });
+  room2.advanceForTest(4);
+  cMsgs.length = 0;
+  for (let round = 0; round < 22; round++) {
+    room2.onMessage('a', { t: 'input', tick: 20_000 + round, q }); // NO ack field (old client)
+    room2.advanceForTest(30);
+  }
+  const legacyDeltas = recent(cMsgs, 5).some((s) => s.balls.upd.length < s.balls.order.length);
+  check('ack channel: an ack-less legacy client is never force-keyframed', legacyDeltas);
 }
 
 // ---- single live game per user + restart disabled (server enforcement) ------
@@ -4459,7 +4546,7 @@ const mkMM = () => {
     );
   }
 
-  // endgame: park in a Lab Area (5 pt) / ascend a Ring Stand (20 pt)
+  // endgame: park in a Lab Area (5 pt) / ascend a Ring Stand (100 pt)
   {
     const gw = createChainWorld('match', 7, [chainSetup(0, 'blue')]);
     gw.match.phase = 'teleop';
@@ -4474,7 +4561,31 @@ const mkMM = () => {
     rob.pos = { x: rs.x, y: rs.y };
     rob.vel = { x: 0, y: 0 };
     runChain(gw, cmd({}), 0.1);
-    check('chain endgame: ascended a ring stand = 20 pts', gw.chain!.endgame[0] === 'ascended' && gw.match.scores.blue.total >= 20);
+    check('chain endgame: ascended a ring stand = 100 pts', gw.chain!.endgame[0] === 'ascended' && gw.match.scores.blue.total >= 100);
+  }
+
+  // AUTO DESCENT: a robot STAGED on a ring stand (start anchor 2) earns 100 pt when it
+  // comes down off the stand during auto — awarded ONCE, and the points persist after.
+  {
+    const gw = createChainWorld('match', 7, [
+      { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 2 },
+    ]);
+    check('chain descent: staged on a ring stand arms the descent', gw.chain!.descentArmed[0] === true);
+    gw.match.phase = 'auto';
+    gw.match.phaseTimeLeft = 30;
+    runChain(gw, cmd({}), 0.1); // still on the stand → not yet awarded
+    check('chain descent: not awarded while still on the stand', !gw.chain!.descended[0] && gw.match.scores.blue.total < 100);
+    gw.robots[0].pos = { x: 0, y: 0 }; // drive it down off the stand to field centre
+    runChain(gw, cmd({}), 0.1);
+    check('chain descent: coming down off the stand in auto = 100 pts', gw.chain!.descended[0] === true && gw.match.scores.blue.total >= 100);
+    // a robot that did NOT start on a stand is never armed (no free descent)
+    const gw2 = createChainWorld('match', 7, [chainSetup(0, 'blue')]); // start anchor 0 = lab floor
+    check('chain descent: a floor start is NOT armed', !gw2.chain!.descentArmed[0]);
+    gw2.match.phase = 'auto';
+    gw2.match.phaseTimeLeft = 30;
+    gw2.robots[0].pos = { x: 0, y: 0 };
+    runChain(gw2, cmd({}), 0.1);
+    check('chain descent: floor start earns no descent', !gw2.chain!.descended[0]);
   }
 
   // particles never overlap (spatial-hash separation)

@@ -77,12 +77,12 @@ export function CareerPanel({
               </span>
             </div>
             <div className="ds-stat">
-              <span className="sv">{solo?.best ?? '—'}</span>
+              <span className="sv">{solo?.best ?? '-'}</span>
               <span className="sl">Solo best</span>
               <span className="sl">{rankTag(solo?.rank ?? null)}</span>
             </div>
             <div className="ds-stat">
-              <span className="sv">{duo?.best ?? '—'}</span>
+              <span className="sv">{duo?.best ?? '-'}</span>
               <span className="sl">Duo best</span>
               <span className="sl">{rankTag(duo?.rank ?? null)}</span>
             </div>

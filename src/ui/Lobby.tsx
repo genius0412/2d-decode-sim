@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '../game';
 import type { Alliance, GameSettings as GS } from '../types';
 import { START_POSES } from '../config';
+import { CHAIN_START_POSES } from '../games/chain/config';
 import { activeStartLegal } from '../sim/field';
 import { StartPositionEditor } from './StartPositionEditor';
 import { ChainStartSelector } from './ChainStartSelector';
@@ -206,7 +207,7 @@ export function Lobby({
 
   // 2v2 ROLE + consent swap: first robot on the alliance = CLOSE, second = FAR;
   // either can propose a swap the other must accept (see useRoleSwap).
-  const rs = useRoleSwap(players, me, (patch) => lobbyRef.current?.update(patch));
+  const rs = useRoleSwap(players, me, (patch) => lobbyRef.current?.update(patch), settings.game);
   const startRole = rs.role;
   const [swapDismissed, dismissSwap] = useDismissable(rs.incoming);
 
@@ -231,7 +232,7 @@ export function Lobby({
   // settings.startCat (what the locked editor writes when you pick one).
   useEffect(() => {
     if (!startRole || !me) return;
-    const activeCat = me.startPose ? settings.startCat : indexCategory(me.startIndex);
+    const activeCat = me.startPose ? settings.startCat : indexCategory(me.startIndex, settings.game);
     if (activeCat !== startRole) applyStart(switchCategory(sCat, startRole));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startRole, me?.startIndex, me?.startPose, settings.startCat]);
@@ -260,11 +261,6 @@ export function Lobby({
               )}
             </h1>
           </div>
-          <p className="ds-sub" style={{ marginTop: -10 }}>
-            {isRecord
-              ? '2v0 co-op score attack · any drivetrains · share a room code.'
-              : 'Up to 2v2 · share a room code.'}
-          </p>
           <div className="ds-panelbox">
             <label className="ds-field">
               <span className="cap">Your name</span>
@@ -297,14 +293,12 @@ export function Lobby({
                 onClick={() => setEntryMode('create')}
               >
                 <span className="ot">Create room</span>
-                <span className="od">Get a code to share</span>
               </button>
               <button
                 className={`ds-opt ${entryMode === 'join' ? 'on' : ''}`}
                 onClick={() => setEntryMode('join')}
               >
                 <span className="ot">Join room</span>
-                <span className="od">Enter a friend’s code</span>
               </button>
             </div>
             {entryMode === 'join' && (
@@ -337,12 +331,9 @@ export function Lobby({
                 </button>
               )}
             </div>
-            <p className="ds-hint">
-              {isRecord
-                ? 'Matching drivetrains rank on that drivetrain’s board; a MIXED pair counts on the OVERALL board only.'
-                : 'Codes are auto-generated — share yours with your friends.'}
-              {multiServer() && ' Both players must pick the same region.'}
-            </p>
+            {multiServer() && (
+              <p className="ds-hint">Both players must pick the same region.</p>
+            )}
           </div>
         </div>
       </div>
@@ -404,13 +395,19 @@ export function Lobby({
                     {isMe ? ' (you)' : ''}
                   </span>
                   <span className="ptm">
-                    {p.spec.name} · {p.teamNumber || '—'}
+                    {p.spec.name} · {p.teamNumber || '-'}
                   </span>
                   {p.clientId === hostId && (
                     <span className="ds-chip on">★ HOST</span>
                   )}
                   <span className={`ds-chip ${p.alliance}`}>{p.alliance.toUpperCase()}</span>
-                  <span className="ds-chip">{p.startPose ? 'CUSTOM' : (START_POSES[p.startIndex]?.label ?? '—')}</span>
+                  <span className="ds-chip">
+                    {p.startPose
+                      ? 'CUSTOM'
+                      : settings.game === 'chain'
+                        ? (CHAIN_START_POSES[p.startIndex]?.name ?? '-')
+                        : (START_POSES[p.startIndex]?.label ?? '-')}
+                  </span>
                   <span className={`ds-chip ${p.ready ? 'on' : 'off'}`}>
                     {p.ready ? 'READY' : 'NOT READY'}
                   </span>
@@ -450,12 +447,14 @@ export function Lobby({
                 rs={rs}
                 dismissed={swapDismissed}
                 onDismiss={dismissSwap}
+                game={settings.game}
               />
             )}
             {settings.game === 'chain' ? (
               <ChainStartSelector
                 startIndex={me.startIndex ?? 0}
                 onPick={(i) => applyStart(selectStart(sCat, { index: i, pose: null }))}
+                role={startRole}
               />
             ) : (
               <StartPositionEditor
@@ -492,7 +491,7 @@ export function Lobby({
         </div>
         {!startLegal && (
           <p className="ds-hint">
-            ⚠ Your start position isn’t legal for this chassis — fix it above (or pick a preset) to
+            ⚠ Your start position isn’t legal for this chassis - fix it above (or pick a preset) to
             ready up.
           </p>
         )}
@@ -503,7 +502,7 @@ export function Lobby({
           <p className="ds-hint">START unlocks when everyone is ready.</p>
         )}
         {isHost && restartPending && (
-          <p className="ds-hint">Server is restarting shortly — starting is paused for a moment.</p>
+          <p className="ds-hint">Server is restarting shortly - starting is paused for a moment.</p>
         )}
       </div>
     </div>

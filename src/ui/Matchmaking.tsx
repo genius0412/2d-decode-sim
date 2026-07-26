@@ -51,7 +51,12 @@ export function Matchmaking({
 }) {
   const [mode, setMode] = useState<QueueMode>('1v1');
   const [noWiden, setNoWiden] = useState(false);
-  const presence = usePresence(); // live queue depths, refreshed while on this screen
+  // Live queue depths, refreshed while on this screen. `full` because THIS is the
+  // screen where the number decides something: you read "3 waiting in 1v1" and
+  // queue on the strength of it. Elsewhere the ambient chip lets an idle server
+  // answer from memory to keep the database asleep, which here would under-report
+  // a busy other region to someone who hasn't connected yet.
+  const presence = usePresence(8000, true);
   // block queueing while a server restart is scheduled (you'd only get dropped)
   const notice = useServerNotice();
   const restartPending =
@@ -131,7 +136,7 @@ export function Matchmaking({
       return;
     }
     if (restartPending) {
-      setError('Server is restarting shortly — try again in a minute.');
+      setError('Server is restarting shortly - try again in a minute.');
       return;
     }
     setError('');
@@ -217,9 +222,11 @@ export function Matchmaking({
         <div className="ds-title">
           <h1>{title}</h1>
         </div>
-        <p className="ds-sub" style={{ marginTop: -10 }}>
-          {sub}
-        </p>
+        {sub && (
+          <p className="ds-sub" style={{ marginTop: -10 }}>
+            {sub}
+          </p>
+        )}
         <div className="ds-panelbox">{body}</div>
       </div>
     </div>
@@ -232,11 +239,10 @@ export function Matchmaking({
       <>
         Ranked <span className="accent">Match</span>
       </>,
-      'Head-to-head rating on a single leaderboard per mode.',
+      '',
       <>
         <p className="ds-hint">
-          Ranked tracks rating and the leaderboard, so it needs an account. Want to play now? Custom
-          Rooms are open to everyone.
+          Ranked needs an account. Custom Rooms are open to everyone.
         </p>
         <div className="ds-actions">
           <button className="ds-cta" onClick={onSignIn}>
@@ -300,16 +306,14 @@ export function Matchmaking({
     <>
       Ranked <span className="accent">Match</span>
     </>,
-    'Head-to-head rating — the winner takes it, on a single leaderboard per mode.',
+    '',
     <>
       <div className="ds-opts two">
         <button className={`ds-opt ${mode === '1v1' ? 'on' : ''}`} onClick={() => setMode('1v1')}>
           <span className="ot">1v1</span>
-          <span className="od">One driver each</span>
         </button>
         <button className={`ds-opt ${mode === '2v2' ? 'on' : ''}`} onClick={() => setMode('2v2')}>
           <span className="ot">2v2</span>
-          <span className="od">Two drivers per alliance</span>
         </button>
       </div>
       <p className="ds-hint">
@@ -327,13 +331,12 @@ export function Matchmaking({
         <div className="ds-opts">
           <button className={`ds-opt ${noWiden ? 'on' : ''}`} onClick={() => setNoWiden(!noWiden)}>
             <span className="ot">Only my region {noWiden ? 'ON' : 'OFF'}</span>
-            <span className="od">Never widen the search — lowest ping, may wait longer</span>
           </button>
         </div>
       )}
       {error && <p className="ds-form-err">⚠ {error}</p>}
       {restartPending && (
-        <p className="ds-form-err">⚠ Server is restarting shortly — queueing is paused for a moment.</p>
+        <p className="ds-form-err">⚠ Server is restarting shortly - queueing is paused for a moment.</p>
       )}
       <div className="ds-actions">
         <button className="ds-cta" disabled={restartPending} onClick={() => void find()}>

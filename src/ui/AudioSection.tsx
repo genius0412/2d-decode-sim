@@ -50,10 +50,10 @@ function VolumeRow({
   );
 }
 
-const THEMES: { id: ThemePref; title: string; desc: string }[] = [
-  { id: 'system', title: 'System', desc: 'Follow your OS setting' },
-  { id: 'light', title: 'Light', desc: 'Warm off-white floor' },
-  { id: 'dark', title: 'Dark', desc: 'Low-light charcoal' },
+const THEMES: { id: ThemePref; title: string }[] = [
+  { id: 'system', title: 'System' },
+  { id: 'light', title: 'Light' },
+  { id: 'dark', title: 'Dark' },
 ];
 
 /**
@@ -132,11 +132,9 @@ export function AudioSection({
             onChange={(voice) => setVolume({ voice })}
             onAudition={() => audio.say('Volume', true)}
           />
-          <p className="ds-hint">
-            {silent
-              ? 'Master is at 0% — everything is silent until you raise it.'
-              : 'Game sounds are the field cues (start, buzzer, endgame warning). Beeping covers the shooter, intake, and gate effects. At 0%, voice lines fall back to countdown beeps.'}
-          </p>
+          {silent && (
+            <p className="ds-hint">Master is at 0% - everything is silent until you raise it.</p>
+          )}
         </div>
       </section>
 
@@ -154,15 +152,9 @@ export function AudioSection({
                 onClick={() => pickTheme(t.id)}
               >
                 <span className="ot">{t.title}</span>
-                <span className="od">{t.desc}</span>
               </button>
             ))}
           </div>
-          <p className="ds-hint">
-            Theme is stored on this device only — it doesn’t follow your account, and works
-            signed out. The field itself always stays dark so alliance and artifact colours read
-            the same in every match.
-          </p>
         </div>
       </section>
     </>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { StartCat } from '../types';
+import type { GameId, StartCat } from '../types';
 import type { LobbyPlayer, PlayerPatch } from '../net/protocol';
 import { categoryDefaultIndex, derivedRole, otherCat as other } from './startPositions';
 
@@ -38,6 +38,7 @@ export function useRoleSwap(
   players: LobbyPlayer[],
   me: LobbyPlayer | null,
   update: (patch: PlayerPatch) => void,
+  game?: GameId,
 ): RoleSwap {
   const role = me ? derivedRole(players, me) : undefined;
   const partner = me
@@ -56,7 +57,7 @@ export function useRoleSwap(
         // flip my role and reset my ACTIVE start to the new category's default so a
         // now-FAR robot isn't left sitting at a CLOSE preset (and vice-versa).
         const next = other(role);
-        update({ startRole: next, swapReq: false, startIndex: categoryDefaultIndex(next), startPose: null });
+        update({ startRole: next, swapReq: false, startIndex: categoryDefaultIndex(next, game), startPose: null });
       }
     } else {
       enacted.current = false;

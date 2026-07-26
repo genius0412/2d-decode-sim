@@ -10,7 +10,7 @@ import { APP_NAME } from '../seasons';
 import { CareerView } from './CareerView';
 import { ShareButton } from './ShareButton';
 import { ProfileFriendActions } from './ProfileFriendActions';
-import { useFriends } from './useFriends';
+import { useFriendsCtx } from './friendsContext';
 import type { CareerNav } from './Stats';
 
 /**
@@ -36,9 +36,9 @@ export function Profile({
   nav?: CareerNav;
 }) {
   const configured = gameServerConfigured();
-  // collapsed: true — this is a background poll for one profile visit, not the
-  // rail's live badge, so it can back off to the slower interval
-  const friends = useFriends({ signedIn, collapsed: true });
+  // the shared menu-shell friends store (one poll for the whole shell) — Profile
+  // is always rendered inside AppShell's FriendsProvider
+  const friends = useFriendsCtx();
   const isOwnProfile = signedIn && viewerUsername != null && viewerUsername === username;
   const loadStats = useCallback(
     (season?: number) => fetchUserStatsByUsername(username, season),
@@ -55,7 +55,7 @@ export function Profile({
       <h1 className="ds-h1">{stats?.handle ?? `@${username}`}</h1>
       <p className="ds-sub">
         {stats?.username ? `@${stats.username} · ` : ''}
-        Public profile — ranked ELO, personal bests, and match history.
+        Public profile
       </p>
     </>
   );

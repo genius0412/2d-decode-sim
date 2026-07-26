@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Room, type Client } from './room';
@@ -20,6 +20,7 @@ import {
   purgeSeasonReplays,
   startNewSeason,
   takePendingMatch,
+  createPendingMatch,
   cleanupStalePending,
   adminListRecords,
   deleteRecordById,
@@ -47,7 +48,21 @@ import {
 
 const PORT = Number(process.env.PORT ?? 8787);
 const rooms = new Map<string, Room>();
-const matchmaker = new Matchmaker();
+
+// Has this machine staged a ranked match whose row might still be sitting in
+// `pending_matches`? Arms the reaper below; see the note on its interval for why
+// an idle machine must not sweep on a timer.
+let pendingStaged = false;
+const matchmaker = new Matchmaker(
+  dbEnabled
+    ? {
+        stage: async (m) => {
+          pendingStaged = true;
+          await createPendingMatch(m);
+        },
+      }
+    : {},
+);
 
 // live presence, surfaced at GET /api/presence (polled by the client so the
 // homepage/ranked screens can show who's around WITHOUT anyone holding a standing
@@ -149,13 +164,42 @@ function coresInUse(): number {
 // stable per-machine id for the shared presence table (unique per Fly machine)
 const MACHINE = process.env.FLY_MACHINE_ID || REGION || 'local';
 
-// GET /api/presence aggregates presence across ALL regions' machines (each machine
-// only knows its own sockets). A tiny cache absorbs a burst of client polls so the
-// aggregate query doesn't hit the DB on every request.
+/**
+ * GET /api/presence aggregates presence across ALL regions' machines (each machine
+ * only knows its own sockets). Two guards keep that off the database, because this
+ * is the most-called endpoint on the site — every open tab polls it every 8s for
+ * the online chip and every 20s for the admin-notice banner, and each poll used to
+ * be its own query. One tab left open in a background window was enough to hold the
+ * Neon compute awake indefinitely (it suspends only after 5 minutes with no
+ * queries), which bills the whole month.
+ *
+ *  1. IDLE SHORT-CIRCUIT. A machine with no sockets and an empty queue answers
+ *     from memory and never touches the DB. When nobody is connected anywhere
+ *     the true global answer IS zero, so an empty site now costs zero queries and
+ *     the compute is free to suspend. The cost of this is real but small: while
+ *     THIS machine is empty and another region is not, the caller sees this
+ *     machine's zeros instead of the global count, until they connect to
+ *     something (which un-idles the machine and restores the real aggregate).
+ *     `?full=1` opts out, for the one screen where the number drives a decision
+ *     rather than decorating one: the ranked queue depth.
+ *  2. CACHE. Once busy, collapse concurrent pollers onto one query. The TTL is
+ *     just under the client's 8s cadence so a lone poller still sees fresh
+ *     numbers while a crowd shares one read.
+ */
+const PRESENCE_CACHE_MS = 7_000;
 let presenceCache: { at: number; val: GlobalPresence } | null = null;
-async function aggregatePresence(): Promise<GlobalPresence> {
+function machineIdle(): boolean {
+  const qs = matchmaker.queueSizes();
+  return onlineCount === 0 && authedUsers.size === 0 && qs['1v1'] === 0 && qs['2v2'] === 0;
+}
+async function aggregatePresence(full = false): Promise<GlobalPresence> {
   const now = Date.now();
-  if (presenceCache && now - presenceCache.at < 3000) return presenceCache.val;
+  if (presenceCache && now - presenceCache.at < PRESENCE_CACHE_MS) return presenceCache.val;
+  if (!full && machineIdle()) {
+    // don't cache this one: the moment someone connects we want a real read, not
+    // a zero held for another 7 seconds
+    return { online: 0, signedIn: 0, queues: { '1v1': 0, '2v2': 0 } };
+  }
   const val = await globalPresence();
   presenceCache = { at: now, val };
   return val;
@@ -522,7 +566,10 @@ const httpServer = createServer((req, res) => {
     res.end(JSON.stringify(body));
     return;
   }
-  if (req.method === 'GET' && req.url === '/api/presence') {
+  if (req.method === 'GET' && new URL(req.url ?? '/', 'http://x').pathname === '/api/presence') {
+    // `?full=1` opts out of the idle short-circuit in `aggregatePresence` — the
+    // ranked screen asks for it because its queue depth is a number people act on.
+    const wantFull = new URL(req.url ?? '/', 'http://x').searchParams.get('full') === '1';
     // include any LIVE admin notice so the client can show the restart banner
     // (and block starting new games) on EVERY page — even disconnected ones
     // like Home/solo where no WebSocket delivers `serverNotice`.
@@ -542,7 +589,7 @@ const httpServer = createServer((req, res) => {
     // own sockets — anycast routing means the caller often lands on an empty region).
     // Fall back to this machine's local numbers if the DB read fails.
     if (dbEnabled) {
-      aggregatePresence().then(
+      aggregatePresence(wantFull).then(
         (g) => respond(g.online, g.signedIn, g.queues),
         (e) => {
           console.error('[presence] aggregate failed, using local:', e);
@@ -581,6 +628,16 @@ httpServer.on('connection', (socket) => socket.setNoDelay(true));
 // noServer: we intercept the upgrade ourselves (below) to do region routing.
 const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
+// WS-level liveness. A half-open TCP connection (laptop lid closed, wifi dropped,
+// a tab hard-killed) does NOT fire 'close' until the OS keepalive eventually times
+// out — minutes to hours. Until then the socket is a GHOST: it stays in the ranked
+// QUEUE (so the bucket reads e.g. "4/4" and a match is staged against a player who
+// will never reconnect) and holds its ROOM slot. A periodic ping/pong reaps them:
+// any socket that missed the previous ping is terminated, which fires 'close' and
+// runs the normal teardown (matchmaker.remove + room.detach). See the heartbeat
+// interval at the bottom of this file.
+const socketAlive = new WeakMap<WebSocket, boolean>();
+
 // ---- region routing (fly-replay) --------------------------------------------
 // One Fly app, one machine per region. A WebSocket upgrade carries a routing hint
 // in its query string; if it belongs to a DIFFERENT region we answer the upgrade
@@ -589,6 +646,24 @@ const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 // Hints:  ?mm=1 → the designated matchmaker region;  ?room=<region>-<code> → that
 // room's host region;  ?region=<code> → an explicit pick.
 // Only active on Fly (FLY_REGION set); locally REGION='' so we always accept here.
+/**
+ * The region a `?mm=1` connection was FIRST received in, from Fly's `fly-replay-src`
+ * header (format `instance=…;region=<r>;t=…`). Anycast lands the connection on the
+ * client's NEAREST region, which then replays it here to the matchmaker — so this
+ * is a SERVER-OBSERVED home region, immune to the client's `/health` probe failing
+ * (a cold/auto-stopped satellite makes that probe fall back to the warm primary or
+ * to '', which then defaults every player to iad and hosts every match one-sided).
+ * Used only as a FALLBACK when the client didn't report its own homeRegion, so the
+ * working path is unchanged. Empty string when not replayed (already nearest here).
+ */
+function replaySrcRegion(req: IncomingMessage): string {
+  const h = req.headers['fly-replay-src'];
+  const raw = Array.isArray(h) ? h[0] : h;
+  if (!raw) return '';
+  const m = /(?:^|;)\s*region=([a-z]{3})(?:;|$)/i.exec(raw);
+  return m ? m[1].toLowerCase() : '';
+}
+
 function routeTarget(url: URL): string | null {
   if (url.searchParams.get('mm') === '1') return MATCHMAKER_REGION;
   const region = url.searchParams.get('region');
@@ -631,7 +706,17 @@ httpServer.on('error', (e) => console.error('[server] http server error:', e));
 process.on('uncaughtException', (e) => console.error('[server] uncaughtException:', e));
 process.on('unhandledRejection', (e) => console.error('[server] unhandledRejection:', e));
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+  // liveness: mark alive now and on every pong; the heartbeat interval (bottom of
+  // file) pings and reaps anything that stops answering
+  socketAlive.set(ws, true);
+  ws.on('pong', () => socketAlive.set(ws, true));
+
+  // server-observed home region (see replaySrcRegion) — the fallback for a client
+  // whose own region probe failed, so a cold-satellite player is no longer
+  // mis-hosted at iad
+  const edgeRegion = replaySrcRegion(req);
+
   let id: string = randomUUID(); // reassigned to the reclaimed clientId on a rejoin
   let room: Room | null = null;
   // the owning-connection stamp this socket was issued for its slot (0 until it
@@ -717,7 +802,7 @@ wss.on('connection', (ws: WebSocket) => {
     // rejoin/leave it from Home). Reconnects use `rejoin`, so this never blocks
     // returning to your OWN match.
     if (user && activeElsewhere(user.userId, code)) {
-      send({ t: 'error', message: 'You already have a game in progress — rejoin or leave it first.' });
+      send({ t: 'error', message: 'You already have a game in progress - rejoin or leave it first.' });
       if (created) rooms.delete(code);
       return;
     }
@@ -804,7 +889,7 @@ wss.on('connection', (ws: WebSocket) => {
           }
           // one live game per user: can't queue ranked while another game is live
           if (activeElsewhere(u.userId, '')) {
-            send({ t: 'error', message: 'You already have a game in progress — rejoin or leave it first.' });
+            send({ t: 'error', message: 'You already have a game in progress - rejoin or leave it first.' });
             return;
           }
           markAuthed(u.userId);
@@ -817,8 +902,12 @@ wss.on('connection', (ws: WebSocket) => {
             mode: msg.mode,
             // the client's home region (Fly's x-region for its connection) + measured
             // access latency; the matchmaker estimates cross-region ping from these to
-            // pick a fair host. Falls back to THIS instance's region if omitted.
-            homeRegion: msg.homeRegion || REGION,
+            // pick a fair host. Prefer the client's own measurement; if it failed
+            // (empty — a cold satellite Anycast-fell-back to the warm primary), use the
+            // SERVER-OBSERVED source region from fly-replay-src before defaulting to
+            // THIS instance's region (iad) — otherwise every unprobed player lands on
+            // iad and every match hosts one-sided.
+            homeRegion: msg.homeRegion || edgeRegion || REGION,
             accessMs: msg.accessMs ?? 0,
             noWiden: msg.noWiden ?? false,
             caps: Array.isArray(msg.caps) ? msg.caps : [],
@@ -875,7 +964,7 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] DECODE game server listening on 0.0.0.0:${PORT}`);
 });
 initPhysics()
-  .then(() => console.log('[server] Rapier physics ready — matches enabled'))
+  .then(() => console.log('[server] Rapier physics ready - matches enabled'))
   .catch((e) => {
     console.error('[server] failed to init physics:', e);
     process.exit(1);
@@ -887,11 +976,31 @@ migrate()
   .then(() => console.log('[server] database ready'))
   .catch((e) => console.error('[server] migration failed (records disabled):', e));
 
-// reap staged ranked matches nobody claimed (both clients vanished after assign).
-// Only meaningful on the matchmaker/host machines; harmless elsewhere.
+/*
+ * IDLE MEANS SILENT. Everything below is a recurring timer that touches Postgres,
+ * and Neon bills COMPUTE HOURS: the compute suspends only after five consecutive
+ * minutes with NO queries, and bills for every second it is awake. So a timer that
+ * fires unconditionally does not cost "one small query" — it costs the entire
+ * month of compute. `min_machines_running = 1` (fly.toml) keeps iad up forever, so
+ * an unconditional beat there pinned the database on 24/7 whether or not a single
+ * person was playing.
+ *
+ * Rule for anything added here: fire only when there is something to say.
+ */
 if (dbEnabled) {
+  // Reap staged ranked matches nobody claimed (both clients vanished after assign).
+  // Self-arming: rows only exist after THIS machine stages one (`stagePending`
+  // below), so an idle machine sweeps nothing. A sweep that finds nothing left
+  // disarms until the next match is staged. Rows orphaned by a crash are inert —
+  // their code only ever went to the two clients, so nobody can claim them — and
+  // the next staged match sweeps the whole table, so it still self-heals.
   const reaper = setInterval(() => {
-    cleanupStalePending(60_000).catch((e) => console.error('[server] pending cleanup:', e));
+    if (!pendingStaged) return;
+    cleanupStalePending(60_000)
+      .then((n) => {
+        if (n === 0) pendingStaged = false;
+      })
+      .catch((e) => console.error('[server] pending cleanup:', e));
   }, 60_000);
   reaper.unref();
 
@@ -899,8 +1008,18 @@ if (dbEnabled) {
   // aggregate a GLOBAL total across regions. A stopped/crashed machine simply stops
   // beating and its row ages out of the freshness window; a restart with the same
   // FLY_MACHINE_ID overwrites its own row, so no ghosts accumulate.
+  //
+  // An EMPTY machine beats once to publish the zero and then goes quiet until
+  // someone shows up. Nothing reads a missing row as anything but absent —
+  // `globalPresence` already filters to rows updated inside its freshness window,
+  // so silence and a zero row mean the same thing to every consumer.
+  let lastBeatEmpty = false;
   const beat = (): void => {
     const qs = matchmaker.queueSizes();
+    const empty =
+      onlineCount === 0 && authedUsers.size === 0 && qs['1v1'] === 0 && qs['2v2'] === 0;
+    if (empty && lastBeatEmpty) return; // nothing here, and we already said so
+    lastBeatEmpty = empty;
     upsertPresence(MACHINE, REGION, onlineCount, [...authedUsers.keys()], qs['1v1'], qs['2v2']).catch(
       (e) => console.error('[presence] heartbeat failed:', e),
     );
@@ -909,3 +1028,26 @@ if (dbEnabled) {
   const hb = setInterval(beat, 5_000);
   hb.unref();
 }
+
+// WS heartbeat — reap ghost sockets (see socketAlive above). Every interval:
+// terminate any socket that didn't pong since the last ping (fires 'close' → the
+// normal matchmaker.remove + room.detach teardown), then ping the rest. A live
+// client answers pong automatically at the protocol level (no app code needed).
+// 15s cadence ⇒ a dead socket is gone within ~30s instead of lingering for the OS
+// TCP timeout, so it can no longer pad a ranked bucket or hold a match slot.
+const WS_HEARTBEAT_MS = 15_000;
+const pinger = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (socketAlive.get(ws) === false) {
+      ws.terminate();
+      continue;
+    }
+    socketAlive.set(ws, false);
+    try {
+      ws.ping();
+    } catch {
+      ws.terminate();
+    }
+  }
+}, WS_HEARTBEAT_MS);
+pinger.unref();

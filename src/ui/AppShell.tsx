@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { APP_NAME, seasonFor, LINKS } from '../seasons';
 import type { GameId } from '../games/types';
 import { FriendsPanel } from './FriendsPanel';
+import { FriendToasts } from './friendsContext';
 import { Logo } from './Logo';
 import { NavRail } from './NavRail';
 import { usePresence } from './usePresence';
@@ -68,6 +69,7 @@ export function AppShell({
   signedIn,
   onOpenProfile,
   onJoinInvite,
+  myUserId,
   game,
 }: {
   active: ShellNav;
@@ -90,6 +92,9 @@ export function AppShell({
   onOpenProfile: (username: string) => void;
   /** a friend's "Join" click on a room invite, from anywhere the panel is open */
   onJoinInvite: (invite: RoomInvite) => void;
+  /** the signed-in account's own user id — drives the panel's "Recently played"
+   * suggestions (opponents/teammates from recent matches you can friend) */
+  myUserId?: string | null;
   /** the selected game — the footer names its season (DECODE / Chain Reaction) */
   game: GameId;
 }) {
@@ -112,11 +117,21 @@ export function AppShell({
         <div className="ds-body">
           <NavRail active={active} onNav={onNav} showAdmin={showAdmin} />
           <main className="ds-main">{children}</main>
-          <FriendsPanel signedIn={signedIn} onOpenProfile={onOpenProfile} onJoinInvite={onJoinInvite} />
+          <FriendsPanel
+            signedIn={signedIn}
+            onOpenProfile={onOpenProfile}
+            onJoinInvite={onJoinInvite}
+            myUserId={myUserId}
+          />
         </div>
       ) : (
         <main className="ds-main ds-main-home">{children}</main>
       )}
+
+      {/* floating friend-request / challenge notifications — menu shell only, so
+          they never appear over a live match (full-screen surfaces are outside
+          this shell). Inside the FriendsProvider that wraps AppShell in App. */}
+      <FriendToasts onOpenProfile={onOpenProfile} onJoinInvite={onJoinInvite} />
 
       <footer className="ds-foot">
         <span className="ds-foot-brand">
