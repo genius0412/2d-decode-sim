@@ -15,6 +15,10 @@ at session start if it exists — it may describe uncommitted mid-refactor state
 - `npm run dev` — dev server (localhost:5173)
 - `npm test` — **headless sim verification** (`scripts/smoke.ts`, ~30 checks). Run this
   after ANY change to `src/sim/` or `src/config.ts`. It is fast and catches almost everything.
+- `npm run test:mm` — **matchmaker verification** (`scripts/mmsmoke.ts`, 36 checks, no DB or
+  sockets — injected clock + `stage`). Run after ANY change to `server/matchmaking.ts`. Kept
+  out of `npm test` on purpose, same reasoning as `contrast`: a red `npm test` must keep
+  meaning "physics broke".
 - `npm run build` — tsc (strict) + vite build. Run before claiming work done.
 - `npm run contrast` — WCAG audit of the palette (`scripts/contrast.mjs`, 135 pairs, light +
   dark, no deps). Run after ANY colour/token edit. Not wired into `npm test` on purpose: a red
@@ -591,6 +595,38 @@ is detected (`__BUILD_ID__` from git sha → `/version.json` poll, `useNewVersio
 player STARTS a run (never mid-run), forces a refresh — NO "play anyway" (everyone must be on
 the same version for multiplayer). Still open (Phase 3): matchmaking polish, replay UI,
 leaderboard tiers, the full UI redesign (`docs/netcodeplan.md`).
+
+**PLAY A FRIEND — challenges (chess.com's model), DONE.** A challenge (`room_invites` +
+migration `0019`) carries a **`format`**: `casual1v1`/`casual2v2` (a `versus` room),
+`duorecord` (a `record`/`duo` room), or the two RATED ones. Rating is only ever applied to a
+matchmaker-STAGED room (`Room.ranked` ← `pending_matches`), so a code-joined room can NEVER
+rate — the rated formats therefore resolve through the MATCHMAKER, not through a room code.
+The challenge's `room` column doubles as a **party token** both sides send on `queue`
+(`party`/`partyOnly`/`partyFormat`; `RATED_FORMATS` in protocol.ts maps format → mode +
+partyOnly). The matchmaker pairs on **UNITS** (`groupUnits`), never individual entries:
+`rated1v1` is a CLOSED party (the token IS the match — no strangers, and the search radius is
+skipped since they chose each other; the channel+build bucket still applies), `ranked2v2` is a
+PREMADE that queues into the OPEN pool and is kept on one alliance by `allianceOrder`. That
+same ordering needs NO 1v1 exception: there the party is the two opponents and half=1 splits
+them correctly. **`partySize` (2) is load-bearing** — the members enqueue seconds apart, and
+without it the first arrival reads as a complete unit and is swallowed by an open group.
+**The token is VERIFIED, never trusted** (`challengeParty` → `verifyParty`): it resolves
+against the real challenge row and only answers for an account named on it, so two clients
+can't agree on a string and stage themselves a rated match, and a guessed token can't join a
+pair. A token that fails is REFUSED, never downgraded to an open queue. Rated formats are
+gated on **`SERVER_CAPS`** (`/api/presence` `caps`, read via `serverCaps()`) — the first
+server→client capability, and NOT optional: an older server IGNORES the party fields rather
+than rejecting them, silently matching two friends against strangers. Lifecycle is
+Accept/**Decline** (decline MARKS `declined` so the sender is told once, then their client
+cancels the row; dismiss stays a silent clear), the sender SEES their outgoing challenge
+(`listFriends`'s `snt` CTE → `sent`) and can cancel it, and one live challenge per direction
+(`inviteToRoom` replaces — stacked rated rows would let someone accept an abandoned token).
+`src/ui/challenge.ts` `challengeOf` is the ONE place deciding lobby-vs-queue. Tests:
+**`npm run test:mm`** (`scripts/mmsmoke.ts`, 36 checks, injected clock + `stage`, no DB) —
+party pairing fails SILENTLY, so it is covered there rather than by a live two-account run.
+NOTE `enqueue` matches synchronously but STAGES asynchronously; assertions must await a
+microtask flush. Rated friend games are farmable by a colluding pair and deliberately
+unmitigated (as chess.com); damp repeat-opponent deltas in `ranked.ts` if it shows up.
 
 **Phase 2 — Rapier 2D physics: ROBOTS slice DONE + green (~205 smoke checks).** Robot
 collision is Rapier (`physicsEngine.ts` — see the architecture bullet above); balls are
