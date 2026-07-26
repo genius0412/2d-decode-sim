@@ -17,7 +17,7 @@
  */
 
 /** last substantive revision — shown on both pages */
-export const LEGAL_UPDATED = 'July 25, 2026';
+export const LEGAL_UPDATED = 'July 27, 2026';
 
 /** where privacy / data-deletion requests go */
 export const LEGAL_CONTACT = 'genius0412.tech@gmail.com';
@@ -25,23 +25,23 @@ export const LEGAL_CONTACT = 'genius0412.tech@gmail.com';
 /**
  * WHO the terms are with, and WHOSE LAW governs them.
  *
- * ⚠️ BOTH MUST BE SET BEFORE TAKING THE FIRST PAYMENT. They are placeholders,
- * not defaults — a contract has to name a party, and "the operator of DSIM" is
- * not a party anyone can be in a dispute with. Two things depend on this
- * concretely, so it is not a formality:
+ * These are load-bearing, not boilerplate. A contract has to name a party — "the
+ * operator of DSIM" is not someone anyone can be in a dispute with — and two
+ * concrete things depend on it:
  *
  *  - AdSense requires an identifiable publisher; a policy that identifies nobody
  *    is a known rejection reason.
  *  - UK/EU consumer law requires a trader selling to consumers to give a name
  *    and a geographic contact, and a recurring membership is a consumer sale.
+ *    That applies to European supporters regardless of where the operator is.
  *
- * Governing law should be where the operator actually lives — do NOT guess it
- * from a timezone or an email domain. If the project is run by an individual
- * rather than a company, the individual's own name and country is the correct,
- * lawful answer; there is no requirement to incorporate first.
+ * DSIM is run by an individual, which is a perfectly lawful answer — there is no
+ * requirement to incorporate before accepting support. If that ever changes (an
+ * LLC, a different state), update BOTH of these and the date above: the governing
+ * law clause in TERMS_MD reads from them.
  */
-export const LEGAL_OPERATOR = '[OPERATOR NAME — set before launch]';
-export const LEGAL_JURISDICTION = '[COUNTRY / STATE — set before launch]';
+export const LEGAL_OPERATOR = 'Dohun Kim';
+export const LEGAL_JURISDICTION = 'the Commonwealth of Massachusetts, United States';
 
 /** true once the placeholders above have been filled in. The Terms page shows a
  *  visible warning while this is false, so an unfinished contract cannot quietly

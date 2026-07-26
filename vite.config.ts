@@ -54,6 +54,33 @@ export default defineConfig({
     // hand-written copy pointing at the wrong pub- id is worse than none at all.
     // With VITE_ADSENSE_CLIENT unset no file is emitted — a 404 is the correct
     // answer for a site that serves no ads.
+    // AdSense SITE VERIFICATION.
+    //
+    // The review is a chicken-and-egg step that the ad code alone does not cover:
+    // Google issues the publisher id at SIGNUP, then needs to confirm you own the
+    // site before it will approve (or serve) anything. But `<AdSlot>` only loads
+    // the ad tag once a UNIT has a slot id, and you cannot create ad units until
+    // you are approved — so with `VITE_ADSENSE_CLIENT` set and no slots, nothing
+    // whatsoever appears on the page and there is nothing for Google to find.
+    //
+    // This meta tag is Google's own no-ads verification method, and it is the
+    // right one here: it proves ownership without pulling a third-party script
+    // into a 60 Hz game for zero user benefit. Together with the generated
+    // ads.txt below, it satisfies verification twice over.
+    {
+      name: 'adsense-verification-meta',
+      transformIndexHtml() {
+        const client = (process.env.VITE_ADSENSE_CLIENT ?? '').trim();
+        if (!/^ca-pub-\d{10,}$/.test(client)) return [];
+        return [
+          {
+            tag: 'meta',
+            attrs: { name: 'google-adsense-account', content: client },
+            injectTo: 'head' as const,
+          },
+        ];
+      },
+    },
     {
       name: 'emit-ads-txt',
       generateBundle() {
