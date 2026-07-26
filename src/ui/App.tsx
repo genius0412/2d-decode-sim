@@ -10,6 +10,7 @@ import {
   type RoomInvite,
 } from '../net/api';
 import { FriendsProvider } from './friendsContext';
+import { challengeOf, type PendingChallenge } from './challenge';
 import type { RoomConfig, RoomKind } from '../net/protocol';
 import { useNewVersion } from '../net/version';
 import { useServerNotice } from '../net/notice';
@@ -346,7 +347,29 @@ export function App() {
   const [pendingAutoJoin, setPendingAutoJoin] = useState<{ room: string; config: RoomConfig } | null>(
     null,
   );
+  // a RATED challenge waiting to be queued under its party token. Same one-shot
+  // shape as pendingAutoJoin and for the same reason: the Matchmaking screen
+  // consumes it on mount, so a later ordinary visit to /ranked is an ordinary
+  // ranked queue rather than a resurrected challenge.
+  const [pendingChallenge, setPendingChallenge] = useState<PendingChallenge | null>(null);
+  const startChallenge = (c: PendingChallenge): void => {
+    setPendingChallenge(c);
+    navigate('matchmaking');
+  };
+
+  /**
+   * ACCEPT a challenge. The two rated formats have no room to join — they resolve
+   * through the matchmaker — so this is the fork between "open a lobby" and "go
+   * wait in the ranked queue under this token". `challengeOf` owns that decision,
+   * so the sender's path and this one can't drift into disagreeing about what a
+   * format means.
+   */
   const onJoinInvite = (invite: RoomInvite): void => {
+    const challenge = challengeOf(invite, invite.from.username ?? invite.from.handle ?? '');
+    if (challenge) {
+      startChallenge(challenge);
+      return;
+    }
     const config: RoomConfig = { kind: invite.kind, game: invite.game };
     if (invite.kind === 'record' && invite.record) config.record = invite.record;
     setPendingAutoJoin({ room: invite.room, config });
@@ -661,6 +684,7 @@ export function App() {
         signedIn={signedIn}
         autoJoin={auto?.room}
         onAutoJoinConsumed={() => setPendingAutoJoin(null)}
+        onAcceptChallenge={onJoinInvite}
       />
     );
   }
@@ -686,6 +710,7 @@ export function App() {
         signedIn={signedIn}
         autoJoin={auto?.room}
         onAutoJoinConsumed={() => setPendingAutoJoin(null)}
+        onAcceptChallenge={onJoinInvite}
       />
     );
   }
@@ -698,6 +723,8 @@ export function App() {
         onCancel={() => navigate('modes')}
         onSignIn={() => navigate('account')}
         onSettingsChange={update}
+        challenge={pendingChallenge ?? undefined}
+        onChallengeConsumed={() => setPendingChallenge(null)}
       />
     );
   }
@@ -745,6 +772,7 @@ export function App() {
       game={settings.game}
       sound={settings.audio.volume.master > 0}
       onHostRoom={hostForChallenge}
+      onQueueChallenge={startChallenge}
     >
       <AppShell
         active={navFor(screen)}

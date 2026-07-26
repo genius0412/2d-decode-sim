@@ -110,6 +110,9 @@ export class LobbyClient {
     accessMs: number,
     noWiden?: boolean,
     game?: GameId,
+    /** "play a friend": queue under a challenge token so the server pairs us with
+     * the person we challenged instead of the open pool (see ui/challenge.ts) */
+    party?: { token: string; format: string; partyOnly: boolean },
   ): void {
     const doQueue = async (): Promise<void> => {
       const authToken = (await getAuthToken()) ?? undefined;
@@ -117,6 +120,7 @@ export class LobbyClient {
         encodeMsg({
           t: 'queue', mode, player, authToken, homeRegion, accessMs, noWiden, game,
           caps: CLIENT_CAPS, channel: appChannel(), build: appBuild(),
+          party: party?.token, partyFormat: party?.format, partyOnly: party?.partyOnly,
         }),
       );
     };

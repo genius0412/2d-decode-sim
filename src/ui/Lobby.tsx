@@ -21,6 +21,7 @@ import { APP_NAME } from '../seasons';
 import { Logo } from './Logo';
 import { useEscape } from './useEscape';
 import { InviteFlyout } from './InviteFlyout';
+import type { RoomInvite } from '../net/api';
 
 interface Props {
   settings: GameSettings;
@@ -40,6 +41,10 @@ interface Props {
   /** fired once `autoJoin` has been consumed, so the caller can clear its
    * one-shot pending state and a later normal visit doesn't re-trigger it */
   onAutoJoinConsumed?: () => void;
+  /** a RATED challenge was accepted from the friend flyout. It has no room code
+   * to join, so this leaves the lobby entirely for the ranked queue — the app
+   * shell owns that navigation, not us. */
+  onAcceptChallenge?: (inv: RoomInvite) => void;
 }
 
 type Phase = 'entry' | 'connecting' | 'room' | 'error';
@@ -61,6 +66,7 @@ export function Lobby({
   signedIn = false,
   autoJoin,
   onAutoJoinConsumed,
+  onAcceptChallenge,
 }: Props) {
   const isRecord = config.kind === 'record';
   const capacity = roomCapacity(config);
@@ -250,7 +256,7 @@ export function Lobby({
               {APP_NAME}
             </span>
             <span className="ds-head-spacer" />
-            <InviteFlyout signedIn={signedIn} onJoinRoom={join} />
+            <InviteFlyout signedIn={signedIn} onJoinRoom={join} onAcceptChallenge={onAcceptChallenge} />
           </div>
           <div className="ds-title">
             <h1>
@@ -356,6 +362,7 @@ export function Lobby({
             signedIn={signedIn}
             room={{ code, config: { kind: config.kind, record: config.record, game: config.game ?? settings.game } }}
             onJoinRoom={join}
+            onAcceptChallenge={onAcceptChallenge}
           />
         </div>
         <div className="ds-title">

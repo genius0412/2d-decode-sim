@@ -11,6 +11,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "tsx scripts/smoke.ts",
+    "test:mm": "tsx scripts/mmsmoke.ts",
     "contrast": "node scripts/contrast.mjs",
     "shiftaudit": "electron scripts/shiftaudit.cjs",
     "og": "electron scripts/og-image.cjs",

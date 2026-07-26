@@ -2822,9 +2822,13 @@ tr.lb-detail td {
   flex-direction: column;
   gap: 10px;
   margin-bottom: 4px;
+  /* five formats is taller than a laptop modal on a short viewport — scroll the
+     list rather than the page, so the title and any error stay put */
+  max-height: min(58vh, 460px);
+  overflow-y: auto;
 }
-/* a disabled ("Soon") format tile: flat, non-interactive — neutralise the .ds-opt
-   hover/active lift so it never looks pressable. */
+/* a format tile the server can't run: flat, non-interactive — neutralise the
+   .ds-opt hover/active lift so it never looks pressable. */
 .ds-opt:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -2834,13 +2838,6 @@ tr.lb-detail td {
   background: var(--ds-panel);
   border-color: var(--ds-line-strong);
   box-shadow: var(--ds-block-sm);
-}
-/* muted variant of the .oz pill for a "Soon" badge (the accent .oz would read as
-   an active/available cue on a disabled tile) */
-.ds-opt .oz.soon {
-  color: var(--ds-mut);
-  background: transparent;
-  border-color: var(--ds-line);
 }
 .ds-opt.mini {
   padding: 10px 13px;

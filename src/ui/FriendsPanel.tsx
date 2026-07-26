@@ -10,6 +10,7 @@ import {
 } from '../net/api';
 import type { FriendsApi } from './useFriends';
 import { useFriendsCtx } from './friendsContext';
+import { challengeLine, formatLabel } from './challenge';
 import { Select, type SelectOption } from './Select';
 
 /** compact game name for an activity line ("In a match · DECODE") */
@@ -118,6 +119,8 @@ export function FriendsPanel({
 
   const friends = useFriendsCtx();
   const { incoming, outgoing, blocked, invites, friends: list } = friends.data;
+  // challenges I sent that are still live (absent on an older server)
+  const sent = friends.data.sent ?? [];
   const waiting = incoming.length + invites.length;
 
   const [online, offline] = useMemo(() => {
@@ -169,19 +172,42 @@ export function FriendsPanel({
           {friends.error && <p className="fr-error">{friends.error}</p>}
 
           {invites.length > 0 && (
-            <Section title="Invites" count={invites.length}>
+            <Section title="Challenges" count={invites.length}>
               {invites.map((inv) => (
                 <div className="fr-row" key={inv.id}>
                   <span className="fr-who static">
                     <span className="fr-name">{inv.from.handle}</span>
-                    <span className="fr-sub">invited you to a room</span>
+                    <span className="fr-sub">{challengeLine(inv.format)}</span>
                   </span>
                   <span className="fr-actions">
                     <button className="ds-btn small primary" onClick={() => onJoinInvite(inv)}>
-                      Join
+                      Accept
                     </button>
-                    <button className="ds-btn small ghost" onClick={() => void friends.dismissInvite(inv.id)}>
-                      Dismiss
+                    {/* Decline TELLS them; the row is only marked so their client
+                        can say so once. Dismissing silently would leave them
+                        watching a challenge that is never going to be answered. */}
+                    <button className="ds-btn small ghost" onClick={() => void friends.declineInvite(inv.id)}>
+                      Decline
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </Section>
+          )}
+
+          {sent.length > 0 && (
+            <Section title="Sent" count={sent.length}>
+              {sent.map((s) => (
+                <div className="fr-row" key={s.id}>
+                  <span className="fr-who static">
+                    <span className="fr-name">{s.to.handle}</span>
+                    <span className="fr-sub">
+                      {s.declined ? `declined · ${formatLabel(s.format)}` : `waiting · ${formatLabel(s.format)}`}
+                    </span>
+                  </span>
+                  <span className="fr-actions">
+                    <button className="ds-btn small ghost" onClick={() => void friends.cancelInvite(s.id)}>
+                      {s.declined ? 'Clear' : 'Cancel'}
                     </button>
                   </span>
                 </div>

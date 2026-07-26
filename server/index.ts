@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Room, type Client } from './room';
-import { decodeClientMsg, encodeMsg, DEFAULT_ROOM_CONFIG, type ClientMsg, type RoomConfig, type ServerMsg } from '../src/net/protocol';
+import { decodeClientMsg, encodeMsg, DEFAULT_ROOM_CONFIG, RATED_FORMATS, SERVER_CAPS, type ClientMsg, type RoomConfig, type ServerMsg } from '../src/net/protocol';
 import { sanitizePlayer } from '../src/net/sanitize';
 import { verifyAuthToken } from './auth';
 import { initPhysics } from '../src/sim/physicsEngine';
@@ -32,6 +32,7 @@ import {
   deleteAnnouncement,
   upsertPresence,
   globalPresence,
+  challengeParty,
   type GlobalPresence,
 } from './db/repo';
 
@@ -91,6 +92,46 @@ const activeElsewhere = (userId: string, code: string): boolean => {
   }
   return true;
 };
+
+/**
+ * "Play a friend", rated: turn the party token off the wire into a token the
+ * matchmaker is allowed to trust — or refuse it.
+ *
+ * The token is a shared secret between two people who challenged each other, and
+ * everything downstream treats entries sharing one as a pair that MUST be matched
+ * together. So it cannot be taken on the client's word: without this check any two
+ * clients could agree on a string and stage themselves a rated, leaderboard-moving
+ * match having never been friends, never sent a challenge, and never had the other
+ * person see anything. `challengeParty` resolves the token against the real
+ * challenge row and only answers for an account actually named on it, which also
+ * means a third client that GUESSES a live token still can't join the pair.
+ *
+ * Returns null for an ordinary open-queue entry (no token — the common case),
+ * `'bad-token'` for one to reject, or the verified token to enqueue under.
+ */
+type VerifiedParty = { token: string; partyOnly: boolean } | null | 'bad-token';
+async function verifyParty(
+  userId: string,
+  msg: Extract<ClientMsg, { t: 'queue' }>,
+): Promise<VerifiedParty> {
+  const token = typeof msg.party === 'string' ? msg.party.trim() : '';
+  if (!token) return null;
+  const format = typeof msg.partyFormat === 'string' ? msg.partyFormat : '';
+  const spec = RATED_FORMATS[format];
+  // the format decides the queue it belongs in, so a token issued for one must not
+  // be spendable in the other
+  if (!spec || spec.mode !== msg.mode) return 'bad-token';
+  // no DB (local dev) ⇒ no challenges exist to verify against. Drop the party and
+  // let them pair through the open queue, which on a single dev machine is the
+  // same two people anyway.
+  if (!dbEnabled) return null;
+  const pair = await challengeParty(userId, token, format);
+  if (!pair) return 'bad-token';
+  return { token, partyOnly: spec.partyOnly };
+}
+/** a challenge is always exactly two people: the one who sent it and the one who
+ * accepted. The matchmaker needs the number to know when the party is complete. */
+const PARTY_SIZE = 2;
 
 // accounts allowed to use the admin API (their auth-JWT `sub`/userId). Set as a
 // Fly secret: ADMIN_USER_IDS="uuid1,uuid2". Empty => admin API is locked to nobody.
@@ -586,7 +627,10 @@ const httpServer = createServer((req, res) => {
         'cache-control': 'no-store',
         'access-control-allow-origin': '*',
       });
-      res.end(JSON.stringify({ region: REGION, online, signedIn, queues, notice }));
+      // `caps` tells a NEW client what this (possibly older) deploy can honour —
+      // see SERVER_CAPS. One app serves every client build, so a feature that
+      // would misbehave rather than degrade has to be gated on the answer.
+      res.end(JSON.stringify({ region: REGION, online, signedIn, queues, notice, caps: SERVER_CAPS }));
     };
     // GLOBAL count: aggregate every region's heartbeat (this machine only sees its
     // own sockets — anycast routing means the caller often lands on an empty region).
@@ -896,7 +940,15 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
             return;
           }
           markAuthed(u.userId);
-          matchmaker.enqueue({
+          void verifyParty(u.userId, msg).then((party) => {
+            if (party === 'bad-token') {
+              // Never silently fall back to the OPEN queue here. The player asked
+              // to play one specific person; quietly matching them against a
+              // stranger for rating is worse than saying it didn't work.
+              send({ t: 'error', message: 'That challenge expired - send a new one.' });
+              return;
+            }
+            matchmaker.enqueue({
             id,
             send,
             // sanitize the ranked player's spec/assists too (same clamp as join)
@@ -919,11 +971,17 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
             channel: typeof msg.channel === 'string' ? msg.channel : undefined,
             // segregate the pool by build too (two builds never share a match)
             build: typeof msg.build === 'string' ? msg.build : undefined,
+            // "play a friend": only ever the VERIFIED token (see verifyParty) —
+            // never the raw one off the wire
+            party: party?.token,
+            partyOnly: party?.partyOnly,
+            partySize: party ? PARTY_SIZE : undefined,
             enqueuedAt: 0, // stamped by enqueue()
             expandBumps: 0,
             onRoom: (r) => {
               room = r; // dev/no-DB local fallback only
             },
+            });
           });
         });
       } else if (msg.t === 'expandSearch') {

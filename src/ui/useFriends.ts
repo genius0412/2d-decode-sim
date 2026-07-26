@@ -4,7 +4,9 @@ import {
   acceptFriendRequest,
   blockUser,
   cancelFriendRequest,
+  cancelRoomInvite,
   declineFriendRequest,
+  declineRoomInvite,
   dismissRoomInvite,
   fetchFriends,
   FriendsUnavailableError,
@@ -50,6 +52,7 @@ const EMPTY: FriendsPayload = {
   outgoing: [],
   blocked: [],
   invites: [],
+  sent: [],
   status: null,
 };
 
@@ -81,9 +84,14 @@ export interface FriendsApi {
     game: GameId,
     kind: 'versus' | 'record',
     record?: 'solo' | 'duo' | null,
+    format?: string | null,
   ) => Promise<void>;
-  /** dismiss (or consume, on join) an invite addressed to me */
+  /** dismiss (or consume, on accept) an invite addressed to me */
   dismissInvite: (id: string) => Promise<void>;
+  /** DECLINE one addressed to me — the sender is told, unlike dismiss */
+  declineInvite: (id: string) => Promise<void>;
+  /** withdraw one I sent (also how a declined one is cleared once seen) */
+  cancelInvite: (id: string) => Promise<void>;
 }
 
 /**
@@ -153,12 +161,19 @@ export function useFriends({
         d.incoming.map((p) => p.userId).join(','),
         d.outgoing.map((p) => p.userId).join(','),
         d.invites.map((i) => i.id).join(','),
+        // a challenge you SENT is the most interactive wait there is — you are
+        // watching for an answer — so it counts as pending too
+        (d.sent ?? []).map((i) => `${i.id}${i.declined ? '!' : ''}`).join(','),
       ].join('|');
       if (key !== hotKey) {
         hotKey = key;
         hotSince = Date.now();
       }
-      const pending = d.incoming.length > 0 || d.outgoing.length > 0 || d.invites.length > 0;
+      const pending =
+        d.incoming.length > 0 ||
+        d.outgoing.length > 0 ||
+        d.invites.length > 0 ||
+        (d.sent ?? []).length > 0;
       const fresh = Date.now() - hotSince < HOT_WINDOW_MS;
       return pending && fresh ? POLL_HOT_MS : POLL_IDLE_MS;
     };
@@ -362,10 +377,11 @@ export function useFriends({
       game: GameId,
       kind: 'versus' | 'record',
       record?: 'solo' | 'duo' | null,
+      format?: string | null,
     ): Promise<void> => {
       setError(null);
       try {
-        await inviteToRoom(username, room, game, kind, record);
+        await inviteToRoom(username, room, game, kind, record, format);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Something went wrong.');
         throw e;
@@ -380,6 +396,22 @@ export function useFriends({
     (id: string) =>
       mutate((d) => ({ ...d, invites: d.invites.filter((i) => i.id !== id) }), () =>
         dismissRoomInvite(id),
+      ).then(() => undefined),
+    [mutate],
+  );
+
+  const declineInvite = useCallback(
+    (id: string) =>
+      mutate((d) => ({ ...d, invites: d.invites.filter((i) => i.id !== id) }), () =>
+        declineRoomInvite(id),
+      ).then(() => undefined),
+    [mutate],
+  );
+
+  const cancelInvite = useCallback(
+    (id: string) =>
+      mutate((d) => ({ ...d, sent: (d.sent ?? []).filter((i) => i.id !== id) }), () =>
+        cancelRoomInvite(id),
       ).then(() => undefined),
     [mutate],
   );
@@ -401,5 +433,7 @@ export function useFriends({
     setStatus,
     inviteToRoom: inviteRoom,
     dismissInvite,
+    declineInvite,
+    cancelInvite,
   };
 }

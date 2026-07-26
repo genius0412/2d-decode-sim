@@ -163,6 +163,33 @@ export interface Presence {
   /** the live admin notice (scheduled restart / info), or null — mirrors the
    * WebSocket `serverNotice` so disconnected pages can show the banner too */
   notice?: { kind: 'restart' | 'info'; message: string; until?: number } | null;
+  /** what THIS deploy can honour (see SERVER_CAPS in protocol.ts). One Fly app
+   * serves every client build, so a new client checks here before offering
+   * something an older server would mishandle rather than ignore. */
+  caps?: string[];
+}
+
+/**
+ * One-shot, cached read of the server's capabilities.
+ *
+ * Cached for the page's lifetime because the answer can't change under a running
+ * client: a redeploy drops every socket, and the version gate reloads the page on
+ * a new build. A FAILED read resolves to no capabilities and is not cached, so a
+ * later call retries — and the safe direction is exactly that one, since every
+ * caller uses this to decide whether to OFFER something. A hidden feature is
+ * recoverable; a silently mismatched ranked match is not.
+ */
+let capsCache: Promise<string[]> | null = null;
+export function serverCaps(): Promise<string[]> {
+  if (!capsCache) {
+    capsCache = fetchPresence()
+      .then((p) => (Array.isArray(p.caps) ? p.caps : []))
+      .catch(() => {
+        capsCache = null;
+        return [];
+      });
+  }
+  return capsCache;
 }
 
 /**
@@ -636,11 +663,23 @@ export type PresenceStatus = 'online' | 'dnd' | 'invisible';
 export interface RoomInvite {
   id: string;
   from: PublicProfile;
+  /** the room code to join — EXCEPT for a rated format, where there is no room to
+   * join and this is the party token both sides hand the matchmaker instead */
   room: string;
   game: GameId;
   kind: 'versus' | 'record';
   record: 'solo' | 'duo' | null;
+  /** what was offered (see ChallengeFormat). Null on challenges sent by a client
+   * older than formats — read as the historical casual-versus meaning. */
+  format: string | null;
   createdAt: string;
+}
+
+/** a challenge the CALLER sent, as they see it: the other party is the recipient,
+ * and `declined` is the answer they've been waiting for. */
+export interface SentInvite extends Omit<RoomInvite, 'from'> {
+  to: PublicProfile;
+  declined: boolean;
 }
 
 export interface FriendsPayload {
@@ -649,6 +688,9 @@ export interface FriendsPayload {
   outgoing: PublicProfile[];
   blocked: PublicProfile[];
   invites: RoomInvite[];
+  /** challenges the caller SENT and that are still live. Absent from an older
+   * server, so every consumer must tolerate undefined. */
+  sent?: SentInvite[];
   /** the caller's own self-set status (null = automatic) */
   status: PresenceStatus | null;
 }
@@ -749,16 +791,34 @@ export function inviteToRoom(
   game: GameId,
   kind: 'versus' | 'record',
   record?: 'solo' | 'duo' | null,
+  format?: string | null,
 ): Promise<unknown> {
   return authedJson('/api/friends/invite', {
     method: 'POST',
-    body: JSON.stringify({ username, room, game, kind, record: record ?? null }),
+    body: JSON.stringify({ username, room, game, kind, record: record ?? null, format: format ?? null }),
   });
 }
 
 /** dismiss (or consume, on join) an invite addressed to the caller */
 export function dismissRoomInvite(id: string): Promise<unknown> {
   return authedJson('/api/friends/invite/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  });
+}
+
+/** DECLINE a challenge sent to me. Unlike dismiss, the sender is told: the row is
+ * marked rather than deleted so their client can say "@you declined" once. */
+export function declineRoomInvite(id: string): Promise<unknown> {
+  return authedJson('/api/friends/invite/decline', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  });
+}
+
+/** withdraw a challenge I sent (or clear one I've been told was declined) */
+export function cancelRoomInvite(id: string): Promise<unknown> {
+  return authedJson('/api/friends/invite/cancel', {
     method: 'POST',
     body: JSON.stringify({ id }),
   });

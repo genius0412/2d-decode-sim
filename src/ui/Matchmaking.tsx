@@ -13,6 +13,7 @@ import { useServerNotice } from '../net/notice';
 import { APP_NAME } from '../seasons';
 import { Logo } from './Logo';
 import { useEscape } from './useEscape';
+import { formatLabel, type PendingChallenge } from './challenge';
 
 /**
  * Region-aware ranked matchmaking. We connect to the DESIGNATED matchmaker (a
@@ -41,6 +42,8 @@ export function Matchmaking({
   onCancel,
   onSignIn,
   onSettingsChange,
+  challenge,
+  onChallengeConsumed,
 }: {
   settings: GameSettings;
   signedIn: boolean;
@@ -48,8 +51,15 @@ export function Matchmaking({
   onCancel: () => void;
   onSignIn: () => void;
   onSettingsChange: (s: GameSettings) => void;
+  /** arrived here from a RATED "play a friend" challenge: queue under its token
+   * immediately instead of showing the mode picker */
+  challenge?: PendingChallenge;
+  /** one-shot: clear it so a later ordinary visit to /ranked is an ordinary queue */
+  onChallengeConsumed?: () => void;
 }) {
-  const [mode, setMode] = useState<QueueMode>('1v1');
+  // a challenge dictates the bucket — you agreed on a format, there is nothing
+  // left to pick
+  const [mode, setMode] = useState<QueueMode>(challenge?.mode ?? '1v1');
   const [noWiden, setNoWiden] = useState(false);
   // Live queue depths, refreshed while on this screen. `full` because THIS is the
   // screen where the number decides something: you read "3 waiting in 1v1" and
@@ -70,6 +80,11 @@ export function Matchmaking({
   const lobbyRef = useRef<LobbyClient | null>(null);
   const startedRef = useRef(false);
   const assigningRef = useRef(false); // reconnecting from matchmaker → host
+  // The challenge is captured ONCE, in a ref. App clears its copy the moment this
+  // screen consumes it (so /ranked doesn't resurrect it on a later visit), and a
+  // prop that vanishes mid-search would otherwise silently turn a private
+  // challenge into an open queue entry on any reconnect.
+  const challengeRef = useRef<PendingChallenge | null>(challenge ?? null);
 
   // Esc backs out, same as ← Back — but NOT once a match has paired: MatchStrategy
   // owns the screen then, and its ← Leave forfeits. A stray Esc must not do that.
@@ -90,6 +105,19 @@ export function Matchmaking({
     const iv = window.setInterval(() => setElapsed(++t), 1000);
     return () => window.clearInterval(iv);
   }, [searching]);
+
+  // Arriving from a challenge, there is nothing to choose and nothing to confirm —
+  // both sides already agreed on the format, and whoever gets here first is
+  // waiting on the other. So queue on mount rather than showing a FIND MATCH
+  // button they'd have to press to start waiting.
+  useEffect(() => {
+    if (!challengeRef.current || !signedIn) return;
+    onChallengeConsumed?.();
+    void find();
+    // mount only: `find` closes over state that is stable for this screen's life,
+    // and re-running would double-queue
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const playerInfo = () => ({
     name: settings.spec.teamName || 'Player',
@@ -168,7 +196,24 @@ export function Matchmaking({
       if (!startedRef.current && !assigningRef.current)
         setError('Lost connection to the game server.');
     });
-    lobby.queue(mode, playerInfo(), home?.region ?? '', home?.accessMs ?? 0, noWiden, settings.game);
+    lobby.queue(
+      // a challenge fixes the bucket, and it must win over `mode` state: the auto-
+      // start below fires from a mount effect, where a setState in the same tick
+      // would not have landed yet
+      challengeRef.current?.mode ?? mode,
+      playerInfo(),
+      home?.region ?? '',
+      home?.accessMs ?? 0,
+      noWiden,
+      settings.game,
+      challengeRef.current
+        ? {
+            token: challengeRef.current.token,
+            format: challengeRef.current.format,
+            partyOnly: challengeRef.current.partyOnly,
+          }
+        : undefined,
+    );
   };
 
   /** a ranked match was assigned: drop the matchmaker socket and open a fresh one to
@@ -202,6 +247,9 @@ export function Matchmaking({
   const cancel = (): void => {
     teardown();
     setSearching(false);
+    // dropping out of a challenge leaves you on the ordinary ranked screen, not in
+    // a state where FIND MATCH would silently re-enter the private queue
+    challengeRef.current = null;
   };
 
   /** the console scaffold every full-screen setup surface shares (Lobby, Record
@@ -274,6 +322,36 @@ export function Matchmaking({
   }
 
   if (searching) {
+    const ch = challengeRef.current;
+    // A challenge is not a search — you are waiting for one named person, and the
+    // region-widening controls have nothing to widen toward (a closed party skips
+    // the radius entirely, server-side). Saying "finding a match" here would
+    // describe something that isn't happening.
+    if (ch) {
+      return page(
+        <>
+          Waiting for <span className="accent">@{ch.opponent}</span>
+        </>,
+        // a closed pair has no queue to report a depth for; a premade genuinely is
+        // in the open 2v2 pool once both have accepted, so show it
+        ch.partyOnly
+          ? `${formatLabel(ch.format)} · ${elapsed}s`
+          : `${formatLabel(ch.format)} · ${queue.size}/${queue.need} in queue · ${elapsed}s`,
+        <>
+          <p className="ds-hint">
+            {ch.partyOnly
+              ? 'They start the moment they accept. This match counts for ELO.'
+              : 'Once they accept, you queue together as a team.'}
+          </p>
+          {error && <p className="ds-form-err">⚠ {error}</p>}
+          <div className="ds-actions">
+            <button className="ds-cta ghost" onClick={cancel}>
+              CANCEL
+            </button>
+          </div>
+        </>,
+      );
+    }
     return page(
       <>
         Finding a <span className="accent">match…</span>

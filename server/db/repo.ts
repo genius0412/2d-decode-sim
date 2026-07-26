@@ -1412,6 +1412,10 @@ export interface FriendsPayload {
   outgoing: PublicProfile[];
   blocked: PublicProfile[];
   invites: RoomInvite[];
+  /** challenges the CALLER sent that are still live — so the sender can see
+   * "waiting for @x", cancel it, and be told once when it was declined. Without
+   * this a sent challenge was invisible to the person who sent it. */
+  sent: SentInvite[];
   status: PresenceStatus | null;
 }
 
@@ -1484,17 +1488,8 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
     incoming: ProfileCols[];
     outgoing: ProfileCols[];
     blocked: ProfileCols[];
-    invites: {
-      id: string;
-      from_user_id: string;
-      handle: string;
-      username: string | null;
-      room: string;
-      game: string;
-      kind: string;
-      record: string | null;
-      created_at: string;
-    }[];
+    invites: InviteCols[];
+    sent: SentCols[];
     own_status: string | null;
   }>(
     `with pairs as (
@@ -1530,9 +1525,18 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
      ),
      inv as (
        select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
-              ri.record, ri.created_at
+              ri.record, ri.format, ri.created_at
          from room_invites ri join profiles p on p.user_id = ri.from_user_id
-        where ri.to_user_id = $1 and ri.created_at > now() - $2::interval
+        -- a DECLINED challenge is gone for its recipient the instant they decline;
+        -- the row lingers only so the SENDER can be told (see the snt CTE below)
+        where ri.to_user_id = $1 and not ri.declined
+          and ri.created_at > now() - $2::interval
+     ),
+     snt as (
+       select ri.id, ri.to_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
+              ri.record, ri.format, ri.declined, ri.created_at
+         from room_invites ri join profiles p on p.user_id = ri.to_user_id
+        where ri.from_user_id = $1 and ri.created_at > now() - $2::interval
      )
      select
        coalesce((select json_agg(f order by f.handle) from f), '[]'::json) as friends,
@@ -1552,9 +1556,16 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
        coalesce((select json_agg(json_build_object(
          'id', inv.id, 'from_user_id', inv.from_user_id, 'handle', inv.handle,
          'username', inv.username, 'room', inv.room, 'game', inv.game,
-         'kind', inv.kind, 'record', inv.record,
+         'kind', inv.kind, 'record', inv.record, 'format', inv.format,
          'created_at', to_char(inv.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
          order by inv.created_at desc) from inv), '[]'::json) as invites,
+       coalesce((select json_agg(json_build_object(
+         'id', snt.id, 'to_user_id', snt.to_user_id, 'handle', snt.handle,
+         'username', snt.username, 'room', snt.room, 'game', snt.game,
+         'kind', snt.kind, 'record', snt.record, 'format', snt.format,
+         'declined', snt.declined,
+         'created_at', to_char(snt.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+         order by snt.created_at desc) from snt), '[]'::json) as sent,
        (select status from user_presence where user_id = $1) as own_status`,
     [userId, `${INVITE_TTL_S} seconds`],
   );
@@ -1588,6 +1599,7 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
     outgoing: (row?.outgoing ?? []).map(shapeProfile),
     blocked: (row?.blocked ?? []).map(shapeProfile),
     invites: (row?.invites ?? []).map(shapeInvite),
+    sent: (row?.sent ?? []).map(shapeSent),
     status: st === 'online' || st === 'dnd' || st === 'invisible' ? st : null,
   };
 }
@@ -1617,6 +1629,7 @@ interface InviteCols {
   game: string;
   kind: string;
   record: string | null;
+  format: string | null;
   created_at: string;
 }
 const shapeInvite = (r: InviteCols): RoomInvite => ({
@@ -1626,6 +1639,26 @@ const shapeInvite = (r: InviteCols): RoomInvite => ({
   game: r.game === 'chain' ? 'chain' : 'decode',
   kind: r.kind,
   record: r.record,
+  format: r.format,
+  createdAt: r.created_at,
+});
+
+/** the same row seen from the SENDER's side: the other party is the recipient,
+ * and `declined` is meaningful (the recipient's own list never shows a declined
+ * challenge at all). */
+interface SentCols extends Omit<InviteCols, 'from_user_id'> {
+  to_user_id: string;
+  declined: boolean;
+}
+const shapeSent = (r: SentCols): SentInvite => ({
+  id: r.id,
+  to: { userId: r.to_user_id, handle: r.handle, username: r.username },
+  room: r.room,
+  game: r.game === 'chain' ? 'chain' : 'decode',
+  kind: r.kind,
+  record: r.record,
+  format: r.format,
+  declined: !!r.declined,
   createdAt: r.created_at,
 });
 
@@ -1774,11 +1807,25 @@ export async function unblockUser(callerId: string, targetId: string): Promise<b
 export interface RoomInvite {
   id: string;
   from: PublicProfile;
+  /** for a casual/record challenge, the room code to join. For a RATED format
+   * there is no room to join — this is the party token both sides hand the
+   * matchmaker, which pairs them and stages the ranked match. */
   room: string;
   game: Game;
   kind: string;
   record: string | null;
+  /** what was offered: 'casual1v1' | 'casual2v2' | 'rated1v1' | 'ranked2v2' |
+   * 'duorecord'. Null on rows written before challenges carried a format, which
+   * the client reads as the historical casual-versus meaning. */
+  format: string | null;
   createdAt: string;
+}
+
+/** a challenge as its SENDER sees it — same row, other party, and `declined`
+ * carries the one piece of news the sender is waiting on. */
+export interface SentInvite extends Omit<RoomInvite, 'from'> {
+  to: PublicProfile;
+  declined: boolean;
 }
 
 const INVITE_TTL_S = 10 * 60;
@@ -1795,6 +1842,7 @@ export async function inviteToRoom(
   game: Game,
   kind: string,
   record: string | null,
+  format: string | null = null,
 ): Promise<InviteOutcome> {
   const [low, high] = fromId < toId ? [fromId, toId] : [toId, fromId];
   const friend = await q(
@@ -1802,12 +1850,73 @@ export async function inviteToRoom(
     [low, high],
   );
   if (friend.length === 0) return 'not-friends';
+  // One live challenge per direction. Spamming Challenge used to stack a row per
+  // click, and for a RATED format that is worse than untidy: each row carries its
+  // own party token, so the recipient could accept a stale one and sit in a
+  // private queue waiting for a challenger who is already waiting under a
+  // different token. Replacing keeps exactly one token in play.
+  await q(`delete from room_invites where from_user_id = $1 and to_user_id = $2`, [fromId, toId]);
   await q(
-    `insert into room_invites (from_user_id, to_user_id, room, game, kind, record)
-     values ($1, $2, $3, $4, $5, $6)`,
-    [fromId, toId, room, game, kind, record],
+    `insert into room_invites (from_user_id, to_user_id, room, game, kind, record, format)
+     values ($1, $2, $3, $4, $5, $6, $7)`,
+    [fromId, toId, room, game, kind, record, format],
   );
   return 'sent';
+}
+
+/**
+ * Decline a challenge addressed to the caller. MARKS rather than deletes: the row
+ * is what tells the sender their challenge was answered at all, and deleting it
+ * makes a decline indistinguishable from being ignored. The sender's client
+ * collects the news and then cancels it for real; one never collected falls out
+ * of the read TTL like anything else here.
+ */
+export async function declineRoomInvite(userId: string, id: string): Promise<boolean> {
+  const upd = await q(
+    `update room_invites set declined = true where id = $1 and to_user_id = $2 returning 1`,
+    [id, userId],
+  );
+  return upd.length > 0;
+}
+
+/** withdraw a challenge the caller SENT. Scoped to the sender, mirroring
+ * `dismissRoomInvite`'s scoping to the recipient — neither can touch the other's
+ * view of a row they don't own. */
+export async function cancelRoomInvite(userId: string, id: string): Promise<boolean> {
+  const del = await q(
+    `delete from room_invites where id = $1 and from_user_id = $2 returning 1`,
+    [id, userId],
+  );
+  return del.length > 0;
+}
+
+/**
+ * Resolve a party token to the two accounts it belongs to, for a caller claiming
+ * to be one of them. Returns null if there is no live challenge on that token
+ * naming the caller.
+ *
+ * This is the matchmaker's gate for a RATED friend match, and it is not optional.
+ * A party token is otherwise just a string two clients agreed on: without this
+ * check any pair of clients could hand each other one and stage themselves a
+ * rated, leaderboard-affecting match with no friendship, no challenge, and no
+ * invite the other person ever saw. Returning the PAIR (rather than a yes/no) is
+ * what lets the matchmaker also refuse to pair a token with anyone but its two
+ * rightful members.
+ */
+export async function challengeParty(
+  userId: string,
+  token: string,
+  format: string,
+): Promise<{ from: string; to: string } | null> {
+  const rows = await q<{ from_user_id: string; to_user_id: string }>(
+    `select from_user_id, to_user_id from room_invites
+      where room = $2 and format = $3 and created_at > now() - $4::interval
+        and (from_user_id = $1 or to_user_id = $1)
+      limit 1`,
+    [userId, token, format, `${INVITE_TTL_S} seconds`],
+  );
+  const r = rows[0];
+  return r ? { from: r.from_user_id, to: r.to_user_id } : null;
 }
 
 /** invites addressed to `userId`, freshest first, older than the TTL dropped. */
@@ -1821,13 +1930,15 @@ export async function listRoomInvites(userId: string): Promise<RoomInvite[]> {
     game: string;
     kind: string;
     record: string | null;
+    format: string | null;
     created_at: string;
   }>(
     `select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind, ri.record,
-            ri.created_at
+            ri.format, ri.created_at
        from room_invites ri
        join profiles p on p.user_id = ri.from_user_id
-      where ri.to_user_id = $1 and ri.created_at > now() - $2::interval
+      where ri.to_user_id = $1 and not ri.declined
+        and ri.created_at > now() - $2::interval
       order by ri.created_at desc`,
     [userId, `${INVITE_TTL_S} seconds`],
   );
