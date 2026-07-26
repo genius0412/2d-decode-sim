@@ -15,6 +15,26 @@ const gameParam = (game?: GameId): string => (game === 'chain' ? '&game=chain' :
  * loop on the server.
  */
 
+/**
+ * The badge fields that travel with EVERY name the server sends — a leaderboard
+ * row, a match-history participant, a friend, the sender of a challenge.
+ *
+ * One shared shape rather than a pair of fields copied into each interface,
+ * because the failure mode is silent: a row type that forgets them still
+ * compiles and still renders, just with no badge on that one surface — which is
+ * how the ranked board ended up bare while the record board next to it was fine.
+ *
+ * Both are OPTIONAL. One Fly app serves every client build, so a client can be
+ * newer than the server it is talking to and receive neither; "absent" must
+ * render exactly like "not a supporter", never as a broken field.
+ */
+export interface BadgeFields {
+  /** active supporter membership (staff are entitled without paying) */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge in place of the supporter one */
+  role?: StaffRole;
+}
+
 export interface RecordConfig {
   spec: RobotSpec;
   assists: AssistConfig;
@@ -23,7 +43,7 @@ export interface RecordConfig {
   partnerSpec?: RobotSpec;
 }
 
-export interface RecordRow {
+export interface RecordRow extends BadgeFields {
   userId: string;
   handle: string;
   username: string | null;
@@ -31,18 +51,16 @@ export interface RecordRow {
   /** duo partner's display name + username (null for solo runs / legacy) */
   partnerHandle: string | null;
   partnerUsername: string | null;
+  /** the partner's own badge — a duo row prints two names, so it carries two */
+  partnerSupporter?: boolean;
+  partnerRole?: StaffRole;
   score: number;
   replayId: string | null;
   createdAt: string;
   config: RecordConfig | null;
-  /** active supporter membership — renders the badge. Absent from a server older
-   *  than the perk, which renders identically to false. */
-  supporter?: boolean;
-  /** 'owner' | 'admin' — renders the staff badge in place of the supporter one */
-  role?: StaffRole;
 }
 
-export interface EloRow {
+export interface EloRow extends BadgeFields {
   userId: string;
   handle: string;
   username: string | null;
@@ -216,7 +234,7 @@ export function fetchPresence(full = false): Promise<Presence> {
   return getJson(`/api/presence${full ? '?full=1' : ''}`);
 }
 
-export interface PublicProfile {
+export interface PublicProfile extends BadgeFields {
   userId: string;
   handle: string | null;
   username: string | null;
@@ -240,7 +258,7 @@ export function fetchUserStatsByUsername(username: string, season?: number): Pro
 
 // ---- unified match history (Career + public profile) -----------------------
 
-export interface MatchHistoryPlayer {
+export interface MatchHistoryPlayer extends BadgeFields {
   userId: string;
   handle: string;
   username: string | null;
@@ -723,7 +741,7 @@ export async function adminRenameUser(userId: string, handle: string): Promise<s
  * meaningful while `online`; null otherwise. */
 export type Activity = 'menu' | 'lobby' | 'match';
 
-export interface FriendRow {
+export interface FriendRow extends BadgeFields {
   userId: string;
   handle: string;
   username: string | null;

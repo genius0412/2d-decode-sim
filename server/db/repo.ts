@@ -308,18 +308,17 @@ export interface PublicProfile {
   /**
    * active supporter membership — drives the badge.
    *
-   * OPTIONAL because only the surfaces that actually render a badge pay for the
-   * extra column: the profile page and the leaderboards do, the friends-list
-   * queries (three per poll, every few seconds) deliberately do not. `undefined`
-   * means "not asked", which the client renders identically to false.
+   * OPTIONAL because a caller may not have asked for it, and because a client
+   * talking to a server older than the feature will not receive it at all. Both
+   * cases mean "not asked", which renders identically to false — never as a
+   * missing field somewhere upstream.
    */
   supporter?: boolean;
   /**
    * 'owner' | 'admin' for staff, absent otherwise — drives the staff badge.
    *
-   * Optional for the same reason `supporter` is: only the surfaces that render a
-   * badge pay for the column. `undefined` means "not asked" and renders as no
-   * badge, identically to a null role.
+   * Optional for the same reason `supporter` is. `undefined` means "not asked"
+   * and renders as no badge, identically to a null role.
    */
   role?: StaffRole;
 }
@@ -328,8 +327,10 @@ export interface PublicProfile {
  *  `profiles.role` at boot — see 0020_staff_roles.sql for why it is a column. */
 export type StaffRole = 'owner' | 'admin';
 
-/** is this row staff? Shared so "staff" means one thing in every query. */
-const STAFF_PRED = `role in ('owner', 'admin')`;
+/** is this row staff? Shared so "staff" means one thing in every query.
+ *  `a` qualifies the column for a joined query — `staffPred('pp.')`. */
+const staffPred = (a = ''): string => `${a}role in ('owner', 'admin')`;
+const STAFF_PRED = staffPred();
 
 /** narrow whatever the column holds. A value outside the check constraint could
  *  only come from a hand-edited row, and reads as no role. */
@@ -347,7 +348,27 @@ export const asRole = (v: unknown): StaffRole | undefined =>
  * makes it impossible for one surface to disagree with another about whether an
  * admin is entitled.
  */
-const SUPPORTER_COL = `((supporter_until is not null and supporter_until > now()) or ${STAFF_PRED}) as supporter`;
+const supporterPred = (a = ''): string =>
+  `((${a}supporter_until is not null and ${a}supporter_until > now()) or ${staffPred(a)})`;
+const SUPPORTER_COL = `${supporterPred()} as supporter`;
+
+/**
+ * The two badge columns for a JOINED `profiles` row — `badgeCols('p.')`.
+ *
+ * Every surface that prints a name prints the badge beside it, so every query
+ * behind such a surface needs the same two columns, and writing them out by hand
+ * is how a board ends up quietly badge-less (which is exactly what happened to
+ * the ranked board while the record board had them). `prefix` names a SECOND
+ * person in the same row — a duo partner — as `partnerRole`/`partnerSupporter`.
+ *
+ * `coalesce(..., false)` matters on a LEFT JOIN: a solo run has no partner row,
+ * and the predicate over all-NULL columns is NULL, not false.
+ */
+function badgeCols(a: string, prefix?: string): string {
+  const role = prefix ? `"${prefix}Role"` : 'role';
+  const sup = prefix ? `"${prefix}Supporter"` : 'supporter';
+  return `${a}role as ${role}, coalesce(${supporterPred(a)}, false) as ${sup}`;
+}
 
 /**
  * Reconcile `profiles.role` with the environment. Called once per boot, after
@@ -973,6 +994,10 @@ export interface BoardRow {
   supporter?: boolean;
   /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
   role?: StaffRole;
+  /** the PARTNER's badge on a duo row. A duo record is two people's run and both
+   *  names are printed, so both names carry their own badge. */
+  partnerSupporter?: boolean;
+  partnerRole?: StaffRole;
 }
 
 /** best score per player within a season × mode × drivetrain, ranked. Pass
@@ -1000,11 +1025,10 @@ export async function recordLeaderboard(opts: {
        where r.balance_version = $1 and r.mode = $2 and r.game = $3 ${dtFilter}
        order by r.user_id, r.score desc, r.created_at asc
      )
-     select b.user_id as "userId", p.handle, p.username, p.role,
-            ((p.supporter_until is not null and p.supporter_until > now())
-              or p.role in ('owner', 'admin')) as supporter,
+     select b.user_id as "userId", p.handle, p.username, ${badgeCols('p.')},
             b.partner_id as "partnerId",
             pp.handle as "partnerHandle", pp.username as "partnerUsername",
+            ${badgeCols('pp.', 'partner')},
             b.score, b.replay_id as "replayId", b.created_at as "createdAt", b.config
      from best b
        join profiles p on p.user_id = b.user_id
@@ -1314,6 +1338,20 @@ export async function upsertRating(
   return rows[0]?.games ?? 1;
 }
 
+/** one row of a ranked board. Same name-plus-badge shape as `BoardRow` — the two
+ *  boards sit behind one segmented control and render through the same cell. */
+export interface EloBoardRow {
+  userId: string;
+  handle: string;
+  username: string | null;
+  rating: number;
+  games: number;
+  /** active supporter membership — renders a small badge beside the name */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
+  role?: StaffRole;
+}
+
 /** The public leaderboard for an ACT's board — PLACED players only (games >=
  * PLACEMENT_GAMES). Players still in placements are intentionally omitted;
  * `eloUserStanding` reports the viewer's own standing separately. */
@@ -1322,9 +1360,10 @@ export async function eloLeaderboard(opts: {
   act: number;
   limit?: number;
   game?: Game;
-}): Promise<{ userId: string; handle: string; username: string | null; rating: number; games: number }[]> {
-  return q<{ userId: string; handle: string; username: string | null; rating: number; games: number }>(
-    `select e.user_id as "userId", p.handle, p.username, e.rating, e.games
+}): Promise<EloBoardRow[]> {
+  return q<EloBoardRow>(
+    `select e.user_id as "userId", p.handle, p.username, e.rating, e.games,
+            ${badgeCols('p.')}
      from elo_ratings e join profiles p on p.user_id = e.user_id
      where e.act = $1 and e.mode = $2 and e.game = $5 and e.games >= $4
      order by e.rating desc, e.games desc
@@ -1392,9 +1431,10 @@ export async function eloHistoryLeaderboard(opts: {
   balanceVersion: number;
   limit?: number;
   game?: Game;
-}): Promise<{ userId: string; handle: string; username: string | null; rating: number; games: number }[]> {
-  return q<{ userId: string; handle: string; username: string | null; rating: number; games: number }>(
-    `select h.user_id as "userId", p.handle, p.username, h.rating, h.games
+}): Promise<EloBoardRow[]> {
+  return q<EloBoardRow>(
+    `select h.user_id as "userId", p.handle, p.username, h.rating, h.games,
+            ${badgeCols('p.')}
      from elo_history h join profiles p on p.user_id = h.user_id
      where h.balance_version = $1 and h.mode = $2 and h.game = $5 and h.games >= $4
      order by h.rating desc, h.games desc
@@ -1652,6 +1692,10 @@ export interface MatchHistoryPlayer {
   handle: string;
   username: string | null;
   alliance: 'red' | 'blue' | null; // null for record-run partners
+  /** active supporter membership — renders a small badge beside the name */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
+  role?: StaffRole;
 }
 export interface MatchHistoryEntry {
   kind: 'versus' | 'record';
@@ -1772,15 +1816,25 @@ export async function userMatchHistory(
       score: number;
       handle: string;
       username: string | null;
+      role: string | null;
+      supporter: boolean;
     }>(
-      `select mp.match_id::text as id, mp.user_id, mp.alliance, mp.score, p.handle, p.username
+      `select mp.match_id::text as id, mp.user_id, mp.alliance, mp.score, p.handle, p.username,
+              ${badgeCols('p.')}
        from match_participants mp join profiles p on p.user_id = mp.user_id
        where mp.match_id = any($1::uuid[])`,
       [versusIds],
     );
     for (const p of parts) {
       const list = byMatch.get(p.id) ?? [];
-      list.push({ userId: p.user_id, handle: p.handle, username: p.username, alliance: p.alliance });
+      list.push({
+        userId: p.user_id,
+        handle: p.handle,
+        username: p.username,
+        alliance: p.alliance,
+        supporter: !!p.supporter,
+        role: asRole(p.role),
+      });
       byMatch.set(p.id, list);
       const s = scoreByMatch.get(p.id) ?? { red: null, blue: null };
       if (p.alliance === 'red') s.red = p.score;
@@ -1798,14 +1852,27 @@ export async function userMatchHistory(
     );
     const need = new Set<string>([userId]);
     for (const r of recs) if (r.partner_id) need.add(r.partner_id);
-    const profs = await q<{ user_id: string; handle: string; username: string | null }>(
-      `select user_id, handle, username from profiles where user_id = any($1::text[])`,
+    const profs = await q<{
+      user_id: string;
+      handle: string;
+      username: string | null;
+      role: string | null;
+      supporter: boolean;
+    }>(
+      `select user_id, handle, username, ${badgeCols('')} from profiles where user_id = any($1::text[])`,
       [[...need]],
     );
     const byUser = new Map(profs.map((p) => [p.user_id, p]));
     const mk = (uid: string): MatchHistoryPlayer => {
       const p = byUser.get(uid);
-      return { userId: uid, handle: p?.handle ?? 'Player', username: p?.username ?? null, alliance: null };
+      return {
+        userId: uid,
+        handle: p?.handle ?? 'Player',
+        username: p?.username ?? null,
+        alliance: null,
+        supporter: !!p?.supporter,
+        role: asRole(p?.role),
+      };
     };
     for (const r of recs) {
       const list = [mk(userId)];
@@ -1979,6 +2046,10 @@ export interface FriendRow {
   activity: Activity | null;
   /** which game they're in ('decode' | 'chain') — only meaningful with `activity` */
   game: Game | null;
+  /** active supporter membership — renders a small badge beside the name */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
+  role?: StaffRole;
 }
 
 export interface FriendsPayload {
@@ -2059,6 +2130,8 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
       since: number | string | null;
       activity: string | null;
       activity_game: string | null;
+      role: string | null;
+      supporter: boolean;
     }[];
     incoming: ProfileCols[];
     outgoing: ProfileCols[];
@@ -2073,7 +2146,7 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
         where user_low = $1 or user_high = $1
      ),
      f as (
-       select p.user_id, p.handle, p.username,
+       select p.user_id, p.handle, p.username, ${badgeCols('p.')},
               case when up.status = 'invisible' then null else up.status end as status,
               case when up.status = 'invisible' then null
                    else extract(epoch from (now() - up.last_seen_at)) end as since,
@@ -2084,23 +2157,23 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
          left join user_presence up on up.user_id = pairs.friend_id
      ),
      inc as (
-       select p.user_id, p.handle, p.username, fr.created_at
+       select p.user_id, p.handle, p.username, ${badgeCols('p.')}, fr.created_at
          from friend_requests fr join profiles p on p.user_id = fr.from_user_id
         where fr.to_user_id = $1
      ),
      outg as (
-       select p.user_id, p.handle, p.username, fr.created_at
+       select p.user_id, p.handle, p.username, ${badgeCols('p.')}, fr.created_at
          from friend_requests fr join profiles p on p.user_id = fr.to_user_id
         where fr.from_user_id = $1
      ),
      blk as (
-       select p.user_id, p.handle, p.username
+       select p.user_id, p.handle, p.username, ${badgeCols('p.')}
          from friend_blocks b join profiles p on p.user_id = b.blocked_id
         where b.blocker_id = $1
      ),
      inv as (
-       select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
-              ri.record, ri.format, ri.created_at
+       select ri.id, ri.from_user_id, p.handle, p.username, ${badgeCols('p.')},
+              ri.room, ri.game, ri.kind, ri.record, ri.format, ri.created_at
          from room_invites ri join profiles p on p.user_id = ri.from_user_id
         -- a DECLINED challenge is gone for its recipient the instant they decline;
         -- the row lingers only so the SENDER can be told (see the snt CTE below)
@@ -2108,21 +2181,24 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
           and ri.created_at > now() - $2::interval
      ),
      snt as (
-       select ri.id, ri.to_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
-              ri.record, ri.format, ri.declined, ri.created_at
+       select ri.id, ri.to_user_id, p.handle, p.username, ${badgeCols('p.')},
+              ri.room, ri.game, ri.kind, ri.record, ri.format, ri.declined, ri.created_at
          from room_invites ri join profiles p on p.user_id = ri.to_user_id
         where ri.from_user_id = $1 and ri.created_at > now() - $2::interval
      )
      select
        coalesce((select json_agg(f order by f.handle) from f), '[]'::json) as friends,
        coalesce((select json_agg(json_build_object(
-         'user_id', inc.user_id, 'handle', inc.handle, 'username', inc.username)
+         'user_id', inc.user_id, 'handle', inc.handle, 'username', inc.username,
+         'role', inc.role, 'supporter', inc.supporter)
          order by inc.created_at desc) from inc), '[]'::json) as incoming,
        coalesce((select json_agg(json_build_object(
-         'user_id', outg.user_id, 'handle', outg.handle, 'username', outg.username)
+         'user_id', outg.user_id, 'handle', outg.handle, 'username', outg.username,
+         'role', outg.role, 'supporter', outg.supporter)
          order by outg.created_at desc) from outg), '[]'::json) as outgoing,
        coalesce((select json_agg(json_build_object(
-         'user_id', blk.user_id, 'handle', blk.handle, 'username', blk.username)
+         'user_id', blk.user_id, 'handle', blk.handle, 'username', blk.username,
+         'role', blk.role, 'supporter', blk.supporter)
          order by blk.handle) from blk), '[]'::json) as blocked,
        -- created_at is formatted EXPLICITLY rather than let json_agg serialize the
        -- timestamptz: Postgres would emit '...798296+00:00' where the pg driver's
@@ -2130,13 +2206,15 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
        -- handed to clients verbatim - so match the old wire format exactly.
        coalesce((select json_agg(json_build_object(
          'id', inv.id, 'from_user_id', inv.from_user_id, 'handle', inv.handle,
-         'username', inv.username, 'room', inv.room, 'game', inv.game,
+         'username', inv.username, 'role', inv.role, 'supporter', inv.supporter,
+         'room', inv.room, 'game', inv.game,
          'kind', inv.kind, 'record', inv.record, 'format', inv.format,
          'created_at', to_char(inv.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
          order by inv.created_at desc) from inv), '[]'::json) as invites,
        coalesce((select json_agg(json_build_object(
          'id', snt.id, 'to_user_id', snt.to_user_id, 'handle', snt.handle,
-         'username', snt.username, 'room', snt.room, 'game', snt.game,
+         'username', snt.username, 'role', snt.role, 'supporter', snt.supporter,
+         'room', snt.room, 'game', snt.game,
          'kind', snt.kind, 'record', snt.record, 'format', snt.format,
          'declined', snt.declined,
          'created_at', to_char(snt.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
@@ -2164,6 +2242,8 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
       offlineSeconds: online ? null : coarsen(since),
       activity,
       game: activity ? (r.activity_game === 'chain' ? 'chain' : 'decode') : null,
+      supporter: !!r.supporter,
+      role: asRole(r.role),
     };
   });
 
@@ -2181,16 +2261,27 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
 
 /** the exact profile columns every friends query selects — an allowlist, never
  * `select *`: `profiles` also holds `settings`, and a future column would
- * otherwise join the payload silently. */
+ * otherwise join the payload silently.
+ *
+ * The two badge columns are part of the allowlist because these rows are NAMES ON
+ * SCREEN — the friends list, the incoming/outgoing request lists, the challenge
+ * toast — and a badge that appears on the leaderboard but not next to the same
+ * person in your friends list reads as a bug. They cost nothing extra to read:
+ * the `profiles` row is already joined, and this projects two more of its
+ * columns rather than adding a lookup. */
 interface ProfileCols {
   user_id: string;
   handle: string;
   username: string | null;
+  role?: string | null;
+  supporter?: boolean | null;
 }
 const shapeProfile = (r: ProfileCols): PublicProfile => ({
   userId: r.user_id,
   handle: r.handle,
   username: r.username,
+  supporter: !!r.supporter,
+  role: asRole(r.role),
 });
 
 /** the invite row shape, shared by `listFriends` (aggregated to JSON in one trip)
@@ -2200,6 +2291,8 @@ interface InviteCols {
   from_user_id: string;
   handle: string;
   username: string | null;
+  role: string | null;
+  supporter: boolean | null;
   room: string;
   game: string;
   kind: string;
@@ -2209,7 +2302,13 @@ interface InviteCols {
 }
 const shapeInvite = (r: InviteCols): RoomInvite => ({
   id: r.id,
-  from: { userId: r.from_user_id, handle: r.handle, username: r.username },
+  from: {
+    userId: r.from_user_id,
+    handle: r.handle,
+    username: r.username,
+    supporter: !!r.supporter,
+    role: asRole(r.role),
+  },
   room: r.room,
   game: r.game === 'chain' ? 'chain' : 'decode',
   kind: r.kind,
@@ -2227,7 +2326,13 @@ interface SentCols extends Omit<InviteCols, 'from_user_id'> {
 }
 const shapeSent = (r: SentCols): SentInvite => ({
   id: r.id,
-  to: { userId: r.to_user_id, handle: r.handle, username: r.username },
+  to: {
+    userId: r.to_user_id,
+    handle: r.handle,
+    username: r.username,
+    supporter: !!r.supporter,
+    role: asRole(r.role),
+  },
   room: r.room,
   game: r.game === 'chain' ? 'chain' : 'decode',
   kind: r.kind,
@@ -2501,6 +2606,8 @@ export async function listRoomInvites(userId: string): Promise<RoomInvite[]> {
     from_user_id: string;
     handle: string;
     username: string | null;
+    role: string | null;
+    supporter: boolean | null;
     room: string;
     game: string;
     kind: string;
@@ -2508,8 +2615,8 @@ export async function listRoomInvites(userId: string): Promise<RoomInvite[]> {
     format: string | null;
     created_at: string;
   }>(
-    `select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind, ri.record,
-            ri.format, ri.created_at
+    `select ri.id, ri.from_user_id, p.handle, p.username, ${badgeCols('p.')},
+            ri.room, ri.game, ri.kind, ri.record, ri.format, ri.created_at
        from room_invites ri
        join profiles p on p.user_id = ri.from_user_id
       where ri.to_user_id = $1 and not ri.declined
@@ -2543,7 +2650,7 @@ export async function searchUsersByUsername(prefix: string, limit = 20): Promise
   // full-enumeration endpoint this function exists to avoid.
   const esc = prefix.replace(/[\\%_]/g, '\\$&');
   const rows = await q<ProfileCols>(
-    `select user_id, handle, username from profiles
+    `select user_id, handle, username, ${badgeCols('')} from profiles
       where username ilike $1 escape '\\'
       order by username limit $2`,
     [esc + '%', Math.min(Math.max(1, limit), 50)],

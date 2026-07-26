@@ -627,7 +627,25 @@ and nag them to link a Ko-fi account that will never pay). `getSupporter` return
 also `supporter: true`. **Badge colours must be SATURATED IN BOTH THEMES**: the audit
 checks the glyph against its own fill, NOT the badge against the card behind it, so the
 lavender pastel (#34305c in dark) passed contrast while being invisible on the dark
-panel. Distinguish by SHAPE as well as hue. Tests: 18 checks in `npm run dbtest`.
+panel. Distinguish by SHAPE as well as hue.
+**THE BADGE GOES ON EVERY NAME**, and the failure mode is SILENT — a query that just
+doesn't project the two columns still compiles and still renders, only bare, which is how
+the ranked board sat badge-less next to a record board that was fine. So: `badgeCols(alias
+[, prefix])` in repo.ts writes the pair once (the `prefix` form names a SECOND person in
+the same row — a duo partner — as `partnerRole`/`partnerSupporter`, and `coalesce(…,false)`
+is load-bearing on the LEFT JOIN a solo run takes), and client-side every row type
+`extends BadgeFields` (`src/net/api.ts`) instead of re-declaring the fields. Surfaces
+covered: both leaderboards (records incl. the duo partner + ranked, live AND archived),
+career/profile (the `CareerPanel` name chip — the ONLY place My Stats prints who you are),
+match history (every participant + record-run partners), friends/requests/challenges (both
+directions), and username search. The friends poll used to skip the columns deliberately;
+it no longer does — same already-joined row, and a badge that shows on the leaderboard but
+not beside the same person in your friends list reads as a bug.
+**A BADGE IS DECORATION BESIDE A NAME, NEVER PART OF ONE**: render it as a SIBLING of the
+name element, because the name carries the hover underline (`.lb-name-h`, `.mh-player.link`)
+and the ellipsis (`.fr-name`) — nested inside, it gets underlined with the name or
+truncated with it. `.fr-nameline` exists for the stacked name-over-subline rows.
+Tests: 36 checks in `npm run dbtest`.
 
 **PLAY A FRIEND — challenges (chess.com's model), DONE.** A challenge (`room_invites` +
 migration `0019`) carries a **`format`**: `casual1v1`/`casual2v2` (a `versus` room),

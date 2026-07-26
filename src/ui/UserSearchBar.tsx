@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { searchUsers, type PublicProfile } from '../net/api';
+import { SupporterBadge } from './SupporterBadge';
 
 /**
  * "Look up a username" — a standalone public search, independent of the friends
@@ -53,7 +54,10 @@ export function UserSearchBar({ onOpenProfile }: { onOpenProfile: (username: str
               disabled={!p.username}
               title={p.username ? `View @${p.username}` : undefined}
             >
-              <span className="fr-name">{p.handle}</span>
+              <span className="fr-nameline">
+                <span className="fr-name">{p.handle}</span>
+                <SupporterBadge supporter={p.supporter} role={p.role} />
+              </span>
               <span className="fr-sub">@{p.username}</span>
             </button>
           ))}

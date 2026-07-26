@@ -12,6 +12,7 @@ import type { FriendsApi } from './useFriends';
 import { useFriendsCtx } from './friendsContext';
 import { challengeLine, formatLabel } from './challenge';
 import { Select, type SelectOption } from './Select';
+import { SupporterBadge } from './SupporterBadge';
 
 /** compact game name for an activity line ("In a match · DECODE") */
 function gameShort(game: 'decode' | 'chain' | null): string {
@@ -176,7 +177,10 @@ export function FriendsPanel({
               {invites.map((inv) => (
                 <div className="fr-row" key={inv.id}>
                   <span className="fr-who static">
-                    <span className="fr-name">{inv.from.handle}</span>
+                    <span className="fr-nameline">
+                      <span className="fr-name">{inv.from.handle}</span>
+                      <SupporterBadge supporter={inv.from.supporter} role={inv.from.role} />
+                    </span>
                     <span className="fr-sub">{challengeLine(inv.format)}</span>
                   </span>
                   <span className="fr-actions">
@@ -200,7 +204,10 @@ export function FriendsPanel({
               {sent.map((s) => (
                 <div className="fr-row" key={s.id}>
                   <span className="fr-who static">
-                    <span className="fr-name">{s.to.handle}</span>
+                    <span className="fr-nameline">
+                      <span className="fr-name">{s.to.handle}</span>
+                      <SupporterBadge supporter={s.to.supporter} role={s.to.role} />
+                    </span>
                     <span className="fr-sub">
                       {s.declined ? `declined · ${formatLabel(s.format)}` : `waiting · ${formatLabel(s.format)}`}
                     </span>
@@ -338,7 +345,13 @@ function recentPeople(rows: MatchHistoryEntry[], myUserId: string): PublicProfil
     for (const p of row.players) {
       if (seen.has(p.userId) || !p.username) continue; // no username ⇒ can't friend them
       seen.add(p.userId);
-      out.push({ userId: p.userId, handle: p.handle, username: p.username });
+      out.push({
+        userId: p.userId,
+        handle: p.handle,
+        username: p.username,
+        supporter: p.supporter,
+        role: p.role,
+      });
     }
   }
   return out;
@@ -494,7 +507,12 @@ function Row({
   return (
     <div className="fr-row">
       <button className="fr-who" onClick={open} disabled={!username} title={username ? `View @${username}` : undefined}>
-        <span className="fr-name">{p.handle}</span>
+        {/* the badge is a sibling of `.fr-name`, not a child: the name ellipsises
+            on overflow, and a badge inside it would truncate with the text */}
+        <span className="fr-nameline">
+          <span className="fr-name">{p.handle}</span>
+          <SupporterBadge supporter={p.supporter} role={p.role} />
+        </span>
         <span className="fr-sub">{sub ?? (username ? `@${username}` : '')}</span>
       </button>
       <span className="fr-actions">{children}</span>
@@ -627,7 +645,10 @@ function AddFriend({
       {results.map((p) => (
         <div className="fr-row" key={p.userId}>
           <span className="fr-who static">
-            <span className="fr-name">{p.handle}</span>
+            <span className="fr-nameline">
+              <span className="fr-name">{p.handle}</span>
+              <SupporterBadge supporter={p.supporter} role={p.role} />
+            </span>
             <span className="fr-sub">@{p.username}</span>
           </span>
           <span className="fr-actions">

@@ -390,8 +390,8 @@ export function Leaderboard({
                           <DriverName
                             handle={r.handle}
                             username={r.username}
-                            supporter={(r as { supporter?: boolean }).supporter}
-                            role={(r as { role?: StaffRole }).role}
+                            supporter={r.supporter}
+                            role={r.role}
                             onOpenProfile={onOpenProfile}
                           />
                           {isRecords && rec.partnerId && (
@@ -400,6 +400,8 @@ export function Leaderboard({
                               <DriverName
                                 handle={rec.partnerHandle}
                                 username={rec.partnerUsername}
+                                supporter={rec.partnerSupporter}
+                                role={rec.partnerRole}
                                 onOpenProfile={onOpenProfile}
                               />
                               <span className="ds-dt lb-duo-tag">DUO</span>

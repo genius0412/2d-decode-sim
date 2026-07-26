@@ -352,6 +352,136 @@ async function main(): Promise<void> {
   check('staff: ...and is a supporter either way', paidStaff.supporter === true);
   await repo.syncStaffRoles(null, []);
 
+  // ------------------------------------------- badges on EVERY name surface
+  // The badge is only meaningful if it is everywhere a name is: it shipped on
+  // the record board and was silently missing from the ranked board beside it,
+  // from match history, and from the friends list — every one of those a query
+  // that simply did not project the two columns. Nothing in the type system
+  // catches that (an absent field renders as "no badge"), so the queries behind
+  // each surface are asserted here one by one.
+  await repo.ensureProfile('badge-own', 'Ownie');
+  await repo.ensureProfile('badge-sup', 'Suppy');
+  await repo.ensureProfile('badge-nil', 'Plain');
+  await repo.syncStaffRoles('badge-own', ['badge-own']);
+  await db.query(
+    `update profiles set supporter_until = now() + interval '30 days' where user_id = 'badge-sup'`,
+  );
+  await db.query(
+    `update profiles set username = 'ownie' where user_id = 'badge-own'`,
+  );
+
+  const SEASON = 99;
+  await repo.ensureSeason(SEASON, 'decode', 7);
+  const act = await repo.actForSeason(SEASON, 'decode');
+
+  // RANKED — the board that shipped bare. Placement gates the board, so each
+  // player needs PLACEMENT_GAMES rated results before they appear at all.
+  for (let i = 0; i < 5; i++) {
+    await repo.upsertRating('badge-own', '1v1', act, 1600, 60, 0.06, 'decode');
+    await repo.upsertRating('badge-nil', '1v1', act, 1400, 60, 0.06, 'decode');
+  }
+  await repo.upsertEloHistory('badge-own', '1v1', SEASON, 1600, 60, 0.06, 5, 'decode');
+  const eloRows = await repo.eloLeaderboard({ mode: '1v1', act, game: 'decode' });
+  const eloOwn = eloRows.find((r) => r.userId === 'badge-own');
+  const eloNil = eloRows.find((r) => r.userId === 'badge-nil');
+  check('badges/ranked: the live board carries the role', eloOwn?.role === 'owner');
+  check('badges/ranked: ...and the supporter flag it implies', eloOwn?.supporter === true);
+  check('badges/ranked: a plain player carries neither', !eloNil?.role && eloNil?.supporter === false);
+  const eloHist = await repo.eloHistoryLeaderboard({ mode: '1v1', balanceVersion: SEASON, game: 'decode' });
+  check(
+    'badges/ranked: the ARCHIVED season board carries them too',
+    eloHist.find((r) => r.userId === 'badge-own')?.role === 'owner',
+  );
+
+  // RECORDS — the primary name already had a badge; the DUO PARTNER did not,
+  // and a duo row prints two names.
+  await repo.submitRecord({
+    userId: 'badge-sup',
+    partnerId: 'badge-own',
+    mode: 'duo',
+    drivetrain: 'tank',
+    score: 250,
+    balanceVersion: SEASON,
+    replayId: null as unknown as string, // nullable FK; no replay needed here
+    game: 'decode',
+  });
+  await repo.submitRecord({
+    userId: 'badge-nil',
+    mode: 'solo',
+    drivetrain: 'tank',
+    score: 100,
+    balanceVersion: SEASON,
+    replayId: null as unknown as string,
+    game: 'decode',
+  });
+  const recRows = await repo.recordLeaderboard({ mode: 'duo', balanceVersion: SEASON, game: 'decode' });
+  const duo = recRows.find((r) => r.userId === 'badge-sup');
+  check('badges/records: the runner keeps their supporter flag', duo?.supporter === true);
+  check('badges/records: the duo PARTNER carries their own role', duo?.partnerRole === 'owner');
+  check('badges/records: ...and their own supporter flag', duo?.partnerSupporter === true);
+  const solo = (await repo.recordLeaderboard({ mode: 'solo', balanceVersion: SEASON, game: 'decode' }))[0];
+  check(
+    'badges/records: a SOLO row reports the absent partner as false, not null',
+    solo?.partnerSupporter === false,
+  );
+
+  // MATCH HISTORY — the Career page's list, and the one place a name appears
+  // for BOTH alliances of somebody else's match.
+  const matchId = await repo.saveMatch('1v1', SEASON, null as unknown as string, true, 'decode');
+  await repo.addMatchParticipant({
+    matchId, userId: 'badge-nil', alliance: 'red', drivetrain: 'tank',
+    score: 80, won: false, ratingBefore: 1000, ratingAfter: 990,
+  });
+  await repo.addMatchParticipant({
+    matchId, userId: 'badge-own', alliance: 'blue', drivetrain: 'tank',
+    score: 120, won: true, ratingBefore: 1000, ratingAfter: 1010,
+  });
+  const vsHist = await repo.userMatchHistory('badge-nil', { balanceVersion: SEASON, game: 'decode' });
+  const versus = vsHist.rows.find((r) => r.kind === 'versus');
+  const oppo = versus?.players.find((p) => p.userId === 'badge-own');
+  check('badges/history: an opponent in the list carries their role', oppo?.role === 'owner');
+  check(
+    'badges/history: ...and a plain participant carries neither',
+    versus?.players.find((p) => p.userId === 'badge-nil')?.supporter === false,
+  );
+  const runHist = await repo.userMatchHistory('badge-sup', { balanceVersion: SEASON, game: 'decode' });
+  const run = runHist.rows.find((r) => r.kind === 'record');
+  check(
+    'badges/history: a record run badges its PARTNER too',
+    run?.players.find((p) => p.userId === 'badge-own')?.role === 'owner',
+  );
+
+  // FRIENDS + SEARCH — polled surfaces. These deliberately used to skip the
+  // columns; they no longer do, because a badge that shows on the leaderboard
+  // and not beside the same person in your friends list reads as a bug.
+  await repo.sendFriendRequest('badge-own', 'badge-nil');
+  const pending = await repo.listFriends('badge-nil');
+  check('badges/friends: an INCOMING request carries the role', pending.incoming[0]?.role === 'owner');
+  await repo.acceptFriendRequest('badge-nil', 'badge-own');
+  const friendList = await repo.listFriends('badge-nil');
+  check('badges/friends: a friend row carries the role', friendList.friends[0]?.role === 'owner');
+  check('badges/friends: ...and the supporter flag', friendList.friends[0]?.supporter === true);
+
+  await repo.inviteToRoom('badge-own', 'badge-nil', 'ROOM01', 'decode', 'match', null, 'casual1v1');
+  const invited = await repo.listFriends('badge-nil');
+  check('badges/friends: the CHALLENGE sender is badged', invited.invites[0]?.from.role === 'owner');
+  // the SENT list shows the OTHER party, so it must project the badge from a
+  // different join than the received list does — assert it against staff, or the
+  // check passes on a query that selects nothing at all
+  await repo.inviteToRoom('badge-nil', 'badge-own', 'ROOM02', 'decode', 'match', null, 'casual1v1');
+  const asSender = await repo.listFriends('badge-nil');
+  check('badges/friends: and the recipient on the SENDER’s side', asSender.sent[0]?.to.role === 'owner');
+  check(
+    'badges/friends: the standalone invite read agrees with the folded one',
+    (await repo.listRoomInvites('badge-nil'))[0]?.from.role === 'owner',
+  );
+  check(
+    'badges/search: a username lookup carries the badge',
+    (await repo.searchUsersByUsername('own'))[0]?.role === 'owner',
+  );
+
+  await repo.syncStaffRoles(null, []);
+
   // -------------------------------------------------- account deletion (9)
   await repo.ensureProfile('user-c', 'Cy');
   await repo.recordKofiPayment({

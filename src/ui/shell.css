@@ -757,6 +757,16 @@
 .fr-who:hover:not(:disabled):not(.static) {
   background: var(--ds-panel);
 }
+/* the name and its badge on one line. `.fr-who` stacks the name OVER the sub-line,
+   so the badge needs a row of its own here — and it must be a SIBLING of
+   `.fr-name`, not a child: the name ellipsises on overflow, which would eat the
+   badge along with the tail of a long handle. `min-width: 0` is what lets a flex
+   child shrink far enough to ellipsise at all. */
+.fr-nameline {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
 .fr-name {
   font-size: 13px;
   font-weight: 700;
@@ -764,6 +774,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .fr-sub {
   font-size: 11px;
