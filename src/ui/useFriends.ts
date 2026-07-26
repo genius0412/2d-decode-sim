@@ -134,6 +134,17 @@ export function useFriends({
   // fetch function through the effect's deps and re-arming the timer each render
   const [nonce, setNonce] = useState(0);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
+  /**
+   * Bumped when a mutation starts AND when it finishes. A poll whose request went
+   * out before a mutation completed is discarded on arrival.
+   *
+   * Without this, clicking Accept races the poll timer: a GET issued a moment
+   * earlier (or served before the write was visible) lands after the optimistic
+   * patch and puts the request back. The row reappears, and anything watching for
+   * new arrivals sees it as new — which is how accepting a friend request
+   * re-announced the request you had just accepted.
+   */
+  const mutSeq = useRef(0);
 
   const active = signedIn && gameServerConfigured();
 
@@ -192,9 +203,13 @@ export function useFriends({
         return;
       }
       setLoading(true);
+      // stamp the generation this request belongs to; if a mutation begins or
+      // completes while it's in flight, its answer is already out of date
+      const gen = mutSeq.current;
       fetchFriends(activity, game)
         .then((d) => {
           if (!alive) return;
+          if (mutSeq.current !== gen) return; // superseded by a mutation
           setData(d);
           setUnavailable(false);
           setReady(true);
@@ -248,6 +263,8 @@ export function useFriends({
       // setData updater — an updater must be a pure function of its input, and
       // React may invoke it more than once per commit (it does in StrictMode).
       const previous = dataRef.current;
+      // invalidate any poll already in flight — its answer predates this change
+      mutSeq.current += 1;
       setData(patch);
       try {
         await call();
@@ -256,6 +273,9 @@ export function useFriends({
         setError(e instanceof Error ? e.message : 'Something went wrong.');
         throw e;
       } finally {
+        // and again on the way out: a poll that STARTED mid-mutation raced the
+        // write and can be just as stale as one that started before it
+        mutSeq.current += 1;
         refresh();
       }
     },
@@ -354,6 +374,7 @@ export function useFriends({
   const add = useCallback(
     async (username: string): Promise<'sent' | 'accepted'> => {
       setError(null);
+      mutSeq.current += 1;
       try {
         const outcome = await sendFriendRequest(username);
         return outcome;
@@ -361,6 +382,9 @@ export function useFriends({
         setError(e instanceof Error ? e.message : 'Something went wrong.');
         throw e;
       } finally {
+        // same staleness rule as `mutate`: this changed server state, so any poll
+        // that overlapped it is describing the world before the change
+        mutSeq.current += 1;
         refresh();
       }
     },
@@ -380,12 +404,14 @@ export function useFriends({
       format?: string | null,
     ): Promise<void> => {
       setError(null);
+      mutSeq.current += 1;
       try {
         await inviteToRoom(username, room, game, kind, record, format);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Something went wrong.');
         throw e;
       } finally {
+        mutSeq.current += 1;
         refresh();
       }
     },

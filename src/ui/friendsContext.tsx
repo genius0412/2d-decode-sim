@@ -62,6 +62,30 @@ const Ctx = createContext<FriendsCtx | null>(null);
 const MAX_TOASTS = 4;
 const TOAST_MS = 9000;
 
+/**
+ * How long an announced request/invite is remembered after the server stops
+ * reporting it. Comfortably longer than a poll cycle plus a slow round trip, so a
+ * row that blinks out and back is never announced twice.
+ *
+ * TRADE-OFF, chosen deliberately: `incoming` is keyed by userId and carries no
+ * request id or timestamp, so "X re-sent a request after I declined" is
+ * indistinguishable on the wire from "X's request is still sitting there".
+ * Erring toward re-announcing is precisely what produced the accept-then-toast-
+ * again bug, so we err the other way — a repeat request from the same person
+ * inside one session gets no toast. It is still in the Requests section and still
+ * counted on the collapsed rail's badge; only the popup is skipped.
+ */
+const ANNOUNCE_GRACE_MS = 60_000;
+
+/** Record everything currently present, then forget only what the server has
+ * been silent about for longer than the grace window. */
+function markSeen(seen: Map<string, number>, present: Set<string>, now: number): void {
+  for (const id of present) seen.set(id, now);
+  for (const [id, at] of seen) {
+    if (!present.has(id) && now - at > ANNOUNCE_GRACE_MS) seen.delete(id);
+  }
+}
+
 /** a soft two-note chime for an incoming request/challenge. Self-contained
  * WebAudio (no asset), gated by the caller's master-sound setting, and wrapped so
  * a locked AudioContext (no user gesture yet) never throws into React. */
@@ -160,8 +184,23 @@ export function FriendsProvider({
   // ---- notification toasts: diff each poll for genuinely new arrivals --------
   const [toasts, setToasts] = useState<FriendToast[]>([]);
   const nextId = useRef(0);
-  const seenReq = useRef<Set<string>>(new Set());
-  const seenInv = useRef<Set<string>>(new Set());
+  /**
+   * What has already been announced, and WHEN it was last seen on the server.
+   *
+   * These were plain Sets rebuilt from each poll, which meant an entry was
+   * forgotten the instant it was absent for one payload — and accepting is
+   * exactly that: the optimistic patch removes the request immediately, so the
+   * next server payload that still contained it (an in-flight poll, or a read
+   * that beat the write) looked brand new and toasted a request you had just
+   * accepted.
+   *
+   * Timestamps fix it without leaking: an id is only forgotten once the server
+   * has been consistently silent about it for ANNOUNCE_GRACE_MS, so a flicker
+   * can't re-announce, while someone genuinely re-sending a request minutes
+   * later still can.
+   */
+  const seenReq = useRef<Map<string, number>>(new Map());
+  const seenInv = useRef<Map<string, number>>(new Map());
   // declines already announced, so the news is delivered exactly once even though
   // the row survives until the cancel lands (and one poll may overlap it)
   const seenDec = useRef<Set<string>>(new Set());
@@ -178,21 +217,22 @@ export function FriendsProvider({
     // reset the baseline on sign-out so re-signing-in doesn't replay a backlog
     if (!api.ready) {
       primed.current = false;
-      seenReq.current = new Set();
-      seenInv.current = new Set();
+      seenReq.current = new Map();
+      seenInv.current = new Map();
       seenDec.current = new Set();
       return;
     }
     const { incoming, invites } = api.data;
     const sent = api.data.sent ?? [];
+    const now = Date.now();
     const reqIds = new Set(incoming.map((p) => p.userId));
     const invIds = new Set(invites.map((i) => i.id));
     if (!primed.current) {
       // first real payload — adopt as the baseline, never toast what was already
       // waiting when the page opened
       primed.current = true;
-      seenReq.current = reqIds;
-      seenInv.current = invIds;
+      markSeen(seenReq.current, reqIds, now);
+      markSeen(seenInv.current, invIds, now);
       seenDec.current = new Set(sent.filter((s) => s.declined).map((s) => s.id));
       return;
     }
@@ -221,8 +261,8 @@ export function FriendsProvider({
         /* it'll fall out of the read TTL on its own */
       });
     }
-    seenReq.current = reqIds;
-    seenInv.current = invIds;
+    markSeen(seenReq.current, reqIds, now);
+    markSeen(seenInv.current, invIds, now);
     if (fresh.length) {
       setToasts((t) => [...t, ...fresh].slice(-MAX_TOASTS));
       chime(soundRef.current);
