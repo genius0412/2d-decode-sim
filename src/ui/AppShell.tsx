@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { cmpEnabled, showConsentSettings } from '../ads/adsense';
 import { APP_NAME, seasonFor, LINKS } from '../seasons';
+import { SUPPORT_ENABLED } from '../net/env';
 import type { GameId } from '../games/types';
 import { MenuAd } from './AdSlot';
 import { FriendsPanel } from './FriendsPanel';
@@ -166,9 +167,14 @@ export function AppShell({
           <button className="ds-foot-link" onClick={onContributors}>
             Contributors
           </button>
-          <button className="ds-foot-link" onClick={onDonate}>
-            Support
-          </button>
+          {/* hidden until the tier is actually open for business - see
+              SUPPORT_ENABLED. A link to a page that cannot take a payment is a
+              dead end, and a broken purchase path is a cited AdSense rejection. */}
+          {SUPPORT_ENABLED && (
+            <button className="ds-foot-link" onClick={onDonate}>
+              Support
+            </button>
+          )}
           <button className="ds-foot-link" onClick={onPrivacy}>
             Privacy
           </button>

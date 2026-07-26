@@ -16,6 +16,8 @@ import { DesktopUpdate } from './DesktopUpdate';
 import { ServerMenu } from './ServerMenu';
 import { UsernameInput, useUsernameCheck, usernameHintColor } from './UsernameField';
 import { APP_NAME } from '../seasons';
+import { SUPPORT_ENABLED } from '../net/env';
+import { LEGAL_CONTACT } from '../legalText';
 import { trackEvent } from '../analytics';
 
 /**
@@ -65,7 +67,7 @@ export function Account({
 
       <DesktopUpdate />
 
-      {authEnabled && <Membership onDonate={onDonate} />}
+      {authEnabled && SUPPORT_ENABLED && <Membership onDonate={onDonate} />}
 
       <div className="ds-panel" style={{ marginTop: 18 }}>
         <div className="ds-panel-h">
@@ -198,7 +200,17 @@ function DeleteAccount() {
       await authClient!.signOut();
       location.href = '/';
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Could not delete the account.');
+      // The route can be MISSING rather than broken: one Fly app serves every
+      // client version, so a client deployed ahead of the server gets a 404 here.
+      // The privacy policy promises deletion either way, so a failure has to fall
+      // back to the promise we can always keep - a human answering the mailbox -
+      // rather than leaving someone stuck on a button that does nothing.
+      const msg = e instanceof Error ? e.message : '';
+      setErr(
+        /404|not found|unavailable/i.test(msg)
+          ? `Self-service deletion isn't available on this server yet. Email ${LEGAL_CONTACT} and your account will be deleted.`
+          : msg || 'Could not delete the account.',
+      );
       setBusy(false);
     }
   };

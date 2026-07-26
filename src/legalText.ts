@@ -170,7 +170,8 @@ records, replays, ratings, presets, and social data are deleted with it.
 - **Delete everything** - there is a **Delete account** button on your Profile
   page. It removes your profile, username, settings, robot presets, records and
   their replays, rating and rating history, and all friendships, blocks, and
-  invites, immediately and permanently. You do not have to email anyone or wait.
+  invites, immediately and permanently. If that button is unavailable for any
+  reason, email us and we will do exactly the same thing by hand.
 - **Advertising choices** - see the Advertising section above.
 - **Play anonymously** - simply do not sign in.
 

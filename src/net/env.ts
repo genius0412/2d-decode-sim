@@ -129,3 +129,24 @@ export const gameServerHttpUrl = (): string => httpOf(selectedServer()?.url);
 /** ws(s):// → http(s):// for any server's url */
 export const httpOf = (wsUrl: string | undefined): string =>
   wsUrl ? wsUrl.replace(/^ws/, 'http') : '';
+
+/**
+ * Is the supporter tier OPEN for business?
+ *
+ * OFF by default, and it gates the Support page AND its footer link. The tier's
+ * code is complete, but a page cannot go live before the Ko-fi page and the
+ * server's KOFI_VERIFICATION_TOKEN both exist: the "Support on Ko-fi" button
+ * would lead somewhere that cannot take a payment, and the claim box would fail
+ * on every submission. That is a dead end for a visitor and, more concretely, a
+ * broken purchase path is a cited AdSense rejection reason - which matters a
+ * great deal on the exact deploy whose purpose is passing that review.
+ *
+ * Lives HERE, not in `seasons.ts`: the server compiles that file too, and
+ * `import.meta.env` does not exist outside the Vite build.
+ *
+ * Flip `VITE_SUPPORT_ENABLED=1` once Ko-fi is connected and the Fly secret is
+ * set. Nothing else needs to change; the routes stay reachable by direct URL for
+ * testing, only the navigation and the page body are gated.
+ */
+export const SUPPORT_ENABLED =
+  (import.meta.env.VITE_SUPPORT_ENABLED as string | undefined)?.trim() === '1';

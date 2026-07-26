@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { APP_NAME, LINKS } from '../seasons';
+import { SUPPORT_ENABLED } from '../net/env';
 import { claimKofiPayment, fetchEntitlements, fetchPricing, type TierPrice } from '../net/api';
 import { useAds } from '../ads/AdsProvider';
 import { isElectron } from '../ads/adsense';
@@ -100,6 +101,27 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
       setBusy(false);
     }
   };
+
+  // Reachable by direct URL even while closed (handy for testing), but it must
+  // not PRETEND to take money before Ko-fi exists - the button would lead nowhere
+  // and the claim box would fail on every submission.
+  if (!SUPPORT_ENABLED) {
+    return (
+      <>
+        <p className="ds-eyebrow">{APP_NAME} · Support</p>
+        <h1 className="ds-h1">Support DSIM</h1>
+        <p className="ds-sub">Not open yet.</p>
+        <section className="ds-panel">
+          <div style={{ padding: 16 }}>
+            <p className="ds-hint">
+              DSIM is free and stays free. A way to chip in for the servers is on its way -
+              there is nothing to pay for today.
+            </p>
+          </div>
+        </section>
+      </>
+    );
+  }
 
   return (
     <>
