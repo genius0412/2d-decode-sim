@@ -25,9 +25,23 @@ import { gameServerConfigured } from '../net/env';
  * outgoing request, a live invite — we poll FAST so the interactive moment feels
  * near-instant (this is the low-lift stand-in for a real WebSocket push). When
  * nothing's in flight we back off to keep a scale-to-zero Fly machine cheap.
+ *
+ * The fast rate is BOUNDED IN TIME, and that bound is the point. "Something is
+ * pending" is not the same as "something is happening": an outgoing request the
+ * other person never answers stays pending for days, and unbounded that pinned
+ * this poll at the fast rate for as long as the tab stayed open - a permanent 3x
+ * on the busiest authenticated query on the site, spent watching a row that was
+ * never going to change. The window restarts whenever the pending set actually
+ * CHANGES, so a real interactive moment stays fast and only a stalled one decays.
+ *
+ * POLL_IDLE_MS is deliberately well under the server's 45s online window
+ * (ONLINE_WINDOW_S in repo.ts): this request doubles as the caller's presence
+ * heartbeat, so a slower idle rate would make people flicker offline to their
+ * friends on a single missed poll. It is not a free cost dial.
  */
 const POLL_HOT_MS = 6_000;
 const POLL_IDLE_MS = 20_000;
+const HOT_WINDOW_MS = 90_000;
 
 const EMPTY: FriendsPayload = {
   friends: [],
@@ -126,12 +140,26 @@ export function useFriends({
     const schedule = (ms: number): void => {
       timer = window.setTimeout(tick, ms);
     };
-    // reschedule off the LATEST data (via the ref): fast while anything is
-    // pending a resolution, slow when idle
+    // Reschedule off the LATEST data (via the ref): fast while something pending
+    // is actively moving, slow otherwise. `hotKey` fingerprints the pending set,
+    // so the fast window restarts on a real change (a request arrives, an invite
+    // lands, one resolves) and expires when the same items just sit there.
+    let hotKey = '';
+    let hotSince = 0;
     const nextDelay = (): number => {
       const d = dataRef.current;
-      const hot = d.incoming.length > 0 || d.outgoing.length > 0 || d.invites.length > 0;
-      return hot ? POLL_HOT_MS : POLL_IDLE_MS;
+      const key = [
+        d.incoming.map((p) => p.userId).join(','),
+        d.outgoing.map((p) => p.userId).join(','),
+        d.invites.map((i) => i.id).join(','),
+      ].join('|');
+      if (key !== hotKey) {
+        hotKey = key;
+        hotSince = Date.now();
+      }
+      const pending = d.incoming.length > 0 || d.outgoing.length > 0 || d.invites.length > 0;
+      const fresh = Date.now() - hotSince < HOT_WINDOW_MS;
+      return pending && fresh ? POLL_HOT_MS : POLL_IDLE_MS;
     };
     function tick(): void {
       if (!alive) return;

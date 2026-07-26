@@ -1453,38 +1453,114 @@ export async function setPresenceStatus(
   );
 }
 
-/** the caller's whole friends view in one round trip. Every row is reached
- * through the caller's own friendships/requests/blocks, so this cannot be
- * coaxed into returning a stranger's presence. */
+/**
+ * The caller's whole friends view in ONE round trip. Every row is reached through
+ * the caller's own friendships/requests/blocks, so this cannot be coaxed into
+ * returning a stranger's presence.
+ *
+ * It genuinely is one trip now. This used to be six sequential `q()` calls, each
+ * taking its own connection from the pool and paying its own latency to Neon, and
+ * it is the single most-called authenticated query on the site — the friends panel
+ * polls it on a timer for as long as anyone has the app open. Six trips became one
+ * by aggregating each result set to JSON in the same statement: the row counts here
+ * are tiny (your friends, your pending requests, your blocks), so the aggregation
+ * costs nothing next to five extra round trips.
+ *
+ * Ordering lives inside each `json_agg` on purpose — an `order by` in a CTE is not
+ * guaranteed to survive aggregation, so the sort has to be attached to the
+ * aggregate itself, not to the subquery feeding it.
+ */
 export async function listFriends(userId: string): Promise<FriendsPayload> {
-  const friendRows = await q<{
-    user_id: string;
-    handle: string;
-    username: string | null;
-    status: string | null;
-    since: string | null;
-    activity: string | null;
-    activity_game: string | null;
+  const rows = await q<{
+    friends: {
+      user_id: string;
+      handle: string;
+      username: string | null;
+      status: string | null;
+      since: number | string | null;
+      activity: string | null;
+      activity_game: string | null;
+    }[];
+    incoming: ProfileCols[];
+    outgoing: ProfileCols[];
+    blocked: ProfileCols[];
+    invites: {
+      id: string;
+      from_user_id: string;
+      handle: string;
+      username: string | null;
+      room: string;
+      game: string;
+      kind: string;
+      record: string | null;
+      created_at: string;
+    }[];
+    own_status: string | null;
   }>(
     `with pairs as (
        select case when user_low = $1 then user_high else user_low end as friend_id
          from friendships
         where user_low = $1 or user_high = $1
+     ),
+     f as (
+       select p.user_id, p.handle, p.username,
+              case when up.status = 'invisible' then null else up.status end as status,
+              case when up.status = 'invisible' then null
+                   else extract(epoch from (now() - up.last_seen_at)) end as since,
+              case when up.status = 'invisible' then null else up.activity end as activity,
+              case when up.status = 'invisible' then null else up.activity_game end as activity_game
+         from pairs
+         join profiles p on p.user_id = pairs.friend_id
+         left join user_presence up on up.user_id = pairs.friend_id
+     ),
+     inc as (
+       select p.user_id, p.handle, p.username, fr.created_at
+         from friend_requests fr join profiles p on p.user_id = fr.from_user_id
+        where fr.to_user_id = $1
+     ),
+     outg as (
+       select p.user_id, p.handle, p.username, fr.created_at
+         from friend_requests fr join profiles p on p.user_id = fr.to_user_id
+        where fr.from_user_id = $1
+     ),
+     blk as (
+       select p.user_id, p.handle, p.username
+         from friend_blocks b join profiles p on p.user_id = b.blocked_id
+        where b.blocker_id = $1
+     ),
+     inv as (
+       select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
+              ri.record, ri.created_at
+         from room_invites ri join profiles p on p.user_id = ri.from_user_id
+        where ri.to_user_id = $1 and ri.created_at > now() - $2::interval
      )
-     select p.user_id, p.handle, p.username,
-            case when up.status = 'invisible' then null else up.status end as status,
-            case when up.status = 'invisible' then null
-                 else extract(epoch from (now() - up.last_seen_at)) end as since,
-            case when up.status = 'invisible' then null else up.activity end as activity,
-            case when up.status = 'invisible' then null else up.activity_game end as activity_game
-       from pairs
-       join profiles p on p.user_id = pairs.friend_id
-       left join user_presence up on up.user_id = pairs.friend_id
-      order by p.handle`,
-    [userId],
+     select
+       coalesce((select json_agg(f order by f.handle) from f), '[]'::json) as friends,
+       coalesce((select json_agg(json_build_object(
+         'user_id', inc.user_id, 'handle', inc.handle, 'username', inc.username)
+         order by inc.created_at desc) from inc), '[]'::json) as incoming,
+       coalesce((select json_agg(json_build_object(
+         'user_id', outg.user_id, 'handle', outg.handle, 'username', outg.username)
+         order by outg.created_at desc) from outg), '[]'::json) as outgoing,
+       coalesce((select json_agg(json_build_object(
+         'user_id', blk.user_id, 'handle', blk.handle, 'username', blk.username)
+         order by blk.handle) from blk), '[]'::json) as blocked,
+       -- created_at is formatted EXPLICITLY rather than let json_agg serialize the
+       -- timestamptz: Postgres would emit '...798296+00:00' where the pg driver's
+       -- Date gives '...798Z'. Same instant, different string, and this one is
+       -- handed to clients verbatim - so match the old wire format exactly.
+       coalesce((select json_agg(json_build_object(
+         'id', inv.id, 'from_user_id', inv.from_user_id, 'handle', inv.handle,
+         'username', inv.username, 'room', inv.room, 'game', inv.game,
+         'kind', inv.kind, 'record', inv.record,
+         'created_at', to_char(inv.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+         order by inv.created_at desc) from inv), '[]'::json) as invites,
+       (select status from user_presence where user_id = $1) as own_status`,
+    [userId, `${INVITE_TTL_S} seconds`],
   );
 
-  const friends: FriendRow[] = friendRows.map((r) => {
+  const row = rows[0];
+  const friends: FriendRow[] = (row?.friends ?? []).map((r) => {
     const since = r.since === null ? null : Number(r.since);
     const online = since !== null && since <= ONLINE_WINDOW_S;
     // activity is meaningful only while online — an offline friend's LAST activity
@@ -1505,36 +1581,13 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
     };
   });
 
-  const incoming = await q<ProfileCols>(
-    `select p.user_id, p.handle, p.username
-       from friend_requests fr join profiles p on p.user_id = fr.from_user_id
-      where fr.to_user_id = $1 order by fr.created_at desc`,
-    [userId],
-  );
-  const outgoing = await q<ProfileCols>(
-    `select p.user_id, p.handle, p.username
-       from friend_requests fr join profiles p on p.user_id = fr.to_user_id
-      where fr.from_user_id = $1 order by fr.created_at desc`,
-    [userId],
-  );
-  const blocked = await q<ProfileCols>(
-    `select p.user_id, p.handle, p.username
-       from friend_blocks b join profiles p on p.user_id = b.blocked_id
-      where b.blocker_id = $1 order by p.handle`,
-    [userId],
-  );
-  const own = await q<{ status: string | null }>(
-    `select status from user_presence where user_id = $1`,
-    [userId],
-  );
-
-  const st = own[0]?.status;
+  const st = row?.own_status ?? null;
   return {
     friends,
-    incoming: incoming.map(shapeProfile),
-    outgoing: outgoing.map(shapeProfile),
-    blocked: blocked.map(shapeProfile),
-    invites: await listRoomInvites(userId),
+    incoming: (row?.incoming ?? []).map(shapeProfile),
+    outgoing: (row?.outgoing ?? []).map(shapeProfile),
+    blocked: (row?.blocked ?? []).map(shapeProfile),
+    invites: (row?.invites ?? []).map(shapeInvite),
     status: st === 'online' || st === 'dnd' || st === 'invisible' ? st : null,
   };
 }
@@ -1551,6 +1604,29 @@ const shapeProfile = (r: ProfileCols): PublicProfile => ({
   userId: r.user_id,
   handle: r.handle,
   username: r.username,
+});
+
+/** the invite row shape, shared by `listFriends` (aggregated to JSON in one trip)
+ * and `listRoomInvites` (its own query) so the two can never drift apart. */
+interface InviteCols {
+  id: string;
+  from_user_id: string;
+  handle: string;
+  username: string | null;
+  room: string;
+  game: string;
+  kind: string;
+  record: string | null;
+  created_at: string;
+}
+const shapeInvite = (r: InviteCols): RoomInvite => ({
+  id: r.id,
+  from: { userId: r.from_user_id, handle: r.handle, username: r.username },
+  room: r.room,
+  game: r.game === 'chain' ? 'chain' : 'decode',
+  kind: r.kind,
+  record: r.record,
+  createdAt: r.created_at,
 });
 
 export type RequestOutcome = 'sent' | 'accepted' | 'already-friends' | 'blocked' | 'duplicate';
@@ -1755,15 +1831,7 @@ export async function listRoomInvites(userId: string): Promise<RoomInvite[]> {
       order by ri.created_at desc`,
     [userId, `${INVITE_TTL_S} seconds`],
   );
-  return rows.map((r) => ({
-    id: r.id,
-    from: { userId: r.from_user_id, handle: r.handle, username: r.username },
-    room: r.room,
-    game: r.game === 'chain' ? 'chain' : 'decode',
-    kind: r.kind,
-    record: r.record,
-    createdAt: r.created_at,
-  }));
+  return rows.map(shapeInvite);
 }
 
 /** dismiss (or consume, on join) an invite. Scoped to the RECIPIENT, so a

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { GameSettings } from '../game';
-import { authClient } from '../lib/authClient';
+import { authClient, clearAuthToken } from '../lib/authClient';
 import { fetchAccountSettings } from '../net/api';
 import { coerceSettings } from '../settings';
 
@@ -29,6 +29,10 @@ export function AccountSync({
   const uid = session.data?.user?.id ?? null;
 
   useEffect(() => {
+    // The identity just changed - sign-in, sign-out, or a switch between accounts -
+    // so the in-memory JWT belongs to whoever was here before. Clearing it here
+    // covers every sign-out button at once, since they all land on this effect.
+    clearAuthToken();
     onUser(uid);
     if (!uid) {
       syncedUser = null;

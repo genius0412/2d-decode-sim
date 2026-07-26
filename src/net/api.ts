@@ -672,16 +672,29 @@ export class FriendsUnavailableError extends Error {
 async function authedJson<T>(path: string, init?: RequestInit): Promise<T> {
   const base = gameServerHttpUrl();
   if (!base) throw new FriendsUnavailableError();
-  const token = await getAuthToken();
-  if (!token) throw new Error('Please sign in again.');
-  const res = await fetch(base + path, {
-    ...init,
-    headers: {
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      authorization: `Bearer ${token}`,
-      ...init?.headers,
-    },
-  });
+
+  const send = async (force: boolean): Promise<Response> => {
+    const token = await getAuthToken(force);
+    if (!token) throw new Error('Please sign in again.');
+    return fetch(base + path, {
+      ...init,
+      headers: {
+        ...(init?.body ? { 'content-type': 'application/json' } : {}),
+        authorization: `Bearer ${token}`,
+        ...init?.headers,
+      },
+    });
+  };
+
+  // The token is cached in memory until it nears expiry (see getAuthToken), which
+  // is what keeps a polling client off Neon Auth — and therefore off the database
+  // it reads. The one case a cache can't predict is a session revoked server-side:
+  // the token is still unexpired but no longer accepted. A 401 is exactly that
+  // signal, so retry ONCE with a forced refresh before surfacing an error. Only
+  // once, so a genuinely signed-out client fails fast instead of looping.
+  let res = await send(false);
+  if (res.status === 401) res = await send(true);
+
   // 404 = this server predates the friends API. Distinguished from other errors
   // so the caller can degrade instead of showing a failure.
   if (res.status === 404 && !init?.method) throw new FriendsUnavailableError();
