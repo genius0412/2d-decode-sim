@@ -19,10 +19,10 @@ import { gameServerConfigured } from '../net/env';
  * visible effect is that the first frame after refocusing can be one beat stale.
  * (`useFriends` does the same thing for the same reason.)
  *
- * `full` forces the true cross-region aggregate instead of letting an idle server
- * answer from memory - see `fetchPresence`. Pass it where the number decides
- * something (ranked queue depth); leave it off for the ambient online chip, which
- * is the one that sits on screen for hours.
+ * `full` asks for a fresher aggregate than the server's default cache - see
+ * `fetchPresence`. Pass it where the number decides something (ranked queue depth);
+ * leave it off for the ambient online chip, which is the one that sits on screen
+ * for hours and is happy with a value up to a minute old.
  */
 export function usePresence(pollMs = 8000, full = false): Presence | null {
   const [presence, setPresence] = useState<Presence | null>(null);

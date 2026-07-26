@@ -169,13 +169,11 @@ export interface Presence {
  * Live presence: who's online + how deep each ranked queue is, so a player can
  * see it BEFORE queueing. Cheap JSON off the same host; poll it (usePresence).
  *
- * `full` asks for the true CROSS-REGION aggregate. Without it, a server with
- * nobody connected answers from memory instead of querying Postgres, so an empty
- * site costs no database time at all - which is most of why the Neon bill was what
- * it was (see the /api/presence note in server/index.ts). The price is that an idle
- * region reports its own zeros rather than a busy neighbour's count, so the one
- * screen where this number drives a decision - ranked queue depth - asks for the
- * real thing.
+ * `full` asks for a FRESH aggregate rather than a cached one. The count is always
+ * real either way; a server with nobody connected just holds its last read longer
+ * (~45s) so one browsing visitor costs about a query a minute instead of one every
+ * 8 seconds. Pass `full` where the number drives a decision rather than decorating
+ * one - ranked queue depth - and leave it off for the ambient chip.
  */
 export function fetchPresence(full = false): Promise<Presence> {
   return getJson(`/api/presence${full ? '?full=1' : ''}`);

@@ -166,27 +166,34 @@ const MACHINE = process.env.FLY_MACHINE_ID || REGION || 'local';
 
 /**
  * GET /api/presence aggregates presence across ALL regions' machines (each machine
- * only knows its own sockets). Two guards keep that off the database, because this
- * is the most-called endpoint on the site — every open tab polls it every 8s for
- * the online chip and every 20s for the admin-notice banner, and each poll used to
- * be its own query. One tab left open in a background window was enough to hold the
- * Neon compute awake indefinitely (it suspends only after 5 minutes with no
- * queries), which bills the whole month.
+ * only knows its own sockets). This is the most-called endpoint on the site — every
+ * open tab polls it every 8s for the online chip and every 20s for the admin-notice
+ * banner — so it is throttled by a shared cache rather than run per request.
  *
- *  1. IDLE SHORT-CIRCUIT. A machine with no sockets and an empty queue answers
- *     from memory and never touches the DB. When nobody is connected anywhere
- *     the true global answer IS zero, so an empty site now costs zero queries and
- *     the compute is free to suspend. The cost of this is real but small: while
- *     THIS machine is empty and another region is not, the caller sees this
- *     machine's zeros instead of the global count, until they connect to
- *     something (which un-idles the machine and restores the real aggregate).
- *     `?full=1` opts out, for the one screen where the number drives a decision
- *     rather than decorating one: the ranked queue depth.
- *  2. CACHE. Once busy, collapse concurrent pollers onto one query. The TTL is
- *     just under the client's 8s cadence so a lone poller still sees fresh
- *     numbers while a crowd shares one read.
+ * THE ANSWER IS ALWAYS REAL. An earlier pass had an idle machine skip the query and
+ * report zeros, on the theory that "no sockets here" meant "nobody anywhere". It
+ * does not, and the failure was ugly: a visitor got a confident "0 online", and the
+ * instant anything made that machine briefly non-idle the real count appeared and
+ * then snapped back to the fake zero. A counter that flickers 0 -> 1 -> 0 reads as
+ * broken, and greeting the first person through the door with "0 online" is a worse
+ * outcome than any amount of compute. Never fabricate this number.
+ *
+ * The cost lever is the CACHE TTL instead, and the reason that is enough:
+ *
+ *   Someone with the page open IS a user, and keeping the database awake while a
+ *   human is looking at the site is fine. What was never fine was staying awake
+ *   when NOBODY was there — and that traffic came from the unconditional 5s
+ *   heartbeat (now activity-gated) and from hidden background tabs (now paused in
+ *   usePresence/NoticePoller). With those two gone, a site with nobody on it makes
+ *   no queries at all and the compute suspends; a site with one person browsing
+ *   costs about one query a minute, which is the correct thing to pay for.
+ *
+ * So: a long TTL when this machine is idle (one visitor's whole polling stream
+ * collapses onto ~1 query/min), a short one when it is busy or when `?full=1` asks
+ * for freshness — the ranked screen, where queue depth is a number people act on.
  */
-const PRESENCE_CACHE_MS = 7_000;
+const PRESENCE_TTL_BUSY_MS = 7_000;
+const PRESENCE_TTL_IDLE_MS = 45_000;
 let presenceCache: { at: number; val: GlobalPresence } | null = null;
 function machineIdle(): boolean {
   const qs = matchmaker.queueSizes();
@@ -194,12 +201,8 @@ function machineIdle(): boolean {
 }
 async function aggregatePresence(full = false): Promise<GlobalPresence> {
   const now = Date.now();
-  if (presenceCache && now - presenceCache.at < PRESENCE_CACHE_MS) return presenceCache.val;
-  if (!full && machineIdle()) {
-    // don't cache this one: the moment someone connects we want a real read, not
-    // a zero held for another 7 seconds
-    return { online: 0, signedIn: 0, queues: { '1v1': 0, '2v2': 0 } };
-  }
+  const ttl = full || !machineIdle() ? PRESENCE_TTL_BUSY_MS : PRESENCE_TTL_IDLE_MS;
+  if (presenceCache && now - presenceCache.at < ttl) return presenceCache.val;
   const val = await globalPresence();
   presenceCache = { at: now, val };
   return val;

@@ -53,9 +53,8 @@ export function Matchmaking({
   const [noWiden, setNoWiden] = useState(false);
   // Live queue depths, refreshed while on this screen. `full` because THIS is the
   // screen where the number decides something: you read "3 waiting in 1v1" and
-  // queue on the strength of it. Elsewhere the ambient chip lets an idle server
-  // answer from memory to keep the database asleep, which here would under-report
-  // a busy other region to someone who hasn't connected yet.
+  // queue on the strength of it, so it gets an uncached read rather than the
+  // ambient chip's up-to-a-minute-old one.
   const presence = usePresence(8000, true);
   // block queueing while a server restart is scheduled (you'd only get dropped)
   const notice = useServerNotice();
