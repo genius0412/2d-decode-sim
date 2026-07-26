@@ -104,8 +104,13 @@ export function InviteFlyout({
                             onClick={() => {
                               if (rated) {
                                 setOpen(false);
+                                // deliberately NOT dismissed: the server verifies
+                                // the party token against this very row on every
+                                // `queue`, including the re-queue a transport
+                                // reconnect sends. Deleting it here would fail the
+                                // challenge the moment the socket blipped. It ages
+                                // out on the read TTL instead.
                                 onAcceptChallenge?.(inv);
-                                void friends.dismissInvite(inv.id);
                               } else {
                                 join(inv.room, inv.id);
                               }
