@@ -66,60 +66,6 @@ export function aimSolution(r: RobotState): { yaw: number; speed: number; angle:
 }
 
 /**
- * AUTO-ALIGN — the `autoAlign` assist. With aim assist OFF the turret is bolted to the
- * chassis (see `updateRobotActions`), so the robot aims by TURNING; holding the manual
- * fire button steers it onto the firing solution and releases the shot once it is there.
- *
- * The contract is Chain Reaction's `chainAimAssist`, which solved this first for the
- * turretless drum/dumper, and the three rules it settled on are the important part:
- *
- *  1. **Opt-in, and aim-assist-OFF only.** With aim assist on the turret is already
- *     exactly on solution and steering the chassis would be pointless. Turning an assist
- *     OFF must never hand back a *different* assist, so this is its own toggle, and it
- *     defaults off because it takes the rotation stick.
- *  2. **Only the MANUAL button steers.** Auto-fire "fires opportunistically without
- *     hijacking the driver's heading" — a robot that spun to face the goal every time it
- *     happened to hold a ball would be undrivable.
- *  3. **The driver always wins.** Any real rotation input and the assist steps aside
- *     completely, including the fire hold: a driver steering by hand is aiming by hand,
- *     and gets to shoot wherever they are pointed (a dump, a pass, a clear).
- *
- * Returns the (possibly unchanged) command, and records `r.autoAligning` so the FIRE GATE
- * can be applied later in the tick — see `updateRobotActions`. The gate cannot live here:
- * the robot still has to move this tick, and a swerve swinging at full rate coasts ~0.15 rad
- * past the tolerance between this function and the shot. Deciding here released the ball at
- * more than twice `AUTO_ALIGN_TOL`, which is exactly the spray the hold exists to prevent.
- */
-export function autoAlignCommand(world: World, r: RobotState, cmd: RobotCommand): RobotCommand {
-  if (r.aimAssist || !r.autoAlign) return cmd;
-  // rule 2: the manual button only. Auto-fire never steers.
-  if (!cmd.fire || !robotsEnabled(world)) return cmd;
-  // nothing to aim, or nowhere legal to shoot from — don't spin on the spot
-  if (r.hopper.length === 0) return cmd;
-  if (world.mode !== 'free' && !robotInLaunchZone(r)) return cmd;
-
-  // rule 3: the driver's own rotation demand wins outright. Tank has no `rotate` —
-  // its turn command is the DIFFERENCE between the two side sticks.
-  const tank = r.spec.drivetrain === 'tank';
-  const driverTurn = tank ? ((cmd.rightDrive ?? 0) - (cmd.leftDrive ?? 0)) / 2 : cmd.rotate;
-  if (Math.abs(driverTurn) > C.AUTO_ALIGN_OVERRIDE) return cmd;
-
-  r.autoAligning = true;
-  const err = wrapAngle(aimSolution(r).yaw - r.heading);
-  // P on the error, D on the angular velocity already carried. Without the D term the
-  // controller ignores the momentum it has built up during the sweep and rings through
-  // the target before settling — the swerve, which turns fastest, rang worst.
-  const turn = clamp(err * C.AUTO_ALIGN_GAIN - r.angVel * C.AUTO_ALIGN_DAMP, -1, 1);
-
-  if (!tank) return { ...cmd, rotate: turn };
-  // tank is commanded as independent sides and IGNORES `rotate` entirely, so the turn
-  // has to be written as a differential; the shared forward demand is preserved.
-  const forward = ((cmd.leftDrive ?? 0) + (cmd.rightDrive ?? 0)) / 2;
-  const scale = Math.max(1, Math.abs(forward - turn), Math.abs(forward + turn));
-  return { ...cmd, leftDrive: (forward - turn) / scale, rightDrive: (forward + turn) / scale };
-}
-
-/**
  * Updates the robot's drive physics (position, velocity, angular velocity, heading).
  * This function is for movement only.
  */
@@ -340,14 +286,7 @@ export function updateRobotActions(world: World, r: RobotState, cmd: RobotComman
   // ---- fire: no spin-up before the FIRST shot; between shots the cadence
   // is the intake transfer interval plus flywheel recovery after energetic
   // (long-range) shots — see fireReadyAt set in fire() -----------------------
-  // AUTO-ALIGN's fire hold, evaluated HERE because this is after the tick's movement:
-  // `r.heading` is now the heading the shot will actually leave along. Applies only while
-  // the assist is the thing steering (`autoAligning`, set in autoAlignCommand) — a driver
-  // aiming by hand is never blocked from shooting where they are pointed.
-  const alignHold =
-    r.autoAligning && Math.abs(wrapAngle(aimSolution(r).yaw - r.heading)) > C.AUTO_ALIGN_TOL;
-  const canFire =
-    robotsEnabled(world) && r.hopper.length > 0 && world.time >= r.fireReadyAt && !alignHold;
+  const canFire = robotsEnabled(world) && r.hopper.length > 0 && world.time >= r.fireReadyAt;
   const zoneOk = world.mode === 'free' || robotInLaunchZone(r);
   // cmd.fire is true if pathTraversal returns it, or if driver presses it.
   // r.autoFire is true if forced by autoPathActive or set in settings.

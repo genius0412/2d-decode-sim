@@ -167,9 +167,6 @@ function ConfigSummary({ cfg, game }: { cfg: RecordConfig; game?: GameId }) {
       <div className="lb-config-assists">
         {chip(assists.fieldCentric ? 'Field-centric' : 'Robot-centric', true)}
         {chip('Aim assist', assists.aimAssist)}
-        {/* only when ON: it is inert with aim assist on, and every record set before the
-            assist existed would otherwise carry a permanent "Auto align OFF" chip */}
-        {assists.autoAlign && chip('Auto align', true)}
         {chip('Auto intake', assists.autoIntake)}
         {chip('Auto fire', assists.autoFire)}
       </div>

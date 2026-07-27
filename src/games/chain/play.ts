@@ -455,10 +455,13 @@ export function chainGoalAimHeading(r: RobotState): number {
  * the player's rotation alone (turret, or auto-fire, which fires opportunistically without
  * hijacking the driver's heading). Called from `chainStep` BEFORE the drivetrain model.
  *
- * Honours the robot's `aimAssist` driver assist: with it OFF the fire button no longer
- * hijacks the heading and the driver lines the shot up by hand (the fire gate still requires
- * the mounted edge within `CHAIN_AIM_TOL`, so a manual shot has to be aimed). A CR TURRET
- * deliberately ignores the toggle — it always tracks, because there is no manual turret
+ * This is BUILT IN, not an option. `aimAssist` is forced on for every robot in both games
+ * (`coerceAssists` in sim/spawn.ts), so the `!r.aimAssist` early-out below is unreachable
+ * through any configuration — it stays, and stays tested (the smoke check sets the flag on
+ * the spawned robot), for if the toggle ever comes back. What it would mean: the fire button
+ * no longer hijacks the heading and the driver lines the shot up by hand, with the fire gate
+ * still requiring the mounted edge within `CHAIN_AIM_TOL` so a manual shot has to be aimed.
+ * A CR TURRET ignores the flag entirely — it always tracks, because there is no manual turret
  * control to fall back on and gating it would leave that archetype unable to aim at all.
  */
 export function chainAimAssist(r: RobotState, cmd: RobotCommand | undefined, enabled: boolean): number | null {

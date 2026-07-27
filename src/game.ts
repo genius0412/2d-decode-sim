@@ -286,9 +286,9 @@ export class GameController {
     this.audio.voiceVolume = settings.audio.volume.voice;
     this.input = new InputManager(settings.bindings);
 
-    // Mobile Mode: enable assists by default if touch-capable
+    // Mobile Mode: enable assists by default if touch-capable. Aim assist is not
+    // listed — it is unconditionally on for everyone now (see coerceAssists).
     if (window.matchMedia('(pointer: coarse)').matches) {
-      this.settings.assists.aimAssist = true;
       this.settings.assists.autoFire = true;
       this.settings.assists.autoIntake = true;
     }
@@ -369,9 +369,10 @@ export class GameController {
         id,
         alliance,
         spec: { ...DEFAULT_SPEC, name: `Dummy ${id}`, teamName: 'Practice', teamNumber: 0 },
-        // inert: aim assist OFF (no per-tick shot solve) + passive so the sim skips ALL
-        // their action compute — they only ever exist to be bumped into.
-        assists: { ...DEFAULT_ASSISTS, aimAssist: false, autoIntake: false, autoFire: false },
+        // inert: `passive` makes the sim skip ALL their action compute (turret solve,
+        // flywheel, fire, intake) — they only ever exist to be bumped into. Aim assist is
+        // no longer switchable (coerceAssists forces it on) and would be moot here anyway.
+        assists: { ...DEFAULT_ASSISTS, autoIntake: false, autoFire: false },
         startIndex,
         passive: true,
       });

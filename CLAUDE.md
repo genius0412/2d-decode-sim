@@ -222,9 +222,19 @@ modeled motor is the **MATRIX / goBILDA 5000-series 12VDC** brushed motor (5800 
 - All `GameSettings` persist to `localStorage['decodesim.settings.v1']` via `src/settings.ts`
   (validated field-by-field on load — corrupt/stale data falls back per field) and sync to
   Postgres per account.
-- **Assists are menu-only** (field/robot-centric, aim assist, auto intake, auto fire) — NO
-  in-game toggle keybinds. Auto-fire/intake must respect match phases (no firing in
-  `pre`/`transition`).
+- **Assists are menu-only** (field/robot-centric, auto intake, auto fire) — NO in-game toggle
+  keybinds. Auto-fire/intake must respect match phases (no firing in `pre`/`transition`).
+- **AIM ASSIST IS ALWAYS ON, in BOTH games, and is NOT configurable.** `coerceAssists`
+  (sim/spawn.ts) forces `aimAssist` true — deliberately in the SHARED coercer, not the UI,
+  because a stored `false` can arrive from localStorage, a synced account blob, a saved robot
+  slot, or the wire, and forcing it only in the menu would strand anyone who had switched it
+  off with no control to switch back. The FLAG and both sims' manual-aim branches stay
+  (DECODE's chassis-locked turret in `updateRobotActions`, Chain's `chainAimAssist` guard),
+  tested by setting `r.aimAssist` on the spawned robot — restoring the option is deleting one
+  line in `coerceAssists` and putting the toggle back in `Menu.tsx`. A DECODE "auto align"
+  assist (hold fire → steer the chassis onto the shot) was built and then REMOVED: with the
+  turret always tracking there is nothing for it to do. Chain's turretless hold-to-steer is a
+  different thing and STAYS — see `chainAimAssist`.
 - Audio: real FIRST field sounds (`public/sounds`, from Team254/cheesy-arena) + an announcer
   VOICE via speechSynthesis. Countdown digits must interrupt in-flight speech to stay on the
   visual beat. Menu has Sounds ON/OFF (master) + Voice lines ON/OFF (falls back to beeps).
@@ -709,7 +719,10 @@ re-anchoring to `world.time`, so the sub-tick remainder carries and the rate ave
 **Turretless aiming**: drum/dumper have no turret, so **the robot aims by TURNING** —
 `chainAimAssist` (called from `chainStep` BEFORE the drivetrain model) overrides `rotate` while
 the MANUAL fire button is held, and the shot is gated on `CHAIN_AIM_TOL`. Auto-fire fires
-opportunistically and never hijacks the driver's heading. **SHOOTING ON THE MOVE**: a launched
+opportunistically and never hijacks the driver's heading. This is BUILT IN, not an option:
+`aimAssist` is forced on everywhere (see the assists bullet above), so its `!r.aimAssist`
+early-out is unreachable in the product — kept, and kept tested, for if the toggle returns.
+A CR TURRET ignores the flag entirely and always tracks. **SHOOTING ON THE MOVE**: a launched
 particle inherits the CHASSIS velocity, so both archetypes lead — a turret by offsetting
 `turretHeading`, a turretless one by offsetting the whole chassis heading (`leadDir`).
 

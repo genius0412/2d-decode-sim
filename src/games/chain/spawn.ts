@@ -101,10 +101,6 @@ function makeChainRobot(setup: RobotSetup, nth: number): RobotState {
     aimAssist: assists.aimAssist,
     autoIntake: assists.autoIntake,
     autoFire: assists.autoFire,
-    // carried for shape only: Chain's turretless aiming is `chainAimAssist`, which is
-    // gated on `aimAssist` itself (see its doc comment) and predates this flag
-    autoAlign: assists.autoAlign,
-    autoAligning: false,
     passive: setup.passive,
     lastFireAt: -10,
     lastIntakeAt: -10,

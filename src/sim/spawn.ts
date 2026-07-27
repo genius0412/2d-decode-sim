@@ -78,7 +78,7 @@ export const DEFAULT_SPEC: RobotSpec = {
   intakeSide: false,
   shooterRear: false,
   // driver assists ride the ROBOT (both games) — all ON by default. See PLAYER_ASSISTS.
-  assists: { fieldCentric: true, aimAssist: true, autoIntake: true, autoFire: true, autoAlign: false },
+  assists: { fieldCentric: true, aimAssist: true, autoIntake: true, autoFire: true },
 };
 
 // Neutral sim/wire FALLBACK for assists (used by coercion bases, replay, server
@@ -89,7 +89,6 @@ export const DEFAULT_ASSISTS: AssistConfig = {
   aimAssist: true,
   autoIntake: false,
   autoFire: false,
-  autoAlign: false,
 };
 
 /**
@@ -100,19 +99,12 @@ export const DEFAULT_ASSISTS: AssistConfig = {
  * they are now saved ON THE ROBOT (`RobotSpec.assists`), so the memory is per-build and the
  * per-drivetrain library is gone. Distinct from `DEFAULT_ASSISTS` above, which stays auto-OFF
  * as the neutral sim/wire fallback for replay, dummies, and smoke.
- *
- * `autoAlign` is the ONE deliberate exception to "every assist is on". Every other assist
- * only ever hands the driver more; auto-align TAKES the rotation stick while the fire
- * button is held, and it is inert anyway until `aimAssist` is switched off. Defaulting it
- * on would mean that turning aim assist off silently handed back a different assist, which
- * is exactly the thing the toggle exists to let a player opt out of.
  */
 export const PLAYER_ASSISTS: AssistConfig = {
   fieldCentric: true,
   aimAssist: true,
   autoIntake: true,
   autoFire: true,
-  autoAlign: false,
 };
 
 /** the player default (kept as a function for call sites; no longer drivetrain-dependent) */
@@ -264,10 +256,22 @@ export function coerceAssists(raw: unknown, base: AssistConfig = DEFAULT_ASSISTS
   const out: AssistConfig = { ...base };
   if (typeof raw === 'object' && raw !== null) {
     const a = raw as Record<string, unknown>;
-    for (const k of ['fieldCentric', 'aimAssist', 'autoIntake', 'autoFire', 'autoAlign'] as const) {
+    for (const k of ['fieldCentric', 'aimAssist', 'autoIntake', 'autoFire'] as const) {
       if (typeof a[k] === 'boolean') out[k] = a[k];
     }
   }
+  // AIM ASSIST IS ALWAYS ON, in BOTH games — the menu toggle is gone, and this is what
+  // makes that true rather than merely unreachable. It has to be HERE, because a stored
+  // `false` can arrive from four directions: localStorage, a synced account blob, a saved
+  // robot slot (`coerceSpec` routes through this), and the wire. Forcing it only in the UI
+  // would leave anyone who had switched it off before the removal stuck on manual aim with
+  // no control to switch it back.
+  //
+  // The SIM still branches on `r.aimAssist` (the manual-aim turret path in robot.ts, and
+  // Chain's `chainAimAssist`), so the behaviour is intact and tested — tests set the flag
+  // on the spawned robot directly. Restoring the option is deleting this line and putting
+  // the toggle back in Menu.tsx.
+  out.aimAssist = true;
   return out;
 }
 
@@ -532,8 +536,6 @@ export function createWorld(mode: GameMode, seed: number, setups: RobotSetup[], 
       aimAssist: s.assists.aimAssist,
       autoIntake: s.assists.autoIntake,
       autoFire: s.assists.autoFire,
-      autoAlign: s.assists.autoAlign,
-      autoAligning: false,
       passive: s.passive,
       lastFireAt: -10,
       lastIntakeAt: -10,

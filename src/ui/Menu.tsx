@@ -724,24 +724,9 @@ export function Menu({ settings, onChange }: Props) {
         <section className="ds-sec">
           <h2>Driver assists</h2>
           <div className="ds-opts">
-            <button
-              className={`ds-opt ${settings.assists.aimAssist ? 'on' : ''}`}
-              onClick={() => setAssist({ aimAssist: !settings.assists.aimAssist })}
-            >
-              <span className="ot">Aim assist {settings.assists.aimAssist ? 'ON' : 'OFF'}</span>
-            </button>
-            {/* Only offered with aim assist OFF — with the turret tracking the solution
-                there is nothing for it to do, and a toggle that visibly does nothing
-                reads as broken. */}
-            {!settings.assists.aimAssist && (
-              <button
-                className={`ds-opt ${settings.assists.autoAlign ? 'on' : ''}`}
-                onClick={() => setAssist({ autoAlign: !settings.assists.autoAlign })}
-              >
-                <span className="ot">Auto align {settings.assists.autoAlign ? 'ON' : 'OFF'}</span>
-                <span className="od">Holding fire turns the robot onto the shot</span>
-              </button>
-            )}
+            {/* AIM ASSIST IS NOT OFFERED — it is always on, in both games. The flag and
+                the sim's manual-aim path both still exist (`coerceSettings` forces the
+                stored value true), so putting the toggle back is this block returning. */}
             <button
               className={`ds-opt ${settings.assists.autoIntake ? 'on' : ''}`}
               onClick={() => setAssist({ autoIntake: !settings.assists.autoIntake })}

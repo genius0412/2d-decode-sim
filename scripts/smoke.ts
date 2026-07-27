@@ -2,7 +2,7 @@
  * Headless smoke test of the sim core: drives, shoots (incl. on the move),
  * opens the gate, and checks scoring math. Run with: npx tsx scripts/smoke.ts
  */
-import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
+import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceAssists, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
 import type { LobbyPlayer } from '../src/net/protocol';
@@ -78,7 +78,6 @@ import {
   MAX_SAVED_STARTS_SUPPORTER,
   CHASSIS_COLORS,
   chassisFill,
-  AUTO_ALIGN_TOL,
 } from '../src/config';
 import { robotCorners, robotExtents, robotIntersectsRect, wheelContacts } from '../src/sim/physics';
 import { beamBlock, beamDrag, beamDragFactor, beamStrafeBlock, beamForwardness, beamRide, canCrossBeams, cogFactor, wheelsOnBeam, CHAIN_BEAMS } from '../src/games/chain/beams';
@@ -804,132 +803,46 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   check('shooting on the move still scores (lead compensation)', g.classifiedCount + g.overflowCount >= 2, `entered=${g.classifiedCount + g.overflowCount}`);
 }
 
-// ---- manual aim (aim assist OFF) + the AUTO-ALIGN assist ---------------------
-// The bug these guard: `fire()` launches along `r.turretHeading`, which with aim
-// assist off was only ever written at SPAWN — so the robot shot along one frozen
-// world-frame direction all match. Reported by @shlok-k720 (PR #37).
+// ---- manual aim: the turret is bolted to the chassis ------------------------
+// AIM ASSIST IS ALWAYS ON in the product (the toggle is gone; `coerceAssists` forces
+// the flag true), so this path is not reachable through settings. The BRANCH stays, and
+// stays tested, because the bug it fixes is what made removing the toggle safe to undo:
+// `fire()` launches along `r.turretHeading`, and the aim-assist-off branch used to leave
+// it at whatever `spawn` wrote — so the robot shot along one FROZEN world-frame direction
+// all match. Reported by @shlok-k720 (PR #37). Set on the robot directly, since the
+// coercer will not build a manual-aim config any more.
 {
-  /** a manual-aim robot parked in the launch zone, facing `heading` */
-  const manual = (opts: { autoAlign: boolean; drivetrain?: DrivetrainType; heading: number }) => {
-    const w = createWorld('match', 104, [
-      {
-        id: 0,
-        alliance: 'blue',
-        spec: { ...DEFAULT_SPEC, drivetrain: opts.drivetrain ?? 'mecanum' },
-        assists: { ...DEFAULT_ASSISTS, aimAssist: false, autoAlign: opts.autoAlign, autoFire: false },
-        startIndex: 0,
-      },
-    ]);
-    startMatch(w);
-    const r = w.robots[0];
-    r.pos = { x: 10, y: 40 };
-    r.heading = opts.heading;
-    return { w, r };
-  };
-  const aimErr = (r: RobotState) => Math.abs(wrapAngle(aimSolution(r).yaw - r.heading));
+  const w = mkWorld('match', 'blue', 104);
+  startMatch(w);
+  const r = w.robots[0];
+  r.aimAssist = false;
+  r.pos = { x: 10, y: 40 };
+  r.heading = 0;
+  run(w, cmd({}), 0.1);
+  const tracks = Math.abs(wrapAngle(r.turretHeading - r.heading)) < 1e-9;
+  r.heading = aimSolution(r).yaw; // driver lines it up by hand
+  const held = r.hopper.length;
+  run(w, cmd({ fire: true }), 6);
+  const g = w.goals.blue;
+  check(
+    'manual aim: the turret tracks the chassis, so a hand-aimed shot scores',
+    tracks && g.classifiedCount + g.overflowCount === held,
+    `tracks=${tracks} in=${g.classifiedCount + g.overflowCount}/${held}`,
+  );
+}
 
-  // 1. THE BUG: the turret follows the chassis, and a hand-aimed shot goes in.
-  {
-    const { w, r } = manual({ autoAlign: false, heading: 0 });
-    r.heading = aimSolution(r).yaw; // driver has lined it up by hand
-    const held = r.hopper.length;
-    run(w, cmd({ fire: true }), 6);
-    const g = w.goals.blue;
-    check(
-      'manual aim: the turret tracks the chassis, so a hand-aimed shot scores',
-      Math.abs(wrapAngle(r.turretHeading - r.heading)) < 1e-9 &&
-        g.classifiedCount + g.overflowCount === held,
-      `turretErr=${Math.abs(wrapAngle(r.turretHeading - r.heading)).toExponential(1)} in=${g.classifiedCount + g.overflowCount}/${held}`,
-    );
-  }
-
-  // 2. AUTO-ALIGN OFF (the default) changes NOTHING: no steering, and the driver may
-  //    still shoot deliberately off-target (a dump / pass / clear).
-  {
-    const { w, r } = manual({ autoAlign: false, heading: 0 });
-    const err0 = aimErr(r);
-    const held = r.hopper.length;
-    run(w, cmd({ fire: true }), 0.4);
-    check(
-      'auto-align OFF: holding fire neither steers the robot nor blocks the shot',
-      Math.abs(aimErr(r) - err0) < 1e-6 && r.hopper.length < held,
-      `err ${err0.toFixed(2)}->${aimErr(r).toFixed(2)} fired=${held - r.hopper.length}`,
-    );
-  }
-
-  // 3. AUTO-ALIGN ON converges and scores — on EVERY drivetrain, including the two
-  //    the original patch never exercised (swerve wobbles, x-drive turns slowest).
-  for (const drivetrain of ['mecanum', 'tank', 'swerve', 'xdrive'] as const) {
-    const { w, r } = manual({ autoAlign: true, drivetrain, heading: 0 });
-    const held = r.hopper.length;
-    run(w, cmd({ fire: true }), 0.1);
-    const heldWhileTurning = r.hopper.length === held; // shot withheld during the sweep
-    run(w, cmd({ fire: true }), 8);
-    const g = w.goals.blue;
-    check(
-      `auto-align ON: ${drivetrain} turns onto the shot, holds fire until aligned, then scores`,
-      heldWhileTurning && aimErr(r) < AUTO_ALIGN_TOL * 2 && g.classifiedCount + g.overflowCount === held,
-      `held=${heldWhileTurning} err=${aimErr(r).toFixed(3)} in=${g.classifiedCount + g.overflowCount}/${held}`,
-    );
-  }
-
-  // 4. THE DRIVER ALWAYS WINS. A real rotation demand takes the assist off the stick
-  //    entirely — including the fire hold, because a driver steering by hand is aiming
-  //    by hand and gets to shoot where they are pointed.
-  {
-    const spin = (rotate: number) => {
-      const { w, r } = manual({ autoAlign: true, heading: 0 });
-      run(w, cmd({ fire: true, rotate }), 0.4);
-      return r.heading;
-    };
-    const left = spin(1);
-    const right = spin(-1);
-    const { w, r } = manual({ autoAlign: true, heading: 0 });
-    const held = r.hopper.length;
-    run(w, cmd({ fire: true, rotate: 1 }), 0.3);
-    check(
-      'auto-align: the driver’s rotation stick overrides it, and releases the fire hold',
-      left > 0.5 && right < -0.5 && r.hopper.length < held,
-      `left=${left.toFixed(2)} right=${right.toFixed(2)} fired=${held - r.hopper.length}`,
-    );
-  }
-
-  // 5. AUTO-FIRE never steers (Chain's rule: it fires opportunistically without
-  //    hijacking the heading — a robot that spun to face the goal whenever it held a
-  //    ball would be undrivable).
-  {
-    const { w, r } = manual({ autoAlign: true, heading: 0 });
-    r.autoFire = true;
-    const err0 = aimErr(r);
-    run(w, cmd({}), 0.5); // driver presses nothing at all
-    check(
-      'auto-align: auto-fire alone never hijacks the heading',
-      Math.abs(aimErr(r) - err0) < 1e-6,
-      `err ${err0.toFixed(2)}->${aimErr(r).toFixed(2)}`,
-    );
-  }
-
-  // 6. It is INERT with aim assist on (the turret is already exactly on solution) and
-  //    with nothing to shoot — neither should make the robot spin on the spot.
-  {
-    const w = mkWorld('match', 'blue', 104);
-    startMatch(w);
-    const r = w.robots[0];
-    r.autoAlign = true; // aimAssist stays ON
-    r.pos = { x: 10, y: 40 };
-    r.heading = 0;
-    run(w, cmd({ fire: true }), 0.4);
-    const withAssist = Math.abs(wrapAngle(r.heading - 0));
-
-    const { w: w2, r: r2 } = manual({ autoAlign: true, heading: 0 });
-    r2.hopper = [];
-    run(w2, cmd({ fire: true }), 0.4);
-    check(
-      'auto-align: inert with aim assist on, and with an empty hopper',
-      withAssist < 1e-6 && Math.abs(wrapAngle(r2.heading - 0)) < 1e-6,
-      `assistOn=${withAssist.toExponential(1)} empty=${Math.abs(wrapAngle(r2.heading)).toExponential(1)}`,
-    );
-  }
+// AIM ASSIST IS NOT CONFIGURABLE: every coercion path forces it on, so neither a stale
+// localStorage value, a synced account blob, a saved robot slot, nor a spoofed wire
+// payload can leave a player on manual aim with no control to switch back.
+{
+  const forced =
+    coerceAssists({ aimAssist: false }).aimAssist &&
+    coerceAssists({ aimAssist: false }, { ...DEFAULT_ASSISTS, aimAssist: false }).aimAssist &&
+    (coerceSpec({ ...DEFAULT_SPEC, assists: { ...DEFAULT_ASSISTS, aimAssist: false } }).assists
+      ?.aimAssist ??
+      false) &&
+    sanitizePlayer({ assists: { ...DEFAULT_ASSISTS, aimAssist: false } } as never).assists.aimAssist;
+  check('aim assist is forced ON through every coercion path (settings, spec, wire)', !!forced);
 }
 
 // ---- intake -----------------------------------------------------------------
@@ -4960,17 +4873,21 @@ const mkMM = () => {
       );
     }
 
-    // CR AIM ASSIST is now a real toggle: with it OFF the fire button no longer steers a
-    // turretless launcher (the driver aims by hand); ON, it turns the robot onto the goal.
+    // CR AIM ASSIST: with it OFF the fire button no longer steers a turretless launcher
+    // (the driver aims by hand); ON, it turns the robot onto the goal. The toggle is gone
+    // from the menu and `coerceAssists` forces the flag on, so the OFF case is set on the
+    // spawned ROBOT rather than built from a config — the BEHAVIOUR is what is guarded
+    // here, kept ready for the option to come back.
     {
       const mkAim = (aimAssist: boolean) => {
         const s = chainSetup(0, 'blue');
         s.spec = { ...DEFAULT_SPEC, scoreMode: 'drum' };
-        s.assists = { ...DEFAULT_ASSISTS, aimAssist, autoFire: false };
+        s.assists = { ...DEFAULT_ASSISTS, autoFire: false };
         const gw = createChainWorld('match', 991, [s]);
         gw.match.phase = 'teleop';
         gw.match.phaseTimeLeft = 120;
         const rob = gw.robots[0];
+        rob.aimAssist = aimAssist;
         rob.pos = { x: -30, y: 0 };
         rob.heading = Math.PI / 2; // 90° off the goal (+x): assist must turn it back
         rob.hopper = Array(10).fill('green');
