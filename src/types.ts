@@ -36,6 +36,10 @@ export interface AssistConfig {
   aimAssist: boolean;
   autoIntake: boolean;
   autoFire: boolean;
+  /** Steer the CHASSIS toward the firing solution while the MANUAL fire button is
+   *  held. Only meaningful with `aimAssist` OFF: with it on the turret already
+   *  tracks the solution exactly, so the chassis never needs to point anywhere. */
+  autoAlign: boolean;
 }
 
 export type IntakeStyle = 'sloped' | 'vector' | 'triangle';
@@ -199,6 +203,15 @@ export interface RobotState {
   aimAssist: boolean;
   autoIntake: boolean; // intake runs whenever the hopper has room
   autoFire: boolean; // fire automatically when in the zone and on target
+  /** manual fire steers the chassis onto the shot (aim-assist-OFF only) */
+  autoAlign: boolean;
+  /** TRANSIENT, rewritten every tick by `autoAlignCommand`: is the auto-align assist
+   *  actually steering right now? The fire gate has to be evaluated in
+   *  `updateRobotActions`, AFTER the tick's movement, because a fast chassis coasts
+   *  several hundredths of a radian past the tolerance between the two — so the
+   *  command phase records that it is steering and the action phase tests how close
+   *  the robot ACTUALLY ended up. */
+  autoAligning: boolean;
   lastFireAt: number;
   lastIntakeAt: number;
   /** earliest world.time the shooter may fire again (transfer cadence +

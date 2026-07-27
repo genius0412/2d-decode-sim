@@ -540,6 +540,23 @@ export const LAUNCH_ANGLE_MAX = (80 * Math.PI) / 180;
 export const LAUNCH_ANGLE_MARGIN = (14 * Math.PI) / 180; // above line-of-sight
 export const LAUNCH_HEIGHT = 12; // in, muzzle height
 export const LAUNCH_MAX_SPEED = 320; // in/s
+/** AUTO-ALIGN (the `autoAlign` assist, aim-assist-OFF only): the manual fire button
+ *  steers the chassis onto the firing solution. `GAIN` is a plain P-term on the
+ *  heading error — converges from 180° in ~0.6 s on all four drivetrains with no
+ *  overshoot. `TOL` is the error under which the held shot is released; it exists so
+ *  the assist cannot spray the hopper across the field during its own sweep, and is
+ *  NOT a general firing restriction — it applies only while auto-align is the thing
+ *  doing the aiming, never when the driver is steering. */
+export const AUTO_ALIGN_TOL = 0.07; // rad
+export const AUTO_ALIGN_GAIN = 4.0;
+/** D term on angular velocity. A pure P controller ignores the momentum the sweep built
+ *  up and rings through the target before settling; the swerve turns fastest and rang
+ *  worst. Tuned to settle without a visible wobble on all four drivetrains. */
+export const AUTO_ALIGN_DAMP = 0.35;
+/** a rotation stick past this is the DRIVER aiming, so auto-align gets out of the way
+ *  entirely — Chain Reaction's `chainAimAssist` returns null for the same reason.
+ *  Non-zero so stick drift or a resting thumb cannot silently disable the assist. */
+export const AUTO_ALIGN_OVERRIDE = 0.15;
 /** no flywheel spin-up model — shots are limited only by this cadence */
 // firing cadence lives per intake preset: INTAKE_PRESETS[*].fireInterval
 /** fraction of chassis velocity inherited by the launched ball. The turret's

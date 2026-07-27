@@ -16,7 +16,7 @@ import { rot, approach } from '../math';
 import { solveBalls, solveRobots } from './physicsEngine';
 import { decodeColliders } from '../games/decode/colliders';
 import { classifierRect } from './field';
-import { updateRobot, updateRobotActions } from './robot';
+import { autoAlignCommand, updateRobot, updateRobotActions } from './robot';
 import { checkGoalEntry, gateColliderPos, updateBasins, updateGates, updateRails } from './goal';
 import { updateHumanPlayers } from './humanPlayer';
 import { robotsEnabled, stepMatch } from './match';
@@ -72,6 +72,16 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
         // If autoPathActive was true but no path data found in robot, deactivate
         r.autoPathActive = false;
       }
+    }
+    // AUTO-ALIGN sits here, at the ONE seam where the command is finalised, so the
+    // server and every predicting client derive the identical steering from the
+    // identical input. Skipped for passive dummies (they never act) and for a robot
+    // on an auto path, whose heading is written directly by the path — and whose
+    // aimAssist is only forced true LATER this tick, in updateRobotActions, so
+    // reading it here would read a stale flag on the path's first tick.
+    r.autoAligning = false; // transient: only autoAlignCommand may raise it, every tick
+    if (!r.passive && !r.autoPathActive) {
+      currentCmd = autoAlignCommand(world, r, currentCmd);
     }
     actualCommands.set(r.id, currentCmd);
   }

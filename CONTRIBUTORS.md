@@ -11,6 +11,7 @@ Format:
 ## Signed
 
 - Dohun Kim (Project Owner) <genius0412.tech@gmail.com> — GitHub @genius0412 — Owner
+- Shlok Khandelwal <shlokkhandelwal2013@gmail.com> — GitHub @shlok-k720 — signed CLA 2026-07-24
 
 <!--
   New contributors: add your line above this comment in the same PR as your first

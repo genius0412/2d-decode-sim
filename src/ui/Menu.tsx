@@ -730,6 +730,18 @@ export function Menu({ settings, onChange }: Props) {
             >
               <span className="ot">Aim assist {settings.assists.aimAssist ? 'ON' : 'OFF'}</span>
             </button>
+            {/* Only offered with aim assist OFF — with the turret tracking the solution
+                there is nothing for it to do, and a toggle that visibly does nothing
+                reads as broken. */}
+            {!settings.assists.aimAssist && (
+              <button
+                className={`ds-opt ${settings.assists.autoAlign ? 'on' : ''}`}
+                onClick={() => setAssist({ autoAlign: !settings.assists.autoAlign })}
+              >
+                <span className="ot">Auto align {settings.assists.autoAlign ? 'ON' : 'OFF'}</span>
+                <span className="od">Holding fire turns the robot onto the shot</span>
+              </button>
+            )}
             <button
               className={`ds-opt ${settings.assists.autoIntake ? 'on' : ''}`}
               onClick={() => setAssist({ autoIntake: !settings.assists.autoIntake })}
