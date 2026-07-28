@@ -1224,9 +1224,19 @@
   font-family: var(--ds-font-mono);
   letter-spacing: 0.02em;
 }
+/* WRAP. `.ds-foot` itself wraps, so the brand and the links already stack on a
+   phone — but this row did not, and it is a flex row whose contents outgrew the
+   viewport: it went from four links (Download / Contributors / Changes / Discord)
+   to six when Privacy + Terms landed, and it carries two more whenever Support and
+   the consent link are live. At 375px that is 419px of content, and because the
+   row could not break, the 66px spilled out to `.ds-app` and scrolled the WHOLE
+   page sideways with Discord off the right edge. A footer link row must be free to
+   take a second line — it is the one part of the layout whose item COUNT changes
+   with build flags and region. */
 .ds-foot-links {
   display: flex;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: 8px 18px;
 }
 .ds-foot-links a {
   color: var(--ds-ink-dim);
@@ -3188,6 +3198,19 @@ input[type='range']:focus-visible {
   }
   .ds-main-home {
     align-items: flex-start;
+  }
+  /* the footer is already two stacked lines at this width (`.ds-foot` wraps), and
+     with the links row now wrapping too it can be three. `space-between` on a
+     wrapped column reads as ragged left-alignment, so centre the whole stack —
+     and tighten the gap so six links still take two lines rather than three. */
+  .ds-foot {
+    justify-content: center;
+    text-align: center;
+    padding: 14px 16px;
+  }
+  .ds-foot-links {
+    justify-content: center;
+    gap: 8px 14px;
   }
 }
 
