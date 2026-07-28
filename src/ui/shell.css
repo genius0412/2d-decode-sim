@@ -1896,6 +1896,15 @@
   text-align: right;
   font-weight: 700;
   color: var(--ds-accent);
+  /* the score and its watch-replay arrow are ONE unit and must never break apart.
+     The cell is only ~38px of content box on a phone, so as soon as the score ran to
+     four digits the trailing ` ▶` wrapped onto a line of its own UNDERNEATH the
+     number. Data-dependent, which is why it hid: DECODE solo tops out at 3 digits and
+     looks fine, while Chain Reaction (20039) and DECODE duo (1614) show it on every
+     row. Match history's score cell rides this rule too — "353 - 765" should not
+     break mid-score either. Both tables scroll horizontally now, so the wider cell
+     has somewhere to go. */
+  white-space: nowrap;
 }
 .ds-table tr.you {
   background: var(--ds-you);
