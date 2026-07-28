@@ -3289,7 +3289,16 @@ input[type='range']:focus-visible {
   }
   /* leaderboard row controls: the driver name opens a profile and the drivetrain
      chip expands the robot card, so both are real targets, and both were ~19-24px */
-  .lb-name,
+  /* `.lb-robot` centres its own content (`align-items: center`), so a min-height
+     grows it symmetrically and the ▾ stays on the row's midline.
+     `.lb-name` does NOT — it is `align-items: baseline` so the handle and the smaller
+     @username share a baseline, and a min-height pins that baseline group to the TOP
+     of the taller box. That floated every driver name ~7px above the row centre while
+     the rank, the ▾ and the ▶ stayed centred. PADDING instead: it grows both edges, so
+     the tap target still clears 32px and the baseline relationship is preserved. */
+  .lb-name {
+    padding: 7px 0;
+  }
   .lb-robot {
     min-height: 32px;
   }
