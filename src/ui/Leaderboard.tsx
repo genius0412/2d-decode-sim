@@ -360,6 +360,12 @@ export function Leaderboard({
           </div>
         )}
         {status === 'ok' && rows.length > 0 && (
+          /* SCROLL WRAPPER. `.ds-panel` is `overflow: hidden` for its rounded corners,
+             which on a phone did not shrink this table — it CUT it, ~200px of it, with
+             no way to scroll to the Score column and driver @usernames sliced mid-word.
+             Same wrapper Match history already uses (`.mh-scroll`), so the two tables
+             now degrade identically. */
+          <div className="lb-scroll">
           <table className="ds-table">
             <thead>
               <tr>
@@ -448,6 +454,7 @@ export function Leaderboard({
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>

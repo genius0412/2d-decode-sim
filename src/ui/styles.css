@@ -15,6 +15,17 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  /* DYNAMIC viewport height, and it is load-bearing on phones. These three are
+     `overflow: hidden` (the game canvas must never let the page scroll), which makes
+     them a HARD CLIP on everything inside — so if the app shell is even slightly
+     taller than they are, the difference is not scrolled, it is cut off and gone.
+     A phone's retractable toolbar makes exactly that happen: `100vh` (and the
+     initial containing block that `height: 100%` resolves against) is the
+     toolbar-RETRACTED height, while the actually-visible area is shorter by the
+     toolbar. The footer sat in that clipped strip and could not be reached by
+     scrolling at all. `dvh` tracks the visible area as the toolbar moves.
+     Declared AFTER the `%` fallback so a browser without `dvh` keeps the old value. */
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -1626,6 +1637,26 @@ button {
     font-size: 10px;
     padding: 2px 7px;
   }
+  /* THE ROBOT STATUS CHIPS. `.status-wrap` is anchored `right: 12px` and grows
+     LEFTWARD, and `.robot-status` is a nowrap row — so on a phone the chip row
+     (TURRET / HOPPER / multiplier / …) measured 514px against a 320px screen and ran
+     206px off the LEFT edge, taking most of the chips with it. It is the one HUD
+     cluster the compact block never sized. Cap the wrapper and let the row break;
+     the chips already right-align, so a second line stacks under the first. */
+  .status-wrap {
+    max-width: calc(100vw - 24px);
+    /* and BELOW the MENU/RESET buttons. Both clusters are absolutely positioned into
+       the top corners, and once the chips are allowed to use the full width they run
+       under the buttons (they overlapped before this too — the row was just off-screen
+       where nobody saw it). The buttons end ~36px down, so clear them. */
+    top: 44px;
+  }
+  .robot-status {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px 8px;
+    padding: 6px 10px;
+  }
   /* compact top-left menu/reset so the map can use the top */
   .game-buttons {
     top: max(6px, env(safe-area-inset-top));
@@ -2068,6 +2099,11 @@ input.admin-months {
   font-size: 13.5px;
   line-height: 1.55;
   color: var(--ds-ink-dim);
+  /* a rendered page (Privacy, Terms, a changelog) can contain a bare URL, and a URL
+     is ONE unbreakable word — `policies.google.com/technologies/partner-sites` ran
+     47px past the panel on a 320px phone, where the panel's `overflow: hidden` then
+     cut it. Break inside the word only when there is no other option. */
+  overflow-wrap: anywhere;
 }
 .ann-md { margin-top: 9px; }
 /* collapse the outer margins of the first/last block so the card padding rules */

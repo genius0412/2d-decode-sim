@@ -285,8 +285,12 @@
 /* ---- app surface + top bar ------------------------------------------- */
 .ds-app {
   /* the app shell is the scroll container (html/body are overflow:hidden for the
-     full-screen game canvas), so shell screens taller than the viewport scroll */
+     full-screen game canvas), so shell screens taller than the viewport scroll.
+     `dvh` matches what html/body/#root now use — see the note there: with `vh` this
+     box was TALLER than its clipping parent by the height of a phone's toolbar, so
+     the footer sat in a strip that was cut off rather than scrollable. */
   height: 100vh;
+  height: 100dvh;
   /* `scroll`, not `auto`. A tall section (Configure ▸ Robot) gets a scrollbar and a
      short one (▸ Audio) doesn't; since `.ds-main` is centered, that appearing and
      disappearing scrollbar slid every centered element sideways by half its width
@@ -1933,7 +1937,12 @@
 .mh-filters .ds-select {
   flex: 0 1 auto;
 }
-.mh-scroll {
+/* the two table scrollers. A `.ds-panel` clips (`overflow: hidden`, for its rounded
+   corners), so any table wider than a phone has to carry its OWN horizontal scroller
+   or its right-hand columns are simply gone. `.lb-scroll` is the leaderboard's; it
+   went without one until a mobile sweep found ~200px of the Records table cut off. */
+.mh-scroll,
+.lb-scroll {
   overflow-x: auto;
 }
 .mh-table {
@@ -2429,6 +2438,7 @@ tr.lb-detail td {
 /* ---- page scaffold --------------------------------------------------- */
 .ds-console {
   min-height: 100vh;
+  min-height: 100dvh; /* phone toolbar — see html/body in styles.css */
   height: 100%;
   /* same reason as `.ds-app`: its centered `.ds-console-in` must not slide when a
      lobby/queue screen grows past the viewport */
@@ -3212,6 +3222,71 @@ input[type='range']:focus-visible {
     justify-content: center;
     gap: 8px 14px;
   }
+
+  /* ---- TOUCH TARGETS ------------------------------------------------------
+     Everything below is POINTER-SIZE only: sizes, never colours or borders, and
+     scoped to this breakpoint so the desktop layout is byte-identical. A mouse
+     hits a 17px-tall text link; a thumb does not. These are the controls a sweep
+     at 320-414px found under ~32px that a player actually has to hit, sized so
+     the TAP AREA clears 32px even where the ink stays small — mostly via padding,
+     because growing the ink itself would reflow rows the shift audit guards.
+     Untouched on purpose: `.ds-key` (a keybinding readout — rebinding needs a
+     keyboard, so it is not a phone control) and the range TRACK (the thumb is the
+     target, and it is bumped below). */
+  .ds-seg {
+    min-height: 34px;
+    padding: 6px 12px;
+  }
+  .ds-foot-link,
+  .ds-foot-links a {
+    padding: 8px 2px; /* 17px of ink -> 33px of tap, without moving the row */
+  }
+  .ds-mark {
+    padding: 6px 2px;
+  }
+  .chassis-sw {
+    width: 32px;
+    height: 32px;
+  }
+  .contrib-icon {
+    width: 32px;
+    height: 32px;
+  }
+  .contrib-name,
+  .contrib-user,
+  .ds-hint a {
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+  }
+  /* the slider PUCK is the target, not the 22px track */
+  input[type='range'].ds-range::-webkit-slider-thumb,
+  .ds-bind-row input[type='range']::-webkit-slider-thumb,
+  .ds-replay-seek::-webkit-slider-thumb {
+    width: 26px;
+    height: 26px;
+    margin-top: -10px;
+  }
+  input[type='range'].ds-range::-moz-range-thumb,
+  .ds-bind-row input[type='range']::-moz-range-thumb,
+  .ds-replay-seek::-moz-range-thumb {
+    width: 26px;
+    height: 26px;
+  }
+  /* the start-position snap toggle: a 15px native checkbox */
+  .ds-startpos input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+  }
+  /* leaderboard row controls: the driver name opens a profile and the drivetrain
+     chip expands the robot card, so both are real targets, and both were ~19-24px */
+  .lb-name,
+  .lb-robot {
+    min-height: 32px;
+  }
+  .ds-startpos-tab {
+    min-height: 32px;
+  }
 }
 
 /* ---- primary CTA + hint --------------------------------------------- */
@@ -3586,7 +3661,12 @@ button.ds-key:active {
   align-items: flex-start;
 }
 .ds-startpos-stage {
-  flex: 0 0 auto;
+  /* SHRINKABLE. As `0 0 auto` this held the canvas's full 300px whatever the column
+     was, so on a 320px phone ~41px of the field — and of the draggable area — was
+     cut off by the panel. The drag maths normalises by `getBoundingClientRect()`
+     (see `pointerWorld`), so a CSS-scaled canvas still maps pointers correctly. */
+  flex: 0 1 auto;
+  min-width: 0;
   line-height: 0;
 }
 .ds-startpos-canvas {
@@ -3595,6 +3675,12 @@ button.ds-key:active {
   border: 1px solid var(--ds-line);
   touch-action: none; /* pointer drag, not scroll */
   max-width: 100%;
+  /* the field is square, and `max-width` only caps the WIDTH — without these the
+     canvas squashed into a rectangle once it started shrinking. The component sets
+     the display width inline and leaves height to this rule (its backing store is
+     sized separately, from the `width`/`height` attributes). */
+  height: auto;
+  aspect-ratio: 1;
   display: block;
 }
 .ds-startpos-side {
