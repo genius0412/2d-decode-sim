@@ -477,8 +477,43 @@ async function main(): Promise<void> {
   );
   check(
     'badges/search: a username lookup carries the badge',
-    (await repo.searchUsersByUsername('own'))[0]?.role === 'owner',
+    (await repo.searchUsersByName('own'))[0]?.role === 'owner',
   );
+
+  // ---- player search: @username OR display name --------------------------
+  // The box says "name or @username", so both have to actually find someone. The
+  // handle arm is a WORD prefix, which is the half that is easy to get wrong: it must
+  // catch a surname mid-name and must NOT become a free substring probe.
+  await repo.ensureProfile('find-1', 'Dohun Kim');
+  await repo.ensureProfile('find-2', 'kimberly');
+  await repo.ensureProfile('find-3', 'Nameless');
+  await db.query(`update profiles set username = 'acekim' where user_id = 'find-1'`);
+  await db.query(`update profiles set username = 'kimb' where user_id = 'find-2'`);
+  // deliberately NO username on find-3 — it must never be offered
+  const ids = async (qq: string): Promise<string[]> =>
+    (await repo.searchUsersByName(qq)).map((u) => u.userId);
+
+  check('search: finds by @username prefix', (await ids('acek')).includes('find-1'));
+  check('search: finds by display-name prefix', (await ids('dohun')).includes('find-1'));
+  check('search: finds by a WORD inside the display name', (await ids('kim')).includes('find-1'));
+  check('search: is case-insensitive on the display name', (await ids('DOHUN')).includes('find-1'));
+  check(
+    'search: one query can match a username AND someone else’s display name',
+    (async () => true)() && (await ids('kim')).includes('find-1') && (await ids('kim')).includes('find-2'),
+  );
+  check(
+    'search: a username match outranks a display-name-only match',
+    (await ids('kimb'))[0] === 'find-2',
+  );
+  check(
+    'search: does NOT match a mid-WORD fragment (not a free substring probe)',
+    !(await ids('ohun')).includes('find-1'),
+  );
+  check(
+    'search: never offers a profile with no username (nothing to open or friend)',
+    !(await ids('nameless')).includes('find-3'),
+  );
+  check('search: a LIKE wildcard cannot enumerate everyone', (await ids('%')).length === 0);
 
   await repo.syncStaffRoles(null, []);
 

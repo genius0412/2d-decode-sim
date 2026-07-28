@@ -2060,9 +2060,14 @@
 }
 
 /* leaderboard driver names (display handle + clickable @username, duo pairs) */
+/* CENTRE, not baseline. A row pairs a 14px display name with a 12px muted @tag (and
+   a DUO/YOU tag, and a `+`). On a shared BASELINE the smaller text's cap-centre sits
+   below the larger one's, so the tag read as hanging low next to the name it belongs
+   to — the boxes were within a third of a pixel, but the INK was not. Centring the
+   items lines the two up the way the eye reads them. */
 .lb-drivers {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -2080,7 +2085,9 @@
   padding: 0;
   cursor: pointer;
   display: inline-flex;
-  align-items: baseline;
+  /* centre for the same reason as `.lb-drivers` above: name, badge and @tag are
+     different sizes and should share a middle, not a baseline */
+  align-items: center;
   gap: 6px;
   color: var(--ds-ink);
 }
@@ -3289,16 +3296,11 @@ input[type='range']:focus-visible {
   }
   /* leaderboard row controls: the driver name opens a profile and the drivetrain
      chip expands the robot card, so both are real targets, and both were ~19-24px */
-  /* `.lb-robot` centres its own content (`align-items: center`), so a min-height
-     grows it symmetrically and the ▾ stays on the row's midline.
-     `.lb-name` does NOT — it is `align-items: baseline` so the handle and the smaller
-     @username share a baseline, and a min-height pins that baseline group to the TOP
-     of the taller box. That floated every driver name ~7px above the row centre while
-     the rank, the ▾ and the ▶ stayed centred. PADDING instead: it grows both edges, so
-     the tap target still clears 32px and the baseline relationship is preserved. */
-  .lb-name {
-    padding: 7px 0;
-  }
+  /* Both centre their own content now, so a min-height grows them symmetrically and
+     everything stays on the row's midline. This was a `padding` hack while `.lb-name`
+     was still `align-items: baseline`, where a min-height pinned the baseline group to
+     the TOP of the taller box and floated every name ~7px high. */
+  .lb-name,
   .lb-robot {
     min-height: 32px;
   }

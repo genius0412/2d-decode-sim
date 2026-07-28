@@ -634,8 +634,8 @@ function AddFriend({
       <input
         className="ds-input"
         value={query}
-        placeholder="Search username…"
-        aria-label="Search for a player by username"
+        placeholder="Search name or @username…"
+        aria-label="Search for a player by display name or username"
         onChange={(e) => {
           setQuery(e.target.value);
           setNote(null);

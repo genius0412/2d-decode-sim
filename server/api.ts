@@ -20,7 +20,7 @@ import {
   listAnnouncements,
   listFriends,
   removeFriend,
-  searchUsersByUsername,
+  searchUsersByName,
   sendFriendRequest,
   setPresenceStatus,
   touchPresence,
@@ -642,14 +642,17 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     }
 
     // ---- public: username-PREFIX search (the "add a friend" box) ------------
-    // Public because it returns only what /api/profile/<username> already does
-    // one at a time. It is a PREFIX match on `username`, never a substring match
-    // on `handle` — the latter would let anyone enumerate every display name.
-    // Presence never appears here; it is friends-only, in /api/friends.
+    // Public because it returns only what /api/profile/<username> already does one at
+    // a time. Matches the @username OR the DISPLAY NAME — people search for the name
+    // they can see, and the name they can see on a leaderboard row is the handle.
+    // The handle arm is a WORD prefix, not a free substring, so this stays a lookup
+    // rather than a "list every name containing these two letters" probe; see
+    // `searchUsersByName`. Presence never appears here; it is friends-only, in
+    // /api/friends.
     if (req.method === 'GET' && url.pathname === '/api/users/search') {
       const raw = (url.searchParams.get('q') ?? '').trim().toLowerCase();
       if (raw.length < 2) return json(200, { users: [] }), true;
-      const users = dbEnabled ? await searchUsersByUsername(raw, 20) : [];
+      const users = dbEnabled ? await searchUsersByName(raw, 20) : [];
       return json(200, { users }), true;
     }
 

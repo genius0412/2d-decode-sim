@@ -2644,16 +2644,35 @@ export async function dismissRoomInvite(userId: string, id: string): Promise<boo
  * the unique `username` — the same public identifier already exposed one at a time
  * at /api/profile/<username>.
  */
-export async function searchUsersByUsername(prefix: string, limit = 20): Promise<PublicProfile[]> {
+export async function searchUsersByName(query: string, limit = 20): Promise<PublicProfile[]> {
   // Escape LIKE wildcards before appending `%`. Without this, searching for "%"
-  // or "_" matches every username at once, turning a prefix lookup back into the
+  // or "_" matches every row at once, turning a lookup back into the
   // full-enumeration endpoint this function exists to avoid.
-  const esc = prefix.replace(/[\\%_]/g, '\\$&');
+  const esc = query.replace(/[\\%_]/g, '\\$&');
   const rows = await q<ProfileCols>(
+    // Matches the @username OR the DISPLAY NAME. The handle match is a WORD prefix
+    // (`kim` finds "Dohun Kim") rather than a free substring: a substring match makes
+    // the endpoint a general "give me every name containing these two letters" probe,
+    // and word-prefix covers what someone searching a name actually types. Display
+    // names are already public on every leaderboard row, so this exposes no new field
+    // — it changes how cheaply the set can be walked, which is why it stays bounded.
+    //
+    // `username is not null` because BOTH callers need one: the search bar opens
+    // /profile/<username> and the friends box sends a request by username, so a row
+    // without one is a dead result the UI has to disable.
     `select user_id, handle, username, ${badgeCols('')} from profiles
-      where username ilike $1 escape '\\'
-      order by username limit $2`,
-    [esc + '%', Math.min(Math.max(1, limit), 50)],
+      where username is not null
+        and (username ilike $1 escape '\\'
+             or handle ilike $1 escape '\\'
+             or handle ilike $2 escape '\\')
+      order by
+        -- the thing they typed most literally, first
+        case when username ilike $1 escape '\\' then 0
+             when handle ilike $1 escape '\\' then 1
+             else 2 end,
+        username
+      limit $3`,
+    [esc + '%', '% ' + esc + '%', Math.min(Math.max(1, limit), 50)],
   );
   return rows.map(shapeProfile);
 }

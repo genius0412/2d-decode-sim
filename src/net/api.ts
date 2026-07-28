@@ -926,7 +926,8 @@ export function cancelRoomInvite(id: string): Promise<unknown> {
   });
 }
 
-/** public username-prefix search for the add-a-friend box (min 2 chars) */
+/** public player search — matches the @username or the DISPLAY NAME (min 2 chars).
+ *  Feeds both the Records look-up bar and the add-a-friend box. */
 export async function searchUsers(query: string): Promise<PublicProfile[]> {
   const q = query.trim().toLowerCase();
   if (q.length < 2) return [];
