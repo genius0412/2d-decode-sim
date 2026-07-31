@@ -1685,12 +1685,65 @@ button {
   .timer-panel .timer-time {
     font-size: 17px;
   }
+  /* ---- HUD INTO THE GUTTERS -------------------------------------------------
+     The field is SQUARE. Fitting it to a phone's landscape height leaves a wide
+     empty column on each side and nothing to spare vertically, so the chrome that
+     normally sits above and below the field moves out to those columns instead.
+     The camera drops its top/bottom bands to match (see camera.ts) and the map
+     takes the full height. Everything here is a REPOSITION, not a redesign — the
+     same elements, docked somewhere that costs the field nothing. */
+
+  /* the scorebar becomes a vertical stack in the LEFT gutter. Vertical because a
+     ~230px horizontal bar does not fit the gutter of a narrow landscape phone
+     (667x375 leaves ~145px a side) while a stacked one is ~72px at any size. */
+  .scorebar {
+    left: max(6px, env(safe-area-inset-left));
+    right: auto;
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    flex-direction: column;
+    border-radius: var(--ds-round-md);
+    border-bottom: 1px solid var(--ds-hud-line);
+    overflow: hidden;
+  }
+  .score-panel,
+  .timer-panel {
+    min-width: 68px;
+    padding: 4px 8px;
+  }
+  /* the breakdown chips stack in the RIGHT gutter, mirroring the scorebar */
   .breakdown-row {
-    bottom: 42px;
+    left: auto;
+    right: max(6px, env(safe-area-inset-right));
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
   }
   .breakdown-row span {
     font-size: 9px;
     padding: 1px 6px;
+  }
+  /* the status chips keep the top-right corner but must stay INSIDE the gutter
+     rather than stretching back across the field */
+  /* MENU/RESET stack instead of sitting side by side: as a row they are ~183px,
+     which is wider than the gutter on a 667px-wide phone and clipped the field's
+     top-left corner. Stacked they are ~100px and fit any landscape gutter. */
+  .game-buttons {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .status-wrap {
+    top: max(6px, env(safe-area-inset-top));
+    /* CAP TO THE GUTTER, not to a guessed fraction of the width. The field is square
+       and fitted to the height, so each gutter is (100vw - 100vh) / 2; a flat `40vw`
+       was wider than that and the chips stretched back over the field's top-right
+       corner. The `max()` floor keeps them usable on a near-square viewport, where
+       there is no gutter to speak of and a little overlap beats a 20px column. */
+    max-width: max(120px, calc((100vw - 100vh) / 2 - 6px));
   }
 }
 
