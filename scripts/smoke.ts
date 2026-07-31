@@ -1892,7 +1892,11 @@ const setup = (
     check('expand: a press changes the hint immediately, at any elapsed time',
       widenHint(1, 0) !== widenHint(0, 0) && widenHint(1, 0) === widenHint(1, 99));
     check('expand: with no presses the hint still follows the automatic ramp',
-      widenHint(0, 3) === 'Searching your region…' && widenHint(0, 20).startsWith('Widening'));
+      widenHint(0, 0) !== widenHint(0, 4) && widenHint(0, 4) !== widenHint(0, 20));
+    // it must never claim to be searching "your region" — the queue opens wide
+    // enough for a same-continent match on the first attempt (see RADIUS_BASE_MS)
+    check('expand: the ramp reaches "worldwide", and never says region-only',
+      widenHint(0, 20).includes('worldwide') && ![0, 4, 20].some((s) => widenHint(0, s).includes('your region')));
     check('expand: a manual press outranks the automatic line',
       widenHint(3, 99).includes('3×'));
   }
@@ -3867,11 +3871,15 @@ const mkMM = () => {
   check('bestHost: midpoint beats hosting on either endpoint (<210ms)', far.cost > 0 && far.cost < 210, `cost=${far.cost}`);
 }
 
-// radiusCeiling: region-local at t=0, widens with wait / expand, capped, noWiden pins 0
+// radiusCeiling: opens same-continent immediately, worldwide within seconds, capped,
+// noWiden pins 0. The times are the point of these checks, not incidental: this pool
+// is small enough that the radius schedule IS the matchmaking time, and quality is
+// held by nearest-first pairing rather than by making everyone wait (see findMatch).
 {
-  check('radius: 0 at t=0 (region-local only)', radiusCeiling(0, 0, false) === 0);
-  check('radius: one step after one interval', radiusCeiling(8000, 0, false) === 60);
-  check('radius: expand bumps add steps', radiusCeiling(0, 3, false) === 180);
+  check('radius: same-continent allowed from t=0 (iad↔lhr 76, iad↔sjc 85)', radiusCeiling(0, 0, false) >= 85);
+  check('radius: one step after one interval', radiusCeiling(3000, 0, false) === 195);
+  check('radius: WORLDWIDE within 6s (was 40)', radiusCeiling(6000, 0, false) === 300);
+  check('radius: expand bumps add steps', radiusCeiling(0, 2, false) === 300);
   check('radius: capped at max', radiusCeiling(10_000_000, 0, false) === 300);
   check('radius: noWiden pins to 0 forever', radiusCeiling(10_000_000, 9, true) === 0);
 }

@@ -27,12 +27,28 @@ import { QUEUE_NEED, type LobbyPlayer, type QueueMode, type ServerMsg } from '..
  * here (`localStart`), which only works for same-machine players — fine for dev.
  */
 
-// search-radius schedule, in CROSS-REGION ms (not absolute ping — a player's own
-// access latency never counts against the gate, so a bad local link can't block a
-// local match). Starts region-local, widens one region-hop every interval.
-export const RADIUS_BASE_MS = 0;
-export const RADIUS_STEP_MS = 60;
-export const RADIUS_INTERVAL_MS = 8000;
+/**
+ * Search-radius schedule, in CROSS-REGION ms (not absolute ping — a player's own
+ * access latency never counts against the gate, so a bad local link can't block a
+ * local match).
+ *
+ * TUNED FOR A SMALL POOL, which is the pool this game actually has. The radius is
+ * not a quality mechanism — `findMatch` picks the CLOSEST eligible opponent, so a
+ * local match is taken whenever a local match exists, at any radius. All the
+ * radius decides is HOW LONG YOU WAIT FOR A BETTER ONE TO SHOW UP. On a pool of
+ * two or three people that better one is not coming, and the old schedule (0ms
+ * for the first 8s, +60ms per 8s) charged everyone for it: 16 seconds before two
+ * players on opposite US coasts were even allowed to meet, 40 before the queue
+ * went global. With a handful of players online that wait WAS the matchmaking
+ * time.
+ *
+ * So: open at 90ms, which already covers every same-continent pair (iad↔lhr 76,
+ * iad↔sjc 85) — those are good matches, and there is nothing to gain by making
+ * them wait. Then reach worldwide in 6 seconds instead of 40.
+ */
+export const RADIUS_BASE_MS = 90;
+export const RADIUS_STEP_MS = 105;
+export const RADIUS_INTERVAL_MS = 3000;
 export const RADIUS_MAX_MS = 300;
 
 /** the widening ceiling for one waiting entry (cross-region ms it will tolerate) */
@@ -205,9 +221,18 @@ export class Matchmaker {
   }
 
   /**
-   * FIFO-anchored greedy pairing over UNITS: for the oldest waiting unit, add later
+   * FIFO-anchored greedy pairing over UNITS: for the oldest waiting unit, add the
    * units that keep the group hostable under EVERY member's current radius, until
    * the bucket is full. Returns the group + its fair host region, or null.
+   *
+   * NEAREST-FIRST, not first-fit. Each round picks the eligible unit that yields
+   * the SMALLEST resulting spread, ties going to whoever has waited longer (the
+   * comparison is strict, so FIFO order wins them). That inversion is what lets the
+   * radius schedule be aggressive: proximity is now enforced directly, by choosing
+   * the closest opponent available, instead of indirectly by refusing to look far
+   * for the first 40 seconds. Under first-fit the two mechanisms were the same
+   * knob, so making matchmaking quick necessarily made it worse; separated, a wide
+   * radius only ever means "nothing closer exists", never "we stopped looking".
    *
    * A unit is normally one player. A "play a friend" party is one unit of two, and
    * pairing at unit granularity is what makes that work: a party is added
@@ -233,26 +258,36 @@ export class Matchmaker {
         if (group.some((e) => bucketKey(e) !== bucketKey(anchor[0]))) continue;
         return { group, hostRegion: bestHost(group.map(toPing)).hostRegion };
       }
-      for (let j = 0; j < units.length && group.length < need; j++) {
-        if (j === i) continue;
-        const cand = units[j];
-        // a closed party never joins someone else's group
-        if (cand.some((e) => e.partyOnly)) continue;
-        // and a half-arrived party is not available to be taken
-        if (!partyReady(cand)) continue;
-        // all-or-nothing: a party that doesn't fit in the remaining slots is skipped
-        if (group.length + cand.length > need) continue;
-        // never pair across compatibility buckets (channel + build) — different
-        // src/sim (alpha vs stable) OR different builds run different code, so a
-        // shared authoritative match would desync both clients
-        if (bucketKey(cand[0]) !== bucketKey(anchor[0])) continue;
-        // never put the same account in a group twice (backstop for the userId
-        // dedup above) — a self-pair produces a frozen "ghost" robot
-        if (cand.some((c) => c.userId && group.some((g) => g.userId === c.userId))) continue;
-        const trial = [...group, ...cand];
-        const { spread } = bestHost(trial.map(toPing));
-        const ceiling = Math.min(...trial.map((e) => this.ceilingOf(e, now)));
-        if (spread <= ceiling) group.push(...cand);
+      const taken = new Set<number>([i]);
+      while (group.length < need) {
+        let pick: { j: number; unit: QueueEntry[]; spread: number } | null = null;
+        for (let j = 0; j < units.length; j++) {
+          if (taken.has(j)) continue;
+          const cand = units[j];
+          // a closed party never joins someone else's group
+          if (cand.some((e) => e.partyOnly)) continue;
+          // and a half-arrived party is not available to be taken
+          if (!partyReady(cand)) continue;
+          // all-or-nothing: a party that doesn't fit in the remaining slots is skipped
+          if (group.length + cand.length > need) continue;
+          // never pair across compatibility buckets (channel + build) — different
+          // src/sim (alpha vs stable) OR different builds run different code, so a
+          // shared authoritative match would desync both clients
+          if (bucketKey(cand[0]) !== bucketKey(anchor[0])) continue;
+          // never put the same account in a group twice (backstop for the userId
+          // dedup above) — a self-pair produces a frozen "ghost" robot
+          if (cand.some((c) => c.userId && group.some((g) => g.userId === c.userId))) continue;
+          const trial = [...group, ...cand];
+          const { spread } = bestHost(trial.map(toPing));
+          const ceiling = Math.min(...trial.map((e) => this.ceilingOf(e, now)));
+          if (spread > ceiling) continue;
+          // STRICTLY closer to displace the incumbent, so an equally-close unit
+          // never jumps the queue ahead of one that has been waiting longer
+          if (!pick || spread < pick.spread) pick = { j, unit: cand, spread };
+        }
+        if (!pick) break;
+        taken.add(pick.j);
+        group.push(...pick.unit);
       }
       if (group.length === need) {
         const { hostRegion } = bestHost(group.map(toPing));

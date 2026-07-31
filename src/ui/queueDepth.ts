@@ -38,11 +38,19 @@ export function expandLabel(bumps: number): string {
   return bumps > 0 ? `EXPANDED ×${bumps}` : 'EXPAND SEARCH';
 }
 
-/** the line under the spinner: manual presses win over the automatic ramp, because
- *  a press is a thing the player just did and deserves the acknowledgement */
+/**
+ * The line under the spinner: manual presses win over the automatic ramp, because
+ * a press is a thing the player just did and deserves the acknowledgement.
+ *
+ * The thresholds track `RADIUS_INTERVAL_MS` on the server (3s a step, worldwide by
+ * the second one). It never claims to be searching "your region" any more, because
+ * it isn't: the queue opens wide enough for a same-continent match immediately, and
+ * the closest available opponent is preferred at every radius.
+ */
 export function widenHint(bumps: number, elapsedSec: number): string {
-  if (bumps > 0) return `Widened ${bumps}× — searching further out than your region`;
-  return elapsedSec < 8 ? 'Searching your region…' : 'Widening search to nearby regions…';
+  if (bumps > 0) return `Widened ${bumps}× — searching further out`;
+  if (elapsedSec < 3) return 'Searching nearby regions…';
+  return elapsedSec < 6 ? 'Widening — looking further out…' : 'Searching worldwide…';
 }
 
 /** anyone at all waiting — for callers decorating a control rather than printing */

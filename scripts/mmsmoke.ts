@@ -257,6 +257,67 @@ const namesOf = (m: PendingMatch | undefined): string =>
   }
 }
 
+// ---- NEAREST-FIRST pairing (what makes the fast radius safe) ----------------
+// The radius no longer buys locality by refusing to look — it opens same-continent
+// immediately and worldwide within 6s. Locality is bought here instead, by picking
+// the CLOSEST eligible opponent rather than the first one in the queue that fits.
+// Under the old first-fit rule these were one knob, so matching faster necessarily
+// meant matching worse; if this regresses, that trade quietly comes back.
+{
+  // the anchor is in iad; a far opponent (nrt, 164) is ahead of a near one (lhr, 76)
+  // in the queue. First-fit would take nrt purely for being earlier.
+  const { staged } = await pair([
+    entry('anchor', '1v1', { homeRegion: 'iad' }),
+    entry('far', '1v1', { homeRegion: 'nrt' }),
+    entry('near', '1v1', { homeRegion: 'lhr' }),
+  ]);
+  check('nearest-first: the CLOSER opponent wins over the earlier one',
+    namesOf(staged[0]) === 'anchor,near', namesOf(staged[0]));
+}
+{
+  // ...and a same-region opponent beats everyone, however late they queued
+  const { staged } = await pair([
+    entry('anchor', '1v1', { homeRegion: 'iad' }),
+    entry('cross', '1v1', { homeRegion: 'syd' }),
+    entry('local', '1v1', { homeRegion: 'iad' }),
+  ]);
+  check('nearest-first: a same-region opponent still wins at a wide radius',
+    namesOf(staged[0]) === 'anchor,local', namesOf(staged[0]));
+  check('nearest-first: ...and the match hosts in that shared region', staged[0]?.hostRegion === 'iad');
+}
+{
+  // FIFO fairness survives it: equally-close candidates are taken in queue order,
+  // because a tie does NOT displace the incumbent
+  const { staged } = await pair([
+    entry('anchor', '1v1', { homeRegion: 'iad' }),
+    entry('first', '1v1', { homeRegion: 'iad' }),
+    entry('second', '1v1', { homeRegion: 'iad' }),
+  ]);
+  check('nearest-first: a TIE goes to whoever waited longer', namesOf(staged[0]) === 'anchor,first', namesOf(staged[0]));
+}
+{
+  // The radius still MEANS something: the worst pair on the map is held back on the
+  // first attempt, so a wide-open queue never instantly commits someone to a distant
+  // match that a few seconds of waiting might have improved. (lhr↔syd is 251ms
+  // direct, but the gate reads `bestHost`'s SPREAD — 148 — because the minimax host
+  // lands on sjc in the middle. 148 is the worst spread any pair can produce, which
+  // is why one widening step now covers the entire map.)
+  const { staged } = await pair([
+    entry('a', '1v1', { homeRegion: 'lhr' }),
+    entry('b', '1v1', { homeRegion: 'syd' }),
+  ]);
+  check('radius: the worst-case pair is NOT taken on the first attempt', staged.length === 0);
+}
+{
+  // ...but nobody is stranded — once the radius has opened (here via two expand
+  // bumps, which the frozen test clock lets us reach directly) it does match.
+  const { staged } = await pair([
+    entry('a', '1v1', { homeRegion: 'lhr', expandBumps: 2 }),
+    entry('b', '1v1', { homeRegion: 'syd', expandBumps: 2 }),
+  ]);
+  check('radius: ...and DOES match once widened (nobody is stranded)', staged.length === 1);
+}
+
 // ---- a challenge must be queued under the CHALLENGE'S game -------------------
 // The matchmaker buckets by game so a Chain Reaction queuer can never be paired
 // into a DECODE room. That rule is correct, and it is also what made a cross-game
