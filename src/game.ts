@@ -280,7 +280,10 @@ export class GameController {
     this.spectator = session?.spectator ?? false;
     this.audio.masterVolume = settings.audio.volume.master;
     this.audio.gameVolume = settings.audio.volume.game;
-    this.audio.sfxVolume = settings.audio.volume.sfx;
+    this.audio.shootVolume = settings.audio.volume.shoot;
+    this.audio.intakeVolume = settings.audio.volume.intake;
+    this.audio.gateVolume = settings.audio.volume.gate;
+    this.audio.beepVolume = settings.audio.volume.beep;
     this.audio.voiceVolume = settings.audio.volume.voice;
     this.input = new InputManager(settings.bindings);
 

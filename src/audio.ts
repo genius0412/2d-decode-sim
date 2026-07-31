@@ -21,8 +21,18 @@ export class MatchAudio {
   masterVolume = 1;
   /** the FIRST field-recording WAV cues */
   gameVolume = 1;
-  /** synthesized shoot/intake/gate tones + the countdown beep */
-  sfxVolume = 1;
+  /**
+   * ONE LEVEL PER EMITTER. These used to be a single `sfxVolume` behind a slider
+   * labelled "Beeping", which was three different mechanisms in a trench coat — the
+   * launcher, the intake, the classifier gate and the countdown beep all moved
+   * together, and the label only described the last of them. They are separate
+   * sounds with genuinely different reasons to turn down (the shooter fires
+   * constantly; the countdown beep is once a match), so they are separate levels.
+   */
+  shootVolume = 1;
+  intakeVolume = 1;
+  gateVolume = 1;
+  beepVolume = 1;
   /** announcer voice lines; at 0, countdowns fall back to beeps */
   voiceVolume = 1;
 
@@ -120,10 +130,12 @@ export class MatchAudio {
     type: OscillatorType,
     vol: number,
     delay = 0,
+    category = 1,
   ): void {
     // every synthesized effect funnels through tone/noiseBurst, so scaling here is
-    // the only place the SFX level has to be applied
-    const level = this.gain(this.sfxVolume) * vol;
+    // the only place a category level has to be applied. The caller passes WHICH
+    // category, because one emitter (the gate) is built from several of these.
+    const level = this.gain(category) * vol;
     if (level <= 0) return;
     const ctx = this.ensureCtx();
     if (!ctx) return;
@@ -142,7 +154,7 @@ export class MatchAudio {
 
   /** short countdown beep — fires instantly, always in sync with the visual */
   beep(freq = 780, dur = 0.14, vol = 0.35): void {
-    this.tone(freq, freq, dur, 'square', vol);
+    this.tone(freq, freq, dur, 'square', vol, 0, this.beepVolume);
   }
 
   private noise: AudioBuffer | null = null;
@@ -166,8 +178,9 @@ export class MatchAudio {
     vol: number,
     q = 1.2,
     delay = 0,
+    category = 1,
   ): void {
-    const level = this.gain(this.sfxVolume) * vol;
+    const level = this.gain(category) * vol;
     if (level <= 0) return;
     const ctx = this.ensureCtx();
     if (!ctx) return;
@@ -189,20 +202,20 @@ export class MatchAudio {
 
   /** launcher "thwump": a falling noise whoosh with a low pitch-drop body */
   sfxShoot(): void {
-    this.noiseBurst(1800, 400, 0.13, 0.35);
-    this.tone(240, 90, 0.11, 'sawtooth', 0.16);
+    this.noiseBurst(1800, 400, 0.13, 0.35, 1.2, 0, this.shootVolume);
+    this.tone(240, 90, 0.11, 'sawtooth', 0.16, 0, this.shootVolume);
   }
 
   /** intake "slurp": one quick rising blip per swallowed artifact */
   sfxIntake(): void {
-    this.tone(150, 330, 0.08, 'sine', 0.22);
+    this.tone(150, 330, 0.08, 'sine', 0.22, 0, this.intakeVolume);
   }
 
   /** classifier gate "clack-clunk": latch click, then the flap swinging open */
   sfxGate(): void {
-    this.noiseBurst(2600, 2600, 0.03, 0.25, 3);
-    this.tone(520, 520, 0.05, 'square', 0.14);
-    this.tone(340, 300, 0.08, 'square', 0.16, 0.07);
+    this.noiseBurst(2600, 2600, 0.03, 0.25, 3, 0, this.gateVolume);
+    this.tone(520, 520, 0.05, 'square', 0.14, 0, this.gateVolume);
+    this.tone(340, 300, 0.08, 'square', 0.16, 0.07, this.gateVolume);
   }
 
   private voice: SpeechSynthesisVoice | null = null;

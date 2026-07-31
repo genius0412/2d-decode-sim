@@ -49,10 +49,15 @@ export function defaultSettings(): GameSettings {
     // GATE (index 0, close) + AUDIENCE (index 1, far) are the default per-category picks
     startMemory: { close: { index: 0, pose: null }, far: { index: 1, pose: null } },
     practiceDummies: false,
-    audio: { volume: { master: 1, game: 1, sfx: 1, voice: 1 }, sounds: true, voice: true },
+    audio: {
+      volume: { master: 1, game: 1, shoot: 1, intake: 1, gate: 1, beep: 1, voice: 1 },
+      sounds: true,
+      voice: true,
+    },
     bindings: cloneBindings(DEFAULT_BINDINGS),
     autoPath: null, // Default to no auto path loaded
     autoPathEnabled: false, // Default to auto path disabled
+    showEventLog: true,
     parkSpeedPct: 30,
     tankControlMode: 'normal',
     mobileLayout: cloneMobileLayout(DEFAULT_MOBILE_LAYOUT),
@@ -151,11 +156,12 @@ export function switchGame(s: GameSettings, game: GameId): GameSettings {
 type AudioVolume = GameSettings['audio']['volume'];
 
 /** the legacy ON/OFF pair an older client would read, derived from the levels.
- * Four categories can't map onto two switches exactly — `sounds` mirrors the old
+ * Seven categories can't map onto two switches exactly — `sounds` mirrors the old
  * master switch (is ANY audio audible) and `voice` the old voice-lines toggle. */
 function audioMirrors(av: AudioVolume): { sounds: boolean; voice: boolean } {
+  const anyEffect = av.game > 0 || av.shoot > 0 || av.intake > 0 || av.gate > 0 || av.beep > 0;
   return {
-    sounds: av.master > 0 && (av.game > 0 || av.sfx > 0 || av.voice > 0),
+    sounds: av.master > 0 && (anyEffect || av.voice > 0),
     voice: av.master > 0 && av.voice > 0,
   };
 }
@@ -265,7 +271,19 @@ export function coerceSettings(raw: unknown): GameSettings {
       const vol = au.volume;
       if (typeof vol === 'object' && vol !== null) {
         const v = vol as Record<string, unknown>;
-        for (const k of ['master', 'game', 'sfx', 'voice'] as const) {
+        // MIGRATION: `sfx` was one level behind a slider labelled "Beeping" that
+        // actually drove the shooter, the intake, the gate AND the countdown beep.
+        // Seed all four from it FIRST, so a player who had turned it down keeps that
+        // choice, then let any explicit new key override.
+        const legacy = v.sfx;
+        if (typeof legacy === 'number' && Number.isFinite(legacy)) {
+          const n = clamp(legacy, 0, 1);
+          out.audio.volume.shoot = n;
+          out.audio.volume.intake = n;
+          out.audio.volume.gate = n;
+          out.audio.volume.beep = n;
+        }
+        for (const k of ['master', 'game', 'shoot', 'intake', 'gate', 'beep', 'voice'] as const) {
           const n = v[k];
           if (typeof n === 'number' && Number.isFinite(n)) out.audio.volume[k] = clamp(n, 0, 1);
         }
@@ -280,6 +298,7 @@ export function coerceSettings(raw: unknown): GameSettings {
     // re-derive the legacy mirrors from the levels every time, so they can never
     // drift from the sliders (see the `audio` type for why they still exist)
     Object.assign(out.audio, audioMirrors(out.audio.volume));
+    if (typeof s.showEventLog === 'boolean') out.showEventLog = s.showEventLog;
     if (typeof s.parkSpeedPct === 'number') {
       out.parkSpeedPct = clamp(Math.round(s.parkSpeedPct), 0, 100);
     }

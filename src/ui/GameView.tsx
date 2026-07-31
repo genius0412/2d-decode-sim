@@ -359,7 +359,7 @@ export function GameView({
           </div>
         </div>
       )}
-      {hud && <Hud hud={hud} />}
+      {hud && <Hud hud={hud} showEventLog={settings.showEventLog} />}
       <div className="game-buttons">
         <button className="game-btn" onClick={onExit} title="Menu (Esc)">
           ◄ MENU
@@ -480,7 +480,7 @@ const PHASE_LABEL: Record<string, string> = {
 };
 
 /** styled after the FTC live scoring audience display: red panel | timer | blue panel */
-function Hud({ hud }: { hud: HudSnapshot }) {
+function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean }) {
   const [pingGraph, setPingGraph] = useState(false);
   const urgent = hud.timeLeft <= 10 && (hud.phase === 'auto' || hud.phase === 'teleop');
   const endgame = hud.timeLeft <= ENDGAME_START && hud.phase === 'teleop';
@@ -621,14 +621,17 @@ function Hud({ hud }: { hud: HudSnapshot }) {
       )}
 
       {/* polite: match events shouldn't interrupt, but they are the only non-visual
-          channel for scoring/gate/penalty state. */}
-      <div className="eventlog" aria-live="polite">
-        {hud.toasts.map((t) => (
-          <div key={t.id} className="eventlog-line">
-            {t.text}
-          </div>
-        ))}
-      </div>
+          channel for scoring/gate/penalty state. Hideable — some drivers want the
+          field corner clear, and nothing here is actionable. */}
+      {showEventLog && (
+        <div className="eventlog" aria-live="polite">
+          {hud.toasts.map((t) => (
+            <div key={t.id} className="eventlog-line">
+              {t.text}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -1835,13 +1835,39 @@ const setup = (
   const legacyNoVoice = coerceSettings({ audio: { sounds: true, voice: false } });
   check('legacy voice:false migrates to voice 0, master untouched', legacyNoVoice.audio.volume.voice === 0 && legacyNoVoice.audio.volume.master === 1);
 
-  const junk = coerceSettings({ audio: { volume: { master: 9, game: -3, sfx: 'x', voice: NaN } } });
-  check('volumes clamp to 0–1 and non-numbers fall back', junk.audio.volume.master === 1 && junk.audio.volume.game === 0 && junk.audio.volume.sfx === 1 && junk.audio.volume.voice === 1, JSON.stringify(junk.audio.volume));
+  const junk = coerceSettings({ audio: { volume: { master: 9, game: -3, shoot: 'x', voice: NaN } } });
+  check('volumes clamp to 0–1 and non-numbers fall back', junk.audio.volume.master === 1 && junk.audio.volume.game === 0 && junk.audio.volume.shoot === 1 && junk.audio.volume.voice === 1, JSON.stringify(junk.audio.volume));
 
-  const muted = coerceSettings({ audio: { volume: { master: 0, game: 1, sfx: 1, voice: 1 } } });
+  // `sfx` was ONE level driving the shooter, intake, gate and countdown beep. It is
+  // now four, and a save from before the split must keep the player's choice on all
+  // four rather than silently resetting three of them to full.
+  const oldSfx = coerceSettings({ audio: { volume: { master: 1, game: 1, sfx: 0.2, voice: 1 } } });
+  const v = oldSfx.audio.volume;
+  check(
+    'legacy sfx level migrates onto ALL four emitters it used to drive',
+    v.shoot === 0.2 && v.intake === 0.2 && v.gate === 0.2 && v.beep === 0.2,
+    JSON.stringify(v),
+  );
+  // ...but an explicit new key wins over the legacy seed
+  const mixed = coerceSettings({ audio: { volume: { sfx: 0.2, shoot: 0.9 } } });
+  check(
+    'an explicit per-emitter level overrides the migrated sfx value',
+    mixed.audio.volume.shoot === 0.9 && mixed.audio.volume.gate === 0.2,
+    JSON.stringify(mixed.audio.volume),
+  );
+
+  const muted = coerceSettings({ audio: { volume: { master: 0, game: 1, shoot: 1, voice: 1 } } });
   check('master 0 derives BOTH legacy mirrors false', !muted.audio.sounds && !muted.audio.voice);
-  const voiceOff = coerceSettings({ audio: { volume: { master: 1, game: 1, sfx: 1, voice: 0 } } });
+  const voiceOff = coerceSettings({ audio: { volume: { master: 1, game: 1, shoot: 1, voice: 0 } } });
   check('voice 0 derives voice mirror false, sounds true', voiceOff.audio.sounds && !voiceOff.audio.voice);
+  // every emitter silent but voice on: `sounds` still true (voice IS sound)
+  const onlyVoice = coerceSettings({
+    audio: { volume: { master: 1, game: 0, shoot: 0, intake: 0, gate: 0, beep: 0, voice: 1 } },
+  });
+  check('sounds mirror stays true when only voice is audible', onlyVoice.audio.sounds);
+
+  check('in-match event log defaults ON', coerceSettings({}).showEventLog === true);
+  check('...and the toggle persists', coerceSettings({ showEventLog: false }).showEventLog === false);
 
   // a slider drag writes the live object straight to storage, bypassing coerce
   const d = coerceSettings({});
