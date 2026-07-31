@@ -142,6 +142,23 @@ const themedPairs = (t) => {
        pairs rather than token pairs. */
     ['--ds-accent-soft-mut on --ds-accent-soft', t('--ds-accent-soft-mut'), t('--ds-accent-soft'), AA],
 
+    /* QUEUE COUNT CHIP (.ds-qcount) — the same text rides FOUR different grounds,
+       which is exactly how it shipped unreadable: the defaults are tuned for the
+       header bar and the recessed tile, and on the home menu's PLAY button, an
+       --ds-accent FILL, the bold number was --ds-accent on --ds-accent. 1:1. The
+       token pairs existed and passed; this pairing had simply never been declared,
+       so the suite had nothing to fail on. Every ground it can land on is listed
+       here now — adding a fifth placement means adding a fifth pair. */
+    ['qcount label on --ds-bar', t('--ds-mut'), t('--ds-bar'), AA],
+    ['qcount number on --ds-bar', t('--ds-accent'), t('--ds-bar'), AA],
+    ['qcount label on --ds-tile', t('--ds-mut'), t('--ds-tile'), AA],
+    ['qcount number on --ds-tile', t('--ds-accent'), t('--ds-tile'), AA],
+    ['qcount label on --ds-panel (menu button)', t('--ds-mut'), t('--ds-panel'), AA],
+    ['qcount number on --ds-panel (menu button)', t('--ds-accent'), t('--ds-panel'), AA],
+    ['qcount on --ds-accent (PLAY primary)', t('--ds-accent-ink'), t('--ds-accent'), AA],
+    ['qcount label on --ds-accent-soft (rail selected)', t('--ds-accent-soft-mut'), t('--ds-accent-soft'), AA],
+    ['qcount number on --ds-accent-soft (rail selected)', t('--ds-accent-soft-ink'), t('--ds-accent-soft'), AA],
+
     // pastels are fills that carry --ds-ink; they get tinted-dark siblings in dark mode
     ['--ds-ink on --ds-blush', t('--ds-ink'), t('--ds-blush'), AA],
     ['--ds-ink on --ds-sage', t('--ds-ink'), t('--ds-sage'), AA],

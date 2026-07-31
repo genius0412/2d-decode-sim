@@ -3938,6 +3938,27 @@ button.ds-key:active {
   color: var(--ds-accent);
   font-weight: 800;
 }
+/* ON A FILLED SURFACE the defaults above are wrong, and one of them was invisible:
+   the home menu's PLAY button is `.primary`, i.e. an --ds-accent FILL, and the count
+   painted --ds-accent on it — the same colour as its own background, 1:1. The muted
+   label was little better.
+
+   Every filled surface here already ships the ink tokens meant for it (the rail does
+   exactly this for its own sub-label), so use those rather than inventing a colour.
+   The label/number distinction is carried by WEIGHT on these surfaces, since a
+   second tinted ink would be another pair to keep above AA for no real gain. */
+.ds-menu-btn.primary .ds-qcount,
+.ds-menu-btn.primary .ds-qcount b,
+.ds-tile.primary .ds-qcount,
+.ds-tile.primary .ds-qcount b {
+  color: var(--ds-accent-ink);
+}
+.ds-rail-btn.on .ds-qcount {
+  color: var(--ds-accent-soft-mut);
+}
+.ds-rail-btn.on .ds-qcount b {
+  color: var(--ds-accent-soft-ink);
+}
 .ds-qcount-sep {
   opacity: 0.55;
 }
