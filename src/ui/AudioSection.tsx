@@ -91,6 +91,7 @@ export function AudioSection({
   audio.intakeVolume = vol.intake;
   audio.gateVolume = vol.gate;
   audio.beepVolume = vol.beep;
+  audio.alertVolume = vol.alert;
   audio.voiceVolume = vol.voice;
 
   const silent = vol.master <= 0;
@@ -152,6 +153,13 @@ export function AudioSection({
             muted={silent}
             onChange={(beep) => setVolume({ beep })}
             onAudition={() => audio.beep()}
+          />
+          <VolumeRow
+            label="Match alerts"
+            value={vol.alert}
+            muted={silent}
+            onChange={(alert) => setVolume({ alert })}
+            onAudition={() => audio.sfxMatchFound()}
           />
           <VolumeRow
             label="Voice lines"

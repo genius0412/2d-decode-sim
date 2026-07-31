@@ -8,6 +8,7 @@ import { ServerSession } from '../net/serverSession';
 import type { NetSession } from '../net/session';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
+import { MatchAudio } from '../audio';
 import { usePresence } from './usePresence';
 import { useServerNotice } from '../net/notice';
 import { APP_NAME } from '../seasons';
@@ -119,6 +120,22 @@ export function Matchmaking({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** "your match is ready" chime. Its own MatchAudio because the game controller is
+   *  not up yet on this screen, and a ref-guard so a search fires it exactly once —
+   *  `matchAssigned` and `strategyStart` are both "found" signals and on the
+   *  single-region path both can arrive. */
+  const alertRef = useRef<MatchAudio | null>(null);
+  const alertedRef = useRef(false);
+  const matchFound = (): void => {
+    if (alertedRef.current) return;
+    alertedRef.current = true;
+    alertRef.current ??= new MatchAudio();
+    const a = alertRef.current;
+    a.masterVolume = settings.audio.volume.master;
+    a.alertVolume = settings.audio.volume.alert;
+    a.sfxMatchFound();
+  };
+
   const playerInfo = () => ({
     name: settings.spec.teamName || 'Player',
     teamName: settings.spec.teamName,
@@ -168,6 +185,7 @@ export function Matchmaking({
     }
     setError('');
     setElapsed(0);
+    alertedRef.current = false;
     setSearching(true);
     // measure our home region + access latency (best-effort — the matchmaker falls
     // back to its own region if we can't report one)
@@ -187,10 +205,14 @@ export function Matchmaking({
     wireStrategy(lobby);
     lobby.on('matchStart', (m: MatchStart) => {
       startedRef.current = true;
+      matchFound();
       onStart(new ServerSession(transport, lobby.isHost(), m, lobby.clientId, 'ranked'));
     });
     // normal path: reconnect to the assigned host region to play
-    lobby.on('matchAssigned', (room) => joinAssignedMatch(room));
+    lobby.on('matchAssigned', (room) => {
+      matchFound();
+      joinAssignedMatch(room);
+    });
     lobby.on('error', (msg) => strategyCancelled(msg));
     lobby.on('closed', () => {
       if (!startedRef.current && !assigningRef.current)

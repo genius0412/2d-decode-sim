@@ -443,6 +443,7 @@ export interface GameSettings {
       intake: number;
       gate: number;
       beep: number;
+      alert: number;
       voice: number;
     };
     /** LEGACY mirrors, re-derived from `volume` on every coerce — never read these

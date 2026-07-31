@@ -284,6 +284,7 @@ export class GameController {
     this.audio.intakeVolume = settings.audio.volume.intake;
     this.audio.gateVolume = settings.audio.volume.gate;
     this.audio.beepVolume = settings.audio.volume.beep;
+    this.audio.alertVolume = settings.audio.volume.alert;
     this.audio.voiceVolume = settings.audio.volume.voice;
     this.input = new InputManager(settings.bindings);
 

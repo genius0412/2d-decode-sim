@@ -33,6 +33,10 @@ export class MatchAudio {
   intakeVolume = 1;
   gateVolume = 1;
   beepVolume = 1;
+  /** "your ranked match is ready" — its own level because it is the one sound that
+   *  plays when you are deliberately NOT looking at the game, so it wants to be
+   *  louder than the in-match effects rather than tied to them. */
+  alertVolume = 1;
   /** announcer voice lines; at 0, countdowns fall back to beeps */
   voiceVolume = 1;
 
@@ -209,6 +213,19 @@ export class MatchAudio {
   /** intake "slurp": one quick rising blip per swallowed artifact */
   sfxIntake(): void {
     this.tone(150, 330, 0.08, 'sine', 0.22, 0, this.intakeVolume);
+  }
+
+  /**
+   * MATCH FOUND — a rising three-note chime, deliberately unlike anything the match
+   * itself makes. It has to cut through whatever the player is doing (browsing, or
+   * driving a practice run) and read as "come back now", so it is a melodic figure
+   * rather than one of the percussive mechanism effects.
+   */
+  sfxMatchFound(): void {
+    const v = this.alertVolume;
+    this.tone(660, 660, 0.12, 'triangle', 0.34, 0, v);
+    this.tone(880, 880, 0.12, 'triangle', 0.34, 0.13, v);
+    this.tone(1320, 1320, 0.26, 'triangle', 0.3, 0.26, v);
   }
 
   /** classifier gate "clack-clunk": latch click, then the flap swinging open */

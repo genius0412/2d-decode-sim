@@ -50,7 +50,7 @@ export function defaultSettings(): GameSettings {
     startMemory: { close: { index: 0, pose: null }, far: { index: 1, pose: null } },
     practiceDummies: false,
     audio: {
-      volume: { master: 1, game: 1, shoot: 1, intake: 1, gate: 1, beep: 1, voice: 1 },
+      volume: { master: 1, game: 1, shoot: 1, intake: 1, gate: 1, beep: 1, alert: 1, voice: 1 },
       sounds: true,
       voice: true,
     },
@@ -159,7 +159,8 @@ type AudioVolume = GameSettings['audio']['volume'];
  * Seven categories can't map onto two switches exactly — `sounds` mirrors the old
  * master switch (is ANY audio audible) and `voice` the old voice-lines toggle. */
 function audioMirrors(av: AudioVolume): { sounds: boolean; voice: boolean } {
-  const anyEffect = av.game > 0 || av.shoot > 0 || av.intake > 0 || av.gate > 0 || av.beep > 0;
+  const anyEffect =
+    av.game > 0 || av.shoot > 0 || av.intake > 0 || av.gate > 0 || av.beep > 0 || av.alert > 0;
   return {
     sounds: av.master > 0 && (anyEffect || av.voice > 0),
     voice: av.master > 0 && av.voice > 0,
@@ -283,7 +284,7 @@ export function coerceSettings(raw: unknown): GameSettings {
           out.audio.volume.gate = n;
           out.audio.volume.beep = n;
         }
-        for (const k of ['master', 'game', 'shoot', 'intake', 'gate', 'beep', 'voice'] as const) {
+        for (const k of ['master', 'game', 'shoot', 'intake', 'gate', 'beep', 'alert', 'voice'] as const) {
           const n = v[k];
           if (typeof n === 'number' && Number.isFinite(n)) out.audio.volume[k] = clamp(n, 0, 1);
         }

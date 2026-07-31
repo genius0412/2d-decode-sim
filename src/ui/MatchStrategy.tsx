@@ -93,6 +93,7 @@ export function MatchStrategy({
   audioRef.current.intakeVolume = settings.audio.volume.intake;
   audioRef.current.gateVolume = settings.audio.volume.gate;
   audioRef.current.beepVolume = settings.audio.volume.beep;
+  audioRef.current.alertVolume = settings.audio.volume.alert;
   audioRef.current.voiceVolume = settings.audio.volume.voice;
   const lastTickRef = useRef(Infinity);
   useEffect(() => {

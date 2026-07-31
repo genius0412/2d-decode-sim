@@ -1884,6 +1884,20 @@ const setup = (
     check('queue counts: anyoneQueued mirrors it', anyoneQueued(pres(0, 1)) && !anyoneQueued(pres(0, 0)));
   }
 
+  // the match-found alert is its own level: it plays while you are deliberately NOT
+  // looking at the game, so it must not be tied to the in-match effects
+  check('match alert has its own volume, defaulting on', coerceSettings({}).audio.volume.alert === 1);
+  check(
+    'match alert level survives a round trip',
+    coerceSettings({ audio: { volume: { alert: 0.4 } } }).audio.volume.alert === 0.4,
+  );
+  check(
+    'silencing every effect but the alert still reads as "sounds on"',
+    coerceSettings({
+      audio: { volume: { master: 1, game: 0, shoot: 0, intake: 0, gate: 0, beep: 0, alert: 1, voice: 0 } },
+    }).audio.sounds === true,
+  );
+
   check('in-match event log defaults ON', coerceSettings({}).showEventLog === true);
   check('...and the toggle persists', coerceSettings({ showEventLog: false }).showEventLog === false);
 
