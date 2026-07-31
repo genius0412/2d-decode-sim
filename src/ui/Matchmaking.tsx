@@ -9,6 +9,7 @@ import type { NetSession } from '../net/session';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
+import { expandLabel, widenHint } from './queueDepth';
 import { parkQueue, takeQueue, updateQueue, dropQueue, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
 import { useServerNotice } from '../net/notice';
@@ -74,6 +75,10 @@ export function Matchmaking({
     !!notice && notice.kind === 'restart' && (notice.until === undefined || notice.until > Date.now());
   const [searching, setSearching] = useState(false);
   const [queue, setQueue] = useState({ size: 0, need: 2 });
+  /** manual EXPAND SEARCH presses this search — shown so the button visibly does
+   *  something. The server keeps its own count (`expandBumps`); this is only the
+   *  local echo of it, and it is reset with every new search. */
+  const [bumps, setBumps] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
   // set once a paired match opens its pre-match strategy window (see MatchStrategy)
@@ -296,6 +301,7 @@ export function Matchmaking({
     }
     setError('');
     setElapsed(0);
+    setBumps(0);
     alertedRef.current = false;
     startedAtRef.current = Date.now();
     setSearching(true);
@@ -377,7 +383,19 @@ export function Matchmaking({
     lobby.join(room, playerInfo());
   };
 
-  const expand = (): void => lobbyRef.current?.expandSearch();
+  /**
+   * Widen one step NOW rather than waiting for the next automatic one.
+   *
+   * The server call was already here; what was missing was any sign it happened.
+   * The button fired `expandSearch()` and nothing on screen moved — no counter, no
+   * text change — so it read as dead, and the natural response is to press it
+   * repeatedly. Tracking the presses locally is enough to say so out loud.
+   */
+  const expand = (): void => {
+    if (!lobbyRef.current) return;
+    lobbyRef.current.expandSearch();
+    setBumps((n) => n + 1);
+  };
 
   const cancel = (): void => {
     // explicit cancel is NOT a park: pressing cancel means leave the queue, so drop
@@ -500,14 +518,14 @@ export function Matchmaking({
         {/* region-local first; widen automatically as you wait, or on demand */}
         {!noWiden && multiServer() && (
           <p className="ds-hint">
-            {elapsed < 8 ? 'Searching your region…' : 'Widening search to nearby regions…'}
+            {widenHint(bumps, elapsed)}
           </p>
         )}
         {error && <p className="ds-form-err">⚠ {error}</p>}
         <div className="ds-actions">
           {!noWiden && multiServer() && (
             <button className="ds-cta ghost" onClick={expand}>
-              EXPAND SEARCH
+              {expandLabel(bumps)}
             </button>
           )}
           <button className="ds-cta ghost" onClick={cancel}>

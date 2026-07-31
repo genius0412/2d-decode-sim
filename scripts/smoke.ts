@@ -5,7 +5,7 @@
 import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
-import { queuedModes, anyoneQueued } from '../src/ui/queueDepth';
+import { queuedModes, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';
 import {
   parkQueue, takeQueue, dropQueue, updateQueue, peekQueue, subscribeQueue, elapsedLabel,
 } from '../src/ui/queueKeeper';
@@ -1885,6 +1885,16 @@ const setup = (
     check('queue counts: no presence yet → nothing rendered', queuedModes(null).length === 0);
     check('queue counts: a junk count is not shown as a number', queuedModes({ queues: { '1v1': NaN, '2v2': undefined } } as never).length === 0);
     check('queue counts: anyoneQueued mirrors it', anyoneQueued(pres(0, 1)) && !anyoneQueued(pres(0, 0)));
+
+    // EXPAND SEARCH used to call the server and change nothing on screen, so it read
+    // as a dead button. These are the strings that now have to move when it is pressed.
+    check('expand: the button says so after a press', expandLabel(0) === 'EXPAND SEARCH' && expandLabel(2) === 'EXPANDED ×2');
+    check('expand: a press changes the hint immediately, at any elapsed time',
+      widenHint(1, 0) !== widenHint(0, 0) && widenHint(1, 0) === widenHint(1, 99));
+    check('expand: with no presses the hint still follows the automatic ramp',
+      widenHint(0, 3) === 'Searching your region…' && widenHint(0, 20).startsWith('Widening'));
+    check('expand: a manual press outranks the automatic line',
+      widenHint(3, 99).includes('3×'));
   }
 
   // ---- background ranked queue: the keeper store -------------------------

@@ -24,6 +24,27 @@ export function queuedModes(p: Presence | null): EloMode[] {
   });
 }
 
+/**
+ * What the widening controls SAY, given how long we have waited and how many times
+ * the player pressed EXPAND SEARCH.
+ *
+ * Pulled out of the JSX because the bug being fixed was precisely that these strings
+ * never changed: the button called `expandSearch()` on the socket and nothing on
+ * screen moved, so it read as dead and invited repeated pressing. The searching
+ * screen needs a signed-in account to reach, so this is the part that can actually
+ * be tested — and it is the part that was wrong.
+ */
+export function expandLabel(bumps: number): string {
+  return bumps > 0 ? `EXPANDED ×${bumps}` : 'EXPAND SEARCH';
+}
+
+/** the line under the spinner: manual presses win over the automatic ramp, because
+ *  a press is a thing the player just did and deserves the acknowledgement */
+export function widenHint(bumps: number, elapsedSec: number): string {
+  if (bumps > 0) return `Widened ${bumps}× — searching further out than your region`;
+  return elapsedSec < 8 ? 'Searching your region…' : 'Widening search to nearby regions…';
+}
+
 /** anyone at all waiting — for callers decorating a control rather than printing */
 export function anyoneQueued(p: Presence | null): boolean {
   return queuedModes(p).length > 0;
