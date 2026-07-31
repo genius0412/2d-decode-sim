@@ -257,6 +257,52 @@ const namesOf = (m: PendingMatch | undefined): string =>
   }
 }
 
+// ---- a challenge must be queued under the CHALLENGE'S game -------------------
+// The matchmaker buckets by game so a Chain Reaction queuer can never be paired
+// into a DECODE room. That rule is correct, and it is also what made a cross-game
+// challenge silently impossible: a challenge is accepted from wherever the
+// recipient already is, and the client queued under the game it was CURRENTLY in
+// rather than the one the challenge names. The closed pair then sat in two
+// different buckets waiting for each other, with nothing on either screen to say
+// why. These pin both halves — the bucket rule stays strict, and the fix is that
+// both entries carry the challenge's own game.
+{
+  const { staged } = await pair([
+    entry('a', '1v1', { party: 'tok', partySize: 2, partyOnly: true, game: 'decode' }),
+    entry('b', '1v1', { party: 'tok', partySize: 2, partyOnly: true, game: 'chain' }),
+  ]);
+  check('challenge: a pair split across GAMES never stages (bucket rule holds)', staged.length === 0);
+}
+{
+  const { staged } = await pair([
+    entry('a', '1v1', { party: 'tok', partySize: 2, partyOnly: true, game: 'chain' }),
+    entry('b', '1v1', { party: 'tok', partySize: 2, partyOnly: true, game: 'chain' }),
+  ]);
+  check('challenge: both sides on the challenge’s game DO pair', staged.length === 1);
+  check('challenge: ...and the room is staged for that game', staged[0]?.game === 'chain', String(staged[0]?.game));
+}
+
+// ---- the one-live-game guard must not forfeit a staged ranked match ----------
+// `Room.stagedFor` is the predicate that lets a matchmaker-staged join through
+// the "you already have a game in progress" refusal. Without it, being matched
+// out of a BACKGROUND queue while a solo record run was still in flight was an
+// automatic forfeit: the run's slot is held for the reconnect grace, so the join
+// that pays ELO is the one that gets refused. It must answer for exactly the
+// roster and nobody else — a random code-joiner must still be turned away.
+{
+  const { Room } = await import('../server/room');
+  const roster = [
+    { userId: 'u-a', name: 'a', alliance: 'red' as const, startIndex: 0, introElo: null },
+    { userId: 'u-b', name: 'b', alliance: 'blue' as const, startIndex: 0, introElo: null },
+  ] as never;
+  const plain = new Room('plain', () => {}, { kind: 'versus' }, undefined as never);
+  check('stagedFor: an ordinary room is staged for nobody', !plain.stagedFor('u-a'));
+  const staged = new Room('iad-1v1x', () => {}, { kind: 'versus' }, undefined as never);
+  staged.applyPending({ code: 'iad-1v1x', hostRegion: 'iad', mode: '1v1', seed: 1, roster, ranked: true });
+  check('stagedFor: a staged ranked room answers for its roster', staged.stagedFor('u-a') && staged.stagedFor('u-b'));
+  check('stagedFor: ...and for nobody else (a code-guesser is still refused)', !staged.stagedFor('u-stranger'));
+}
+
 // ---- queue depth reporting --------------------------------------------------
 {
   const { mm } = await pair([

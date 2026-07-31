@@ -679,6 +679,21 @@ export class Room {
     return this.pendingMatch?.code ?? null;
   }
 
+  /**
+   * Is this user NAMED on the staged roster the matchmaker wrote for this room?
+   *
+   * The one-live-game guard reads it to tell a game somebody CHOSE to start from
+   * one the SERVER committed them to. A staged ranked match is not a second game
+   * they went and opened — it is the match they are already in, and this roster is
+   * the server's own record of that, so it outranks a stale slot they are still
+   * holding elsewhere. Without it, being matched out of a backgrounded queue while
+   * mid-run was an automatic forfeit: the run's slot is held for the reconnect
+   * grace, and the ranked join it blocks is the one that pays ELO.
+   */
+  stagedFor(userId: string): boolean {
+    return !!this.pendingMatch?.roster.some((r) => r.userId === userId);
+  }
+
   /** start the staged match once every roster member (by verified user id) is
    * connected. Called after each client's identity resolves. */
   maybeStartRanked(): void {

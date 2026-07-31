@@ -1005,10 +1005,25 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     // one live game per user: refuse a second game while one is in progress (they
     // rejoin/leave it from Home). Reconnects use `rejoin`, so this never blocks
     // returning to your OWN match.
+    //
+    // ONE EXCEPTION, and it is the whole point of the background queue: a room the
+    // MATCHMAKER STAGED FOR THIS USER is not a second game they chose to start — it
+    // is the match the server has already committed them to, and it is about to
+    // cost them ELO. Get matched while a solo record run is still in flight and the
+    // run's slot is held for the reconnect grace, so this guard would refuse the
+    // ranked join and turn "matched out of a background queue" into an automatic
+    // forfeit. The staged roster is the server's own record of who belongs here, so
+    // it wins: release the stale slot and let them in. (The abandoned room finalizes
+    // on its own grace; its `onUserInactive` is code-scoped, so it can't then clear
+    // the lock this match takes out.)
     if (user && activeElsewhere(user.userId, code)) {
-      send({ t: 'error', message: 'You already have a game in progress - rejoin or leave it first.' });
-      if (created) rooms.delete(code);
-      return;
+      if (r.stagedFor(user.userId)) {
+        userRoom.delete(user.userId);
+      } else {
+        send({ t: 'error', message: 'You already have a game in progress - rejoin or leave it first.' });
+        if (created) rooms.delete(code);
+        return;
+      }
     }
     room = r;
     const client: Client = {

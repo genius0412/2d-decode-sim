@@ -1,6 +1,18 @@
-import type { LobbyClient } from '../net/lobbyClient';
-import type { QueueMode } from '../net/protocol';
+import type { LobbyClient, MatchStart } from '../net/lobbyClient';
+import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import type { GameId } from '../types';
+import type { PendingChallenge } from './challenge';
+
+/** a `strategyStart` that arrived while parked, kept whole so the screen that
+ *  adopts the socket can open the window the event already announced */
+export interface ParkedStrategy {
+  deadline: number;
+  yourRobotId: number;
+  mode: QueueMode;
+  intros: PlayerIntro[];
+  players: LobbyPlayer[];
+  myClientId: string;
+}
 
 /**
  * A ranked queue that outlives the screen that started it.
@@ -32,13 +44,33 @@ export interface ParkedQueue {
    * live setting is not.
    */
   game: GameId;
+  /**
+   * The "play a friend" challenge this search was queued under, if any.
+   *
+   * Carried for the same reason as `game`: the parked queue is the authority on
+   * what the search IS. Without it an adopted challenge came back as an ordinary
+   * open queue — "Finding a match…" instead of "Waiting for @them", and a CANCEL
+   * that no longer knew it was leaving a private challenge.
+   */
+  challenge: PendingChallenge | null;
   /** Date.now() the search began, so a remount shows a continuous elapsed timer */
   since: number;
   size: number;
   need: number;
-  /** the assignment that arrived while parked — a remount acts on it immediately
-   *  rather than waiting for an event that has already been and gone */
+  /**
+   * Signals that arrived WHILE PARKED. Each is an event that has already fired and
+   * will never fire again, so the screen that adopts the socket has to be handed
+   * the payload rather than left waiting for it.
+   *
+   * `assignedRoom` is the production path (reconnect to the host region).
+   * `start`/`strategy` are the single-region / no-DB path, where the match runs on
+   * the matchmaker socket itself — those two used to be recorded as a bare
+   * `found: true` with the payload dropped on the floor, which left the player
+   * watching "Finding a match…" for a match the server had already begun.
+   */
   assignedRoom: string | null;
+  start: MatchStart | null;
+  strategy: ParkedStrategy | null;
   /** a match exists (assigned, or started on the single-region path) */
   found: boolean;
   error: string | null;
@@ -117,8 +149,21 @@ export function subscribeQueue(fn: () => void): () => void {
   };
 }
 
+/**
+ * Whole seconds a search has been running, from when it ACTUALLY started.
+ *
+ * The one definition of queue time, shared by the bar and the search screen. The
+ * screen used to count up from its own mount instead, so adopting a parked queue
+ * restarted the stopwatch at zero and told the player they had been waiting a
+ * second when they had been waiting two minutes. Elapsed is a function of `since`;
+ * it is not something a component gets to have its own opinion about.
+ */
+export function elapsedSeconds(since: number, now = Date.now()): number {
+  return Math.max(0, Math.floor((now - since) / 1000));
+}
+
 /** "1:07" — a parked search's elapsed time, formatted for the queue bar */
 export function elapsedLabel(since: number, now = Date.now()): string {
-  const s = Math.max(0, Math.floor((now - since) / 1000));
+  const s = elapsedSeconds(since, now);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

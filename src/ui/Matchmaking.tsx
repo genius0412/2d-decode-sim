@@ -10,7 +10,7 @@ import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
 import { expandLabel, widenHint } from './queueDepth';
-import { parkQueue, takeQueue, updateQueue, dropQueue, type ParkedQueue } from './queueKeeper';
+import { parkQueue, takeQueue, updateQueue, dropQueue, elapsedSeconds, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
 import { useServerNotice } from '../net/notice';
 import { APP_NAME } from '../seasons';
@@ -124,29 +124,41 @@ export function Matchmaking({
         lobby,
         mode: challengeRef.current?.mode ?? modeRef.current,
         // the game this search was QUEUED for, not the one the player wanders into
-        game: gameRef.current,
+        game: challengeRef.current?.game ?? gameRef.current,
+        // a private challenge stays a private challenge across a park/adopt
+        challenge: challengeRef.current,
         since: startedAtRef.current,
         size: queueRef.current.size,
         need: queueRef.current.need,
         assignedRoom: null,
+        start: null,
+        strategy: null,
         found: false,
         error: null,
       };
       // REBIND to keeper-owned handlers: the ones registered below close over this
       // component's state, and calling them after unmount would write into a tree
       // that is gone. `on()` replaces, so this is a straight hand-over.
+      //
+      // Each "found" handler RECORDS ITS PAYLOAD, not just the fact of it. These
+      // events fire exactly once; the screen that adopts the socket arrives after
+      // they are gone, so anything dropped here is unrecoverable and the player
+      // waits forever on a match that has already started.
       lobby.on('queued', (_m, size, need) => updateQueue({ size, need }));
       lobby.on('matchAssigned', (room) => {
         matchFound();
         updateQueue({ assignedRoom: room, found: true });
       });
-      lobby.on('matchStart', () => {
+      lobby.on('matchStart', (m) => {
         matchFound();
-        updateQueue({ found: true });
+        updateQueue({ start: m, found: true });
       });
-      lobby.on('strategyStart', () => {
+      lobby.on('strategyStart', (deadline, yourRobotId, m, intros) => {
         matchFound();
-        updateQueue({ found: true });
+        updateQueue({
+          strategy: { deadline, yourRobotId, mode: m, intros, players: lobby.players, myClientId: lobby.clientId },
+          found: true,
+        });
       });
       lobby.on('error', (msg) => updateQueue({ error: msg }));
       lobby.on('closed', () => updateQueue({ error: 'Lost connection to the game server.' }));
@@ -171,10 +183,18 @@ export function Matchmaking({
     gameRef.current = settings.game;
   }, [settings.game]);
 
+  // The stopwatch is DERIVED from when the search actually began, never counted up
+  // from when this screen mounted. Adopting a parked queue re-enters this effect,
+  // and a local counter restarted at 0 there — so leaving and coming back reset a
+  // wait the player had genuinely been sitting through. `startedAtRef` is the
+  // keeper's `since` on that path, so the two agree by construction.
   useEffect(() => {
     if (!searching) return;
-    let t = 0;
-    const iv = window.setInterval(() => setElapsed(++t), 1000);
+    // 0 is the ref's "no search has started" value, not a 1970 timestamp
+    const paint = (): void =>
+      setElapsed(startedAtRef.current ? elapsedSeconds(startedAtRef.current) : 0);
+    paint(); // show the real figure now, not a second from now
+    const iv = window.setInterval(paint, 1000);
     return () => window.clearInterval(iv);
   }, [searching]);
 
@@ -192,10 +212,11 @@ export function Matchmaking({
     lobbyRef.current = lobby;
     setMode(p.mode);
     modeRef.current = p.mode;
+    // a parked private challenge is still a private challenge on the way back in
+    challengeRef.current = p.challenge;
     setQueue({ size: p.size, need: p.need });
     queueRef.current = { size: p.size, need: p.need };
     startedAtRef.current = p.since;
-    setElapsed(Math.max(0, Math.floor((Date.now() - p.since) / 1000)));
     setSearching(true);
     searchingRef.current = true;
     if (p.error) setError(p.error);
@@ -216,9 +237,27 @@ export function Matchmaking({
       if (!startedRef.current && !assigningRef.current)
         setError('Lost connection to the game server.');
     });
-    // an assignment that landed WHILE parked has already fired its event; act on it
-    // now rather than waiting for one that will never come again
-    if (p.assignedRoom) joinAssignedMatch(p.assignedRoom);
+    // REPLAY whatever landed WHILE PARKED. These events have already fired and will
+    // not fire again for the handlers just registered above, so acting on the
+    // recorded payload is the only way the adopted screen ever learns about them.
+    // Ordered most-progressed first: a match that has actually STARTED supersedes
+    // the strategy window that preceded it, which supersedes a bare assignment.
+    if (p.start) {
+      startedRef.current = true;
+      onStart(new ServerSession(lobby.transport, lobby.isHost(), p.start, lobby.clientId, 'ranked'));
+    } else if (p.strategy) {
+      const s = p.strategy;
+      setStrategy({
+        lobby,
+        players: s.players.length ? s.players : lobby.players,
+        myClientId: s.myClientId || lobby.clientId,
+        deadline: s.deadline,
+        mode: s.mode,
+        intros: s.intros,
+      });
+    } else if (p.assignedRoom) {
+      joinAssignedMatch(p.assignedRoom);
+    }
     return true;
   };
 
@@ -346,7 +385,14 @@ export function Matchmaking({
       home?.region ?? '',
       home?.accessMs ?? 0,
       noWiden,
-      settings.game,
+      // THE CHALLENGE'S GAME, not the one this client happens to be sitting in.
+      // The matchmaker buckets by game (a CR queuer must never pair into a DECODE
+      // room), and a challenge is accepted from wherever the recipient already is
+      // — so queueing under `settings.game` put the two halves of one challenge in
+      // two different buckets whenever the friends were on different games. The
+      // closed pair then waits for each other forever: `findMatch` requires a
+      // single bucket, so it can never stage, and neither side is ever told why.
+      challengeRef.current?.game ?? settings.game,
       challengeRef.current
         ? {
             token: challengeRef.current.token,

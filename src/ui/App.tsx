@@ -373,6 +373,12 @@ export function App() {
   // ranked queue rather than a resurrected challenge.
   const [pendingChallenge, setPendingChallenge] = useState<PendingChallenge | null>(null);
   const startChallenge = (c: PendingChallenge): void => {
+    // A challenge names its own GAME, and the recipient accepts it from wherever
+    // they already were — which is not necessarily the same game. Switch before
+    // queueing: the matchmaker buckets by game, so a challenge queued under the
+    // wrong one can never pair with its other half, and the pair simply waits for
+    // each other until they give up.
+    selectGame(c.game);
     setPendingChallenge(c);
     navigate('matchmaking');
   };
@@ -390,6 +396,10 @@ export function App() {
       startChallenge(challenge);
       return;
     }
+    // Same rule as a rated challenge: the INVITE names the game, and accepting it
+    // from the other one would leave the app configured for a game the room isn't
+    // playing — right room, wrong robot, wrong field.
+    selectGame(invite.game);
     const config: RoomConfig = { kind: invite.kind, game: invite.game };
     if (invite.kind === 'record' && invite.record) config.record = invite.record;
     setPendingAutoJoin({ room: invite.room, config });
@@ -485,6 +495,26 @@ export function App() {
       clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => void saveAccountSettings(s), 700);
     }
+  };
+
+  /**
+   * Switch the ACTIVE game (and its saved loadout), safely for a caller that is
+   * about to `navigate` in the same tick.
+   *
+   * `settingsRef.current` is assigned BEFORE `update`, because `update` is a
+   * setState that will not have landed by the synchronous `navigate` that follows
+   * — and `navigate` builds its URL from the ref. Without it the app switched to
+   * Chain Reaction while the address bar still read /decode/…, and since the URL is
+   * authoritative for the game on load, a refresh from there landed back in the
+   * wrong one. Both callers (the parked-queue takeover and an accepted challenge)
+   * are exactly that shape.
+   */
+  const selectGame = (g: GameId): void => {
+    const s = settingsRef.current;
+    if (s.game === g) return;
+    const next = switchGame(s, g);
+    settingsRef.current = next;
+    update(next);
   };
 
   const onSyncUser = useCallback((id: string | null) => setAccountUserId(id), []);
@@ -628,19 +658,7 @@ export function App() {
    */
   const openParkedQueue = (): void => {
     const q = peekQueue();
-    if (q) {
-      const s = settingsRef.current;
-      if (s.game !== q.game) {
-        const next = switchGame(s, q.game);
-        // Assign the ref BEFORE navigating. `update` is a setState and will not have
-        // landed by the synchronous `navigate` below, which builds its URL from
-        // `settingsRef.current.game` — without this the settings switched to Chain
-        // Reaction while the address bar still said /decode/ranked, and a refresh
-        // from there would resolve straight back into the wrong game.
-        settingsRef.current = next;
-        update(next);
-      }
-    }
+    if (q) selectGame(q.game);
     navigate('matchmaking');
   };
 
@@ -650,6 +668,13 @@ export function App() {
     sessionRef.current?.dispose();
     setSession(null);
     setSessionKind(null);
+    // ABANDON whatever was in flight, for real. A record run is server-hosted, so
+    // it leaves behind a rejoin record AND a held server slot; keeping either would
+    // have this ranked match refused as a "second game" by the very guards that
+    // exist to stop you starting one. The run is discarded by design here — it is
+    // worth less than the rated match it would otherwise cost.
+    clearActiveGame();
+    setActiveGame(null);
     openParkedQueue();
     // `navigate` and the setters are stable for this component's life
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -736,9 +761,26 @@ export function App() {
     return () => window.clearInterval(iv);
   }, [signedIn, screen]);
 
+  /**
+   * Wrap a FULL-SCREEN surface so the "you are still queued" indicator survives it.
+   *
+   * The bar itself is mounted inside the menu shell, which these screens replace
+   * outright — so the moment you started a practice match or a record run, the one
+   * thing telling you a ranked search was still live disappeared. That is precisely
+   * the situation the background queue exists to create, which made it the worst
+   * possible place to hide it. `overlay` renders the compact top chip instead of
+   * the bottom bar (see QueueBar).
+   */
+  const fullScreen = (node: JSX.Element): JSX.Element => (
+    <>
+      <QueueBar onOpen={openParkedQueue} overlay />
+      {node}
+    </>
+  );
+
   // full-screen surfaces (outside the shell)
   if (screen === 'game') {
-    return (
+    return fullScreen(
       <GameView
         settings={settings}
         session={session}
@@ -756,7 +798,7 @@ export function App() {
   }
   if (screen === 'lobby') {
     const auto = pendingAutoJoin?.config.kind === 'versus' ? pendingAutoJoin : undefined;
-    return (
+    return fullScreen(
       <Lobby
         settings={settings}
         onSettingsChange={update}
@@ -771,7 +813,7 @@ export function App() {
     );
   }
   if (screen === 'record') {
-    return (
+    return fullScreen(
       <RecordRun
         settings={settings}
         mode="solo"
@@ -782,7 +824,7 @@ export function App() {
   }
   if (screen === 'duorecord') {
     const auto = pendingAutoJoin?.config.kind === 'record' ? pendingAutoJoin : undefined;
-    return (
+    return fullScreen(
       <Lobby
         settings={settings}
         onSettingsChange={update}
@@ -811,7 +853,7 @@ export function App() {
     );
   }
   if (screen === 'replay' && (route.replayId || replayObj)) {
-    return (
+    return fullScreen(
       <ReplayView
         replayId={route.replayId ?? undefined}
         preloadReplay={replayObj ?? undefined}

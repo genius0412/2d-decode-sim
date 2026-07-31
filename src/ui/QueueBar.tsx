@@ -23,7 +23,7 @@ export function useParkedQueue(): ParkedQueue | null {
  * "minimise", because a queue you cannot see and cannot leave is the thing this
  * whole feature exists to avoid.
  */
-export function QueueBar({ onOpen }: { onOpen: () => void }) {
+export function QueueBar({ onOpen, overlay = false }: { onOpen: () => void; overlay?: boolean }) {
   useEffect(() => exposeForTesting(import.meta.env.DEV), []);
   const q = useParkedQueue();
   const [, tick] = useState(0);
@@ -38,8 +38,28 @@ export function QueueBar({ onOpen }: { onOpen: () => void }) {
   if (!q) return null;
 
   const found = q.found;
+  // OVERLAY form, for the full-screen surfaces (a live match, a record run, a
+  // lobby). Same fact, less of it: a small top-corner chip instead of a bar across
+  // the bottom, where the score display lives — and no inline Cancel, because on a
+  // surface you are DRIVING on, a one-click "leave the ranked queue" sitting under
+  // a moving thumb is a trap. Tapping it opens the queue screen, which has Cancel.
+  if (overlay && !found) {
+    return (
+      <button
+        className="ds-queuechip"
+        onClick={onOpen}
+        title={`In the ${q.mode.toUpperCase()} ranked queue - tap to view`}
+      >
+        <span className="qb-dot" aria-hidden />
+        <span className="qb-txt">
+          {q.mode.toUpperCase()} · {elapsedLabel(q.since)}
+        </span>
+      </button>
+    );
+  }
+
   return (
-    <div className={`ds-queuebar${found ? ' found' : ''}`} role="status">
+    <div className={`ds-queuebar${found ? ' found' : ''}${overlay ? ' over' : ''}`} role="status">
       <span className="qb-dot" aria-hidden />
       <span className="qb-txt">
         {found ? (

@@ -229,6 +229,15 @@ const hudPairs = (t) => {
     ['HUD .res-side.red label', '#ffffff', '#991b1b', AA],
     ['HUD .res-side.blue label', '#ffffff', '#1d4ed8', AA],
 
+    // The standing "you are still queued" chip — the one menu-shell surface that
+    // ALSO floats over the field. Its fill is the panel, so its ink is measured
+    // there; its EDGE is what identifies it against the field, which
+    // `checkCardIdentifiable` already asserts for --ds-hud-line. It is opaque on
+    // purpose: fading it would blend ink and fill toward the field together and
+    // quietly drop this pair below the floor, where nothing here would see it.
+    ['HUD .ds-queuechip ink over the field', t('--ds-ink'), panel, AA],
+    ['HUD .ds-queuechip live dot (1.4.11)', t('--ds-accent'), panel, NON_TEXT],
+
     // the .overlay-panel is `--ds-panel` on a dark scrim, so its ink is the panel's
     ['HUD .record-total on the results panel', t('--ds-ink'), panel, AA],
     ['HUD .results-table th.red', t('--ds-red-ink'), panel, AA],

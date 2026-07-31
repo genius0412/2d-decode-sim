@@ -7,7 +7,7 @@ import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
 import { queuedModes, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';
 import {
-  parkQueue, takeQueue, dropQueue, updateQueue, peekQueue, subscribeQueue, elapsedLabel,
+  parkQueue, takeQueue, dropQueue, updateQueue, peekQueue, subscribeQueue, elapsedLabel, elapsedSeconds,
 } from '../src/ui/queueKeeper';
 import type { LobbyPlayer } from '../src/net/protocol';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from '../src/net/roomCode';
@@ -1905,8 +1905,9 @@ const setup = (
     let disposed = 0, left = 0;
     const fakeLobby = () => ({ dispose: () => disposed++, leaveQueue: () => left++ }) as never;
     const mk = (over: Partial<Parameters<typeof parkQueue>[0]> = {}) => ({
-      lobby: fakeLobby(), mode: '1v1' as const, game: 'decode' as const, since: 1000, size: 1, need: 2,
-      assignedRoom: null, found: false, error: null, ...over,
+      lobby: fakeLobby(), mode: '1v1' as const, game: 'decode' as const, challenge: null,
+      since: 1000, size: 1, need: 2,
+      assignedRoom: null, start: null, strategy: null, found: false, error: null, ...over,
     });
 
     // THE GAME TRAVELS WITH THE SEARCH. Parking exists so the player can go and do
@@ -1947,6 +1948,19 @@ const setup = (
     updateQueue({ assignedRoom: 'iad-abc', found: true });
     check('queue keeper: a late assignment is remembered', peekQueue()?.assignedRoom === 'iad-abc');
 
+    // The SAME applies to the two signals that carry a whole match with them. On
+    // the single-region / no-DB path the match runs on the matchmaker socket
+    // itself, so `matchStart` / `strategyStart` arrive here rather than an
+    // assignment — and they were being recorded as a bare `found: true` with the
+    // payload dropped. Nothing can reconstruct it: the event is gone, so the
+    // adopting screen sat on "Finding a match…" for a match already in progress.
+    updateQueue({ start: { seed: 7, setups: [], yourRobotId: 1 } as never });
+    check('queue keeper: a late matchStart keeps its PAYLOAD, not just the fact', peekQueue()?.start?.seed === 7);
+    updateQueue({
+      strategy: { deadline: 42, yourRobotId: 0, mode: '1v1', intros: [], players: [], myClientId: 'c1' },
+    });
+    check('queue keeper: a late strategyStart keeps its deadline', peekQueue()?.strategy?.deadline === 42);
+
     const taken = takeQueue();
     check('queue keeper: taking hands back the same search', taken?.assignedRoom === 'iad-abc');
     check('queue keeper: ...and only once', takeQueue() === null);
@@ -1965,6 +1979,31 @@ const setup = (
     check('queue keeper: elapsed formats as m:ss', elapsedLabel(0, 67_000) === '1:07', elapsedLabel(0, 67_000));
     check('queue keeper: ...pads the seconds', elapsedLabel(0, 65_000) === '1:05');
     check('queue keeper: ...and never goes negative on a clock skew', elapsedLabel(5_000, 0) === '0:00');
+
+    // THE STOPWATCH IS A FUNCTION OF `since`, never a counter started on mount.
+    // The search screen used to count up from when IT appeared, so adopting a
+    // parked queue restarted a wait the player had genuinely been sitting through.
+    check('queue keeper: elapsed is measured from the search START', elapsedSeconds(1_000, 96_000) === 95);
+    check('queue keeper: ...so adopting mid-search reports the real wait, not 0', elapsedSeconds(1_000, 96_000) > 0);
+    check('queue keeper: ...and a clock that runs backwards floors at 0', elapsedSeconds(96_000, 1_000) === 0);
+  }
+
+  // A CHALLENGE travels with the parked search, same as its game. Leaving the
+  // screen while waiting on a named opponent must not quietly turn a private
+  // challenge into an ordinary open-queue entry on the way back in.
+  {
+    const ch = {
+      token: 'TMFX2K', format: 'rated1v1', mode: '1v1' as const,
+      partyOnly: true, game: 'chain' as const, opponent: 'bob',
+    };
+    parkQueue({
+      lobby: {} as never, mode: '1v1', game: 'chain', challenge: ch, since: 1, size: 1, need: 2,
+      assignedRoom: null, start: null, strategy: null, found: false, error: null,
+    });
+    check('queue keeper: a parked search remembers its CHALLENGE', peekQueue()?.challenge?.opponent === 'bob');
+    const back = takeQueue();
+    check('queue keeper: ...and hands the token back on adopt', back?.challenge?.token === 'TMFX2K');
+    check('queue keeper: ...with the challenge’s own game', back?.challenge?.game === 'chain');
   }
 
   // the match-found alert is its own level: it plays while you are deliberately NOT

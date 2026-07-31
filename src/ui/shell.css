@@ -4019,3 +4019,58 @@ button.ds-key:active {
   color: var(--ds-danger);
   font-size: 12px;
 }
+
+/* ---- the queue on a FULL-SCREEN surface (live match, record run, lobby) ------
+   Anchored TOP, never bottom: the score display owns the bottom of a match (see
+   the HUD product decision), and a status bar parked over it is the one place it
+   must never be. `--ds-hud-line` rather than `--ds-line` for the same reason the
+   other floating HUD surfaces use it — a dark card on the dark field is barely
+   1.4:1 by fill, so its edge is what says where it ends. */
+.ds-queuebar.over {
+  bottom: auto;
+  top: max(10px, env(safe-area-inset-top));
+  border-color: var(--ds-hud-line);
+}
+/* Centred and tucked UNDER the top HUD row, not level with it. The top strip is
+   already spoken for at both ends — MENU/RESET on the left, the robot status on
+   the right — and on a phone those two nearly meet in the middle, so a chip on
+   that line lands right on top of RESET. One row down is empty at every width:
+   the event log runs down the left edge and the field sits lower still. */
+.ds-queuechip {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  top: calc(max(10px, env(safe-area-inset-top)) + 54px);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid var(--ds-hud-line);
+  border-radius: var(--ds-round-full);
+  background: var(--ds-panel);
+  box-shadow: var(--ds-block);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ds-ink);
+  cursor: pointer;
+}
+/* deliberately NOT faded down to sit back: a translucent card blends its text AND
+   its fill toward the field behind it, which drops the pair below the bar the rest
+   of the app holds (worst in light theme, where a light panel darkens toward the
+   dark field while the ink stays dark). Being small is what makes it unobtrusive. */
+.ds-queuechip:hover,
+.ds-queuechip:focus-visible {
+  border-color: var(--ds-accent);
+}
+.ds-queuechip .qb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ds-accent);
+  flex: none;
+}
+.ds-queuechip .qb-txt {
+  white-space: nowrap;
+}
