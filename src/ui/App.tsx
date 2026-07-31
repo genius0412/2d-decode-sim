@@ -28,6 +28,7 @@ import { Configure, isConfigureSection, type ConfigureSection } from './Configur
 import { Records, isRecordsTab, type RecordsTab } from './Records';
 import { RecordRun } from './RecordRun';
 import { Matchmaking } from './Matchmaking';
+import { QueueBar, useParkedQueue } from './QueueBar';
 import { ReplayView } from './ReplayView';
 import { ProfileMenu } from './ProfileMenu';
 import { Download } from './Download';
@@ -283,6 +284,10 @@ export function App() {
   const [screen, setScreen] = useState<Screen>(start.screen);
   const [route, setRoute] = useState<RouteArgs>(start);
   const [session, setSession] = useState<NetSession | null>(null);
+  // read by the match-found takeover, which must fire on `found` alone — depending on
+  // `screen`/`session` directly would re-run it on every navigation instead
+  const sessionRef = useRef<NetSession | null>(null);
+  const screenRef = useRef<Screen>('home');
   // which flow opened the live session — only 'record' offers an in-game NEW RUN
   const [sessionKind, setSessionKind] = useState<ActiveGameRef['kind'] | null>(null);
   // a just-played replay to watch in-memory (not yet persisted, so no URL id)
@@ -496,6 +501,11 @@ export function App() {
   // the multiplayer game this browser is currently in (persisted to localStorage), so
   // the player can REJOIN it after navigating away and is stopped from starting a 2nd.
   const [activeGame, setActiveGame] = useState<ActiveGameRef | null>(() => loadActiveGame());
+  // A backgrounded ranked search that PAIRED. The match will not wait — the server
+  // holds the slot for RANKED_JOIN_GRACE_MS and then forfeits it — so this takes the
+  // screen back rather than offering a choice, and a solo run in flight is discarded
+  // (deliberate: a practice run is worth less than the rated match it would cost).
+  const parkedQueue = useParkedQueue();
 
   /** enter a networked game: remember it (for rejoin + the single-game guard), then
    * show the game screen. Solo play never calls this (it has no session). */
@@ -593,6 +603,34 @@ export function App() {
     setSessionKind(null);
     navigate('record');
   };
+
+  /**
+   * TAKEOVER. A parked search paired while the player was elsewhere: pull them onto
+   * the matchmaking screen, which adopts the socket and carries on into the
+   * pre-match strategy window.
+   *
+   * It does NOT ask. The server holds the slot for RANKED_JOIN_GRACE_MS and then
+   * forfeits it, so a dialog would just be a way to lose the match slowly. Anything
+   * in progress is discarded — per the product call, a solo run in flight is worth
+   * less than the rated match it would otherwise cost.
+   */
+  useEffect(() => {
+    if (!parkedQueue?.found) return;
+    if (screenRef.current === 'matchmaking') return; // already there; it will adopt
+    sessionRef.current?.dispose();
+    setSession(null);
+    setSessionKind(null);
+    navigate('matchmaking');
+    // `navigate` and the setters are stable for this component's life
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parkedQueue?.found]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
 
   const exitGame = (): void => {
     setEditMobileLayout(false);
@@ -788,6 +826,9 @@ export function App() {
       onHostRoom={hostForChallenge}
       onQueueChallenge={startChallenge}
     >
+      {/* the standing "still queued" bar — only appears when a search is PARKED,
+          i.e. the player queued and then went somewhere else */}
+      <QueueBar onOpen={() => navigate('matchmaking')} />
       <AppShell
         active={navFor(screen)}
         onNav={(n) => navigate(screenForNav(n))}

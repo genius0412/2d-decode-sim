@@ -9,6 +9,8 @@ import type { NetSession } from '../net/session';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
+import { backgroundQueueEnabled } from './flags';
+import { parkQueue, takeQueue, updateQueue, dropQueue, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
 import { useServerNotice } from '../net/notice';
 import { APP_NAME } from '../seasons';
@@ -79,6 +81,13 @@ export function Matchmaking({
   const [strategy, setStrategy] = useState<StrategyState | null>(null);
 
   const lobbyRef = useRef<LobbyClient | null>(null);
+  // The unmount cleanup runs with the closure from the FIRST render, so anything it
+  // needs has to be a ref rather than state — these mirror `searching`/`mode`/`queue`
+  // purely so `teardown` reads what is true NOW instead of what was true on mount.
+  const searchingRef = useRef(false);
+  const modeRef = useRef<QueueMode>(challenge?.mode ?? '1v1');
+  const queueRef = useRef({ size: 0, need: 2 });
+  const startedAtRef = useRef(0);
   const startedRef = useRef(false);
   const assigningRef = useRef(false); // reconnecting from matchmaker → host
   // The challenge is captured ONCE, in a ref. App clears its copy the moment this
@@ -92,13 +101,59 @@ export function Matchmaking({
   useEscape(onCancel, !strategy);
 
   const teardown = (): void => {
-    if (!startedRef.current) {
-      lobbyRef.current?.leaveQueue();
-      lobbyRef.current?.dispose();
-    }
+    const lobby = lobbyRef.current;
     lobbyRef.current = null;
+    if (startedRef.current || !lobby) return;
+    // BACKGROUND QUEUE: a search in flight is handed to the keeper instead of being
+    // dropped, so leaving this screen no longer cancels it. Only the LIFETIME
+    // changes here — the socket, the queue message and the match hand-off are all
+    // untouched. With the flag off this is exactly the old teardown.
+    if (backgroundQueueEnabled() && searchingRef.current && !assigningRef.current) {
+      const parkedState: ParkedQueue = {
+        lobby,
+        mode: challengeRef.current?.mode ?? modeRef.current,
+        since: startedAtRef.current,
+        size: queueRef.current.size,
+        need: queueRef.current.need,
+        assignedRoom: null,
+        found: false,
+        error: null,
+      };
+      // REBIND to keeper-owned handlers: the ones registered below close over this
+      // component's state, and calling them after unmount would write into a tree
+      // that is gone. `on()` replaces, so this is a straight hand-over.
+      lobby.on('queued', (_m, size, need) => updateQueue({ size, need }));
+      lobby.on('matchAssigned', (room) => {
+        matchFound();
+        updateQueue({ assignedRoom: room, found: true });
+      });
+      lobby.on('matchStart', () => {
+        matchFound();
+        updateQueue({ found: true });
+      });
+      lobby.on('strategyStart', () => {
+        matchFound();
+        updateQueue({ found: true });
+      });
+      lobby.on('error', (msg) => updateQueue({ error: msg }));
+      lobby.on('closed', () => updateQueue({ error: 'Lost connection to the game server.' }));
+      parkQueue(parkedState);
+      return;
+    }
+    lobby.leaveQueue();
+    lobby.dispose();
   };
   useEffect(() => teardown, []); // cleanup on unmount
+
+  useEffect(() => {
+    searchingRef.current = searching;
+  }, [searching]);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
 
   useEffect(() => {
     if (!searching) return;
@@ -107,11 +162,56 @@ export function Matchmaking({
     return () => window.clearInterval(iv);
   }, [searching]);
 
+  /**
+   * ADOPT a search that was running while this screen was away.
+   *
+   * Runs BEFORE the challenge auto-queue below, and returning true suppresses it:
+   * a parked queue means we are already in the bucket, and queueing again would put
+   * a second entry in for the same player.
+   */
+  const adoptParked = (): boolean => {
+    const p = takeQueue();
+    if (!p) return false;
+    const lobby = p.lobby;
+    lobbyRef.current = lobby;
+    setMode(p.mode);
+    modeRef.current = p.mode;
+    setQueue({ size: p.size, need: p.need });
+    queueRef.current = { size: p.size, need: p.need };
+    startedAtRef.current = p.since;
+    setElapsed(Math.max(0, Math.floor((Date.now() - p.since) / 1000)));
+    setSearching(true);
+    searchingRef.current = true;
+    if (p.error) setError(p.error);
+    // take the handlers back off the keeper
+    lobby.on('queued', (_m, size, need) => setQueue({ size, need }));
+    wireStrategy(lobby);
+    lobby.on('matchStart', (m: MatchStart) => {
+      startedRef.current = true;
+      matchFound();
+      onStart(new ServerSession(lobby.transport, lobby.isHost(), m, lobby.clientId, 'ranked'));
+    });
+    lobby.on('matchAssigned', (room) => {
+      matchFound();
+      joinAssignedMatch(room);
+    });
+    lobby.on('error', (msg) => strategyCancelled(msg));
+    lobby.on('closed', () => {
+      if (!startedRef.current && !assigningRef.current)
+        setError('Lost connection to the game server.');
+    });
+    // an assignment that landed WHILE parked has already fired its event; act on it
+    // now rather than waiting for one that will never come again
+    if (p.assignedRoom) joinAssignedMatch(p.assignedRoom);
+    return true;
+  };
+
   // Arriving from a challenge, there is nothing to choose and nothing to confirm —
   // both sides already agreed on the format, and whoever gets here first is
   // waiting on the other. So queue on mount rather than showing a FIND MATCH
   // button they'd have to press to start waiting.
   useEffect(() => {
+    if (adoptParked()) return; // already in the queue — do not enter it twice
     if (!challengeRef.current || !signedIn) return;
     onChallengeConsumed?.();
     void find();
@@ -186,7 +286,9 @@ export function Matchmaking({
     setError('');
     setElapsed(0);
     alertedRef.current = false;
+    startedAtRef.current = Date.now();
     setSearching(true);
+    searchingRef.current = true;
     // measure our home region + access latency (best-effort — the matchmaker falls
     // back to its own region if we can't report one)
     const home = await probeHome(gameServerHttpUrl());
@@ -267,7 +369,11 @@ export function Matchmaking({
   const expand = (): void => lobbyRef.current?.expandSearch();
 
   const cancel = (): void => {
+    // explicit cancel is NOT a park: pressing cancel means leave the queue, so drop
+    // the search here rather than letting `teardown` hand it to the keeper
+    searchingRef.current = false;
     teardown();
+    dropQueue();
     setSearching(false);
     // dropping out of a challenge leaves you on the ordinary ranked screen, not in
     // a state where FIND MATCH would silently re-enter the private queue

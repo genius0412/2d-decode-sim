@@ -3950,3 +3950,51 @@ button.ds-key:active {
 .ds-qcount.bar {
   margin-right: 2px;
 }
+
+/* ---- background ranked queue bar (QueueBar.tsx) -----------------------
+   Fixed to the bottom of the viewport, above everything, and only present while a
+   search is PARKED. It is the one thing telling a player their queue is still
+   live while they read a leaderboard, so it does not scroll away with the page
+   and it always carries the way out. */
+.ds-queuebar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--ds-line-strong);
+  border-radius: var(--ds-round-full);
+  background: var(--ds-panel);
+  box-shadow: var(--ds-block);
+  font-size: 13px;
+  color: var(--ds-ink);
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.ds-queuebar .qb-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ds-accent);
+  flex: none;
+}
+/* found: the bar stops being ambient and starts being the most important thing
+   on screen, because the match slot expires */
+.ds-queuebar.found {
+  border-color: var(--ds-accent);
+}
+.ds-queuebar.found .qb-dot {
+  background: var(--ds-ok);
+}
+.ds-queuebar .qb-txt {
+  white-space: nowrap;
+}
+.ds-queuebar .qb-err {
+  color: var(--ds-danger);
+  font-size: 12px;
+}

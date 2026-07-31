@@ -6,6 +6,9 @@ import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceSpec, coerceSetup, co
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
 import { queuedModes, anyoneQueued } from '../src/ui/queueDepth';
+import {
+  parkQueue, takeQueue, dropQueue, updateQueue, peekQueue, subscribeQueue, elapsedLabel,
+} from '../src/ui/queueKeeper';
 import type { LobbyPlayer } from '../src/net/protocol';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from '../src/net/roomCode';
 import { step } from '../src/sim/world';
@@ -1882,6 +1885,60 @@ const setup = (
     check('queue counts: no presence yet → nothing rendered', queuedModes(null).length === 0);
     check('queue counts: a junk count is not shown as a number', queuedModes({ queues: { '1v1': NaN, '2v2': undefined } } as never).length === 0);
     check('queue counts: anyoneQueued mirrors it', anyoneQueued(pres(0, 1)) && !anyoneQueued(pres(0, 0)));
+  }
+
+  // ---- background ranked queue: the keeper store -------------------------
+  // The store is what makes a queue survive leaving the screen, so its contract is
+  // worth pinning: parking makes it visible, taking hands it back exactly once, a
+  // late assignment is remembered rather than lost, and cancel really cancels.
+  {
+    let disposed = 0, left = 0;
+    const fakeLobby = () => ({ dispose: () => disposed++, leaveQueue: () => left++ }) as never;
+    const mk = (over: Partial<Parameters<typeof parkQueue>[0]> = {}) => ({
+      lobby: fakeLobby(), mode: '1v1' as const, since: 1000, size: 1, need: 2,
+      assignedRoom: null, found: false, error: null, ...over,
+    });
+
+    check('queue keeper: nothing parked to begin with', peekQueue() === null);
+    let seen = 0;
+    const un = subscribeQueue(() => seen++);
+    parkQueue(mk());
+    check('queue keeper: parking makes the search visible', peekQueue()?.mode === '1v1');
+    check('queue keeper: ...and notifies subscribers', seen === 1, `seen=${seen}`);
+
+    const beforeUpdate = peekQueue();
+    updateQueue({ size: 2 });
+    check('queue keeper: an update lands on the parked search', peekQueue()?.size === 2);
+    // REFERENCE must change: useSyncExternalStore compares snapshots by identity, so
+    // an in-place mutation notifies subscribers who then re-read the same object and
+    // skip the render — which is exactly how the match-found takeover silently
+    // failed the first time this was written
+    check('queue keeper: an update yields a NEW snapshot, not a mutated one', peekQueue() !== beforeUpdate);
+    check('queue keeper: ...and notified again', seen === 2, `seen=${seen}`);
+
+    // an assignment that arrives while parked must be REMEMBERED — its event has
+    // already fired and will not fire again for the screen that adopts the socket
+    updateQueue({ assignedRoom: 'iad-abc', found: true });
+    check('queue keeper: a late assignment is remembered', peekQueue()?.assignedRoom === 'iad-abc');
+
+    const taken = takeQueue();
+    check('queue keeper: taking hands back the same search', taken?.assignedRoom === 'iad-abc');
+    check('queue keeper: ...and only once', takeQueue() === null);
+    check('queue keeper: taking does NOT close the socket (the screen adopts it)', disposed === 0);
+
+    parkQueue(mk());
+    dropQueue();
+    check('queue keeper: cancelling leaves the queue AND closes the socket', left === 1 && disposed === 1);
+    check('queue keeper: ...and clears it', peekQueue() === null);
+    updateQueue({ size: 9 });
+    check('queue keeper: updating nothing is a no-op, not a crash', peekQueue() === null);
+    un();
+  }
+
+  {
+    check('queue keeper: elapsed formats as m:ss', elapsedLabel(0, 67_000) === '1:07', elapsedLabel(0, 67_000));
+    check('queue keeper: ...pads the seconds', elapsedLabel(0, 65_000) === '1:05');
+    check('queue keeper: ...and never goes negative on a clock skew', elapsedLabel(5_000, 0) === '0:00');
   }
 
   // the match-found alert is its own level: it plays while you are deliberately NOT
