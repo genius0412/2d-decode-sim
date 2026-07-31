@@ -9,7 +9,6 @@ import type { NetSession } from '../net/session';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
-import { backgroundQueueEnabled } from './flags';
 import { parkQueue, takeQueue, updateQueue, dropQueue, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
 import { useServerNotice } from '../net/notice';
@@ -107,8 +106,14 @@ export function Matchmaking({
     // BACKGROUND QUEUE: a search in flight is handed to the keeper instead of being
     // dropped, so leaving this screen no longer cancels it. Only the LIFETIME
     // changes here — the socket, the queue message and the match hand-off are all
-    // untouched. With the flag off this is exactly the old teardown.
-    if (backgroundQueueEnabled() && searchingRef.current && !assigningRef.current) {
+    // untouched, which is what keeps the blast radius small on a path that costs
+    // real ELO when it goes wrong.
+    //
+    // Two cases still tear down for real rather than park: a match that has already
+    // STARTED (the session owns the transport now) and a reconnect to the assigned
+    // host region already in flight (`assigning`) — parking either would leave a
+    // socket nobody is going to come back for.
+    if (searchingRef.current && !assigningRef.current) {
       const parkedState: ParkedQueue = {
         lobby,
         mode: challengeRef.current?.mode ?? modeRef.current,

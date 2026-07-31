@@ -647,6 +647,29 @@ and the ellipsis (`.fr-name`) — nested inside, it gets underlined with the nam
 truncated with it. `.fr-nameline` exists for the stacked name-over-subline rows.
 Tests: 36 checks in `npm run dbtest`.
 
+**BACKGROUND RANKED QUEUE, LIVE (no flag).** The queue used to die when you left the
+matchmaking screen — that screen owned the socket (`useEffect(() => teardown, [])`),
+so queueing locked you out of the rest of the app, which is what stopped people
+queueing at all. Now `Matchmaking` PARKS the live `LobbyClient` in `queueKeeper.ts`
+(a module singleton — it must outlive the tree that made it) on unmount mid-search,
+and ADOPTS it back on remount. **Nothing about how the socket is opened, queued or
+handed to a match changed — only how long it lives**; that was the design constraint,
+because this path costs real ELO when it breaks. `LobbyClient.on()` REPLACES, so both
+hand-overs are plain re-registration. Two cases still tear down for real rather than
+park: a match that already STARTED (the session owns the transport) and an in-flight
+reconnect to the host region (`assigning`). `QueueBar` shows bucket/elapsed/cancel
+while parked; match-found takes the screen back WITHOUT asking (the server forfeits
+the slot after `RANKED_JOIN_GRACE_MS`, so a dialog is just a slower way to lose) and
+DISCARDS any run in progress. An assignment arriving while parked is remembered on
+the parked state — its event has already fired and won't fire again for the adopting
+screen. **`updateQueue` must return a NEW object**: it mutated in place at first, so
+`useSyncExternalStore` re-read an identical snapshot, skipped the render, and the
+takeover silently never fired (the bar still looked right — it repaints on its own
+1s timer). A smoke check asserts snapshot IDENTITY changes. `exposeForTesting` is
+`import.meta.env.DEV`-only; a shipped bundle must never carry a handle that can
+cancel a stranger's queue. **NOT yet validated end-to-end** — that needs two
+signed-in accounts completing a rated match.
+
 **PLAY A FRIEND — challenges (chess.com's model), DONE.** A challenge (`room_invites` +
 migration `0019`) carries a **`format`**: `casual1v1`/`casual2v2` (a `versus` room),
 `duorecord` (a `record`/`duo` room), or the two RATED ones. Rating is only ever applied to a

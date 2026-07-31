@@ -82,11 +82,13 @@ export function updateQueue(patch: Partial<ParkedQueue>): void {
 }
 
 /**
- * TEST HOOK. With the background-queue flag on, expose the store so the bar and the
- * match-found takeover can be driven without a second player — this flow otherwise
- * needs two signed-in accounts completing a rated match, which is exactly why the
- * feature ships behind a flag. Gated on the same flag, so a default build has no
- * such handle on `window`.
+ * DEV-ONLY test handle: drive the bar and the match-found takeover without a second
+ * player. The real flow needs two signed-in accounts completing a rated match, so
+ * this is the only way to exercise the UI locally.
+ *
+ * Gated on `import.meta.env.DEV`, which is false for every production build — a
+ * shipped bundle must not carry a handle that lets anything on the page cancel a
+ * stranger's ranked queue.
  */
 export function exposeForTesting(enabled: boolean): void {
   if (!enabled || typeof window === 'undefined') return;

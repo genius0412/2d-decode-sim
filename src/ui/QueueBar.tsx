@@ -2,7 +2,6 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
   dropQueue, elapsedLabel, exposeForTesting, peekQueue, subscribeQueue, type ParkedQueue,
 } from './queueKeeper';
-import { backgroundQueueEnabled } from './flags';
 
 /** re-render on any change to the parked queue (null when nothing is parked). Lives
  *  here rather than in the keeper so that module stays React-free and its store can
@@ -25,7 +24,7 @@ export function useParkedQueue(): ParkedQueue | null {
  * whole feature exists to avoid.
  */
 export function QueueBar({ onOpen }: { onOpen: () => void }) {
-  useEffect(() => exposeForTesting(backgroundQueueEnabled()), []);
+  useEffect(() => exposeForTesting(import.meta.env.DEV), []);
   const q = useParkedQueue();
   const [, tick] = useState(0);
 
