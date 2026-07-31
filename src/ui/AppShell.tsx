@@ -9,6 +9,7 @@ import { FriendToasts } from './friendsContext';
 import { Logo } from './Logo';
 import { NavRail } from './NavRail';
 import { usePresence } from './usePresence';
+import { PresenceProvider, QueueCounts } from './QueueCounts';
 import type { Presence, RoomInvite } from '../net/api';
 
 export type ShellNav = 'home' | 'play' | 'configure' | 'records' | 'profile' | 'admin';
@@ -113,6 +114,9 @@ export function AppShell({
   const presence = usePresence();
   const season = seasonFor(game);
   return (
+    // ONE poller for the whole shell — every menu that shows queue depth reads this
+    // value rather than starting its own (see QueueCounts.tsx)
+    <PresenceProvider value={presence}>
     <div className="ds-app">
       <header className="ds-bar">
         <button className="ds-mark" onClick={() => onNav('home')} aria-label={`${APP_NAME} home`}>
@@ -120,6 +124,10 @@ export function AppShell({
           {APP_NAME}
         </button>
         <div className="ds-bar-right">
+          {/* the header is on EVERY menu screen, so this is the one placement that
+              makes queue depth visible everywhere rather than only where someone
+              already went looking for a match */}
+          <QueueCounts className="bar" />
           {presence && <PresenceChip p={presence} />}
           {right}
         </div>
@@ -193,6 +201,7 @@ export function AppShell({
         </span>
       </footer>
     </div>
+    </PresenceProvider>
   );
 }
 

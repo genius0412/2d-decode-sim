@@ -5,6 +5,7 @@
 import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
+import { queuedModes, anyoneQueued } from '../src/ui/queueDepth';
 import type { LobbyPlayer } from '../src/net/protocol';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from '../src/net/roomCode';
 import { step } from '../src/sim/world';
@@ -1865,6 +1866,23 @@ const setup = (
     audio: { volume: { master: 1, game: 0, shoot: 0, intake: 0, gate: 0, beep: 0, voice: 1 } },
   });
   check('sounds mirror stays true when only voice is audible', onlyVoice.audio.sounds);
+
+  // ---- ranked queue counts shown across the menus ------------------------
+  // The RULE is "omit a mode at zero, show nothing when nothing is queued" — a
+  // visible "0 waiting" reads as a verdict on whether to bother rather than as the
+  // absence of news. It is logic, not styling, so it is tested rather than eyeballed.
+  {
+    const pres = (a: number, b: number) =>
+      ({ online: 0, signedIn: 0, queues: { '1v1': a, '2v2': b } }) as never;
+    const j = (v: unknown) => JSON.stringify(v);
+    check('queue counts: both modes busy → both listed', j(queuedModes(pres(2, 3))) === j(['1v1', '2v2']));
+    check('queue counts: a mode at 0 is OMITTED', j(queuedModes(pres(2, 0))) === j(['1v1']));
+    check('queue counts: the other way round too', j(queuedModes(pres(0, 4))) === j(['2v2']));
+    check('queue counts: nothing queued → nothing rendered', queuedModes(pres(0, 0)).length === 0);
+    check('queue counts: no presence yet → nothing rendered', queuedModes(null).length === 0);
+    check('queue counts: a junk count is not shown as a number', queuedModes({ queues: { '1v1': NaN, '2v2': undefined } } as never).length === 0);
+    check('queue counts: anyoneQueued mirrors it', anyoneQueued(pres(0, 1)) && !anyoneQueued(pres(0, 0)));
+  }
 
   check('in-match event log defaults ON', coerceSettings({}).showEventLog === true);
   check('...and the toggle persists', coerceSettings({ showEventLog: false }).showEventLog === false);

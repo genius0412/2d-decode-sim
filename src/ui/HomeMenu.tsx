@@ -5,6 +5,7 @@ import { APP_BLURB, APP_NAME, APP_TAGLINE, LINKS, seasonFor } from '../seasons';
 import { registeredGames } from '../games';
 import { fetchGlobalStats, type GlobalStats } from '../net/api';
 import { RAIL_ITEMS } from './NavRail';
+import { QueueCounts } from './QueueCounts';
 import type { ShellNav } from './AppShell';
 
 const DRIVETRAIN_LABELS: Record<DrivetrainType, string> = {
@@ -114,7 +115,10 @@ export function HomeMenu({
             className={`ds-menu-btn${i === 0 ? ' primary' : ''}`}
             onClick={() => onNav(it.id)}
           >
-            <span className="ml">{it.label}</span>
+            <span className="ml">
+              {it.label}
+              {it.id === 'play' && <QueueCounts className="menu" />}
+            </span>
             <span className="mh">{it.hint}</span>
           </button>
         ))}

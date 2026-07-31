@@ -1,4 +1,5 @@
 import { APP_NAME } from '../seasons';
+import { QueueCounts } from './QueueCounts';
 
 /**
  * Game-mode select — reached from PLAY. These are the tiles that used to live on
@@ -75,7 +76,10 @@ export function ModeSelect({
             <button className="ds-tile" onClick={onRanked} disabled={!multiplayer || !signedIn}>
               <span className="k">Ranked</span>
               <span>
-                <span className="t">Find Match</span>
+                <span className="t">
+                  Find Match
+                  <QueueCounts className="tile" />
+                </span>
                 {(!multiplayer || !signedIn) && (
                   <span className="d">
                     {!multiplayer ? 'Needs the game server' : 'Sign in to play ranked'}

@@ -3918,3 +3918,35 @@ button.ds-key:active {
 }
 .ds-claim-msg.ok { color: var(--ds-ok-ink); }
 .ds-claim-msg.err { color: var(--ds-red-ink); }
+
+/* ---- live ranked queue depth (QueueCounts.tsx) ------------------------
+   Shown wherever a player might decide to queue: the header on every menu
+   screen, the PLAY item, and the Ranked tile. A mode at zero is omitted and an
+   empty queue renders nothing at all — "0 waiting" reads as a verdict on
+   whether to bother, so the number only ever appears when it argues FOR
+   queueing. Sized/coloured to sit UNDER the label it decorates, never to
+   compete with it. */
+.ds-qcount {
+  font-family: var(--ds-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ds-mut);
+  white-space: nowrap;
+}
+.ds-qcount b {
+  color: var(--ds-accent);
+  font-weight: 800;
+}
+.ds-qcount-sep {
+  opacity: 0.55;
+}
+/* beside a label rather than under it: the rail item, the home button, the tile */
+.ds-qcount.rail,
+.ds-qcount.menu,
+.ds-qcount.tile {
+  margin-left: 8px;
+}
+.ds-qcount.bar {
+  margin-right: 2px;
+}
