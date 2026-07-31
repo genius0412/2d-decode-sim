@@ -29,6 +29,7 @@ import { Records, isRecordsTab, type RecordsTab } from './Records';
 import { RecordRun } from './RecordRun';
 import { Matchmaking } from './Matchmaking';
 import { QueueBar, useParkedQueue } from './QueueBar';
+import { peekQueue } from './queueKeeper';
 import { ReplayView } from './ReplayView';
 import { ProfileMenu } from './ProfileMenu';
 import { Download } from './Download';
@@ -614,13 +615,42 @@ export function App() {
    * in progress is discarded — per the product call, a solo run in flight is worth
    * less than the rated match it would otherwise cost.
    */
+  /**
+   * Open the matchmaking screen FOR THE PARKED SEARCH, restoring its game first.
+   *
+   * The parked queue is the authority on which game the match is for, not
+   * `settings.game` — the player is free to wander into the other game while
+   * waiting, and that is the entire point of parking. Adopting the queue without
+   * this switched the app to the CURRENT game: queue Chain Reaction, start a DECODE
+   * run, and the takeover came up as DECODE for a Chain Reaction match (wrong
+   * ready-up, wrong robot, wrong field). Both ways into the queue screen — the
+   * automatic takeover and the bar's View button — go through here.
+   */
+  const openParkedQueue = (): void => {
+    const q = peekQueue();
+    if (q) {
+      const s = settingsRef.current;
+      if (s.game !== q.game) {
+        const next = switchGame(s, q.game);
+        // Assign the ref BEFORE navigating. `update` is a setState and will not have
+        // landed by the synchronous `navigate` below, which builds its URL from
+        // `settingsRef.current.game` — without this the settings switched to Chain
+        // Reaction while the address bar still said /decode/ranked, and a refresh
+        // from there would resolve straight back into the wrong game.
+        settingsRef.current = next;
+        update(next);
+      }
+    }
+    navigate('matchmaking');
+  };
+
   useEffect(() => {
     if (!parkedQueue?.found) return;
     if (screenRef.current === 'matchmaking') return; // already there; it will adopt
     sessionRef.current?.dispose();
     setSession(null);
     setSessionKind(null);
-    navigate('matchmaking');
+    openParkedQueue();
     // `navigate` and the setters are stable for this component's life
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parkedQueue?.found]);
@@ -828,7 +858,7 @@ export function App() {
     >
       {/* the standing "still queued" bar — only appears when a search is PARKED,
           i.e. the player queued and then went somewhere else */}
-      <QueueBar onOpen={() => navigate('matchmaking')} />
+      <QueueBar onOpen={openParkedQueue} />
       <AppShell
         active={navFor(screen)}
         onNav={(n) => navigate(screenForNav(n))}

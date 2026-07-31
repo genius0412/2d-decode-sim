@@ -86,6 +86,7 @@ export function Matchmaking({
   const searchingRef = useRef(false);
   const modeRef = useRef<QueueMode>(challenge?.mode ?? '1v1');
   const queueRef = useRef({ size: 0, need: 2 });
+  const gameRef = useRef(settings.game);
   const startedAtRef = useRef(0);
   const startedRef = useRef(false);
   const assigningRef = useRef(false); // reconnecting from matchmaker → host
@@ -117,6 +118,8 @@ export function Matchmaking({
       const parkedState: ParkedQueue = {
         lobby,
         mode: challengeRef.current?.mode ?? modeRef.current,
+        // the game this search was QUEUED for, not the one the player wanders into
+        game: gameRef.current,
         since: startedAtRef.current,
         size: queueRef.current.size,
         need: queueRef.current.need,
@@ -159,6 +162,9 @@ export function Matchmaking({
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
+  useEffect(() => {
+    gameRef.current = settings.game;
+  }, [settings.game]);
 
   useEffect(() => {
     if (!searching) return;

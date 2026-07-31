@@ -1,5 +1,6 @@
 import type { LobbyClient } from '../net/lobbyClient';
 import type { QueueMode } from '../net/protocol';
+import type { GameId } from '../types';
 
 /**
  * A ranked queue that outlives the screen that started it.
@@ -19,6 +20,18 @@ import type { QueueMode } from '../net/protocol';
 export interface ParkedQueue {
   lobby: LobbyClient;
   mode: QueueMode;
+  /**
+   * WHICH GAME this search is for — DECODE or Chain Reaction.
+   *
+   * Load-bearing, and its absence was a real bug: the whole point of parking is
+   * that the player goes off and does something else, and "something else" can be
+   * the OTHER game, which moves `settings.game`. Without the queue remembering its
+   * own game, adopting it read whatever game the player happened to be in — queue
+   * Chain Reaction, start a DECODE run, and the match-found takeover came up as
+   * DECODE for a Chain Reaction match. The parked queue is the authority here; the
+   * live setting is not.
+   */
+  game: GameId;
   /** Date.now() the search began, so a remount shows a continuous elapsed timer */
   since: number;
   size: number;

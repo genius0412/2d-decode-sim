@@ -1895,11 +1895,27 @@ const setup = (
     let disposed = 0, left = 0;
     const fakeLobby = () => ({ dispose: () => disposed++, leaveQueue: () => left++ }) as never;
     const mk = (over: Partial<Parameters<typeof parkQueue>[0]> = {}) => ({
-      lobby: fakeLobby(), mode: '1v1' as const, since: 1000, size: 1, need: 2,
+      lobby: fakeLobby(), mode: '1v1' as const, game: 'decode' as const, since: 1000, size: 1, need: 2,
       assignedRoom: null, found: false, error: null, ...over,
     });
 
+    // THE GAME TRAVELS WITH THE SEARCH. Parking exists so the player can go and do
+    // something else, and "something else" can be the OTHER game — which moves
+    // `settings.game`. A queue that does not remember its own game gets adopted as
+    // whatever the player wandered into: queue Chain Reaction, start a DECODE run,
+    // and the match-found takeover came up as DECODE for a CR match. The parked
+    // search is the authority, not the live setting.
     check('queue keeper: nothing parked to begin with', peekQueue() === null);
+    parkQueue(mk({ game: 'chain' }));
+    check('queue keeper: a search remembers WHICH GAME it queued for', peekQueue()?.game === 'chain');
+    check(
+      'queue keeper: ...and still carries it after an unrelated update',
+      (updateQueue({ size: 3 }), peekQueue()?.game === 'chain'),
+    );
+    check('queue keeper: ...and hands it back on adopt', takeQueue()?.game === 'chain');
+    check('queue keeper: DECODE searches carry their own game too', (parkQueue(mk()), peekQueue()?.game === 'decode'));
+    takeQueue();
+
     let seen = 0;
     const un = subscribeQueue(() => seen++);
     parkQueue(mk());
