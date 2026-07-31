@@ -80,6 +80,11 @@ const matchmaker = new Matchmaker(
 // userId, so multiple tabs count once).
 let onlineCount = 0;
 const authedUsers = new Map<string, number>(); // userId -> live socket count
+/** Publish this machine's presence row RIGHT NOW. Installed by the heartbeat below;
+ *  a no-op until then (and in tests, which never start it). Called on the
+ *  empty -> occupied edge so the first player of a quiet period is visible to the
+ *  OTHER regions in milliseconds instead of on the next 5s tick. */
+let beatNow: () => void = () => {};
 
 // "one live game per user": userId -> code of the room whose MATCH they're currently
 // in. Set by a room when its match begins (Room.onUserActive), cleared when their slot
@@ -252,19 +257,60 @@ const MACHINE = process.env.FLY_MACHINE_ID || REGION || 'local';
  * for freshness — the ranked screen, where queue depth is a number people act on.
  */
 const PRESENCE_TTL_BUSY_MS = 7_000;
-const PRESENCE_TTL_IDLE_MS = 45_000;
+/** Only when the world looks EMPTY and this machine is empty too. Halved from 45s
+ *  once `globalPresence` became a single query — the cost of a refresh dropped, so
+ *  the staleness budget could too. This is the worst-case delay before an idle
+ *  machine notices the first player joining somewhere else. */
+const PRESENCE_TTL_QUIET_MS = 20_000;
 let presenceCache: { at: number; val: GlobalPresence } | null = null;
 function machineIdle(): boolean {
   const qs = matchmaker.queueSizes();
   return onlineCount === 0 && authedUsers.size === 0 && qs['1v1'] === 0 && qs['2v2'] === 0;
 }
+
+/**
+ * This machine's OWN live counts, as a FLOOR under the database's answer.
+ *
+ * The aggregate is assembled from rows every machine writes about itself, so between
+ * a socket opening here and this machine's row landing in Postgres, the query
+ * genuinely returns a total that does not include a player this process is holding a
+ * socket to. Measured against production: a real client connected, and /api/presence
+ * answered `online: 0` for ~8s afterwards — from the very machine serving that
+ * socket. It knew, and said zero anyway.
+ *
+ * `max` per field, applied at RESPONSE time and never folded into the cache: the
+ * cached value stays the pure database answer, so this can never outlive the socket
+ * it describes. It cannot over-count either — a fresh row for this machine is already
+ * in the sum, and the max is then a no-op.
+ */
+function withLocal(v: GlobalPresence): GlobalPresence {
+  const qs = matchmaker.queueSizes();
+  return {
+    online: Math.max(v.online, onlineCount),
+    signedIn: Math.max(v.signedIn, authedUsers.size),
+    queues: {
+      '1v1': Math.max(v.queues['1v1'], qs['1v1']),
+      '2v2': Math.max(v.queues['2v2'], qs['2v2']),
+    },
+  };
+}
+
+/** How long the cached DB answer may be reused. The long TTL is for ONE case — a
+ *  quiet machine on an apparently quiet site — because that is the only case where
+ *  nobody is waiting on the number. If anyone is online ANYWHERE, the site is in use
+ *  and the count is worth keeping honest. */
+function presenceTtl(full: boolean): number {
+  if (full || !machineIdle()) return PRESENCE_TTL_BUSY_MS;
+  if (presenceCache && presenceCache.val.online > 0) return PRESENCE_TTL_BUSY_MS;
+  return PRESENCE_TTL_QUIET_MS;
+}
+
 async function aggregatePresence(full = false): Promise<GlobalPresence> {
   const now = Date.now();
-  const ttl = full || !machineIdle() ? PRESENCE_TTL_BUSY_MS : PRESENCE_TTL_IDLE_MS;
-  if (presenceCache && now - presenceCache.at < ttl) return presenceCache.val;
+  if (presenceCache && now - presenceCache.at < presenceTtl(full)) return withLocal(presenceCache.val);
   const val = await globalPresence();
   presenceCache = { at: now, val };
-  return val;
+  return withLocal(val);
 }
 
 const httpServer = createServer((req, res) => {
@@ -872,7 +918,16 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
   // joins/rejoins). Passed to detach on close so a stale socket that a newer
   // reconnect already superseded can't knock the live player offline.
   let conn = 0;
+  const wasEmpty = onlineCount === 0;
   onlineCount++;
+  // FIRST arrival after a quiet spell: publish immediately rather than waiting up to
+  // 5s for the next tick, and drop the cached answer — it was computed when this
+  // machine was empty, so serving it again would report a zero we already know is
+  // wrong. Only on the EDGE, so a busy machine still writes at its normal cadence.
+  if (wasEmpty) {
+    presenceCache = null;
+    beatNow();
+  }
   // the authed user this socket belongs to (set once its JWT verifies), so the
   // signed-in tally can be decremented cleanly on close
   let authedUserId: string | null = null;
@@ -1210,6 +1265,7 @@ if (dbEnabled) {
     );
   };
   beat();
+  beatNow = beat;
   const hb = setInterval(beat, 5_000);
   hb.unref();
 }

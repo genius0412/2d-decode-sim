@@ -1987,21 +1987,26 @@ export async function upsertPresence(
  * (a user connected from two regions counts once). */
 export async function globalPresence(freshSeconds = 15): Promise<GlobalPresence> {
   const win = `${Math.max(1, Math.floor(freshSeconds))} seconds`;
-  const agg = await q<{ online: number; q1: number; q2: number }>(
-    `select coalesce(sum(online), 0)::int as online,
+  // ONE round trip, not two. This is the most-called query on the service and every
+  // refresh used to cost a pair of statements — the sum, then a separate
+  // `count(distinct)` over the same rows. Folding the distinct into a sub-select on a
+  // shared CTE halves the per-refresh cost, which is what pays for the shorter cache
+  // TTL in server/index.ts: accuracy and cost were traded against each other here, and
+  // this is the move that buys both.
+  const rows = await q<{ online: number; q1: number; q2: number; signed_in: number }>(
+    `with fresh as (
+       select * from presence where updated_at > now() - $1::interval
+     )
+     select coalesce(sum(online), 0)::int as online,
             coalesce(sum(q1v1), 0)::int as q1,
-            coalesce(sum(q2v2), 0)::int as q2
-       from presence where updated_at > now() - $1::interval`,
+            coalesce(sum(q2v2), 0)::int as q2,
+            (select count(distinct uid)::int
+               from fresh f, jsonb_array_elements_text(f.authed) as uid) as signed_in
+       from fresh`,
     [win],
   );
-  const su = await q<{ n: number }>(
-    `select count(distinct uid)::int as n
-       from presence p, jsonb_array_elements_text(p.authed) as uid
-      where p.updated_at > now() - $1::interval`,
-    [win],
-  );
-  const a = agg[0] ?? { online: 0, q1: 0, q2: 0 };
-  return { online: a.online, signedIn: su[0]?.n ?? 0, queues: { '1v1': a.q1, '2v2': a.q2 } };
+  const a = rows[0] ?? { online: 0, q1: 0, q2: 0, signed_in: 0 };
+  return { online: a.online, signedIn: a.signed_in ?? 0, queues: { '1v1': a.q1, '2v2': a.q2 } };
 }
 
 // ------------------------------------------------------------- friends ------

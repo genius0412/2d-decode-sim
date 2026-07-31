@@ -480,6 +480,57 @@ async function main(): Promise<void> {
     (await repo.searchUsersByName('own'))[0]?.role === 'owner',
   );
 
+  // ---- global presence aggregation ---------------------------------------
+  // Rewritten from two statements into one (the sum, plus a distinct-count over the
+  // same rows) to halve the cost of the site's most-called query. It had no coverage,
+  // and the failure mode is a WRONG NUMBER rather than an error, so it needs some.
+  await db.query(`delete from presence`);
+  const beat = (m: string, region: string, online: number, authed: string[], q1 = 0, q2 = 0) =>
+    repo.upsertPresence(m, region, online, authed, q1, q2);
+  await beat('m-iad', 'iad', 3, ['u1', 'u2'], 1, 0);
+  await beat('m-lhr', 'lhr', 2, ['u2', 'u3'], 0, 2);
+  let pres = await repo.globalPresence();
+  check('presence: sockets are summed across regions', pres.online === 5, `online=${pres.online}`);
+  check(
+    'presence: signed-in users are DEDUPED across regions (u2 is on both)',
+    pres.signedIn === 3,
+    `signedIn=${pres.signedIn}`,
+  );
+  check(
+    'presence: queue depths are summed per bucket',
+    pres.queues['1v1'] === 1 && pres.queues['2v2'] === 2,
+    JSON.stringify(pres.queues),
+  );
+
+  // a machine that stopped beating drops out — that is how a crashed/stopped region
+  // is forgotten, and it is why a BUSY machine must keep writing inside the window
+  await db.query(`update presence set updated_at = now() - interval '60 seconds' where machine = 'm-lhr'`);
+  pres = await repo.globalPresence();
+  check('presence: a stale machine is excluded entirely', pres.online === 3, `online=${pres.online}`);
+  check('presence: ...including its signed-in users', pres.signedIn === 2, `signedIn=${pres.signedIn}`);
+  check(
+    'presence: ...and its queue depth',
+    pres.queues['2v2'] === 0,
+    JSON.stringify(pres.queues),
+  );
+
+  // re-beating the SAME machine id overwrites rather than accumulating a ghost row
+  await beat('m-iad', 'iad', 1, ['u1']);
+  const n = (await db.query<{ c: string }>(`select count(*)::text as c from presence`)).rows[0].c;
+  pres = await repo.globalPresence();
+  check('presence: a machine re-beating updates its row, never adds one', n === '2', `rows=${n}`);
+  check('presence: the updated count replaces the old one', pres.online === 1, `online=${pres.online}`);
+
+  // everything quiet: zero, not null/NaN
+  await db.query(`update presence set updated_at = now() - interval '60 seconds'`);
+  pres = await repo.globalPresence();
+  check(
+    'presence: an empty world aggregates to a clean zero',
+    pres.online === 0 && pres.signedIn === 0 && pres.queues['1v1'] === 0 && pres.queues['2v2'] === 0,
+    JSON.stringify(pres),
+  );
+  await db.query(`delete from presence`);
+
   // ---- player search: @username OR display name --------------------------
   // The box says "name or @username", so both have to actually find someone. The
   // handle arm is a WORD prefix, which is the half that is easy to get wrong: it must
