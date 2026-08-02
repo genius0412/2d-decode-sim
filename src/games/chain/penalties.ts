@@ -1,4 +1,5 @@
 import type { Alliance, RobotState, Vec2, World } from '../../types';
+import { hyp } from '../../math';
 import { robotCorners } from '../../sim/physics';
 import { awardFoul } from '../../sim/scoring';
 import { accelSide } from './state';
@@ -82,7 +83,7 @@ function robotsContact(A: RobotState, B: RobotState): boolean {
 function edgeNormal(p: Vec2, q: Vec2): Vec2 {
   const dx = q.x - p.x;
   const dy = q.y - p.y;
-  const l = Math.hypot(dx, dy) || 1;
+  const l = hyp(dx, dy) || 1;
   return { x: -dy / l, y: dx / l };
 }
 

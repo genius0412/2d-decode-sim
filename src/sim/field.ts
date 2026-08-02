@@ -1,6 +1,6 @@
 import type { Alliance, RobotSpec, StartPose, Vec2 } from '../types';
 import * as C from '../config';
-import { rot } from '../math';
+import { rot, hyp } from '../math';
 
 export type { StartPose } from '../types';
 
@@ -97,7 +97,7 @@ export function goalCenter(a: Alliance): Vec2 {
  * the ramp can't drift between them. */
 export function flywheelSpinTarget(a: Alliance, pos: Vec2): number {
   const g = goalCenter(a);
-  const d = Math.hypot(g.x - pos.x, g.y - pos.y);
+  const d = hyp(g.x - pos.x, g.y - pos.y);
   const t = (d - C.FLY_SPIN_NEAR) / (C.FLY_SPIN_FAR - C.FLY_SPIN_NEAR);
   return t < 0 ? 0 : t > 1 ? 1 : t;
 }
@@ -439,7 +439,7 @@ function startLoci(a: Alliance): [Vec2, Vec2][] {
 export function snapStartToLegal(spec: RobotSpec, pose: StartPose, a: Alliance): StartPose {
   if (evalStartPose(spec, pose, a).legal) return pose;
   const e = footprintExtents(spec);
-  const reach = Math.hypot(Math.max(e.front, e.rear), e.half); // max center→corner
+  const reach = hyp(Math.max(e.front, e.rear), e.half); // max center→corner
   const headings = [pose.headingDeg];
   for (let dh = 15; dh <= 180; dh += 15) headings.push(pose.headingDeg + dh, pose.headingDeg - dh);
 
@@ -448,7 +448,7 @@ export function snapStartToLegal(spec: RobotSpec, pose: StartPose, a: Alliance):
   for (const [p, q] of startLoci(a)) {
     const nx = -(q.y - p.y);
     const ny = q.x - p.x;
-    const nlen = Math.hypot(nx, ny) || 1;
+    const nlen = hyp(nx, ny) || 1;
     // inward normal points toward the field interior (away from the surface)
     let inx = nx / nlen;
     let iny = ny / nlen;

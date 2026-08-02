@@ -2,6 +2,8 @@
  * Headless smoke test of the sim core: drives, shoots (incl. on the move),
  * opens the gate, and checks scoring math. Run with: npx tsx scripts/smoke.ts
  */
+import { readdirSync, readFileSync } from 'node:fs';
+import { join as joinPath } from 'node:path';
 import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
@@ -60,6 +62,7 @@ import {
   HP_INITIAL_STOCK,
   HP_PLACE_DELAY,
   BALANCE_VERSION,
+  SIM_VERSION,
   INTAKE_PRESETS,
   ROBOT_PRESETS,
   ROBOT_MAX_SIZE,
@@ -100,6 +103,8 @@ import {
   maxMatchTicks,
   REPLAY_FORMAT,
   type CommandSource,
+  replayViewpoint,
+  type Replay,
   type ReplayResult,
 } from '../src/sim/replay';
 import { Room, type Client } from '../server/room';
@@ -3194,6 +3199,63 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- SOURCE GUARD: no engine-defined math anywhere the sim can reach --------
+// The accuracy checks below prove `dsin`/`dcos`/`datan2` are good replacements.
+// They do NOT prove anyone USED them, and that is the gap this closes: six
+// `Math.hypot` calls had drifted into drivetrain/field/physics/CR-penalties, one
+// of them in `motorStep` — every robot, every tick. `Math.hypot` is not
+// correctly-rounded, so its result is the engine's choice; the sim then produces
+// a different match on an engine that chooses differently, which is a desync in
+// live play (the client predicts) and a wrong game on replay (recorded in Node,
+// re-simulated in a browser). Swapping those six to `hyp` measurably moved a
+// match score, so this is load-bearing, not hygiene.
+//
+// A grep, deliberately: the rule is "don't write this", and only reading the
+// source can check it. `Math.round/floor/ceil/abs/min/max/sqrt/sign/trunc/imul`
+// are IEEE-exact and stay allowed.
+{
+  const BANNED = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'hypot',
+    'pow', 'exp', 'expm1', 'log', 'log2', 'log10', 'log1p', 'cbrt', 'fround', 'random'];
+  const rx = new RegExp(`Math\\.(${BANNED.join('|')})\\s*\\(`);
+  const roots = ['src/sim', 'src/games'];
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = joinPath(dir, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!e.name.endsWith('.ts') || e.name.endsWith('.d.ts')) continue;
+      // renderers are NOT sim-reachable — they read world state and draw it, so
+      // an engine-specific cosine there changes pixels, never the match
+      if (/^(draw|render)/i.test(e.name)) continue;
+      readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+        const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
+        if (rx.test(code)) offenders.push(`${p}:${i + 1}`);
+      });
+    }
+  };
+  for (const r of roots) walk(r);
+  check(
+    'sim source uses NO engine-defined Math (hypot/sin/cos/pow/random/…) — cross-engine desync',
+    offenders.length === 0,
+    offenders.join(', '),
+  );
+  // and the sim must not read wall-clock time either (same determinism contract)
+  const clockers: string[] = [];
+  const walkClock = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = joinPath(dir, e.name);
+      if (e.isDirectory()) { walkClock(p); continue; }
+      if (!e.name.endsWith('.ts') || /^(draw|render)/i.test(e.name)) continue;
+      readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+        const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
+        if (/\bDate\.now\s*\(|\bnew Date\s*\(|performance\.now\s*\(/.test(code)) clockers.push(`${p}:${i + 1}`);
+      });
+    }
+  };
+  for (const r of roots) walkClock(r);
+  check('sim source reads NO wall clock (Date/performance) — replays must be pure', clockers.length === 0, clockers.join(', '));
+}
+
 // ---- deterministic trig: cross-engine lockstep needs Math-free sin/cos/atan2 -
 // (Math.sin/cos/tan/atan2 are not correctly-rounded, so they differ across
 // browsers and fork a lockstep sim; dsin/dcos/dtan/datan2 are pure +,-,*,/ )
@@ -3280,6 +3342,12 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   const run = runRecordMatch(0x51ce, solo, drive);
   check('record match runs to phase "post"', run.world.match.phase === 'post');
   check('replay stamped with format + balance version', run.replay.format === REPLAY_FORMAT && run.replay.balanceVersion === BALANCE_VERSION);
+  // the SIM-BEHAVIOUR stamp: what decides whether THIS build can re-simulate the
+  // log at all. Separate from balanceVersion so a determinism fix can invalidate
+  // stale replays without resetting the competitive season (config.ts SIM_VERSION).
+  check('replay stamped with the sim-behaviour version', run.replay.sim === SIM_VERSION);
+  check('...and a replay with no sim stamp reads as 0, never as current',
+    ((({ ...run.replay, sim: undefined }) as Replay).sim ?? 0) === 0);
   const entries0 = (run.replay.tracks[0]?.length ?? 0) / 5;
   check('replay recorded a non-trivial run', run.replay.ticks > 1000 && entries0 >= 2);
   check('replay hold-last compresses (entries << ticks)', entries0 * 20 < run.replay.ticks, `${entries0} entries / ${run.replay.ticks} ticks`);
@@ -3289,6 +3357,36 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   check('verifyReplay reproduces the final worldHash', v.hash === run.result.hash, `${v.hash} vs ${run.result.hash}`);
   check('verifyReplay reproduces the score', v.score.blue === run.result.score.blue && v.score.red === run.result.score.red);
   check('verifyReplay reproduces the tick count', v.ticks === run.result.ticks);
+
+  // ---- WHOSE VIEW the replay is watched from ------------------------------
+  // The camera swings a full 180° between alliances, so the wrong seat shows every
+  // robot at the wrong end of the field driving the wrong way — which reads, to the
+  // person who played it, as the replay having DIVERGED. The viewer defaulted to
+  // setups[0], and a staged 1v1 roster always puts red at index 0, so it was wrong
+  // for exactly the blue player in every match: the two people in one match saw
+  // mirror images of the same replay.
+  {
+    const vs = [
+      { id: 0, alliance: 'red' as Alliance, spec: DEFAULT_SPEC, assists: DEFAULT_ASSISTS, startIndex: 0 },
+      { id: 1, alliance: 'blue' as Alliance, spec: DEFAULT_SPEC, assists: DEFAULT_ASSISTS, startIndex: 1 },
+    ];
+    check('viewpoint: the RED driver watches from red', replayViewpoint(vs, 0).alliance === 'red');
+    check('viewpoint: the BLUE driver watches from BLUE, not from roster order',
+      replayViewpoint(vs, 1).alliance === 'blue' && replayViewpoint(vs, 1).robotId === 1);
+    check('viewpoint: the two drivers get OPPOSITE cameras (the bug: they got the same one)',
+      replayViewpoint(vs, 0).alliance !== replayViewpoint(vs, 1).alliance);
+    check('viewpoint: ...and each is marked as their OWN robot',
+      replayViewpoint(vs, 0).robotId === 0 && replayViewpoint(vs, 1).robotId === 1);
+    // a non-participant (leaderboard link) has no seat — fall back to the first
+    // setup, which is right for the opponent-free record runs that fill the boards
+    check('viewpoint: a watcher who was not in the match falls back to setups[0]',
+      replayViewpoint(vs).alliance === 'red' && replayViewpoint(vs, null).alliance === 'red');
+    check('viewpoint: an unknown robot id falls back rather than throwing',
+      replayViewpoint(vs, 99).robotId === 0);
+    check('viewpoint: a solo record run reads its own alliance',
+      replayViewpoint([{ id: 0, alliance: 'blue' as Alliance, spec: DEFAULT_SPEC, assists: DEFAULT_ASSISTS, startIndex: 0 }]).alliance === 'blue');
+  }
+
   // referential determinism: a second re-sim is identical
   check('simulateReplay is referentially stable', worldHash(simulateReplay(run.replay)) === v.hash);
 
@@ -3362,6 +3460,54 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       `${verifyReplay(res.replay).hash} vs ${res.result.hash}`,
     );
     check('server replay stamped with balance version', res.replay.balanceVersion === BALANCE_VERSION);
+  }
+}
+
+// ---- a MULTIPLAYER match's replay must re-simulate exactly ------------------
+// The check above covers a solo record room: ONE robot, one input stream, no
+// robot-robot contact. That is the easy half, and it was the only half covered —
+// so nothing was watching the case the desync report was actually about. A versus
+// room runs two independently-commanded robots that shove each other through
+// Rapier, which is where a recording gap (a command applied but not logged, or
+// logged at the wrong tick) would actually show up.
+{
+  const msgs: ServerMsg[] = [];
+  const mkVs = (id: string, alliance: Alliance): Client => ({
+    id,
+    send: (m) => msgs.push(m),
+    player: {
+      clientId: id, name: id, teamName: 'T', teamNumber: 1, alliance,
+      startIndex: alliance === 'red' ? 0 : 1, ready: true,
+      spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS },
+    },
+    connected: true, disconnectAt: 0, userId: `u-${id}`,
+  });
+  const room = new Room('smoke-vs-replay', () => {}, { kind: 'versus' });
+  room.add(mkVs('va', 'red'));
+  room.add(mkVs('vb', 'blue'));
+  room.onMessage('va', { t: 'start' });
+  // two DIFFERENT time-varying streams, so the robots genuinely interact rather
+  // than sitting on their start poses running identical inputs
+  const vcap = maxMatchTicks();
+  for (let t = 1; t <= vcap; t++) {
+    room.onMessage('va', { t: 'input', tick: t, q: quantizeCommand({ driveX: dsin(t / 37), driveY: dcos(t / 53), rotate: dsin(t / 91), intake: true, fire: t % 7 === 0 }) });
+    room.onMessage('vb', { t: 'input', tick: t, q: quantizeCommand({ driveX: dcos(t / 41), driveY: dsin(t / 29), rotate: dcos(t / 67), intake: t % 3 !== 0, fire: t % 11 === 0 }) });
+  }
+  room.advanceForTest(vcap + 400);
+  const vres = msgs.find((m) => m.t === 'matchResult');
+  check('versus Room emits a matchResult', !!vres);
+  if (vres && vres.t === 'matchResult') {
+    const rv = verifyReplay(vres.replay);
+    check('MULTIPLAYER replay re-simulates to the authoritative world (no desync)',
+      rv.hash === vres.result.hash, `${rv.hash} vs ${vres.result.hash}`);
+    check('multiplayer replay reproduces BOTH alliances’ scores',
+      rv.score.red === vres.result.score.red && rv.score.blue === vres.result.score.blue,
+      `${JSON.stringify(rv.score)} vs ${JSON.stringify(vres.result.score)}`);
+    check('multiplayer replay reproduces the tick count', rv.ticks === vres.result.ticks);
+    check('multiplayer replay logged a track per robot', Object.keys(vres.replay.tracks).length === 2);
+    check('multiplayer replay is a real contested match (both sides scored)',
+      vres.result.score.red > 0 && vres.result.score.blue > 0,
+      JSON.stringify(vres.result.score));
   }
 }
 

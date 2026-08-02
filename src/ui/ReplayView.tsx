@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReplay } from '../net/api';
-import { ReplayPlayer, REPLAY_FORMAT, type Replay } from '../sim/replay';
+import { ReplayPlayer, REPLAY_FORMAT, replayViewpoint, type Replay } from '../sim/replay';
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
-import { SIM_DT, BALANCE_VERSION } from '../config';
+import { SIM_DT, BALANCE_VERSION, SIM_VERSION } from '../config';
 import type { MatchPhase } from '../types';
 
 /**
@@ -17,11 +17,16 @@ import type { MatchPhase } from '../types';
 export function ReplayView({
   replayId,
   preloadReplay,
+  viewerRobotId,
   onClose,
 }: {
   replayId?: string;
   /** a replay already in hand (just-played run) — skips the fetch */
   preloadReplay?: Replay;
+  /** the robot the WATCHER drove, so the camera sits behind their own driver
+   * station rather than whichever alliance happens to be first on the roster.
+   * See `replayViewpoint` — getting this wrong mirrors the whole field. */
+  viewerRobotId?: number | null;
   onClose: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -54,7 +59,10 @@ export function ReplayView({
       // update (BALANCE_VERSION bump) or a replay-container change (REPLAY_FORMAT),
       // re-running it here would diverge, so refuse playback and say why instead of
       // showing a silently-wrong game.
-      if (r.format !== REPLAY_FORMAT || r.balanceVersion !== BALANCE_VERSION) {
+      // `sim` is the SIM-BEHAVIOUR version (see config.ts SIM_VERSION) — bumped by
+      // determinism/physics fixes that are not balance decisions and so must not
+      // reset the competitive season. Absent ⇒ 0 ⇒ recorded before it existed.
+      if (r.format !== REPLAY_FORMAT || r.balanceVersion !== BALANCE_VERSION || (r.sim ?? 0) !== SIM_VERSION) {
         setStaleVersion(r.balanceVersion ?? null);
         setStatus('stale');
         return;
@@ -95,8 +103,8 @@ export function ReplayView({
     const ctx = canvas.getContext('2d')!;
     const r = replay.current!;
     const rend = renderer.current!;
-    const localId = r.setups[0]?.id ?? 0;
-    const alliance = r.setups[0]?.alliance ?? 'blue';
+    // watch it from the seat the WATCHER actually sat in — see `replayViewpoint`
+    const { robotId: localId, alliance } = replayViewpoint(r.setups, viewerRobotId);
     // CR's field is larger (protruding goals) — configure the camera with the game's
     // bounds so a CR replay isn't cropped to DECODE's field.
     const bounds = moduleFor(r.game).bounds;
@@ -136,7 +144,7 @@ export function ReplayView({
       window.clearInterval(readout);
       window.removeEventListener('resize', resize);
     };
-  }, [status]);
+  }, [status, viewerRobotId]);
 
   /** pull tick + scoreboard off the sim in one go, so seeking/restarting can't
    *  leave the score showing a different moment than the field does. */

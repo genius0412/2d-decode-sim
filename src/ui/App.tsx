@@ -293,6 +293,10 @@ export function App() {
   const [sessionKind, setSessionKind] = useState<ActiveGameRef['kind'] | null>(null);
   // a just-played replay to watch in-memory (not yet persisted, so no URL id)
   const [replayObj, setReplayObj] = useState<Replay | null>(null);
+  // which robot the WATCHER drove in that replay, so the viewer puts them behind
+  // their own driver station instead of whichever alliance is first on the roster
+  // (the camera flips a full 180° between alliances — see `replayViewpoint`).
+  const [replayRobot, setReplayRobot] = useState<number | null>(null);
   // one-time "this simulation isn't realistic" disclaimer (shown the first time CR is
   // the selected game, on this device; dismissal persists in localStorage)
   const [showChainDisclaimer, setShowChainDisclaimer] = useState(false);
@@ -791,6 +795,8 @@ export function App() {
         onRestartRun={sessionKind === 'record' ? restartRun : undefined}
         onWatchReplay={(r) => {
           setReplayObj(r);
+          // capture the seat NOW: `session` is torn down on the way out of the game
+          setReplayRobot(session?.localRobotId ?? null);
           navigate('replay');
         }}
       />
@@ -857,6 +863,7 @@ export function App() {
       <ReplayView
         replayId={route.replayId ?? undefined}
         preloadReplay={replayObj ?? undefined}
+        viewerRobotId={replayObj ? replayRobot : null}
         onClose={() => (replayObj ? navigate('home') : navigate('records'))}
       />
     );

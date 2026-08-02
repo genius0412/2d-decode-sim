@@ -1,6 +1,6 @@
 import type { DrivetrainType, IntakeStyle, RobotSpec } from '../types';
 import * as C from '../config';
-import { clamp, approach } from '../math';
+import { clamp, approach, hyp } from '../math';
 
 /** derived per-robot drive parameters. Everything the drivetrain influences
  * comes from the spec: type multipliers × RPM (speed up / accel down) × mass
@@ -86,9 +86,9 @@ export function motorStepVec(
 ): { x: number; y: number } {
   const ex = tx - vx;
   const ey = ty - vy;
-  const eMag = Math.hypot(ex, ey);
+  const eMag = hyp(ex, ey);
   if (eMag === 0) return { x: vx, y: vy };
-  const speed = Math.hypot(vx, vy);
+  const speed = hyp(vx, vy);
   const braking = ex * vx + ey * vy < 0; // the demanded change opposes current motion
   let frac: number;
   if (braking) {

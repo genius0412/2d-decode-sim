@@ -49,6 +49,27 @@ export const BALANCE_VERSION = 3; // 2: real-motor drivetrain retune (torque–s
 // Bumping this INVALIDATES older replays for playback (they only re-sim exactly under their own
 // version's build): ReplayView gates on it and shows "recorded on an older version" instead.
 
+/**
+ * SIM BEHAVIOUR version — "which builds can re-simulate a replay", which is a
+ * DIFFERENT question from "which competitive season is this".
+ *
+ * BALANCE_VERSION answers the second: it keys leaderboards, so bumping it starts
+ * a fresh season and archives the standings. That makes it the wrong tool for the
+ * first. A determinism or float-level physics FIX changes what `step()` produces
+ * without being a balance decision at all — and shipping one has only two
+ * outcomes if this axis doesn't exist: reset everyone's season over a bug fix, or
+ * leave stored replays silently re-simulating into a different game than the one
+ * that was played. That second option is the exact failure this constant exists
+ * to prevent, so it gets its own number.
+ *
+ * Bump on ANY change to sim math, physics, or step ordering that moves the
+ * output. Never reset it. Leaderboards, ELO and seasons DO NOT read it — only
+ * replay playback does (`ReplayView` refuses a mismatch and says so).
+ *
+ * 1: sim-reachable Math.hypot -> hyp (engine-independent; see src/math.ts)
+ */
+export const SIM_VERSION = 1;
+
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).
  * Until placed they are HIDDEN from the leaderboard and shown a "?" plus an
