@@ -92,6 +92,8 @@ export class ServerSession implements NetSession {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   /** smoothed round-trip time (EWMA over pong samples), null until the first pong */
   private rttMs: number | null = null;
+  /** live watcher count from the server (`spectators`), as players are told it */
+  private spectators = 0;
   /** RAW round-trip samples (oldest→newest) for the ping graph — un-smoothed so a
    * spike shows as a spike */
   private readonly rttSamples: number[] = [];
@@ -189,6 +191,10 @@ export class ServerSession implements NetSession {
     return this.recordResult;
   }
 
+  spectatorCount(): number {
+    return this.spectators;
+  }
+
   status(): NetStatus {
     // snapshot rate + jitter from the recent inter-arrival gaps (mean + mean-abs-dev)
     let snapHz: number | null = null;
@@ -280,6 +286,8 @@ export class ServerSession implements NetSession {
       // also keep the RAW sample for the ping graph (spikes the EWMA would smooth away)
       this.rttSamples.push(sample);
       if (this.rttSamples.length > RTT_HISTORY) this.rttSamples.shift();
+    } else if (m.t === 'spectators') {
+      this.spectators = m.n;
     } else if (m.t === 'matchResult') {
       this.matchResult = { kind: m.kind, record: m.record, result: m.result, replay: m.replay };
     } else if (m.t === 'eloResult') {

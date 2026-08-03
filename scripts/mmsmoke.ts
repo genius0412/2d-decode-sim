@@ -364,6 +364,22 @@ const namesOf = (m: PendingMatch | undefined): string =>
   check('stagedFor: ...and for nobody else (a code-guesser is still refused)', !staged.stagedFor('u-stranger'));
 }
 
+// ---- the operator view of the queue -----------------------------------------
+// A depth count cannot distinguish "nobody is queueing" from "everybody is queueing
+// and nothing is pairing", which is exactly the failure an operator gets called
+// about. The bucket + the WAIT is what separates them. Ranked requires an account,
+// so every row here already belongs to a signed-in player — there is no guest data
+// in this surface by construction.
+{
+  const { mm } = await pair([entry('a', '1v1'), entry('x', '2v2')]);
+  const q = mm.queuedPlayers(30_000);
+  check('operator queue: reports each waiting account', q.length === 2, JSON.stringify(q));
+  check('operator queue: with its bucket', q.find((e) => e.userId === 'u-a')?.mode === '1v1');
+  check('operator queue: and how long it has been waiting', q.find((e) => e.userId === 'u-a')?.waitedS === 30);
+  check('operator queue: an anonymous entry cannot appear (ranked needs an account)',
+    q.every((e) => !!e.userId));
+}
+
 // ---- queue depth reporting --------------------------------------------------
 {
   const { mm } = await pair([

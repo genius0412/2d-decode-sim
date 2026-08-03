@@ -604,6 +604,17 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
                 🌐 {hud.net.server}
               </span>
             )}
+            {/* who is watching. Shown only when somebody IS: a standing "0 watching"
+                is noise on an already-busy chip row, and the moment worth surfacing
+                is the one where the number stops being zero. */}
+            {hud.spectators > 0 && (
+              <span
+                className="chip on"
+                title={`${hud.spectators} ${hud.spectators === 1 ? 'person is' : 'people are'} watching this match live`}
+              >
+                👁 {hud.spectators}
+              </span>
+            )}
             {hud.net && !hud.net.waitingFor && (
               <NetQuality
                 net={hud.net}

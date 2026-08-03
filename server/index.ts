@@ -37,6 +37,10 @@ import {
   deleteAnnouncement,
   upsertPresence,
   globalPresence,
+  globalLiveRooms,
+  adminPresence,
+  type PresencePlayer,
+  type PresenceAnon,
   challengeParty,
   syncStaffRoles,
   type GlobalPresence,
@@ -305,12 +309,85 @@ function presenceTtl(full: boolean): number {
   return PRESENCE_TTL_QUIET_MS;
 }
 
+/**
+ * This machine's operator snapshot: what each SIGNED-IN account is doing, plus a
+ * COUNT of anonymous sessions.
+ *
+ * Deliberately assembled from state the server already holds to run matches — room
+ * membership, queue membership, socket counts. Nothing is asked of any client to
+ * build it, and there is no field for which screen someone is on: knowing a player
+ * is "in Configure" moderates nothing, and collecting it would be tracking for its
+ * own sake. `menu` here means "connected, not in a room and not queued", which is
+ * the same resolution the player's own friends already see.
+ *
+ * ANONYMOUS sessions are bucketed and never itemised. The only lever against a
+ * guest is their connection or their room — both reachable without knowing who
+ * they are — so an identifier would add surveillance without adding a remedy.
+ */
+function operatorSnapshot(): { players: PresencePlayer[]; anon: PresenceAnon } {
+  const byUser = new Map<string, PresencePlayer>();
+  let anonInRoom = 0;
+  let anonInMatch = 0;
+  for (const [code, r] of rooms) {
+    const s = r.presenceSnapshot();
+    for (const p of s.players) byUser.set(p.userId, { userId: p.userId, act: p.act, room: code, game: r.gameId });
+    anonInRoom += s.anon;
+    if (r.hasWorld) anonInMatch += s.anon;
+  }
+  // queue membership layers ON TOP of where they are: the whole point of the
+  // background queue is that you can be queued while doing something else, and an
+  // operator debugging "my search never resolved" needs to see both at once
+  for (const q of matchmaker.queuedPlayers()) {
+    const cur = byUser.get(q.userId);
+    byUser.set(q.userId, {
+      ...(cur ?? { userId: q.userId, act: 'menu' as const }),
+      queue: q.mode,
+      queuedS: q.waitedS,
+      game: cur?.game ?? q.game,
+    });
+  }
+  // signed in, connected, doing neither
+  for (const uid of authedUsers.keys()) {
+    if (!byUser.has(uid)) byUser.set(uid, { userId: uid, act: 'menu' });
+  }
+  let authedSockets = 0;
+  for (const n of authedUsers.values()) authedSockets += n;
+  const total = Math.max(0, onlineCount - authedSockets);
+  return {
+    players: [...byUser.values()],
+    anon: {
+      total,
+      inMatch: Math.min(total, anonInMatch),
+      inLobby: Math.min(total, anonInRoom - anonInMatch),
+      idle: Math.max(0, total - anonInRoom),
+    },
+  };
+}
+
 async function aggregatePresence(full = false): Promise<GlobalPresence> {
   const now = Date.now();
   if (presenceCache && now - presenceCache.at < presenceTtl(full)) return withLocal(presenceCache.val);
   const val = await globalPresence();
   presenceCache = { at: now, val };
   return withLocal(val);
+}
+
+/**
+ * Cross-region live rooms, cached.
+ *
+ * `/api/live` is polled every 4s by everyone sitting on the Watch screen and used
+ * to cost zero database. One shared 3s cache keeps that nearly true: N watchers
+ * cost one query per 3s instead of one each, which matters on a compute that bills
+ * for being awake.
+ */
+const LIVE_TTL_MS = 3_000;
+let liveCache: { at: number; val: unknown[] } | null = null;
+async function aggregateLive(): Promise<unknown[]> {
+  const now = Date.now();
+  if (liveCache && now - liveCache.at < LIVE_TTL_MS) return liveCache.val;
+  const val = await globalLiveRooms();
+  liveCache = { at: now, val };
+  return val;
 }
 
 const httpServer = createServer((req, res) => {
@@ -372,6 +449,45 @@ const httpServer = createServer((req, res) => {
       if (req.method === 'GET' && u.pathname === '/api/admin/status') {
         res.writeHead(200, { ...cors, 'content-type': 'application/json' });
         res.end(JSON.stringify({ isAdmin, userId: user?.userId ?? null }));
+        return;
+      }
+      /**
+       * GET /api/admin/presence — the operator view of who is on the service.
+       *
+       * WHAT THIS SHOWS AND DELIBERATELY DOES NOT:
+       *  - SIGNED-IN accounts: handle, coarse activity (menu/lobby/match), the room
+       *    they are in, and their ranked-queue bucket + wait. Every field is either
+       *    already public (`/api/live` lists live rooms WITH player names) or
+       *    already shown to that player's own friends. Nothing new is collected
+       *    from anyone to build this.
+       *  - ANONYMOUS sessions: COUNTS ONLY, bucketed by activity. No identifier, no
+       *    row, no history. A guest cannot be warned, banned or contacted, so
+       *    identifying one enables no moderation action — it would be surveillance
+       *    with no remedy attached to it.
+       *  - NOBODY: which menu or screen they are on, their inputs, or any timeline.
+       *    The table underneath is a ~5s snapshot that overwrites itself, so this
+       *    cannot answer "what was X doing an hour ago" even in principle.
+       */
+      if (req.method === 'GET' && u.pathname === '/api/admin/presence') {
+        if (!isAdmin) {
+          res.writeHead(403, cors);
+          res.end('forbidden');
+          return;
+        }
+        const machines = dbEnabled ? await adminPresence() : [];
+        const local = operatorSnapshot();
+        res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            region: REGION,
+            machines,
+            // this machine's own numbers too, so a single-region/dev deploy — and
+            // the gap between a socket opening and the next beat — still reads true
+            local: { machine: MACHINE, region: REGION, online: onlineCount, ...local },
+            rooms: [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null),
+            queues: matchmaker.queueSizes(),
+          }),
+        );
         return;
       }
       if (req.method === 'POST' && u.pathname === '/api/admin/announce') {
@@ -714,16 +830,40 @@ const httpServer = createServer((req, res) => {
   }
   // live presence (served here, not in api.ts, because the counts live on this
   // process: the socket registry + the in-memory matchmaker queues)
-  // "Watch Live": every currently-running versus match on THIS host, for the spectator
-  // list. Each entry's `room` code is spectated via the WS `spectate` message.
+  // "Watch Live": every currently-running versus match ACROSS EVERY REGION. Each
+  // entry's `room` code is spectated via the WS `spectate` message.
   if (req.method === 'GET' && req.url?.startsWith('/api/live')) {
-    const live = [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null);
-    res.writeHead(200, {
-      'content-type': 'application/json',
-      'cache-control': 'no-store',
-      'access-control-allow-origin': '*',
-    });
-    res.end(JSON.stringify({ region: REGION, rooms: live }));
+    const local = [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null);
+    const send = (list: unknown[]): void => {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+        'access-control-allow-origin': '*',
+      });
+      res.end(JSON.stringify({ region: REGION, rooms: list }));
+    };
+    // EVERY region, not just this one. Anycast lands each caller on their nearest
+    // machine, and a machine only knows its OWN rooms — so this answered with
+    // whatever happened to be running in the caller's region and silently omitted
+    // the rest of the service. Matches are hosted wherever the matchmaker judged
+    // fairest, which is frequently not where a given spectator is, so "no live
+    // matches right now" was routinely just wrong. Rooms ride the presence
+    // heartbeat (0021); this machine's own list is unioned in on top so a room
+    // started since the last beat is never missing from its own region's answer.
+    if (dbEnabled) {
+      aggregateLive().then(
+        (all) => {
+          const seen = new Set(local.map((r) => (r as { room: string }).room));
+          send([...local, ...all.filter((r) => !seen.has((r as { room: string }).room))]);
+        },
+        (e) => {
+          console.error('[live] aggregate failed, using local:', e);
+          send(local);
+        },
+      );
+    } else {
+      send(local);
+    }
     return;
   }
   // machine-sizing evidence for THIS machine (see the perf probe above). Public and
@@ -1086,15 +1226,29 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
           send({ t: 'error', message: 'That match is no longer live.' });
           return;
         }
-        r.addSpectator({
+        const spec = {
           id,
           send,
           player: { ...sanitizePlayer(undefined, r.config.game), clientId: id },
           connected: true,
           disconnectAt: 0,
           caps: Array.isArray(msg.caps) ? msg.caps : [],
-        });
+        };
         room = r; // route this socket's close → r.detach (drops the spectator)
+        // HIDDEN OBSERVER: an admin may watch without moving the spectator count.
+        // The flag is NEVER taken from the message — `hidden: true` off the wire
+        // would let anyone make themselves invisible. It is set only after this
+        // server verifies the JWT and finds the subject in ADMIN_USER_IDS. Attach
+        // immediately either way so a slow/failed verify never costs the admin the
+        // start of the match; the count is corrected the moment it resolves.
+        if (typeof msg.authToken === 'string' && msg.authToken) {
+          void verifyAuthToken(msg.authToken)
+            .then((u) => {
+              if (u && ADMIN_IDS.has(u.userId)) r.hideSpectator(id);
+            })
+            .catch(() => {});
+        }
+        r.addSpectator(spec);
       } else if (msg.t === 'rejoin') {
         if (room) return;
         const r = rooms.get(msg.room.toLowerCase());
@@ -1275,9 +1429,13 @@ if (dbEnabled) {
       onlineCount === 0 && authedUsers.size === 0 && qs['1v1'] === 0 && qs['2v2'] === 0;
     if (empty && lastBeatEmpty) return; // nothing here, and we already said so
     lastBeatEmpty = empty;
-    upsertPresence(MACHINE, REGION, onlineCount, [...authedUsers.keys()], qs['1v1'], qs['2v2']).catch(
-      (e) => console.error('[presence] heartbeat failed:', e),
-    );
+    const snap = operatorSnapshot();
+    upsertPresence(
+      MACHINE, REGION, onlineCount, [...authedUsers.keys()], qs['1v1'], qs['2v2'],
+      // live rooms ride the SAME beat, so "Watch Live" sees every region (0021)
+      [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null),
+      snap.players, snap.anon,
+    ).catch((e) => console.error('[presence] heartbeat failed:', e));
   };
   beat();
   beatNow = beat;

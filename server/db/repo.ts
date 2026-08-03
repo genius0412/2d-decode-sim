@@ -1964,7 +1964,39 @@ export interface GlobalPresence {
   queues: { '1v1': number; '2v2': number };
 }
 
-/** heartbeat THIS machine's live counts (upsert keyed by machine id). */
+/**
+ * What ONE signed-in account is doing, as the server already knows it.
+ *
+ * Everything here is state the match server must hold anyway to run a game — it is
+ * republished for operators, not gathered for them. And it stops short of a
+ * behavioural record on purpose: `act` is the same coarse bucket the player's own
+ * friends list already shows their friends, and there is deliberately no field for
+ * which screen or menu they are looking at.
+ */
+export interface PresencePlayer {
+  userId: string;
+  /** coarse activity — the friends-list vocabulary, nothing finer */
+  act: 'menu' | 'lobby' | 'match';
+  /** the room they are in, when they are in one (already public via /api/live) */
+  room?: string;
+  /** ranked queue bucket, when queued — the operational fact behind "why is
+   *  matchmaking not pairing?", and the one queue abuse is visible in */
+  queue?: '1v1' | '2v2';
+  /** whole seconds queued so far (a stuck queue is the thing worth seeing) */
+  queuedS?: number;
+  game?: string;
+}
+
+/** ANONYMOUS sessions: counted, never identified — see 0021_presence_detail.sql. */
+export interface PresenceAnon {
+  total: number;
+  inMatch: number;
+  inLobby: number;
+  idle: number;
+}
+
+/** heartbeat THIS machine's live counts (upsert keyed by machine id). SNAPSHOT
+ * only: every field is replaced by the next beat, so nothing accumulates here. */
 export async function upsertPresence(
   machine: string,
   region: string,
@@ -1972,14 +2004,79 @@ export async function upsertPresence(
   authedUserIds: string[],
   q1v1: number,
   q2v2: number,
+  rooms: unknown[] = [],
+  players: PresencePlayer[] = [],
+  anon: PresenceAnon | null = null,
 ): Promise<void> {
   await q(
-    `insert into presence (machine, region, online, authed, q1v1, q2v2, updated_at)
-       values ($1, $2, $3, $4::jsonb, $5, $6, now())
+    `insert into presence (machine, region, online, authed, q1v1, q2v2, rooms, players, anon, updated_at)
+       values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, now())
      on conflict (machine) do update
-       set region = $2, online = $3, authed = $4::jsonb, q1v1 = $5, q2v2 = $6, updated_at = now()`,
-    [machine, region, online, JSON.stringify(authedUserIds), q1v1, q2v2],
+       set region = $2, online = $3, authed = $4::jsonb, q1v1 = $5, q2v2 = $6,
+           rooms = $7::jsonb, players = $8::jsonb, anon = $9::jsonb, updated_at = now()`,
+    [
+      machine, region, online, JSON.stringify(authedUserIds), q1v1, q2v2,
+      JSON.stringify(rooms), JSON.stringify(players), JSON.stringify(anon ?? {}),
+    ],
   );
+}
+
+/** every live room across EVERY region with a fresh heartbeat. This is what makes
+ *  "Watch Live" show the whole service instead of whichever region anycast picked. */
+export async function globalLiveRooms(freshSeconds = 15): Promise<unknown[]> {
+  const rows = await q<{ rooms: unknown[] }>(
+    `select rooms from presence
+      where updated_at > now() - $1::interval and jsonb_array_length(rooms) > 0
+      order by region`,
+    [`${Math.max(1, Math.floor(freshSeconds))} seconds`],
+  );
+  return rows.flatMap((r) => (Array.isArray(r.rooms) ? r.rooms : []));
+}
+
+/** the operator view: per-machine rows with their players + anonymous buckets.
+ *  Handles are resolved HERE rather than stored on the heartbeat, so the snapshot
+ *  itself carries ids only and no names are duplicated into it. */
+export interface AdminPresenceRow {
+  machine: string;
+  region: string;
+  online: number;
+  updatedAt: string;
+  players: (PresencePlayer & { handle: string | null; username: string | null })[];
+  anon: PresenceAnon;
+}
+export async function adminPresence(freshSeconds = 20): Promise<AdminPresenceRow[]> {
+  const rows = await q<{
+    machine: string; region: string; online: number; updated_at: string;
+    players: PresencePlayer[] | null; anon: PresenceAnon | null;
+  }>(
+    `select machine, region, online, updated_at, players, anon from presence
+      where updated_at > now() - $1::interval order by region`,
+    [`${Math.max(1, Math.floor(freshSeconds))} seconds`],
+  );
+  const ids = [...new Set(rows.flatMap((r) => (Array.isArray(r.players) ? r.players : []).map((p) => p.userId)))];
+  const names = new Map<string, { handle: string; username: string | null }>();
+  if (ids.length) {
+    const profs = await q<{ user_id: string; handle: string; username: string | null }>(
+      `select user_id, handle, username from profiles where user_id = any($1::text[])`,
+      [ids],
+    );
+    for (const p of profs) names.set(p.user_id, { handle: p.handle, username: p.username });
+  }
+  return rows.map((r) => ({
+    machine: r.machine,
+    region: r.region,
+    online: r.online,
+    updatedAt: r.updated_at,
+    players: (Array.isArray(r.players) ? r.players : []).map((p) => ({
+      ...p,
+      handle: names.get(p.userId)?.handle ?? null,
+      username: names.get(p.userId)?.username ?? null,
+    })),
+    anon:
+      r.anon && typeof r.anon === 'object' && typeof (r.anon as PresenceAnon).total === 'number'
+        ? r.anon
+        : { total: 0, inMatch: 0, inLobby: 0, idle: 0 },
+  }));
 }
 
 /** aggregate presence over every machine heartbeating within `freshSeconds` (a few

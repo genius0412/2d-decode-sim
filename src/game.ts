@@ -167,6 +167,9 @@ export interface HudSnapshot {
   toasts: Toast[];
   /** multiplayer status (null in solo): stall target + desync + connection quality */
   net: NetStatus | null;
+  /** how many people are watching this match (0 when nobody is, or in solo).
+   *  Hidden admin observers are excluded server-side and never reach this. */
+  spectators: number;
 }
 
 export class GameController {
@@ -1051,6 +1054,7 @@ export class GameController {
           : null,
       toasts: [...this.toasts],
       net: this.session ? this.session.status() : null,
+      spectators: this.session?.spectatorCount?.() ?? 0,
     };
   }
 

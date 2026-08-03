@@ -101,6 +101,17 @@ export interface Client {
    * socket's eventual close must be able to tell it is stale — it carries the conn
    * it was issued and `detach` ignores it if a newer socket has taken over. */
   conn?: number;
+  /**
+   * A SPECTATOR who is not counted in the visible watcher total.
+   *
+   * Only ever set by the server after verifying an admin JWT — never from anything
+   * a client claims — so an ordinary viewer cannot make themselves invisible. It
+   * exists for moderation: watching a suspected cheat play out stops working the
+   * moment the count tells them somebody arrived. It changes what players are told
+   * about who is watching, so it is disclosed in the privacy policy rather than
+   * left as a quiet capability.
+   */
+  hidden?: boolean;
 }
 
 /** one driver's outcome in a finished match (for persistence) */
@@ -225,6 +236,16 @@ export class Room {
     return this.pendingMatch?.game ?? this.config.game ?? 'decode';
   }
 
+  /** which game this room runs (public read for the operator snapshot) */
+  get gameId(): GameId {
+    return this.game;
+  }
+
+  /** is a match actually running here (vs. still a lobby)? */
+  get hasWorld(): boolean {
+    return this.world !== null;
+  }
+
   constructor(
     readonly code: string,
     /** called when the room empties, so the registry can drop it */
@@ -297,6 +318,21 @@ export class Room {
       this.sendSnapshotTo(client);
     }
     this.broadcastRoster();
+    this.broadcastSpectators();
+  }
+
+  /**
+   * Tell the room how many people are watching — edge-triggered, and only when the
+   * number players can SEE actually moved. A hidden admin joining or leaving is a
+   * no-op by construction rather than by a separate code path, which is what keeps
+   * "invisible" honest: there is no message to notice the absence of.
+   */
+  private lastSpecCount = -1;
+  private broadcastSpectators(): void {
+    const n = this.visibleSpectators();
+    if (n === this.lastSpecCount) return;
+    this.lastSpecCount = n;
+    this.broadcast({ t: 'spectators', n });
   }
 
   /** the matchStart payload for a client. `yourRobotId` = -1 for a spectator (no slot). */
@@ -340,8 +376,49 @@ export class Room {
       ranked: this.ranked,
       players,
       score: { red: w.match.scores.red.total, blue: w.match.scores.blue.total },
-      spectators: this.spectators.size,
+      spectators: this.visibleSpectators(),
     };
+  }
+
+  /** Mark an already-attached spectator as a hidden observer and correct the count.
+   *  Called ONLY from the server's own admin-JWT verification (see the `spectate`
+   *  handler) — there is no path from a client message to this. */
+  hideSpectator(id: string): void {
+    const s = this.spectators.get(id);
+    if (!s || s.hidden) return;
+    s.hidden = true;
+    this.broadcastSpectators();
+  }
+
+  /** watchers as PLAYERS are told about them: hidden admin observers excluded.
+   *  One definition, used by the Watch Live card and the in-match readout, so the
+   *  two can never disagree about whether somebody is being counted. */
+  visibleSpectators(): number {
+    let n = 0;
+    for (const s of this.spectators.values()) if (!s.hidden) n++;
+    return n;
+  }
+
+  /**
+   * Operator snapshot of who is in this room, for the cross-region presence beat.
+   *
+   * Signed-in drivers are listed by ACCOUNT ID and nothing else — the caller joins
+   * the handle at read time, so no names are copied into the heartbeat. Anonymous
+   * drivers are COUNTED and not identified: a guest session cannot be warned,
+   * banned or contacted, so naming one buys no moderation power and would just be
+   * a record of somebody who chose not to make an account. Spectators are excluded
+   * entirely; they are watchers, and the visible count already reports them.
+   */
+  presenceSnapshot(): { players: { userId: string; act: 'lobby' | 'match' }[]; anon: number } {
+    const act: 'lobby' | 'match' = this.world !== null ? 'match' : 'lobby';
+    const players: { userId: string; act: 'lobby' | 'match' }[] = [];
+    let anon = 0;
+    for (const c of this.clients.values()) {
+      if (!c.connected) continue;
+      if (c.userId) players.push({ userId: c.userId, act });
+      else anon++;
+    }
+    return { players, anon };
   }
 
   /** a socket dropped. In the lobby that's an outright leave; mid-match the slot
@@ -353,6 +430,7 @@ export class Room {
       this.snapPrimed.delete(id);
       this.snapAck.delete(id);
       this.broadcastRoster();
+      this.broadcastSpectators();
       return;
     }
     const c = this.clients.get(id);

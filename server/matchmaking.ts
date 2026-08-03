@@ -400,6 +400,31 @@ export class Matchmaker {
     return { '1v1': open('1v1'), '2v2': open('2v2') };
   }
 
+  /**
+   * Who is waiting in the ranked queue right now, for the operator view.
+   *
+   * The queue is the one place a stall is invisible from the outside — "nobody is
+   * matching" and "nobody is queueing" look identical from a depth count — so the
+   * bucket and the WAIT are the numbers that make it diagnosable. Anonymous
+   * entries cannot exist here (ranked requires an account), so there is no
+   * guest data to leak: every row already belongs to a signed-in player.
+   */
+  queuedPlayers(now = this.now()): { userId: string; mode: QueueMode; waitedS: number; game?: GameId }[] {
+    const out: { userId: string; mode: QueueMode; waitedS: number; game?: GameId }[] = [];
+    for (const mode of Object.keys(this.queues) as QueueMode[]) {
+      for (const e of this.queues[mode]) {
+        if (!e.userId) continue;
+        out.push({
+          userId: e.userId,
+          mode,
+          waitedS: Math.max(0, Math.round((now - e.enqueuedAt) / 1000)),
+          game: e.game,
+        });
+      }
+    }
+    return out;
+  }
+
   private broadcastStatus(mode: QueueMode): void {
     // report each waiter the depth of ITS OWN bucket (channel + build) — pairing is
     // bucket-scoped, so a mixed count would falsely read "enough players" and never

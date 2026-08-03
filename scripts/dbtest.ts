@@ -531,6 +531,72 @@ async function main(): Promise<void> {
   );
   await db.query(`delete from presence`);
 
+  // ---- cross-region LIVE ROOMS + the operator view (0021) -----------------
+  // "Watch Live" listed only the caller's own region, because a machine knows only
+  // its own rooms and anycast picks which machine answers. Rooms now ride this same
+  // heartbeat, and the aggregate is what the list reads.
+  await repo.ensureProfile('op-1', 'Ada');
+  await repo.ensureProfile('op-2', 'Grace');
+  await repo.upsertPresence(
+    'm-iad', 'iad', 4, ['op-1'], 1, 0,
+    [{ room: 'iad-a1', mode: '1v1' }],
+    [{ userId: 'op-1', act: 'match', room: 'iad-a1' }],
+    { total: 2, inMatch: 1, inLobby: 0, idle: 1 },
+  );
+  await repo.upsertPresence(
+    'm-nrt', 'nrt', 2, ['op-2'], 0, 0,
+    [{ room: 'nrt-b2', mode: '2v2' }],
+    [{ userId: 'op-2', act: 'menu', queue: '1v1', queuedS: 42 }],
+    { total: 1, inMatch: 0, inLobby: 0, idle: 1 },
+  );
+  const liveAll = (await repo.globalLiveRooms()) as { room: string }[];
+  check(
+    'live rooms: matches from EVERY region come back, not just one',
+    liveAll.length === 2 && liveAll.some((r) => r.room === 'iad-a1') && liveAll.some((r) => r.room === 'nrt-b2'),
+    JSON.stringify(liveAll),
+  );
+  await db.query(`update presence set updated_at = now() - interval '60 seconds' where machine = 'm-nrt'`);
+  check('live rooms: a stale machine’s rooms drop out with it', ((await repo.globalLiveRooms()) as unknown[]).length === 1);
+  await repo.upsertPresence('m-nrt', 'nrt', 2, ['op-2'], 0, 0, [{ room: 'nrt-b2' }], [{ userId: 'op-2', act: 'menu', queue: '1v1', queuedS: 42 }], { total: 1, inMatch: 0, inLobby: 0, idle: 1 });
+
+  const opRows = await repo.adminPresence();
+  const allPlayers = opRows.flatMap((r) => r.players);
+  check('operator view: every region is reported', opRows.length === 2, JSON.stringify(opRows.map((r) => r.region)));
+  check(
+    'operator view: signed-in accounts resolve to a handle',
+    allPlayers.find((p) => p.userId === 'op-1')?.handle === 'Ada',
+  );
+  check(
+    'operator view: a queued player shows the bucket AND the wait (a stall is the point)',
+    allPlayers.find((p) => p.userId === 'op-2')?.queue === '1v1' &&
+      allPlayers.find((p) => p.userId === 'op-2')?.queuedS === 42,
+  );
+  check(
+    'operator view: anonymous sessions arrive as COUNTS',
+    opRows.reduce((n, r) => n + r.anon.total, 0) === 3,
+    JSON.stringify(opRows.map((r) => r.anon)),
+  );
+  // THE PRIVACY INVARIANT, asserted rather than assumed. If a later change starts
+  // itemising guest sessions or recording what screen someone is on, these are what
+  // say so out loud instead of it going unnoticed.
+  check(
+    'operator view: no anonymous session is identified anywhere in the payload',
+    opRows.every((r) => Object.keys(r.anon).every((k) => ['total', 'inMatch', 'inLobby', 'idle'].includes(k))),
+    JSON.stringify(opRows.map((r) => r.anon)),
+  );
+  check(
+    'operator view: and it carries NO screen/menu detail for anybody',
+    allPlayers.every((p) => !('screen' in p) && !('page' in p) && ['menu', 'lobby', 'match'].includes(p.act)),
+  );
+  // a snapshot, never a timeline: re-beating REPLACES, so no history accumulates
+  await repo.upsertPresence('m-iad', 'iad', 0, [], 0, 0, [], [], { total: 0, inMatch: 0, inLobby: 0, idle: 0 });
+  const after = await repo.adminPresence();
+  check(
+    'operator view: a new beat REPLACES the last (snapshot, never a history)',
+    (after.find((r) => r.machine === 'm-iad')?.players.length ?? 1) === 0,
+  );
+  await db.query(`delete from presence`);
+
   // ---- player search: @username OR display name --------------------------
   // The box says "name or @username", so both have to actually find someone. The
   // handle arm is a WORD prefix, which is the half that is easy to get wrong: it must

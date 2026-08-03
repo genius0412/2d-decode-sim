@@ -274,7 +274,10 @@ export type ClientMsg =
   // SPECTATE a live match: join a room read-only. The server adds a spectator (no
   // robot slot, never counted toward capacity/roster/persistence), sends the current
   // `matchStart`, and streams the same `snapshot`s the drivers get. Input is ignored.
-  | { t: 'spectate'; room: string; caps?: string[] }
+  // `authToken` is optional here and used for ONE thing: if the server verifies it
+  // as an admin, this watcher is not counted in the visible spectator total (see
+  // Room.hideSpectator). It is never a claim the client can make on its own.
+  | { t: 'spectate'; room: string; caps?: string[]; authToken?: string }
   | { t: 'update'; patch: PlayerPatch }
   | { t: 'start' } // host only: build + broadcast the match world
   | { t: 'restart' } // host only: re-author the match with a fresh seed
@@ -420,6 +423,11 @@ export type ServerMsg =
   // a robot left: the server runs it on ZERO from `tick`; snapshots already
   // reflect this, so it is informational (drives the HUD)
   | { t: 'drop'; robotId: number; tick: number }
+  // how many people are watching, as PLAYERS are told it (hidden admin observers
+  // are not in this number — see Room.visibleSpectators). Edge-triggered on change,
+  // deliberately NOT on the snapshot path: it moves a handful of times a match and
+  // has no business riding a 30 Hz hot loop.
+  | { t: 'spectators'; n: number }
   // the match reached phase 'post': the SERVER's authoritative final score + the
   // full deterministic replay it recorded (input log). The server persists this
   // to the leaderboard (Phase 3 DB); clients render the results screen + can

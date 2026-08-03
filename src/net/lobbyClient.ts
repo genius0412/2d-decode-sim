@@ -82,11 +82,17 @@ export class LobbyClient {
   /** SPECTATE a live match read-only. (Re)sends on open + reconnect. `matchStart`
    * arrives with yourRobotId -1 → build a spectator ServerSession from it. */
   spectate(room: string): void {
-    const doSpectate = (): void => {
-      this.transport.send(encodeMsg({ t: 'spectate', room, caps: CLIENT_CAPS }));
+    const doSpectate = async (): Promise<void> => {
+      // The token is sent for ONE purpose: if the server verifies it as an admin,
+      // this watcher is left out of the visible spectator count (moderation — see
+      // Room.hideSpectator). For everyone else it changes nothing at all, so it is
+      // attached unconditionally rather than gated on the client believing it is
+      // an admin, which would just be a claim the server has to re-check anyway.
+      const authToken = (await getAuthToken()) ?? undefined;
+      this.transport.send(encodeMsg({ t: 'spectate', room, caps: CLIENT_CAPS, authToken }));
     };
-    this.transport.onOpen(() => doSpectate());
-    this.transport.onReopen(() => doSpectate());
+    this.transport.onOpen(() => void doSpectate());
+    this.transport.onReopen(() => void doSpectate());
   }
 
   /** change our own alliance / start pose / ready / spec */

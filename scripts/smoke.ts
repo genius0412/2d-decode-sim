@@ -3591,9 +3591,51 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   const sum = room.summary();
   check('spectate: Room.summary() reports the live match', sum !== null && sum.mode === '1v1' && sum.spectators === 1 && sum.players.length === 2);
 
+  // players are TOLD how many people are watching — edge-triggered, not on the
+  // snapshot path (it moves a handful of times a match; the hot loop runs at 30 Hz)
+  const specMsgs = (sink: ServerMsg[]): Extract<ServerMsg, { t: 'spectators' }>[] =>
+    sink.filter((m) => m.t === 'spectators') as Extract<ServerMsg, { t: 'spectators' }>[];
+  check('spectate: players are told the watcher count', specMsgs(rosterB).slice(-1)[0]?.n === 1);
+
+  // HIDDEN ADMIN OBSERVER: an operator can watch a suspected cheat without the
+  // count announcing their arrival — which is the whole point, since a count that
+  // ticks up is itself the tip-off. Server-set only; there is no client path to it.
+  rosterB.length = 0;
+  const hidden: ServerMsg[] = [];
+  room.addSpectator({ id: 'admin-1', send: (m) => hidden.push(m), player: { clientId: 'admin-1', name: 'Admin', teamName: '', teamNumber: 0, alliance: 'blue', startIndex: 0, ready: false, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } }, connected: true, disconnectAt: 0 });
+  room.hideSpectator('admin-1');
+  check('spectate: a hidden observer is NOT in the visible count', room.visibleSpectators() === 1);
+  check('spectate: ...nor in the Watch Live card', room.summary()?.spectators === 1);
+  check('spectate: ...and the hidden observer still gets the live stream', hidden.some((m) => m.t === 'snapshot'));
+  // the count went 1 -> 2 -> 1 across the hide, so players must end on 1 and must
+  // NOT have been left believing a phantom watcher is present
+  check('spectate: players end up back at the honest count after a hide',
+    (specMsgs(rosterB).slice(-1)[0]?.n ?? 1) === 1);
+
   // the spectator leaving is clean and never touches the match
   room.detach('watch-1');
   check('spectate: after the watcher leaves, the match summary drops the spectator', (room.summary()?.spectators ?? 1) === 0);
+  check('spectate: a room with ONLY a hidden observer reads as unwatched', room.visibleSpectators() === 0);
+
+  // ---- the operator snapshot: signed-in by id, anonymous by COUNT --------
+  // The privacy line lives here rather than in the UI: an anonymous session gets
+  // no identifier at any layer, so there is nothing for a later feature to
+  // accidentally surface. See 0021_presence_detail.sql.
+  {
+    const r2 = new Room('smoke-opsnap', () => {}, { kind: 'versus' });
+    r2.add(mkDriver('signed', 'red', []));
+    r2.add({ id: 'guest', send: () => {}, player: { clientId: 'guest', name: 'Guest', teamName: '', teamNumber: 0, alliance: 'blue', startIndex: 0, ready: true, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } }, connected: true, disconnectAt: 0 });
+    const snap = r2.presenceSnapshot();
+    check('operator snapshot: the signed-in driver is listed by account id',
+      snap.players.length === 1 && snap.players[0].userId === 'u-signed');
+    check('operator snapshot: the anonymous driver is COUNTED, never identified', snap.anon === 1);
+    check('operator snapshot: ...and carries no id, name or handle anywhere in it',
+      !JSON.stringify(snap).toLowerCase().includes('guest'));
+    check('operator snapshot: a lobby reads as "lobby", not "match"', snap.players[0].act === 'lobby');
+    r2.onMessage('signed', { t: 'start' });
+    r2.advanceForTest(3);
+    check('operator snapshot: once the match runs it reads as "match"', r2.presenceSnapshot().players[0].act === 'match');
+  }
 }
 
 // ---- snapshot ACK channel + self-healing keyframe (PR2) ---------------------

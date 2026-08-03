@@ -107,5 +107,8 @@ export interface NetSession {
    * server's `recordResult` lands after persistence — record runs only */
   getRecordResult?(): RecordRankInfo | null;
   status(): NetStatus;
+  /** how many people are watching this match, as the SERVER reports it to players
+   *  (hidden admin observers excluded). 0 until the first update arrives. */
+  spectatorCount?(): number;
   dispose(): void;
 }
