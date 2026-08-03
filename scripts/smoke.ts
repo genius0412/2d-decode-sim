@@ -108,6 +108,8 @@ import {
   type ReplayResult,
 } from '../src/sim/replay';
 import { Room, type Client } from '../server/room';
+import { maintenanceBiting } from '../server/db/repo';
+import { maintenanceLine } from '../src/ui/MaintenanceBanner';
 import { Matchmaker, radiusCeiling, type QueueEntry } from '../server/matchmaking';
 import { bestHost } from '../server/regions';
 import type { PendingMatch } from '../server/matchTypes';
@@ -3249,6 +3251,39 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- MAINTENANCE LOCKDOWN: when the window actually bites -------------------
+// The scheduling semantics are the whole feature: an armed window with a FUTURE
+// start must announce itself WITHOUT locking anyone out (otherwise it is just an
+// outage with extra steps), and an expired one must stop biting on its own so a
+// lockdown somebody forgets to lift cannot strand the service.
+{
+  const w = (over: Partial<Parameters<typeof maintenanceBiting>[0]> = {}) => ({
+    active: true, startsAt: null, endsAt: null, message: '', ...over,
+  });
+  const T = 1_000_000;
+  check('maintenance: inactive never bites', !maintenanceBiting(w({ active: false }), T));
+  check('maintenance: active with no window bites now', maintenanceBiting(w(), T));
+  check('maintenance: SCHEDULED (future start) does NOT lock anyone out yet',
+    !maintenanceBiting(w({ startsAt: T + 60_000 }), T));
+  check('maintenance: ...and does once its start passes',
+    maintenanceBiting(w({ startsAt: T - 1 }), T));
+  check('maintenance: an EXPIRED window stops biting by itself',
+    !maintenanceBiting(w({ startsAt: T - 60_000, endsAt: T - 1 }), T));
+  check('maintenance: inside the window it bites',
+    maintenanceBiting(w({ startsAt: T - 60_000, endsAt: T + 60_000 }), T));
+
+  // the copy players read is the part they act on, so it is asserted too
+  const line = (over: Record<string, unknown>, now: number) =>
+    maintenanceLine({ startsAt: null, endsAt: null, message: 'Season reset', biting: false, ...over } as never, now);
+  check('maintenance: a live window says new games are paused',
+    (line({ biting: true }, T) ?? '').includes('paused'));
+  check('maintenance: a scheduled one counts down instead of claiming to be live',
+    (line({ startsAt: T + 5 * 60_000 }, T) ?? '').includes('5 minutes'));
+  check('maintenance: nothing scheduled renders nothing at all', line({}, T) === null);
+  check('maintenance: the operator message is carried through to players',
+    (line({ biting: true }, T) ?? '').includes('Season reset'));
+}
+
 // ---- SOURCE GUARD: no engine-defined math anywhere the sim can reach --------
 // The accuracy checks below prove `dsin`/`dcos`/`datan2` are good replacements.
 // They do NOT prove anyone USED them, and that is the gap this closes: six
@@ -3678,13 +3713,20 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     const snap = r2.presenceSnapshot();
     check('operator snapshot: the signed-in driver is listed by account id',
       snap.players.length === 1 && snap.players[0].userId === 'u-signed');
-    check('operator snapshot: the anonymous driver is COUNTED, never identified', snap.anon === 1);
-    check('operator snapshot: ...and carries no id, name or handle anywhere in it',
-      !JSON.stringify(snap).toLowerCase().includes('guest'));
-    check('operator snapshot: a lobby reads as "lobby", not "match"', snap.players[0].act === 'lobby');
+    // GUESTS ARE ROWS NOW (operator's call), keyed by the per-socket connection id —
+    // not an IP, not a fingerprint, and gone when the socket closes. It separates two
+    // live sessions; it cannot connect either to a past one.
+    check('operator snapshot: the anonymous driver is a ROW, keyed by connection id',
+      snap.guests.length === 1 && snap.guests[0].id === 'guest');
+    check('operator snapshot: ...and carries no display name or account id',
+      !('userId' in snap.guests[0]) && !('name' in snap.guests[0]));
+    check('operator snapshot: a lobby reads as "lobby", not "match"',
+      snap.players[0].act === 'lobby' && snap.guests[0].act === 'lobby');
     r2.onMessage('signed', { t: 'start' });
     r2.advanceForTest(3);
-    check('operator snapshot: once the match runs it reads as "match"', r2.presenceSnapshot().players[0].act === 'match');
+    const after = r2.presenceSnapshot();
+    check('operator snapshot: once the match runs BOTH read as "match"',
+      after.players[0].act === 'match' && after.guests[0].act === 'match');
   }
 }
 

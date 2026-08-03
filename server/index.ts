@@ -39,8 +39,13 @@ import {
   globalPresence,
   globalLiveRooms,
   adminPresence,
+  getMaintenance,
+  setMaintenance,
+  maintenanceBiting,
   type PresencePlayer,
   type PresenceAnon,
+  type PresenceGuest,
+  type MaintenanceWindow,
   challengeParty,
   syncStaffRoles,
   type GlobalPresence,
@@ -96,6 +101,59 @@ let beatNow: () => void = () => {};
 // a second join/queue elsewhere — they must rejoin or leave that game first. Reconnects
 // (the `rejoin` message) bypass this, so returning to your OWN game always works.
 const userRoom = new Map<string, string>();
+
+/**
+ * Every live socket on this machine, by its connection id, and whether it has
+ * proven an account.
+ *
+ * Needed because an anonymous player who is just browsing belongs to no room and no
+ * queue, so nothing else on the server knows they exist as an individual — only the
+ * `onlineCount` integer does. The operator view lists guests row by row, and a row
+ * needs something to BE. The id is this process's own per-socket routing id: not an
+ * IP, not a fingerprint, deleted on close, and unrelated to the id the same person
+ * gets if they reconnect.
+ */
+const liveSockets = new Map<string, { authed: boolean }>();
+
+/**
+ * MAINTENANCE LOCKDOWN, cached from the database.
+ *
+ * Read on a timer rather than per request: this is consulted on every join/queue,
+ * and a database round trip on the hot path of starting a match would be a worse
+ * problem than the one it solves. A few seconds of staleness is fine — the window
+ * is announced minutes ahead, which is the entire point of scheduling it.
+ *
+ * Admins are exempt, deliberately: the person deploying has to be able to smoke-test
+ * the thing they just shipped while everyone else is still held out.
+ */
+const MAINT_TTL_MS = 10_000;
+let maint: MaintenanceWindow = { active: false, startsAt: null, endsAt: null, message: '' };
+let maintAt = 0;
+async function refreshMaintenance(force = false): Promise<MaintenanceWindow> {
+  if (!dbEnabled) return maint;
+  if (!force && Date.now() - maintAt < MAINT_TTL_MS) return maint;
+  try {
+    maint = await getMaintenance();
+    maintAt = Date.now();
+  } catch (e) {
+    // a DB hiccup must not lock everyone out, nor silently unlock — keep the last
+    // known answer and try again on the next tick
+    console.error('[maintenance] read failed, keeping last known state:', e);
+  }
+  return maint;
+}
+/** is the lockdown biting for THIS caller? Admins always pass. */
+function lockedOut(userId?: string | null): boolean {
+  if (userId && ADMIN_IDS.has(userId)) return false;
+  return maintenanceBiting(maint);
+}
+/** the message a locked-out client is shown */
+function lockoutMessage(): string {
+  const base = maint.message?.trim() || 'DSIM is down for maintenance.';
+  if (!maint.endsAt) return `${base} Please try again shortly.`;
+  const mins = Math.max(1, Math.round((maint.endsAt - Date.now()) / 60000));
+  return `${base} Back in about ${mins} minute${mins === 1 ? '' : 's'}.`;
+}
 /** true if this user already has a LIVE match in a DIFFERENT room (stale entries whose
  * room has since vanished are pruned and treated as clear). */
 const activeElsewhere = (userId: string, code: string): boolean => {
@@ -321,56 +379,75 @@ function presenceTtl(full: boolean): number {
 }
 
 /**
- * This machine's operator snapshot: what each SIGNED-IN account is doing, plus a
- * COUNT of anonymous sessions.
+ * This machine's operator snapshot: what every connected session is doing.
  *
- * Deliberately assembled from state the server already holds to run matches — room
- * membership, queue membership, socket counts. Nothing is asked of any client to
- * build it, and there is no field for which screen someone is on: knowing a player
- * is "in Configure" moderates nothing, and collecting it would be tracking for its
- * own sake. `menu` here means "connected, not in a room and not queued", which is
- * the same resolution the player's own friends already see.
+ * Assembled entirely from state the server already holds to run matches — room
+ * membership, queue membership, the socket registry. Nothing is asked of any client
+ * to build it, and there is still no field for which SCREEN anybody is on: knowing
+ * a player is "in Configure" moderates nothing, and collecting it would be tracking
+ * for its own sake. `menu` means "connected, not in a room, not queued", the same
+ * resolution a player's own friends already see.
  *
- * ANONYMOUS sessions are bucketed and never itemised. The only lever against a
- * guest is their connection or their room — both reachable without knowing who
- * they are — so an identifier would add surveillance without adding a remedy.
+ * GUESTS ARE LISTED INDIVIDUALLY, by the server's per-socket connection id. That is
+ * a deliberate change from counting them: an operator asking "is that session idle
+ * or stuck in a lobby" cannot answer it from a total. The id is not an IP, not a
+ * fingerprint, is written nowhere else, and dies with the socket — it distinguishes
+ * two live sessions from each other and cannot connect either to a past one. The
+ * privacy policy says exactly this; if this widens, that text moves with it.
  */
-function operatorSnapshot(): { players: PresencePlayer[]; anon: PresenceAnon } {
+function operatorSnapshot(): {
+  players: PresencePlayer[];
+  guests: PresenceGuest[];
+  anon: PresenceAnon;
+} {
   const byUser = new Map<string, PresencePlayer>();
-  let anonInRoom = 0;
-  let anonInMatch = 0;
+  const byGuest = new Map<string, PresenceGuest>();
   for (const [code, r] of rooms) {
     const s = r.presenceSnapshot();
     for (const p of s.players) byUser.set(p.userId, { userId: p.userId, act: p.act, room: code, game: r.gameId });
-    anonInRoom += s.anon;
-    if (r.hasWorld) anonInMatch += s.anon;
+    for (const g of s.guests) byGuest.set(g.id, { id: g.id, act: g.act, room: code, game: r.gameId });
   }
   // queue membership layers ON TOP of where they are: the whole point of the
   // background queue is that you can be queued while doing something else, and an
-  // operator debugging "my search never resolved" needs to see both at once
+  // operator debugging "my search never resolved" needs to see both at once.
+  // `queueGame` is kept SEPARATE from `game` because they can differ — you can be
+  // queued for Chain Reaction while sitting in a DECODE practice room, and an
+  // operator who is shown only one of those is being told a half-truth.
   for (const q of matchmaker.queuedPlayers()) {
     const cur = byUser.get(q.userId);
     byUser.set(q.userId, {
       ...(cur ?? { userId: q.userId, act: 'menu' as const }),
       queue: q.mode,
       queuedS: q.waitedS,
+      queueGame: q.game,
       game: cur?.game ?? q.game,
     });
   }
-  // signed in, connected, doing neither
+  // signed in and connected but in neither a room nor a queue
   for (const uid of authedUsers.keys()) {
     if (!byUser.has(uid)) byUser.set(uid, { userId: uid, act: 'menu' });
   }
-  let authedSockets = 0;
-  for (const n of authedUsers.values()) authedSockets += n;
-  const total = Math.max(0, onlineCount - authedSockets);
+  // stamp each account's SOCKET count so the operator tiles reconcile: sockets held
+  // by accounts, plus guest rows, equals the online total exactly
+  for (const [uid, p] of byUser) p.sessions = authedUsers.get(uid) ?? 1;
+  // ...and the same for guests: a socket in the registry that is not authed and not
+  // in any room is somebody sitting in the menus, which is a row, not a rounding
+  // error. This is the only place idle guests are visible at all.
+  for (const [sid, sock] of liveSockets) {
+    if (sock.authed || byGuest.has(sid)) continue;
+    byGuest.set(sid, { id: sid, act: 'menu' });
+  }
+  const guests = [...byGuest.values()];
   return {
     players: [...byUser.values()],
+    guests,
+    // the summary tiles are DERIVED from the rows, so a count can never disagree
+    // with the list printed under it
     anon: {
-      total,
-      inMatch: Math.min(total, anonInMatch),
-      inLobby: Math.min(total, anonInRoom - anonInMatch),
-      idle: Math.max(0, total - anonInRoom),
+      total: guests.length,
+      inMatch: guests.filter((g) => g.act === 'match').length,
+      inLobby: guests.filter((g) => g.act === 'lobby').length,
+      idle: guests.filter((g) => g.act === 'menu').length,
     },
   };
 }
@@ -499,6 +576,48 @@ const httpServer = createServer((req, res) => {
             queues: matchmaker.queueSizes(),
           }),
         );
+        return;
+      }
+      /**
+       * GET/POST /api/admin/maintenance — the lockdown window.
+       *
+       * POST body (query params): active=1|0, startsAt/endsAt (ms epoch, blank for
+       * "now"/"open-ended"), msg. Setting a FUTURE start is the normal path: it
+       * announces the window to everyone without locking anyone out yet, which is
+       * the difference between scheduled maintenance and an outage.
+       */
+      if (u.pathname === '/api/admin/maintenance') {
+        if (!isAdmin) {
+          res.writeHead(403, cors);
+          res.end('forbidden');
+          return;
+        }
+        if (!dbEnabled) {
+          res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'no database — maintenance needs one to be shared across regions' }));
+          return;
+        }
+        if (req.method === 'POST') {
+          const num = (k: string): number | null => {
+            const v = u.searchParams.get(k);
+            if (!v) return null;
+            const n = Number(v);
+            return Number.isFinite(n) && n > 0 ? n : null;
+          };
+          const next = await setMaintenance({
+            active: u.searchParams.get('active') === '1',
+            startsAt: num('startsAt'),
+            endsAt: num('endsAt'),
+            message: (u.searchParams.get('msg') ?? '').slice(0, 200),
+          });
+          await refreshMaintenance(true); // this machine stops/starts enforcing NOW
+          res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, maintenance: next }));
+          return;
+        }
+        const cur = await getMaintenance();
+        res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, maintenance: cur, biting: maintenanceBiting(cur) }));
         return;
       }
       if (req.method === 'POST' && u.pathname === '/api/admin/announce') {
@@ -913,6 +1032,7 @@ const httpServer = createServer((req, res) => {
     // `?full=1` opts out of the idle short-circuit in `aggregatePresence` — the
     // ranked screen asks for it because its queue depth is a number people act on.
     const wantFull = new URL(req.url ?? '/', 'http://x').searchParams.get('full') === '1';
+    void refreshMaintenance(); // keep the cached window fresh off this same poll
     // include any LIVE admin notice so the client can show the restart banner
     // (and block starting new games) on EVERY page — even disconnected ones
     // like Home/solo where no WebSocket delivers `serverNotice`.
@@ -938,7 +1058,13 @@ const httpServer = createServer((req, res) => {
       // `queues` (all games combined) STAYS for older clients that only know that
       // shape. `gameQueues` is the one a player can act on: pairing is bucketed by
       // game, so a combined count advertises a pool the reader cannot match from.
-      res.end(JSON.stringify({ region: REGION, online, signedIn, queues, gameQueues, notice, caps: SERVER_CAPS }));
+      // the maintenance window rides the presence poll every page already makes, so
+      // the banner reaches disconnected screens (Home, solo) too — the same reason
+      // `notice` is here rather than only on the WebSocket.
+      const m = maint.active
+        ? { startsAt: maint.startsAt, endsAt: maint.endsAt, message: maint.message, biting: maintenanceBiting(maint) }
+        : null;
+      res.end(JSON.stringify({ region: REGION, online, signedIn, queues, gameQueues, notice, maintenance: m, caps: SERVER_CAPS }));
     };
     // GLOBAL count: aggregate every region's heartbeat (this machine only sees its
     // own sockets — anycast routing means the caller often lands on an empty region).
@@ -1080,6 +1206,7 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
   let conn = 0;
   const wasEmpty = onlineCount === 0;
   onlineCount++;
+  liveSockets.set(id, { authed: false });
   // FIRST arrival after a quiet spell: publish immediately rather than waiting up to
   // 5s for the next tick, and drop the cached answer — it was computed when this
   // machine was empty, so serving it again would report a zero we already know is
@@ -1094,6 +1221,8 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
   const markAuthed = (userId: string): void => {
     if (authedUserId) return; // count each connection's user exactly once
     authedUserId = userId;
+    const sock = liveSockets.get(id);
+    if (sock) sock.authed = true; // no longer a guest row
     authedUsers.set(userId, (authedUsers.get(userId) ?? 0) + 1);
   };
   const send = (m: ServerMsg): void => {
@@ -1157,6 +1286,17 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     let user: Awaited<ReturnType<typeof verifyAuthToken>> = null;
     if (msg.authToken) user = await verifyAuthToken(msg.authToken).catch(() => null);
     if (room) return; // a concurrent frame already placed this socket
+    // MAINTENANCE: refuse new games while the window is biting. Enforced HERE, not
+    // only in the client's start guard — the lockdown exists to protect a migration
+    // mid-flight, and a guard anyone can skip by holding a stale tab is not one.
+    // A room the matchmaker staged is exempt for the same reason it beats the
+    // one-live-game guard: the server already committed those players to it.
+    await refreshMaintenance();
+    if (lockedOut(user?.userId) && !r.stagedFor(user?.userId ?? '')) {
+      send({ t: 'error', message: lockoutMessage() });
+      if (created) rooms.delete(code);
+      return;
+    }
     if (!r.canJoin()) {
       send({ t: 'error', message: 'Room is full or a match is already in progress.' });
       if (created) rooms.delete(code); // don't leave an empty just-created room behind
@@ -1274,7 +1414,9 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
         const r = rooms.get(msg.room.toLowerCase());
         const nc = r ? r.reattach(msg.clientId, send) : null;
         if (r && nc !== null) {
+          liveSockets.delete(id);
           id = msg.clientId; // adopt the reclaimed identity on this socket
+          liveSockets.set(id, { authed: !!authedUserId });
           room = r;
           conn = nc; // this socket now owns the slot (supersedes the dropped one)
         } else {
@@ -1289,6 +1431,10 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
         verifyAuthToken(msg.authToken).then((u) => {
           if (!u) {
             send({ t: 'error', message: 'Sign in to play ranked.' });
+            return;
+          }
+          if (lockedOut(u.userId)) {
+            send({ t: 'error', message: lockoutMessage() });
             return;
           }
           // one live game per user: can't queue ranked while another game is live
@@ -1355,6 +1501,7 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
 
   ws.on('close', () => {
     onlineCount--;
+    liveSockets.delete(id);
     if (authedUserId) {
       const n = (authedUsers.get(authedUserId) ?? 1) - 1;
       if (n <= 0) authedUsers.delete(authedUserId);
@@ -1454,7 +1601,7 @@ if (dbEnabled) {
       MACHINE, REGION, onlineCount, [...authedUsers.keys()], qs['1v1'], qs['2v2'],
       // live rooms ride the SAME beat, so "Watch Live" sees every region (0021)
       [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null),
-      snap.players, snap.anon, matchmaker.queueSizesByGame(),
+      snap.players, snap.anon, matchmaker.queueSizesByGame(), snap.guests,
     ).catch((e) => console.error('[presence] heartbeat failed:', e));
   };
   beat();

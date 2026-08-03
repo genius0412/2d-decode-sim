@@ -404,21 +404,26 @@ export class Room {
    *
    * Signed-in drivers are listed by ACCOUNT ID and nothing else — the caller joins
    * the handle at read time, so no names are copied into the heartbeat. Anonymous
-   * drivers are COUNTED and not identified: a guest session cannot be warned,
-   * banned or contacted, so naming one buys no moderation power and would just be
-   * a record of somebody who chose not to make an account. Spectators are excluded
-   * entirely; they are watchers, and the visible count already reports them.
+   * drivers are listed by their per-socket CONNECTION ID: not an IP, not a
+   * fingerprint, not stored anywhere else, and gone when the socket closes. It
+   * tells one live guest apart from another, which is what an operator needs to
+   * answer "is that session idle or in a lobby", and cannot follow anyone between
+   * sessions. Spectators are excluded entirely; they are watchers, and the visible
+   * count already reports them.
    */
-  presenceSnapshot(): { players: { userId: string; act: 'lobby' | 'match' }[]; anon: number } {
+  presenceSnapshot(): {
+    players: { userId: string; act: 'lobby' | 'match' }[];
+    guests: { id: string; act: 'lobby' | 'match' }[];
+  } {
     const act: 'lobby' | 'match' = this.world !== null ? 'match' : 'lobby';
     const players: { userId: string; act: 'lobby' | 'match' }[] = [];
-    let anon = 0;
+    const guests: { id: string; act: 'lobby' | 'match' }[] = [];
     for (const c of this.clients.values()) {
       if (!c.connected) continue;
       if (c.userId) players.push({ userId: c.userId, act });
-      else anon++;
+      else guests.push({ id: c.id, act });
     }
-    return { players, anon };
+    return { players, guests };
   }
 
   /** a socket dropped. In the lobby that's an outright leave; mid-match the slot

@@ -17,7 +17,7 @@
  */
 
 /** last substantive revision — shown on both pages */
-export const LEGAL_UPDATED = 'August 3, 2026';
+export const LEGAL_UPDATED = 'August 4, 2026';
 
 /** where privacy / data-deletion requests go */
 export const LEGAL_CONTACT = 'genius0412.tech@gmail.com';
@@ -107,9 +107,13 @@ state, not history:
 - **If you are signed in**, the snapshot can include your account id, a coarse
   activity (in menus / in a lobby / in a match), the room code of a match you are
   in, and whether you are waiting in a ranked queue and for how long.
-- **If you are not signed in**, you are **counted and not identified**. There is no
-  per-session identifier, no row, and no record of you as an individual - only
-  totals, such as how many guests are connected or currently in a match.
+- **If you are not signed in**, your session appears with the same coarse activity,
+  identified by a **connection id**. That id is the one our server generates to
+  route messages on your socket: it is **not** your IP address, **not** a device
+  fingerprint, it is stored nowhere else, and it **ceases to exist when you
+  disconnect** - reconnecting gives you a completely unrelated one. It can tell two
+  sessions that are live at the same moment apart. It cannot link you to anything
+  you did before, or to any other session.
 - **For nobody** do we record which screen or menu you are looking at, what you
   click, or your inputs.
 
@@ -125,10 +129,16 @@ list is what the "Watch Live" screen shows.
 
 Administrators of DSIM can see the live snapshot described above, for moderation
 (investigating cheating or abuse) and for keeping the servers running. Concretely,
-an administrator can see which signed-in accounts are connected, the coarse
-activity above, and which matches are live. They **cannot** see which screen you
-are on, your inputs, your messages, or any history of your activity, and they
-cannot identify someone who is not signed in.
+an administrator can see every connected session - signed-in accounts by name, and
+sessions without an account by the temporary connection id described above - along
+with the coarse activity, the room, and the ranked queue state for each. They
+**cannot** see which screen you are on, your inputs, your messages, or any history
+of your activity, and the connection id gives them no way to recognise a returning
+visitor.
+
+Administrators can also put DSIM into **maintenance**, which pauses new matches for
+everyone else while an update or a season reset is applied. When one is scheduled or
+running you will see a banner saying so, with the times.
 
 Administrators can also **watch a live match without appearing in the spectator
 count** that players see. We are stating this rather than leaving it implicit: the
@@ -203,7 +213,8 @@ records, replays, ratings, presets, and social data are deleted with it.
 
 The **live status snapshot** described above is not kept at all: each update
 replaces the last, and a server's entry disappears within seconds of it going
-quiet. There is nothing there to export or delete after you disconnect.
+quiet. Connection ids are gone the moment the socket closes. There is nothing there
+to export or delete after you disconnect.
 
 ## Your choices
 

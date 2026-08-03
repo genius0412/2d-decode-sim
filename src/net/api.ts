@@ -200,6 +200,14 @@ export interface Presence {
   /** the live admin notice (scheduled restart / info), or null — mirrors the
    * WebSocket `serverNotice` so disconnected pages can show the banner too */
   notice?: { kind: 'restart' | 'info'; message: string; until?: number } | null;
+  /** a scheduled MAINTENANCE window, or null. `biting` is whether it is in force
+   *  right now — an armed window with a future start announces itself first. */
+  maintenance?: {
+    startsAt: number | null;
+    endsAt: number | null;
+    message: string;
+    biting: boolean;
+  } | null;
   /** what THIS deploy can honour (see SERVER_CAPS in protocol.ts). One Fly app
    * serves every client build, so a new client checks here before offering
    * something an older server would mishandle rather than ignore. */
@@ -530,12 +538,25 @@ export async function fetchAdminStatus(): Promise<{ isAdmin: boolean; userId: st
  */
 export interface AdminPresencePlayer {
   userId: string;
+  /** how many SOCKETS this account holds — one player with two tabs is two
+   *  sessions and one account, which is why the tiles need both numbers */
+  sessions?: number;
   handle: string | null;
   username: string | null;
   act: 'menu' | 'lobby' | 'match';
   room?: string;
   queue?: '1v1' | '2v2';
   queuedS?: number;
+  /** the game they are QUEUED for, which can differ from the one they are in */
+  queueGame?: string;
+  game?: string;
+}
+/** ONE anonymous session. `id` is the server's per-socket connection id: not an IP,
+ *  not a fingerprint, gone when the socket closes. See 0024_presence_guests.sql. */
+export interface AdminPresenceGuest {
+  id: string;
+  act: 'menu' | 'lobby' | 'match';
+  room?: string;
   game?: string;
 }
 export interface AdminAnonBucket {
@@ -550,6 +571,7 @@ export interface AdminMachineRow {
   online: number;
   updatedAt?: string;
   players: AdminPresencePlayer[];
+  guests: AdminPresenceGuest[];
   anon: AdminAnonBucket;
 }
 export interface AdminPresence {
@@ -558,6 +580,49 @@ export interface AdminPresence {
   local: AdminMachineRow;
   rooms: LiveRoom[];
   queues: Record<string, number>;
+}
+
+export interface MaintenanceWindow {
+  active: boolean;
+  startsAt: number | null;
+  endsAt: number | null;
+  message: string;
+}
+
+export async function adminFetchMaintenance(): Promise<{ maintenance: MaintenanceWindow; biting: boolean } | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(base + '/api/admin/maintenance', {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { ok: boolean; maintenance: MaintenanceWindow; biting: boolean };
+    return j.ok ? { maintenance: j.maintenance, biting: j.biting } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function adminSetMaintenance(w: MaintenanceWindow): Promise<boolean> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return false;
+  const q = new URLSearchParams({ active: w.active ? '1' : '0', msg: w.message });
+  if (w.startsAt) q.set('startsAt', String(w.startsAt));
+  if (w.endsAt) q.set('endsAt', String(w.endsAt));
+  try {
+    const res = await fetch(base + '/api/admin/maintenance?' + q.toString(), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return false;
+    return ((await res.json()) as { ok: boolean }).ok === true;
+  } catch {
+    return false;
+  }
 }
 
 export async function adminFetchPresence(): Promise<AdminPresence | null> {

@@ -1830,6 +1830,33 @@ button {
 }
 .ds-tip b { color: var(--ds-ink); }
 
+/* MAINTENANCE: the scheduled state informs, the biting state interrupts. Both use
+   an edge + ink rather than a saturated fill, so a banner that sits on every menu
+   screen for half an hour doesn't become something people stop seeing. */
+.ds-maint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--ds-warn);
+  border-radius: 10px;
+  background: var(--ds-tile);
+  color: var(--ds-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ds-maint.biting { border-color: var(--ds-danger); }
+
+.adm-maint { border-color: var(--ds-line-strong); }
+.adm-maint.biting { border-color: var(--ds-danger); }
+.adm-maint-h { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.adm-guest-id {
+  font-family: var(--ds-font-mono);
+  font-size: 12px;
+  color: var(--ds-mut);
+}
+
 /* the console is wider than a settings column now — it carries a live table */
 .adm-wide { max-width: 940px; }
 

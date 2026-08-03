@@ -614,6 +614,43 @@ async function main(): Promise<void> {
     JSON.stringify(gq2.gameQueues));
   await repo.upsertPresence('m-nrt', 'nrt', 2, ['op-2'], 0, 0, [{ room: 'nrt-b2' }], [{ userId: 'op-2', act: 'menu', queue: '1v1', queuedS: 42 }], { total: 1, inMatch: 0, inLobby: 0, idle: 1 });
 
+  // ---- MAINTENANCE lockdown round-trips through the DB (0023) -------------
+  // In the database rather than a machine's memory for two reasons that ARE the
+  // feature: it has to survive the restart it exists to protect, and every region
+  // has to agree (anycast puts players on different machines).
+  const m0 = await repo.getMaintenance();
+  check('maintenance: starts off', !m0.active && !repo.maintenanceBiting(m0));
+  const T = Date.now();
+  const m1 = await repo.setMaintenance({
+    active: true, startsAt: T + 600_000, endsAt: T + 1_800_000, message: 'Season reset',
+  });
+  check('maintenance: a scheduled window round-trips', m1.active && m1.message === 'Season reset');
+  check('maintenance: times survive the round trip', m1.startsAt === T + 600_000 && m1.endsAt === T + 1_800_000);
+  check('maintenance: SCHEDULED does not lock anyone out yet', !repo.maintenanceBiting(m1, T));
+  check('maintenance: ...but does once it starts', repo.maintenanceBiting(m1, T + 700_000));
+  check('maintenance: ...and stops on its own when it ends', !repo.maintenanceBiting(m1, T + 2_000_000));
+  const m2 = await repo.setMaintenance({ active: false, startsAt: null, endsAt: null, message: '' });
+  check('maintenance: lifting it clears the window', !m2.active && m2.startsAt === null);
+  check('maintenance: the row is a SINGLETON (no second window can exist)',
+    (await db.query<{ c: string }>(`select count(*)::text as c from maintenance`)).rows[0].c === '1');
+
+  // ---- guest sessions are ROWS now (0024) ---------------------------------
+  await repo.upsertPresence(
+    'm-iad', 'iad', 3, ['op-1'], 0, 0, [], [{ userId: 'op-1', act: 'match', room: 'r1', sessions: 2 }],
+    { total: 2, inMatch: 1, inLobby: 0, idle: 1 }, {},
+    [{ id: 'conn-a', act: 'match', room: 'r1' }, { id: 'conn-b', act: 'menu' }],
+  );
+  const gRows = (await repo.adminPresence()).find((r) => r.machine === 'm-iad');
+  check('guests: each session is its own row', gRows?.guests.length === 2, JSON.stringify(gRows?.guests));
+  check('guests: a row carries its activity and room', gRows?.guests[0].act === 'match' && gRows?.guests[0].room === 'r1');
+  check('guests: an idle guest is visible as idle, not just as a total', gRows?.guests[1].act === 'menu');
+  // the id is the SERVER's per-socket routing id — never an account id, and there is
+  // still nothing in a guest row that could identify the person behind it
+  check('guests: a guest row carries no account id, handle or username',
+    gRows?.guests.every((g) => !('userId' in g) && !('handle' in g) && !('username' in g)) === true);
+  check('accounts: a player\'s SOCKET count is reported (two tabs = one account, two sessions)',
+    gRows?.players[0].sessions === 2);
+
   // a snapshot, never a timeline: re-beating REPLACES, so no history accumulates
   await repo.upsertPresence('m-iad', 'iad', 0, [], 0, 0, [], [], { total: 0, inMatch: 0, inLobby: 0, idle: 0 });
   const after = await repo.adminPresence();

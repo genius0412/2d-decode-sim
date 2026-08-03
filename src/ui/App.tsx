@@ -29,6 +29,8 @@ import { Records, isRecordsTab, type RecordsTab } from './Records';
 import { RecordRun } from './RecordRun';
 import { Matchmaking } from './Matchmaking';
 import { QueueBar, useParkedQueue } from './QueueBar';
+import { usePresence } from './usePresence';
+import { maintenanceLine } from './MaintenanceBanner';
 import { peekQueue } from './queueKeeper';
 import { ReplayView } from './ReplayView';
 import { ProfileMenu } from './ProfileMenu';
@@ -710,6 +712,11 @@ export function App() {
   // game / queue — they'd just get dropped by the restart. People already in a game
   // are untouched (this only guards the start actions). Info notices don't block.
   const notice = useServerNotice();
+  // MAINTENANCE LOCKDOWN. The server refuses regardless (that is what makes it a
+  // lockdown rather than a suggestion); this stops a player from clicking into an
+  // error they could have been told about first. Admins are exempt on both sides.
+  const maintenance = usePresence()?.maintenance ?? null;
+  const lockedOut = !!maintenance?.biting && !isAdmin;
   const restartPending =
     !!notice && notice.kind === 'restart' && (notice.until === undefined || notice.until > Date.now());
   const [startBlocked, setStartBlocked] = useState(false);
@@ -727,6 +734,7 @@ export function App() {
     // start-pose legality is a DECODE (G304) check; other games have no legality yet
     const startOk = settings.game !== 'decode' || activeStartLegal(settings.spec, settings.alliance, settings.startPose);
     if (loadActiveGame()) setBlockedByActive(true);
+    else if (lockedOut) setStartBlocked(true);
     else if (restartPending) setStartBlocked(true);
     else if (!startOk) setBadStart(true);
     else if (newVersion) setPendingStart(() => go);
@@ -1051,9 +1059,12 @@ export function App() {
       {startBlocked && (
         <div className="overlay">
           <div className="overlay-panel">
-            <h2>Server restarting soon</h2>
+            <h2>{lockedOut ? 'Down for maintenance' : 'Server restarting soon'}</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              A scheduled server update is about to happen, so new games are paused for a moment.
+              {lockedOut
+                ? maintenanceLine(maintenance) ??
+                  'DSIM is down for maintenance — new games are paused. Please try again shortly.'
+                : 'A scheduled server update is about to happen, so new games are paused for a moment.'}
             </p>
             <div className="overlay-buttons">
               <button onClick={() => setStartBlocked(false)}>OK</button>

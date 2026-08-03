@@ -1999,6 +1999,11 @@ function addGameQueues(
  */
 export interface PresencePlayer {
   userId: string;
+  /** how many SOCKETS this account holds on this machine (two tabs, or a lobby
+   *  socket plus a match socket). Without it the tiles cannot be made to add up:
+   *  "online" counts sockets and "signed in" counts people, so one player with two
+   *  tabs makes the two numbers disagree with no visible reason. */
+  sessions?: number;
   /** coarse activity — the friends-list vocabulary, nothing finer */
   act: 'menu' | 'lobby' | 'match';
   /** the room they are in, when they are in one (already public via /api/live) */
@@ -2008,10 +2013,34 @@ export interface PresencePlayer {
   queue?: '1v1' | '2v2';
   /** whole seconds queued so far (a stuck queue is the thing worth seeing) */
   queuedS?: number;
+  /** which GAME they are queued for — kept apart from `game` because the two can
+   *  differ (queued for Chain Reaction while in a DECODE practice room), and an
+   *  operator shown only one of them is being told a half-truth */
+  queueGame?: string;
   game?: string;
 }
 
-/** ANONYMOUS sessions: counted, never identified — see 0021_presence_detail.sql. */
+/**
+ * ONE anonymous (not signed in) session, for the operator view.
+ *
+ * Listed individually at the operator's request — earlier this was counts only. The
+ * identifier is the SERVER'S OWN CONNECTION ID: a per-socket string this process
+ * already generates to route messages. It is not derived from anything about the
+ * person, it is not an IP or a fingerprint, it is not stored anywhere else, and it
+ * ceases to exist when the socket closes — reconnecting produces an unrelated id.
+ * So a guest can be told apart from another guest *right now*, which is what an
+ * operator needs to see "who is idle vs in a lobby", without becoming something
+ * that can follow anyone between sessions.
+ */
+export interface PresenceGuest {
+  /** ephemeral per-connection id; dies with the socket */
+  id: string;
+  act: 'menu' | 'lobby' | 'match';
+  room?: string;
+  game?: string;
+}
+
+/** rolled-up guest counts, derived from the rows (kept for the summary tiles) */
 export interface PresenceAnon {
   total: number;
   inMatch: number;
@@ -2032,18 +2061,19 @@ export async function upsertPresence(
   players: PresencePlayer[] = [],
   anon: PresenceAnon | null = null,
   gameQueues: Record<string, { '1v1': number; '2v2': number }> = {},
+  guests: PresenceGuest[] = [],
 ): Promise<void> {
   await q(
-    `insert into presence (machine, region, online, authed, q1v1, q2v2, rooms, players, anon, game_queues, updated_at)
-       values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, now())
+    `insert into presence (machine, region, online, authed, q1v1, q2v2, rooms, players, anon, game_queues, guests, updated_at)
+       values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, now())
      on conflict (machine) do update
        set region = $2, online = $3, authed = $4::jsonb, q1v1 = $5, q2v2 = $6,
            rooms = $7::jsonb, players = $8::jsonb, anon = $9::jsonb,
-           game_queues = $10::jsonb, updated_at = now()`,
+           game_queues = $10::jsonb, guests = $11::jsonb, updated_at = now()`,
     [
       machine, region, online, JSON.stringify(authedUserIds), q1v1, q2v2,
       JSON.stringify(rooms), JSON.stringify(players), JSON.stringify(anon ?? {}),
-      JSON.stringify(gameQueues),
+      JSON.stringify(gameQueues), JSON.stringify(guests),
     ],
   );
 }
@@ -2069,14 +2099,15 @@ export interface AdminPresenceRow {
   online: number;
   updatedAt: string;
   players: (PresencePlayer & { handle: string | null; username: string | null })[];
+  guests: PresenceGuest[];
   anon: PresenceAnon;
 }
 export async function adminPresence(freshSeconds = 20): Promise<AdminPresenceRow[]> {
   const rows = await q<{
     machine: string; region: string; online: number; updated_at: string;
-    players: PresencePlayer[] | null; anon: PresenceAnon | null;
+    players: PresencePlayer[] | null; anon: PresenceAnon | null; guests: PresenceGuest[] | null;
   }>(
-    `select machine, region, online, updated_at, players, anon from presence
+    `select machine, region, online, updated_at, players, anon, guests from presence
       where updated_at > now() - $1::interval order by region`,
     [`${Math.max(1, Math.floor(freshSeconds))} seconds`],
   );
@@ -2099,11 +2130,75 @@ export async function adminPresence(freshSeconds = 20): Promise<AdminPresenceRow
       handle: names.get(p.userId)?.handle ?? null,
       username: names.get(p.userId)?.username ?? null,
     })),
+    guests: Array.isArray(r.guests) ? r.guests : [],
     anon:
       r.anon && typeof r.anon === 'object' && typeof (r.anon as PresenceAnon).total === 'number'
         ? r.anon
         : { total: 0, inMatch: 0, inLobby: 0, idle: 0 },
   }));
+}
+
+// ---------------------------------------------------------- maintenance ----
+/**
+ * A scheduled MAINTENANCE LOCKDOWN: while it is live, only admins may start
+ * anything. See 0023_maintenance.sql for why this lives in the database rather
+ * than a machine's memory — it has to survive the restart it exists to protect,
+ * and every region has to agree about it.
+ */
+export interface MaintenanceWindow {
+  active: boolean;
+  /** ms epoch it begins; null = the moment it was armed */
+  startsAt: number | null;
+  /** ms epoch it ends; null = open-ended ("until we say otherwise") */
+  endsAt: number | null;
+  message: string;
+}
+
+const NO_MAINTENANCE: MaintenanceWindow = { active: false, startsAt: null, endsAt: null, message: '' };
+
+export async function getMaintenance(): Promise<MaintenanceWindow> {
+  const rows = await q<{ active: boolean; starts_at: string | null; ends_at: string | null; message: string }>(
+    `select active, starts_at, ends_at, message from maintenance where id = 1`,
+  );
+  const r = rows[0];
+  if (!r) return NO_MAINTENANCE;
+  return {
+    active: !!r.active,
+    startsAt: r.starts_at ? new Date(r.starts_at).getTime() : null,
+    endsAt: r.ends_at ? new Date(r.ends_at).getTime() : null,
+    message: r.message ?? '',
+  };
+}
+
+export async function setMaintenance(w: MaintenanceWindow): Promise<MaintenanceWindow> {
+  await q(
+    `update maintenance
+        set active = $1, starts_at = $2, ends_at = $3, message = $4, updated_at = now()
+      where id = 1`,
+    [
+      w.active,
+      w.startsAt ? new Date(w.startsAt).toISOString() : null,
+      w.endsAt ? new Date(w.endsAt).toISOString() : null,
+      w.message ?? '',
+    ],
+  );
+  return getMaintenance();
+}
+
+/**
+ * Is the lockdown BITING right now?
+ *
+ * Armed-but-not-yet-started deliberately does NOT lock. The point of scheduling a
+ * window is to warn people before it takes effect, and a schedule that bites the
+ * moment you set it cannot do that. A window whose end has passed also stops
+ * biting on its own, so a lockdown somebody forgets to lift expires instead of
+ * stranding the service until a human notices.
+ */
+export function maintenanceBiting(w: MaintenanceWindow, now = Date.now()): boolean {
+  if (!w.active) return false;
+  if (w.startsAt && now < w.startsAt) return false;
+  if (w.endsAt && now >= w.endsAt) return false;
+  return true;
 }
 
 /** aggregate presence over every machine heartbeating within `freshSeconds` (a few

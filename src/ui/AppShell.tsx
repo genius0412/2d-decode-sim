@@ -9,6 +9,7 @@ import { FriendToasts } from './friendsContext';
 import { Logo } from './Logo';
 import { NavRail } from './NavRail';
 import { usePresence } from './usePresence';
+import { MaintenanceBanner } from './MaintenanceBanner';
 import { PresenceProvider, QueueCounts } from './QueueCounts';
 import type { Presence, RoomInvite } from '../net/api';
 
@@ -132,6 +133,11 @@ export function AppShell({
           {right}
         </div>
       </header>
+      {/* the maintenance window, on every menu screen. Fed by the presence poll
+          rather than the socket so it also reaches the screens that hold no
+          connection — which is exactly where somebody stands when they are about to
+          start the thing we need them not to start. */}
+      <MaintenanceBanner presence={presence} />
 
       {showRail ? (
         <div className="ds-body">
