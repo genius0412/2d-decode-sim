@@ -293,6 +293,17 @@ export function App() {
   const screenRef = useRef<Screen>('home');
   // which flow opened the live session — only 'record' offers an in-game NEW RUN
   const [sessionKind, setSessionKind] = useState<ActiveGameRef['kind'] | null>(null);
+  /**
+   * Is the live session a CO-OP (duo record) run?
+   *
+   * Kept apart from `sessionKind`, which is 'record' for both solo and duo — and
+   * the two want opposite things from the restart control. A solo run tears itself
+   * down and opens a fresh room; a duo run belongs to BOTH drivers, so restarting
+   * is a vote and one player must never be able to take it away from the other. Duo
+   * previously fell through to the solo path, which sent the presser off to a SOLO
+   * record screen and left their partner alone in the run.
+   */
+  const [sessionCoop, setSessionCoop] = useState(false);
   // a just-played replay to watch in-memory (not yet persisted, so no URL id)
   const [replayObj, setReplayObj] = useState<Replay | null>(null);
   // which robot the WATCHER drove in that replay, so the viewer puts them behind
@@ -546,7 +557,7 @@ export function App() {
 
   /** enter a networked game: remember it (for rejoin + the single-game guard), then
    * show the game screen. Solo play never calls this (it has no session). */
-  const beginSession = (s: NetSession, kind: ActiveGameRef['kind']): void => {
+  const beginSession = (s: NetSession, kind: ActiveGameRef['kind'], coop = false): void => {
     if (s.room && s.clientId) {
       const ref: ActiveGameRef = {
         room: s.room,
@@ -570,6 +581,7 @@ export function App() {
     }
     setSession(s);
     setSessionKind(kind);
+    setSessionCoop(coop);
     navigate('game');
   };
 
@@ -593,6 +605,8 @@ export function App() {
     const s = new ServerSession(transport, false, ref.start, ref.clientId, ref.room);
     setSession(s);
     setSessionKind(ref.kind);
+    // a duo run rejoined has more than one robot on the roster; a solo one does not
+    setSessionCoop(ref.kind === 'record' && (ref.start.setups?.length ?? 1) > 1);
     navigate('game');
   };
 
@@ -698,6 +712,7 @@ export function App() {
     session?.dispose();
     setSession(null);
     setSessionKind(null);
+    setSessionCoop(false);
     // a match that FINISHED (or whose slot is gone) clears its rejoin record in
     // GameView; a mid-match exit keeps it so Home can offer "rejoin your match".
     setActiveGame(loadActiveGame());
@@ -800,7 +815,8 @@ export function App() {
         onExit={exitGame}
         onSettingsChange={update}
         editLayout={editMobileLayout}
-        onRestartRun={sessionKind === 'record' ? restartRun : undefined}
+        onRestartRun={sessionKind === 'record' && !sessionCoop ? restartRun : undefined}
+        coop={sessionCoop}
         onWatchReplay={(r) => {
           setReplayObj(r);
           // capture the seat NOW: `session` is torn down on the way out of the game
@@ -843,7 +859,7 @@ export function App() {
         settings={settings}
         onSettingsChange={update}
         config={auto?.config ?? { kind: 'record', record: 'duo' }}
-        onStart={(s) => beginSession(s, 'record')}
+        onStart={(s) => beginSession(s, 'record', true)}
         onCancel={() => navigate('modes')}
         signedIn={signedIn}
         autoJoin={auto?.room}

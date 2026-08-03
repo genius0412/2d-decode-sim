@@ -51,6 +51,7 @@ import { addClassified, addOverflow, assessMatchEnd } from '../src/sim/scoring';
 import type { Alliance, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, World } from '../src/types';
 import {
   SIM_DT,
+  PRE_COUNTDOWN as C_PRE_COUNTDOWN,
   GATE_STOP_S,
   GATE_OPEN_LATCH_S,
   GATE_TAPE_Y,
@@ -3249,6 +3250,98 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     w.tick === before + 120 && Number.isFinite(r1.pos.x) && Number.isFinite(r1.pos.y),
     `tick=${w.tick} r1=(${r1.pos.x.toFixed(1)},${r1.pos.y.toFixed(1)})`,
   );
+}
+
+// ---- DUO RECORD REMATCH: a vote, not one driver's decision ------------------
+// A co-op run belongs to both people, so neither may restart it out from under the
+// other — mid-match or from the results screen. Everyone toggles their own vote and
+// the run only restarts on unanimity. The generation guard is what makes restarting
+// a LIVE match safe: a rebuild starts at tick 0, so inputs still in flight from the
+// old match carry tick numbers the new one will reach minutes later.
+{
+  const msgs: Record<string, ServerMsg[]> = { d1: [], d2: [] };
+  const mkD = (id: string): Client => ({
+    id,
+    send: (m) => msgs[id].push(m),
+    player: { clientId: id, name: id, teamName: 'T', teamNumber: 1, alliance: 'blue', startIndex: 0, ready: true, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } },
+    connected: true, disconnectAt: 0, userId: `u-${id}`,
+  });
+  const room = new Room('smoke-duo', () => {}, { kind: 'record', record: 'duo' });
+  room.add(mkD('d1'));
+  room.add(mkD('d2'));
+  room.onMessage('d1', { t: 'start' });
+  room.advanceForTest(30);
+  const gen0 = (msgs.d1.find((m) => m.t === 'matchStart') as Extract<ServerMsg, { t: 'matchStart' }>).gen;
+  check('duo rematch: the match is stamped with a generation', typeof gen0 === 'number');
+
+  const tally = (id: string) =>
+    [...msgs[id]].reverse().find((m) => m.t === 'rematch') as Extract<ServerMsg, { t: 'rematch' }> | undefined;
+
+  // ONE driver voting is not enough, and BOTH are told the count
+  room.onMessage('d1', { t: 'rematch', on: true });
+  check('duo rematch: one vote reads 1/2', tally('d1')?.votes === 1 && tally('d1')?.need === 2);
+  check('duo rematch: the PARTNER is told too (that is the point of showing 1/2)',
+    tally('d2')?.votes === 1 && tally('d2')?.need === 2);
+  check('duo rematch: each side is told whether the vote is THEIRS',
+    tally('d1')?.you === true && tally('d2')?.you === false);
+  check('duo rematch: one vote does NOT restart the run', room.tick > 0);
+
+  // ...and a vote can be TAKEN BACK
+  room.onMessage('d1', { t: 'rematch', on: false });
+  check('duo rematch: a vote can be un-pressed', tally('d1')?.votes === 0 && tally('d1')?.you === false);
+
+  // unanimity restarts, mid-match, with a fresh generation
+  room.onMessage('d1', { t: 'rematch', on: true });
+  msgs.d1.length = 0;
+  room.onMessage('d2', { t: 'rematch', on: true });
+  const restarted = msgs.d1.find((m) => m.t === 'matchStart') as Extract<ServerMsg, { t: 'matchStart' }> | undefined;
+  check('duo rematch: BOTH votes restart the run mid-match', !!restarted);
+  check('duo rematch: ...at tick 0 again', room.tick === 0, String(room.tick));
+  check('duo rematch: ...with a NEW generation (stale inputs become identifiable)',
+    (restarted?.gen ?? 0) > (gen0 ?? 0));
+  check('duo rematch: ...and a fresh seed, so it is a new run not a replay',
+    restarted?.seed !== undefined);
+  const after = tally('d1');
+  check('duo rematch: the tally resets after a restart', (after?.votes ?? 1) === 0);
+
+  // THE GENERATION GUARD: an input stamped with the old match must not be applied
+  // to the new one, even though its tick is perfectly plausible here.
+  const gNew = restarted?.gen ?? 1;
+  const drive = quantizeCommand({ driveX: 1, driveY: 1, rotate: 0, intake: false, fire: false });
+  const posOf = (): { x: number; y: number } => {
+    const r = room.worldForTest()?.robots.find((x) => x.id === 0);
+    return { x: r?.pos.x ?? 0, y: r?.pos.y ?? 0 };
+  };
+  // clear the pre-match countdown FIRST — robots are frozen during it, so measuring
+  // "did the input move anything" before auto begins measures nothing at all (the
+  // first cut of this check did exactly that and read a 0.1in physics settle as a
+  // pass on one line and a failure on the next)
+  room.advanceForTest(Math.ceil(C_PRE_COUNTDOWN / SIM_DT) + 30);
+  const base = posOf();
+  const t0 = room.tick;
+  for (let t = t0 + 1; t <= t0 + 60; t++) room.onMessage('d1', { t: 'input', tick: t, q: drive, gen: gNew - 1 });
+  room.advanceForTest(60);
+  const afterStale = posOf();
+  check('duo rematch: a STALE-generation input moves nothing',
+    Math.hypot(afterStale.x - base.x, afterStale.y - base.y) < 0.5,
+    `moved ${Math.hypot(afterStale.x - base.x, afterStale.y - base.y).toFixed(3)}`);
+  // positive control: the SAME command at the CURRENT generation DOES move it, so
+  // the check above is measuring the guard rather than a robot that cannot drive
+  const t1 = room.tick;
+  for (let t = t1 + 1; t <= t1 + 60; t++) room.onMessage('d1', { t: 'input', tick: t, q: drive, gen: gNew });
+  room.advanceForTest(60);
+  const afterFresh = posOf();
+  check('duo rematch: ...while a CURRENT-generation input does move it',
+    Math.hypot(afterFresh.x - afterStale.x, afterFresh.y - afterStale.y) > 2,
+    `moved ${Math.hypot(afterFresh.x - afterStale.x, afterFresh.y - afterStale.y).toFixed(2)}`);
+
+  // a versus room must NOT accept the vote at all — "both agree" is a co-op idea,
+  // and in a rated match it would just be a coercion surface
+  const vs: ServerMsg[] = [];
+  const vroom = new Room('smoke-vs-rematch', () => {}, { kind: 'versus' });
+  vroom.add({ ...mkD('v1'), send: (m) => vs.push(m) });
+  vroom.onMessage('v1', { t: 'rematch', on: true });
+  check('duo rematch: a VERSUS room ignores the vote entirely', !vs.some((m) => m.t === 'rematch'));
 }
 
 // ---- MAINTENANCE LOCKDOWN: when the window actually bites -------------------

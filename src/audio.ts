@@ -228,6 +228,20 @@ export class MatchAudio {
     this.tone(1320, 1320, 0.26, 'triangle', 0.3, 0.26, v);
   }
 
+  /**
+   * REMATCH VOTE — a short two-note blip, deliberately quieter and plainer than
+   * `sfxMatchFound`. It fires while both drivers are looking at the same screen, so
+   * it only has to say "something changed"; a fanfare here would be startling every
+   * time somebody changed their mind. Rising when a vote goes IN, falling when it
+   * comes back out, so the direction is audible without looking.
+   */
+  sfxRematchVote(on: boolean): void {
+    const v = this.alertVolume * 0.7;
+    const [a, b] = on ? [660, 880] : [660, 440];
+    this.tone(a, a, 0.07, 'triangle', 0.22, 0, v);
+    this.tone(b, b, 0.1, 'triangle', 0.2, 0.075, v);
+  }
+
   /** classifier gate "clack-clunk": latch click, then the flap swinging open */
   sfxGate(): void {
     this.noiseBurst(2600, 2600, 0.03, 0.25, 3, 0, this.gateVolume);

@@ -64,6 +64,14 @@ export interface NetStatus {
   server: string | null;
 }
 
+/** the duo-record rematch tally, as the server reports it */
+export interface RematchVote {
+  votes: number;
+  need: number;
+  /** is THIS client's vote currently in? */
+  mine: boolean;
+}
+
 export interface NetSession {
   /** which game the match plays (from matchStart / the first snapshot; DECODE by
    * default). The GameController builds its initial predicted world for this game. */
@@ -110,5 +118,9 @@ export interface NetSession {
   /** how many people are watching this match, as the SERVER reports it to players
    *  (hidden admin observers excluded). 0 until the first update arrives. */
   spectatorCount?(): number;
+  /** duo-record rematch tally (votes / how many are needed / whether ours is in) */
+  rematchVote?(): RematchVote;
+  /** toggle our rematch vote — the server restarts only on unanimity */
+  setRematch?(on: boolean): void;
   dispose(): void;
 }
