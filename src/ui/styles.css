@@ -1813,6 +1813,23 @@ button {
    do, since those are what the light HUD cards are made of. Hence --ds-* here.
    See the bridge block in shell.css. Do not "unify" these back.
    --------------------------------------------------------------------------- */
+/* A standing tip on the queue screens. Bordered rather than another muted line:
+   it tells you the screen is safe to LEAVE, which is the opposite of what a
+   "searching…" screen normally implies, so it has to read as its own object
+   instead of blending into the status text above it. */
+.ds-tip {
+  margin: 14px 0 0;
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--ds-tile);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ds-mut);
+  text-align: left;
+}
+.ds-tip b { color: var(--ds-ink); }
+
 /* the console is wider than a settings column now — it carries a live table */
 .adm-wide { max-width: 940px; }
 

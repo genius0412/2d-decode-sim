@@ -3938,6 +3938,16 @@ button.ds-key:active {
   color: var(--ds-accent);
   font-weight: 800;
 }
+/* the top bar names each game, because it reports the WHOLE service rather than
+   the game you happen to be in. Set apart from the mode labels beside it so
+   "DECODE 1V1 1 2V2 3 · CHAIN REACTION 1V1 2" parses as two groups, not one run-on
+   string. A game with an empty queue never reaches here — see `queuedGames`. */
+.ds-qcount-game {
+  color: var(--ds-ink);
+  text-transform: uppercase;
+}
+/* the bar can carry several games; let it wrap rather than push the bar wider */
+.ds-qcount.bar { white-space: normal; }
 /* ON A FILLED SURFACE the defaults above are wrong, and one of them was invisible:
    the home menu's PLAY button is `.primary`, i.e. an --ds-accent FILL, and the count
    painted --ds-accent on it — the same colour as its own background, 1:1. The muted

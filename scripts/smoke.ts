@@ -7,7 +7,7 @@ import { join as joinPath } from 'node:path';
 import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
-import { queuedModes, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';
+import { queuedModes, queuedGames, queuesFor, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';
 import {
   parkQueue, takeQueue, dropQueue, updateQueue, peekQueue, subscribeQueue, elapsedLabel, elapsedSeconds,
 } from '../src/ui/queueKeeper';
@@ -1890,6 +1890,56 @@ const setup = (
     check('queue counts: no presence yet → nothing rendered', queuedModes(null).length === 0);
     check('queue counts: a junk count is not shown as a number', queuedModes({ queues: { '1v1': NaN, '2v2': undefined } } as never).length === 0);
     check('queue counts: anyoneQueued mirrors it', anyoneQueued(pres(0, 1)) && !anyoneQueued(pres(0, 0)));
+
+    // ---- PER-GAME depth --------------------------------------------------
+    // The matchmaker buckets by game, so a combined count told a DECODE player that
+    // a Chain Reaction queuer was waiting FOR THEM — a number they could act on and
+    // never match from, printed next to the button whose whole job is to get them to
+    // act on it. Depth is per game now, everywhere it is shown.
+    const gp = (decode: [number, number], chain: [number, number]) =>
+      ({
+        online: 0,
+        signedIn: 0,
+        queues: { '1v1': decode[0] + chain[0], '2v2': decode[1] + chain[1] },
+        gameQueues: {
+          decode: { '1v1': decode[0], '2v2': decode[1] },
+          chain: { '1v1': chain[0], '2v2': chain[1] },
+        },
+      }) as never;
+
+    check('per-game: DECODE reads its OWN 1v1 depth, not the combined one',
+      queuesFor(gp([1, 0], [5, 0]), 'decode')?.['1v1'] === 1);
+    check('per-game: ...and Chain Reaction reads its own',
+      queuesFor(gp([1, 0], [5, 0]), 'chain')?.['1v1'] === 5);
+    check('per-game: a game with an empty queue lists NO modes',
+      queuedModes(gp([0, 0], [3, 0]), 'decode').length === 0);
+    check('per-game: ...while the busy one still does',
+      j(queuedModes(gp([0, 0], [3, 0]), 'chain')) === j(['1v1']));
+    check('per-game: an unknown game reads as empty, never as the combined total',
+      queuesFor(gp([1, 1], [1, 1]), 'nope' as never)?.['1v1'] === 0);
+
+    // the TOP BAR lists every game that has somebody waiting, each labelled — and
+    // omits a game with an empty queue ENTIRELY, name included
+    const games = ['decode', 'chain'] as const;
+    const both = queuedGames(gp([1, 3], [2, 0]), games);
+    check('top bar: every busy game is listed', j(both.map((g) => g.game)) === j(['decode', 'chain']));
+    check('top bar: with each of its non-empty modes',
+      j(both[0].modes) === j([{ mode: '1v1', n: 1 }, { mode: '2v2', n: 3 }]));
+    check('top bar: a mode at 0 is dropped from a busy game',
+      j(both[1].modes) === j([{ mode: '1v1', n: 2 }]));
+    const oneGame = queuedGames(gp([0, 0], [2, 0]), games);
+    check('top bar: a game with NOTHING queued is omitted entirely (no label)',
+      oneGame.length === 1 && oneGame[0].game === 'chain');
+    check('top bar: nobody queued anywhere → nothing at all',
+      queuedGames(gp([0, 0], [0, 0]), games).length === 0);
+
+    // OLDER SERVER (no gameQueues): fall back to the combined total rather than
+    // rendering nothing. It is the pre-fix number, but it is the only one such a
+    // server can give, and a rollout window should not blank the count.
+    check('per-game: an old server without gameQueues still yields a count',
+      queuesFor(pres(2, 0), 'decode')?.['1v1'] === 2);
+    check('per-game: ...and the labelled top-bar form shows nothing rather than guessing',
+      queuedGames(pres(2, 0), games).length === 0);
 
     // EXPAND SEARCH used to call the server and change nothing on screen, so it read
     // as a dead button. These are the strings that now have to move when it is pressed.

@@ -116,7 +116,7 @@ export function AppShell({
   return (
     // ONE poller for the whole shell — every menu that shows queue depth reads this
     // value rather than starting its own (see QueueCounts.tsx)
-    <PresenceProvider value={presence}>
+    <PresenceProvider value={presence} game={game}>
     <div className="ds-app">
       <header className="ds-bar">
         <button className="ds-mark" onClick={() => onNav('home')} aria-label={`${APP_NAME} home`}>
@@ -127,7 +127,7 @@ export function AppShell({
           {/* the header is on EVERY menu screen, so this is the one placement that
               makes queue depth visible everywhere rather than only where someone
               already went looking for a match */}
-          <QueueCounts className="bar" />
+          <QueueCounts className="bar" allGames />
           {presence && <PresenceChip p={presence} />}
           {right}
         </div>

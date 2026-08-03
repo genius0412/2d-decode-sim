@@ -392,12 +392,37 @@ export class Matchmaker {
     room.applyPending({ code, hostRegion: '', mode, seed, roster, ranked: true });
   }
 
-  /** live queue depth per bucket, for the public presence endpoint. CLOSED parties
-   * are excluded: they can never pair with anyone reading this number, so counting
-   * them would advertise a pool that isn't there. */
+  /** live queue depth per bucket ACROSS EVERY GAME. Kept because older clients read
+   * this shape; new ones want `queueSizesByGame` (a DECODE player cannot pair with
+   * a Chain Reaction queuer, so a combined number misleads them). CLOSED parties are
+   * excluded: they can never pair with anyone reading this, so counting them would
+   * advertise a pool that isn't there. */
   queueSizes(): Record<QueueMode, number> {
     const open = (m: QueueMode): number => this.queues[m].reduce((n, e) => n + (e.partyOnly ? 0 : 1), 0);
     return { '1v1': open('1v1'), '2v2': open('2v2') };
+  }
+
+  /**
+   * Queue depth split BY GAME, which is the only version of this number that means
+   * anything to a player.
+   *
+   * Pairing is bucketed by game (see `bucketKey`) — a Chain Reaction queuer and a
+   * DECODE queuer can never be matched — so a combined count told a DECODE player
+   * "1 waiting in 1V1" about somebody they had no way of playing. That inverts the
+   * whole point of showing the number: the chip exists to be an argument FOR
+   * queueing, and it was advertising a pool that did not exist for the reader.
+   */
+  queueSizesByGame(): Record<string, Record<QueueMode, number>> {
+    const out: Record<string, Record<QueueMode, number>> = {};
+    for (const mode of Object.keys(this.queues) as QueueMode[]) {
+      for (const e of this.queues[mode]) {
+        if (e.partyOnly) continue; // a closed challenge is not an open pool
+        const g = e.game ?? 'decode';
+        out[g] ??= { '1v1': 0, '2v2': 0 };
+        out[g][mode]++;
+      }
+    }
+    return out;
   }
 
   /**

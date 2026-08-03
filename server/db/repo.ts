@@ -1961,7 +1961,31 @@ export async function cleanupStalePending(olderThanMs: number): Promise<number> 
 export interface GlobalPresence {
   online: number;
   signedIn: number;
+  /** every game combined — the shape older clients read. Do not remove. */
   queues: { '1v1': number; '2v2': number };
+  /**
+   * Depth split BY GAME, which is the only version a player can act on: pairing is
+   * bucketed by game, so a DECODE player can never be matched with a Chain Reaction
+   * queuer and must not be told one is waiting for them. Keyed by game id.
+   */
+  gameQueues: Record<string, { '1v1': number; '2v2': number }>;
+}
+
+/** merge per-game queue depths from one machine into an accumulator */
+function addGameQueues(
+  into: Record<string, { '1v1': number; '2v2': number }>,
+  from: unknown,
+): void {
+  if (!from || typeof from !== 'object') return;
+  for (const [game, q] of Object.entries(from as Record<string, unknown>)) {
+    if (!q || typeof q !== 'object') continue;
+    const one = q as Partial<Record<'1v1' | '2v2', unknown>>;
+    into[game] ??= { '1v1': 0, '2v2': 0 };
+    for (const m of ['1v1', '2v2'] as const) {
+      const n = one[m];
+      if (typeof n === 'number' && Number.isFinite(n)) into[game][m] += n;
+    }
+  }
 }
 
 /**
@@ -2007,16 +2031,19 @@ export async function upsertPresence(
   rooms: unknown[] = [],
   players: PresencePlayer[] = [],
   anon: PresenceAnon | null = null,
+  gameQueues: Record<string, { '1v1': number; '2v2': number }> = {},
 ): Promise<void> {
   await q(
-    `insert into presence (machine, region, online, authed, q1v1, q2v2, rooms, players, anon, updated_at)
-       values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, now())
+    `insert into presence (machine, region, online, authed, q1v1, q2v2, rooms, players, anon, game_queues, updated_at)
+       values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, now())
      on conflict (machine) do update
        set region = $2, online = $3, authed = $4::jsonb, q1v1 = $5, q2v2 = $6,
-           rooms = $7::jsonb, players = $8::jsonb, anon = $9::jsonb, updated_at = now()`,
+           rooms = $7::jsonb, players = $8::jsonb, anon = $9::jsonb,
+           game_queues = $10::jsonb, updated_at = now()`,
     [
       machine, region, online, JSON.stringify(authedUserIds), q1v1, q2v2,
       JSON.stringify(rooms), JSON.stringify(players), JSON.stringify(anon ?? {}),
+      JSON.stringify(gameQueues),
     ],
   );
 }
@@ -2090,7 +2117,9 @@ export async function globalPresence(freshSeconds = 15): Promise<GlobalPresence>
   // shared CTE halves the per-refresh cost, which is what pays for the shorter cache
   // TTL in server/index.ts: accuracy and cost were traded against each other here, and
   // this is the move that buys both.
-  const rows = await q<{ online: number; q1: number; q2: number; signed_in: number }>(
+  const rows = await q<{
+    online: number; q1: number; q2: number; signed_in: number; game_queues: unknown[];
+  }>(
     `with fresh as (
        select * from presence where updated_at > now() - $1::interval
      )
@@ -2098,12 +2127,22 @@ export async function globalPresence(freshSeconds = 15): Promise<GlobalPresence>
             coalesce(sum(q1v1), 0)::int as q1,
             coalesce(sum(q2v2), 0)::int as q2,
             (select count(distinct uid)::int
-               from fresh f, jsonb_array_elements_text(f.authed) as uid) as signed_in
+               from fresh f, jsonb_array_elements_text(f.authed) as uid) as signed_in,
+            -- carried on the SAME round trip: this is the service's most-called
+            -- query, and per-game depth is not worth a second one
+            coalesce(jsonb_agg(game_queues), '[]'::jsonb) as game_queues
        from fresh`,
     [win],
   );
-  const a = rows[0] ?? { online: 0, q1: 0, q2: 0, signed_in: 0 };
-  return { online: a.online, signedIn: a.signed_in ?? 0, queues: { '1v1': a.q1, '2v2': a.q2 } };
+  const a = rows[0] ?? { online: 0, q1: 0, q2: 0, signed_in: 0, game_queues: [] };
+  const gameQueues: Record<string, { '1v1': number; '2v2': number }> = {};
+  for (const per of Array.isArray(a.game_queues) ? a.game_queues : []) addGameQueues(gameQueues, per);
+  return {
+    online: a.online,
+    signedIn: a.signed_in ?? 0,
+    queues: { '1v1': a.q1, '2v2': a.q2 },
+    gameQueues,
+  };
 }
 
 // ------------------------------------------------------------- friends ------

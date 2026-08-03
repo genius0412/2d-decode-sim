@@ -1,0 +1,18 @@
+-- Ranked queue depth, split BY GAME.
+--
+-- `q1v1`/`q2v2` count every waiter in a bucket regardless of which game they queued
+-- for. Pairing does NOT work that way: the matchmaker's compatibility bucket includes
+-- the game (server/matchmaking.ts `bucketKey`), because DECODE and Chain Reaction run
+-- different `step()`s and could never share an authoritative match. So a single
+-- Chain Reaction queuer made every DECODE menu advertise "1V1 1" — a player the
+-- reader had no way of being matched with.
+--
+-- That inverts the reason the count is shown at all. The rule for these chips is that
+-- a number only ever appears when it is an argument FOR queueing (see queueDepth.ts);
+-- a cross-game count is an argument for queueing into a pool that, for you, is empty.
+--
+-- One jsonb rather than four more int columns: a third game should not need another
+-- migration, and every consumer reads the whole object anyway. The old int columns
+-- stay and keep being written — one Fly app serves every client build, and older
+-- clients still read the flat total from /api/presence.
+alter table presence add column if not exists game_queues jsonb not null default '{}'::jsonb;

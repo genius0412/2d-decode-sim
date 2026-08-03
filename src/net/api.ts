@@ -186,8 +186,17 @@ export interface Presence {
   online: number;
   /** distinct authenticated users currently connected */
   signedIn: number;
-  /** how many players are waiting in each ranked bucket right now */
+  /**
+   * Waiting players per bucket, EVERY GAME COMBINED.
+   *
+   * Kept for compatibility, and deliberately not what the UI shows: pairing is
+   * bucketed by game, so this number told a DECODE player that a Chain Reaction
+   * queuer was waiting for them. Read `gameQueues` instead.
+   */
   queues: { '1v1': number; '2v2': number };
+  /** waiting players per bucket, SPLIT BY GAME — the only version a player can act
+   *  on. Absent from servers older than this field; callers fall back to `queues`. */
+  gameQueues?: Record<string, { '1v1': number; '2v2': number }>;
   /** the live admin notice (scheduled restart / info), or null — mirrors the
    * WebSocket `serverNotice` so disconnected pages can show the banner too */
   notice?: { kind: 'restart' | 'info'; message: string; until?: number } | null;

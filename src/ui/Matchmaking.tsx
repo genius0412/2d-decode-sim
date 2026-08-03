@@ -9,7 +9,7 @@ import type { NetSession } from '../net/session';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
-import { expandLabel, widenHint } from './queueDepth';
+import { expandLabel, widenHint, queuesFor } from './queueDepth';
 import { parkQueue, takeQueue, updateQueue, dropQueue, elapsedSeconds, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
 import { useServerNotice } from '../net/notice';
@@ -69,6 +69,8 @@ export function Matchmaking({
   // queue on the strength of it, so it gets an uncached read rather than the
   // ambient chip's up-to-a-minute-old one.
   const presence = usePresence(8000, true);
+  // depth for THIS game only — see the note where it renders
+  const depth = queuesFor(presence, settings.game) ?? { '1v1': 0, '2v2': 0 };
   // block queueing while a server restart is scheduled (you'd only get dropped)
   const notice = useServerNotice();
   const restartPending =
@@ -546,6 +548,12 @@ export function Matchmaking({
               ? 'They start the moment they accept. This match counts for ELO.'
               : 'Once they accept, you queue together as a team.'}
           </p>
+          {/* the wait here is somebody else's response time, so it is the screen
+              MOST worth telling people they can leave */}
+          <p className="ds-tip">
+            <b>Tip:</b> press <b>← Back</b> and keep playing — you stay in the queue, and
+            we’ll pull you in the moment they accept.
+          </p>
           {error && <p className="ds-form-err">⚠ {error}</p>}
           <div className="ds-actions">
             <button className="ds-cta ghost" onClick={cancel}>
@@ -567,6 +575,10 @@ export function Matchmaking({
             {widenHint(bumps, elapsed)}
           </p>
         )}
+        <p className="ds-tip">
+          <b>Tip:</b> press <b>← Back</b> and keep playing — your place in the queue is
+          kept, and we’ll pull you into the match the moment it’s found.
+        </p>
         {error && <p className="ds-form-err">⚠ {error}</p>}
         <div className="ds-actions">
           {!noWiden && multiServer() && (
@@ -599,8 +611,11 @@ export function Matchmaking({
       <p className="ds-hint">
         {presence ? (
           <>
-            <b style={{ color: 'var(--ds-ink)' }}>{presence.queues[mode]}</b> waiting in{' '}
-            {mode.toUpperCase()} · {presence.queues[mode === '1v1' ? '2v2' : '1v1']} in{' '}
+            {/* THIS GAME's depth. A combined count named people you cannot be paired
+                with — the matchmaker buckets by game — which made the number an
+                argument for queueing into a pool that, for you, was empty. */}
+            <b style={{ color: 'var(--ds-ink)' }}>{depth[mode]}</b> waiting in{' '}
+            {mode.toUpperCase()} · {depth[mode === '1v1' ? '2v2' : '1v1']} in{' '}
             {(mode === '1v1' ? '2v2' : '1v1').toUpperCase()} · {presence.online} online
           </>
         ) : (

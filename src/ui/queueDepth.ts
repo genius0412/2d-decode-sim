@@ -1,4 +1,5 @@
 import type { EloMode, Presence } from '../net/api';
+import type { GameId } from '../types';
 
 /** the ranked buckets, in the order they are shown */
 export const QUEUE_MODES: readonly EloMode[] = ['1v1', '2v2'] as const;
@@ -16,12 +17,53 @@ export const QUEUE_MODES: readonly EloMode[] = ['1v1', '2v2'] as const;
  * Pure and separate from the component so the rule can be tested directly — this
  * is logic, not markup, and it is the part that would silently regress.
  */
-export function queuedModes(p: Presence | null): EloMode[] {
-  if (!p || !p.queues) return [];
+export function queuedModes(p: Presence | null, game?: GameId): EloMode[] {
+  const src = queuesFor(p, game);
+  if (!src) return [];
   return QUEUE_MODES.filter((m) => {
-    const n = p.queues[m];
+    const n = src[m];
     return typeof n === 'number' && Number.isFinite(n) && n > 0;
   });
+}
+
+/**
+ * The depths that apply to `game` — or every game combined when no game is named.
+ *
+ * `gameQueues` is absent on servers older than it, and the fallback is the combined
+ * `queues`. That is knowingly the pre-fix (wrong-for-one-game) number, but it is the
+ * only one such a server can offer, and showing a slightly-too-high count beats
+ * showing nothing while a deploy rolls out.
+ */
+export function queuesFor(p: Presence | null, game?: GameId): Record<EloMode, number> | null {
+  if (!p) return null;
+  if (game && p.gameQueues) return p.gameQueues[game] ?? { '1v1': 0, '2v2': 0 };
+  return p.queues ?? null;
+}
+
+/**
+ * Every game that has somebody waiting, with its modes — for the top bar, which
+ * shows the WHOLE service rather than just the game you happen to be in.
+ *
+ * A game with nothing queued is omitted entirely, label and all: the same rule that
+ * hides a zero mode, applied one level up. "Chain Reaction 0" is not a smaller
+ * version of useful information, it is a reason not to bother, printed next to the
+ * button whose job is to get you to bother.
+ */
+export function queuedGames(
+  p: Presence | null,
+  games: readonly GameId[],
+): { game: GameId; modes: { mode: EloMode; n: number }[] }[] {
+  if (!p?.gameQueues) return [];
+  const out: { game: GameId; modes: { mode: EloMode; n: number }[] }[] = [];
+  for (const game of games) {
+    const q = p.gameQueues[game];
+    if (!q) continue;
+    const modes = QUEUE_MODES.map((mode) => ({ mode, n: q[mode] ?? 0 })).filter(
+      (x) => Number.isFinite(x.n) && x.n > 0,
+    );
+    if (modes.length) out.push({ game, modes });
+  }
+  return out;
 }
 
 /**

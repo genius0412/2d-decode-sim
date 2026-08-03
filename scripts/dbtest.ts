@@ -588,6 +588,32 @@ async function main(): Promise<void> {
     'operator view: and it carries NO screen/menu detail for anybody',
     allPlayers.every((p) => !('screen' in p) && !('page' in p) && ['menu', 'lobby', 'match'].includes(p.act)),
   );
+  // ---- PER-GAME queue depth aggregates across regions (0022) --------------
+  // The flat q1v1/q2v2 columns count every game together, which is not how pairing
+  // works — so a Chain Reaction queuer inflated DECODE's advertised depth.
+  await repo.upsertPresence('m-iad', 'iad', 4, ['op-1'], 1, 0, [], [], null, {
+    decode: { '1v1': 1, '2v2': 0 },
+  });
+  await repo.upsertPresence('m-nrt', 'nrt', 2, ['op-2'], 2, 1, [], [], null, {
+    decode: { '1v1': 1, '2v2': 0 },
+    chain: { '1v1': 1, '2v2': 1 },
+  });
+  const gq = await repo.globalPresence();
+  check('per-game: depths are summed per game ACROSS regions',
+    gq.gameQueues.decode['1v1'] === 2 && gq.gameQueues.chain['1v1'] === 1,
+    JSON.stringify(gq.gameQueues));
+  check('per-game: buckets stay separate within a game', gq.gameQueues.chain['2v2'] === 1);
+  check('per-game: a game nobody is queued for is absent, not zeroed in',
+    !('nope' in gq.gameQueues));
+  check('per-game: the COMBINED total still adds up for older clients',
+    gq.queues['1v1'] === 3 && gq.queues['2v2'] === 1, JSON.stringify(gq.queues));
+  await db.query(`update presence set updated_at = now() - interval '60 seconds' where machine = 'm-nrt'`);
+  const gq2 = await repo.globalPresence();
+  check('per-game: a stale machine drops out of the per-game aggregate too',
+    gq2.gameQueues.decode['1v1'] === 1 && !gq2.gameQueues.chain,
+    JSON.stringify(gq2.gameQueues));
+  await repo.upsertPresence('m-nrt', 'nrt', 2, ['op-2'], 0, 0, [{ room: 'nrt-b2' }], [{ userId: 'op-2', act: 'menu', queue: '1v1', queuedS: 42 }], { total: 1, inMatch: 0, inLobby: 0, idle: 1 });
+
   // a snapshot, never a timeline: re-beating REPLACES, so no history accumulates
   await repo.upsertPresence('m-iad', 'iad', 0, [], 0, 0, [], [], { total: 0, inMatch: 0, inLobby: 0, idle: 0 });
   const after = await repo.adminPresence();

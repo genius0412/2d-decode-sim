@@ -289,6 +289,16 @@ function machineIdle(): boolean {
  */
 function withLocal(v: GlobalPresence): GlobalPresence {
   const qs = matchmaker.queueSizes();
+  const byGame = matchmaker.queueSizesByGame();
+  // same max-per-field rule, applied per game: this machine's own queue is already
+  // in the aggregate once its beat lands, so the max is a no-op then and a floor
+  // in the window before it
+  const gameQueues: Record<string, { '1v1': number; '2v2': number }> = {};
+  for (const g of new Set([...Object.keys(v.gameQueues ?? {}), ...Object.keys(byGame)])) {
+    const a = v.gameQueues?.[g] ?? { '1v1': 0, '2v2': 0 };
+    const b = byGame[g] ?? { '1v1': 0, '2v2': 0 };
+    gameQueues[g] = { '1v1': Math.max(a['1v1'], b['1v1']), '2v2': Math.max(a['2v2'], b['2v2']) };
+  }
   return {
     online: Math.max(v.online, onlineCount),
     signedIn: Math.max(v.signedIn, authedUsers.size),
@@ -296,6 +306,7 @@ function withLocal(v: GlobalPresence): GlobalPresence {
       '1v1': Math.max(v.queues['1v1'], qs['1v1']),
       '2v2': Math.max(v.queues['2v2'], qs['2v2']),
     },
+    gameQueues,
   };
 }
 
@@ -909,7 +920,12 @@ const httpServer = createServer((req, res) => {
       noticeLive() && currentNotice
         ? { kind: currentNotice.kind, message: currentNotice.message, until: currentNotice.until }
         : null;
-    const respond = (online: number, signedIn: number, queues: Record<string, number>): void => {
+    const respond = (
+      online: number,
+      signedIn: number,
+      queues: Record<string, number>,
+      gameQueues: Record<string, Record<string, number>>,
+    ): void => {
       res.writeHead(200, {
         'content-type': 'application/json',
         'cache-control': 'no-store',
@@ -918,21 +934,25 @@ const httpServer = createServer((req, res) => {
       // `caps` tells a NEW client what this (possibly older) deploy can honour —
       // see SERVER_CAPS. One app serves every client build, so a feature that
       // would misbehave rather than degrade has to be gated on the answer.
-      res.end(JSON.stringify({ region: REGION, online, signedIn, queues, notice, caps: SERVER_CAPS }));
+      //
+      // `queues` (all games combined) STAYS for older clients that only know that
+      // shape. `gameQueues` is the one a player can act on: pairing is bucketed by
+      // game, so a combined count advertises a pool the reader cannot match from.
+      res.end(JSON.stringify({ region: REGION, online, signedIn, queues, gameQueues, notice, caps: SERVER_CAPS }));
     };
     // GLOBAL count: aggregate every region's heartbeat (this machine only sees its
     // own sockets — anycast routing means the caller often lands on an empty region).
     // Fall back to this machine's local numbers if the DB read fails.
     if (dbEnabled) {
       aggregatePresence(wantFull).then(
-        (g) => respond(g.online, g.signedIn, g.queues),
+        (g) => respond(g.online, g.signedIn, g.queues, g.gameQueues ?? {}),
         (e) => {
           console.error('[presence] aggregate failed, using local:', e);
-          respond(onlineCount, authedUsers.size, matchmaker.queueSizes());
+          respond(onlineCount, authedUsers.size, matchmaker.queueSizes(), matchmaker.queueSizesByGame());
         },
       );
     } else {
-      respond(onlineCount, authedUsers.size, matchmaker.queueSizes());
+      respond(onlineCount, authedUsers.size, matchmaker.queueSizes(), matchmaker.queueSizesByGame());
     }
     return;
   }
@@ -1434,7 +1454,7 @@ if (dbEnabled) {
       MACHINE, REGION, onlineCount, [...authedUsers.keys()], qs['1v1'], qs['2v2'],
       // live rooms ride the SAME beat, so "Watch Live" sees every region (0021)
       [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null),
-      snap.players, snap.anon,
+      snap.players, snap.anon, matchmaker.queueSizesByGame(),
     ).catch((e) => console.error('[presence] heartbeat failed:', e));
   };
   beat();

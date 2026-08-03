@@ -364,6 +364,32 @@ const namesOf = (m: PendingMatch | undefined): string =>
   check('stagedFor: ...and for nobody else (a code-guesser is still refused)', !staged.stagedFor('u-stranger'));
 }
 
+// ---- queue depth is PER GAME ------------------------------------------------
+// Pairing buckets by game, so a combined count advertised a pool the reader could
+// never match from: one Chain Reaction queuer made every DECODE menu read "1V1 1".
+{
+  const { mm } = await pair([
+    entry('d1', '1v1', { game: 'decode' }),
+    entry('c1', '1v1', { game: 'chain' }),
+    entry('c2', '2v2', { game: 'chain' }),
+  ]);
+  const byGame = mm.queueSizesByGame();
+  check('per-game depth: DECODE counts only its own queuer', byGame.decode?.['1v1'] === 1, JSON.stringify(byGame));
+  check('per-game depth: Chain Reaction counts only its own', byGame.chain?.['1v1'] === 1);
+  check('per-game depth: ...in each bucket separately', byGame.chain?.['2v2'] === 1 && byGame.decode?.['2v2'] === 0);
+  check('per-game depth: a game with nobody waiting has no entry at all', !byGame.nope);
+  // the combined shape stays correct too — older clients still read it
+  check('per-game depth: the combined total is unchanged for old clients', mm.queueSizes()['1v1'] === 2);
+}
+{
+  // a CLOSED challenge is not an open pool in either shape
+  const { mm } = await pair([
+    entry('p1', '1v1', { game: 'decode', party: 'tok', partySize: 2, partyOnly: true }),
+  ]);
+  check('per-game depth: a closed challenge is not advertised as available',
+    (mm.queueSizesByGame().decode?.['1v1'] ?? 0) === 0);
+}
+
 // ---- the operator view of the queue -----------------------------------------
 // A depth count cannot distinguish "nobody is queueing" from "everybody is queueing
 // and nothing is pairing", which is exactly the failure an operator gets called
