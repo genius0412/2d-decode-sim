@@ -1124,7 +1124,7 @@ export function App() {
           onDonate={() => navigate('donate')}
         />
       )}
-      {screen === 'admin' && isAdmin && <Admin />}
+      {screen === 'admin' && isAdmin && <Admin onWatch={spectateRoom} />}
 
       {/* Patch notes / new-season + new-act reveals — shown once on the menu shell,
           never over a live match (the game screen returns before this). Mounted

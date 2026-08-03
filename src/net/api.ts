@@ -510,6 +510,63 @@ export async function fetchAdminStatus(): Promise<{ isAdmin: boolean; userId: st
   }
 }
 
+/**
+ * The operator view of who is on the service right now.
+ *
+ * Deliberately scoped (server: GET /api/admin/presence). Signed-in accounts carry
+ * only state that is already public or already shown to their own friends;
+ * anonymous sessions are COUNTS with no identifier; nobody's screen or menu is
+ * reported; and there is no history, because the source row is a ~5s snapshot that
+ * overwrites itself.
+ */
+export interface AdminPresencePlayer {
+  userId: string;
+  handle: string | null;
+  username: string | null;
+  act: 'menu' | 'lobby' | 'match';
+  room?: string;
+  queue?: '1v1' | '2v2';
+  queuedS?: number;
+  game?: string;
+}
+export interface AdminAnonBucket {
+  total: number;
+  inMatch: number;
+  inLobby: number;
+  idle: number;
+}
+export interface AdminMachineRow {
+  machine: string;
+  region: string;
+  online: number;
+  updatedAt?: string;
+  players: AdminPresencePlayer[];
+  anon: AdminAnonBucket;
+}
+export interface AdminPresence {
+  region: string;
+  machines: AdminMachineRow[];
+  local: AdminMachineRow;
+  rooms: LiveRoom[];
+  queues: Record<string, number>;
+}
+
+export async function adminFetchPresence(): Promise<AdminPresence | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(base + '/api/admin/presence', {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as AdminPresence;
+  } catch {
+    return null;
+  }
+}
+
 /** broadcast a scheduled-restart countdown to every connected client */
 export async function adminAnnounce(seconds: number, message: string): Promise<boolean> {
   const base = gameServerHttpUrl();

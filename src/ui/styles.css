@@ -1813,6 +1813,147 @@ button {
    do, since those are what the light HUD cards are made of. Hence --ds-* here.
    See the bridge block in shell.css. Do not "unify" these back.
    --------------------------------------------------------------------------- */
+/* the console is wider than a settings column now — it carries a live table */
+.adm-wide { max-width: 940px; }
+
+.adm-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 22px;
+  border-bottom: 1px solid var(--ds-line);
+  padding-bottom: 10px;
+}
+.adm-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ds-round-full);
+  padding: 7px 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--ds-mut);
+  cursor: pointer;
+}
+.adm-tab:hover { color: var(--ds-ink); }
+.adm-tab.on {
+  background: var(--ds-tile);
+  border-color: var(--ds-line-strong);
+  color: var(--ds-ink);
+}
+
+.adm-h3 {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ds-mut);
+  margin: 28px 0 12px;
+}
+
+.adm-stats { display: flex; flex-wrap: wrap; gap: 10px; }
+.adm-stat {
+  flex: 1 1 120px;
+  background: var(--ds-panel);
+  border: 1px solid var(--ds-line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.adm-stat b { font-size: 24px; line-height: 1.1; color: var(--ds-ink); }
+.adm-stat span {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ds-mut);
+}
+.adm-stats.small .adm-stat b { font-size: 18px; }
+
+.adm-regions { display: flex; flex-wrap: wrap; gap: 8px; }
+.adm-region {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  background: var(--ds-tile);
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+.adm-region b { text-transform: uppercase; letter-spacing: 0.06em; color: var(--ds-ink); }
+
+.adm-filter {
+  width: 100%;
+  background: var(--ds-tile);
+  border: 1px solid var(--ds-line-strong);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ds-ink);
+  margin-bottom: 12px;
+}
+
+/* the table is the one thing here that can outgrow a phone — let IT scroll rather
+   than the page, so the panel never scrolls sideways as a whole */
+.adm-table-wrap { overflow-x: auto; }
+.adm-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
+.adm-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ds-mut);
+  padding: 0 10px 8px 0;
+  border-bottom: 1px solid var(--ds-line);
+}
+.adm-table td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--ds-line); vertical-align: middle; }
+.adm-name { font-weight: 700; color: var(--ds-ink); }
+
+.adm-pill {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--ds-round-full);
+  font-size: 11.5px;
+  font-weight: 700;
+  background: var(--ds-tile);
+  border: 1px solid var(--ds-line-strong);
+  color: var(--ds-mut);
+  white-space: nowrap;
+}
+.adm-pill.match { color: var(--ds-ok-ink); border-color: var(--ds-ok-ink); }
+.adm-pill.queued { color: var(--ds-accent); border-color: var(--ds-accent); }
+
+.adm-rooms { display: flex; flex-direction: column; gap: 8px; }
+.adm-room {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--ds-panel);
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+/* the standing note about what this page can and cannot see. Bordered rather than
+   muted into the background on purpose: the limits are part of the feature, not a
+   footnote to it. */
+.adm-privacy {
+  margin-top: 28px;
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--ds-tile);
+}
+
 .admin-card {
   background: var(--ds-panel);
   border: 1px solid var(--ds-line);
