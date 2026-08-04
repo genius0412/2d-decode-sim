@@ -101,6 +101,17 @@ export interface Client {
    * socket's eventual close must be able to tell it is stale — it carries the conn
    * it was issued and `detach` ignores it if a newer socket has taken over. */
   conn?: number;
+  /**
+   * A SPECTATOR who is not counted in the visible watcher total.
+   *
+   * Only ever set by the server after verifying an admin JWT — never from anything
+   * a client claims — so an ordinary viewer cannot make themselves invisible. It
+   * exists for moderation: watching a suspected cheat play out stops working the
+   * moment the count tells them somebody arrived. It changes what players are told
+   * about who is watching, so it is disclosed in the privacy policy rather than
+   * left as a quiet capability.
+   */
+  hidden?: boolean;
 }
 
 /** one driver's outcome in a finished match (for persistence) */
@@ -151,6 +162,18 @@ export class Room {
   private connSeq = 0;
 
   private world: World | null = null;
+  /**
+   * MATCH GENERATION: bumped every time this room authors a world.
+   *
+   * A rematch rebuilds at tick 0, so inputs still in flight from the previous match
+   * carry tick numbers the new one WILL reach — and would be applied as if fresh.
+   * Every input is stamped with the generation it was produced for and dropped if it
+   * is stale. This is what makes restarting a live match safe rather than the source
+   * of the post-restart drift that got restart disabled in the first place.
+   */
+  private matchGen = 0;
+  /** duo-record rematch votes, by clientId. A TOGGLE per driver — see `voteRematch`. */
+  private readonly rematchVotes = new Set<string>();
   // the live match's seed + setups (remembered so a spectator joining mid-match, or a
   // reconnect, can be handed the same `matchStart` the drivers got)
   private matchSeed = 0;
@@ -225,6 +248,16 @@ export class Room {
     return this.pendingMatch?.game ?? this.config.game ?? 'decode';
   }
 
+  /** which game this room runs (public read for the operator snapshot) */
+  get gameId(): GameId {
+    return this.game;
+  }
+
+  /** is a match actually running here (vs. still a lobby)? */
+  get hasWorld(): boolean {
+    return this.world !== null;
+  }
+
   constructor(
     readonly code: string,
     /** called when the room empties, so the registry can drop it */
@@ -297,6 +330,21 @@ export class Room {
       this.sendSnapshotTo(client);
     }
     this.broadcastRoster();
+    this.broadcastSpectators();
+  }
+
+  /**
+   * Tell the room how many people are watching — edge-triggered, and only when the
+   * number players can SEE actually moved. A hidden admin joining or leaving is a
+   * no-op by construction rather than by a separate code path, which is what keeps
+   * "invisible" honest: there is no message to notice the absence of.
+   */
+  private lastSpecCount = -1;
+  private broadcastSpectators(): void {
+    const n = this.visibleSpectators();
+    if (n === this.lastSpecCount) return;
+    this.lastSpecCount = n;
+    this.broadcast({ t: 'spectators', n });
   }
 
   /** the matchStart payload for a client. `yourRobotId` = -1 for a spectator (no slot). */
@@ -309,6 +357,7 @@ export class Room {
       game: this.game,
       ranked: this.ranked,
       intros: this.ranked ? this.intros : undefined,
+      gen: this.matchGen,
       region: SERVER_REGION || undefined,
     };
   }
@@ -340,8 +389,54 @@ export class Room {
       ranked: this.ranked,
       players,
       score: { red: w.match.scores.red.total, blue: w.match.scores.blue.total },
-      spectators: this.spectators.size,
+      spectators: this.visibleSpectators(),
     };
+  }
+
+  /** Mark an already-attached spectator as a hidden observer and correct the count.
+   *  Called ONLY from the server's own admin-JWT verification (see the `spectate`
+   *  handler) — there is no path from a client message to this. */
+  hideSpectator(id: string): void {
+    const s = this.spectators.get(id);
+    if (!s || s.hidden) return;
+    s.hidden = true;
+    this.broadcastSpectators();
+  }
+
+  /** watchers as PLAYERS are told about them: hidden admin observers excluded.
+   *  One definition, used by the Watch Live card and the in-match readout, so the
+   *  two can never disagree about whether somebody is being counted. */
+  visibleSpectators(): number {
+    let n = 0;
+    for (const s of this.spectators.values()) if (!s.hidden) n++;
+    return n;
+  }
+
+  /**
+   * Operator snapshot of who is in this room, for the cross-region presence beat.
+   *
+   * Signed-in drivers are listed by ACCOUNT ID and nothing else — the caller joins
+   * the handle at read time, so no names are copied into the heartbeat. Anonymous
+   * drivers are listed by their per-socket CONNECTION ID: not an IP, not a
+   * fingerprint, not stored anywhere else, and gone when the socket closes. It
+   * tells one live guest apart from another, which is what an operator needs to
+   * answer "is that session idle or in a lobby", and cannot follow anyone between
+   * sessions. Spectators are excluded entirely; they are watchers, and the visible
+   * count already reports them.
+   */
+  presenceSnapshot(): {
+    players: { userId: string; act: 'lobby' | 'match' }[];
+    guests: { id: string; act: 'lobby' | 'match' }[];
+  } {
+    const act: 'lobby' | 'match' = this.world !== null ? 'match' : 'lobby';
+    const players: { userId: string; act: 'lobby' | 'match' }[] = [];
+    const guests: { id: string; act: 'lobby' | 'match' }[] = [];
+    for (const c of this.clients.values()) {
+      if (!c.connected) continue;
+      if (c.userId) players.push({ userId: c.userId, act });
+      else guests.push({ id: c.id, act });
+    }
+    return { players, guests };
   }
 
   /** a socket dropped. In the lobby that's an outright leave; mid-match the slot
@@ -353,6 +448,7 @@ export class Room {
       this.snapPrimed.delete(id);
       this.snapAck.delete(id);
       this.broadcastRoster();
+      this.broadcastSpectators();
       return;
     }
     const c = this.clients.get(id);
@@ -376,6 +472,7 @@ export class Room {
       if (this.hostId === id) this.hostId = this.clients.keys().next().value ?? '';
       this.robotOf.delete(id);
       this.broadcastRoster();
+      this.refreshRematch(); // the tally is against CONNECTED drivers
       if (this.clients.size === 0) {
         this.stop();
         this.onEmpty();
@@ -384,6 +481,9 @@ export class Room {
       c.connected = false;
       c.disconnectAt = Date.now();
       this.broadcastRoster();
+      // a partner who drops must not leave the run un-restartable: their vote is
+      // no longer required, so a rematch the other driver already asked for lands
+      this.refreshRematch();
     }
   }
 
@@ -408,6 +508,7 @@ export class Room {
     send({ t: 'rejoined', ok: true });
     if (this.world) this.sendSnapshotTo(c); // immediate full resync (re-primes)
     this.broadcastRoster();
+    this.refreshRematch(); // they are required again, and get the current tally
     return c.conn;
   }
 
@@ -492,6 +593,9 @@ export class Room {
           else c.send({ t: 'error', message: 'Server is starting up - try again in a moment.' });
         }
         break;
+      case 'rematch':
+        this.voteRematch(id, msg.on === true);
+        break;
       case 'restart':
         // Rematch/restart is DISABLED for multiplayer: re-authoring a live match for
         // everyone caused post-restart desync (stuck/jitter). Ignored for ALL clients
@@ -499,14 +603,18 @@ export class Room {
         // to the lobby to start a fresh match instead.
         break;
       case 'input':
-        this.onInput(id, msg.tick, msg.q, msg.ack);
+        this.onInput(id, msg.tick, msg.q, msg.ack, msg.gen);
         break;
       case 'join':
         break; // join is handled at the connection layer
     }
   }
 
-  private onInput(id: string, tick: number, q: QCommand, ack?: number): void {
+  private onInput(id: string, tick: number, q: QCommand, ack?: number, gen?: number): void {
+    // STALE GENERATION: an input produced for a match this room has already replaced.
+    // Dropping it is the whole reason a rematch can rebuild in place — see `matchGen`.
+    // Absent (older client) ⇒ accepted, exactly as before.
+    if (gen !== undefined && gen !== this.matchGen) return;
     // record the client's confirmed snapshot baseline (piggybacked ack). Kept even
     // for a dropped/spectating robot below — it's transport bookkeeping, not a command.
     if (typeof ack === 'number' && ack > (this.snapAck.get(id) ?? -1)) this.snapAck.set(id, ack);
@@ -619,6 +727,8 @@ export class Room {
     // never reaches Room, keeps running auto client-side.
     setups = setups.map((s) => ({ ...s, autoPath: undefined, autoPathEnabled: false }));
     this.phase = 'match';
+    this.matchGen++; // any input stamped with an older generation is now stale
+    this.rematchVotes.clear();
     this.matchSeed = seed; // remembered so a spectator joining mid-match gets matchStart
     this.matchSetups = setups;
     const world = simModuleFor(this.game).createWorld('match', seed, setups);
@@ -651,6 +761,9 @@ export class Room {
     }
 
     for (const c of this.clients.values()) c.send(this.matchStartMsg(this.robotOf.get(c.id) ?? 0));
+    // the votes were cleared above — SAY so, or both clients carry the old full
+    // tally into the new run and the button reads "2/2" on a run nobody voted for
+    if (this.config.kind === 'record') this.broadcastRematch();
     // spectators already watching a lobby/strategy room get the match start too (yourRobotId -1)
     for (const c of this.spectators.values()) c.send(this.matchStartMsg(-1));
     this.startLoop();
@@ -677,6 +790,21 @@ export class Room {
   /** the room code this room was staged under (null if not a staged ranked room) */
   pendingCode(): string | null {
     return this.pendingMatch?.code ?? null;
+  }
+
+  /**
+   * Is this user NAMED on the staged roster the matchmaker wrote for this room?
+   *
+   * The one-live-game guard reads it to tell a game somebody CHOSE to start from
+   * one the SERVER committed them to. A staged ranked match is not a second game
+   * they went and opened — it is the match they are already in, and this roster is
+   * the server's own record of that, so it outranks a stale slot they are still
+   * holding elsewhere. Without it, being matched out of a backgrounded queue while
+   * mid-run was an automatic forfeit: the run's slot is held for the reconnect
+   * grace, and the ranked join it blocks is the one that pays ELO.
+   */
+  stagedFor(userId: string): boolean {
+    return !!this.pendingMatch?.roster.some((r) => r.userId === userId);
   }
 
   /** start the staged match once every roster member (by verified user id) is
@@ -1003,6 +1131,71 @@ export class Room {
       }
     }
     this.stop();
+  }
+
+  /**
+   * DUO RECORD REMATCH: a vote, not a command.
+   *
+   * A co-op run belongs to both drivers equally, so neither may restart it out from
+   * under the other — mid-match OR from the results screen. Everyone toggles their
+   * own vote, the count is broadcast so both sides can see "1/2", and the match
+   * restarts only once every CONNECTED driver has said yes.
+   *
+   * Restricted to record rooms on purpose. A versus match has an opponent whose
+   * interest is opposed to yours, and ranked has ELO riding on it; "both agree" is a
+   * meaningful gate for co-op and a coercion surface everywhere else.
+   */
+  private voteRematch(id: string, on: boolean): void {
+    if (this.config.kind !== 'record') return;
+    if (!this.clients.has(id)) return; // spectators do not get a vote
+    if (on) this.rematchVotes.add(id);
+    else this.rematchVotes.delete(id);
+    this.broadcastRematch();
+    this.maybeRematch();
+  }
+
+  /** everyone still connected has to agree, and the tally is against that same
+   *  number — a partner who drops mid-vote must not leave the run un-restartable */
+  private connectedDrivers(): string[] {
+    return [...this.clients.values()].filter((c) => c.connected).map((c) => c.id);
+  }
+
+  private broadcastRematch(): void {
+    const ids = this.connectedDrivers();
+    const votes = ids.filter((i) => this.rematchVotes.has(i)).length;
+    for (const c of this.clients.values()) {
+      c.send({ t: 'rematch', votes, need: ids.length, you: this.rematchVotes.has(c.id) });
+    }
+  }
+
+  private maybeRematch(): void {
+    const ids = this.connectedDrivers();
+    if (ids.length === 0) return;
+    if (!ids.every((i) => this.rematchVotes.has(i))) return;
+    if (!this.matchSetups.length) return;
+    // a FRESH seed: a rematch is a new run at a new motif, not a replay of the old
+    // one. `beginMatch` does the whole reset (world, buffers, recorder, generation)
+    // through exactly the path a first start takes, so there is no second, subtly
+    // different restart routine to keep in step with it.
+    const seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+    this.beginMatch(this.matchSetups, seed);
+  }
+
+  /** a driver left or came back: the tally is against CONNECTED drivers, so it has
+   *  to be recomputed (and may now be unanimous) */
+  private refreshRematch(): void {
+    if (this.config.kind !== 'record') return;
+    for (const id of [...this.rematchVotes]) {
+      if (!this.clients.has(id)) this.rematchVotes.delete(id);
+    }
+    this.broadcastRematch();
+    this.maybeRematch();
+  }
+
+  /** TEST SEAM: the live world, read-only. Lets a test assert what an input
+   *  actually DID rather than only that the server accepted the frame. */
+  worldForTest(): World | null {
+    return this.world;
   }
 
   /** TEST / TOOL SEAM: drive an already-started match deterministically with NO

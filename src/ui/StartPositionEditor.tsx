@@ -267,7 +267,9 @@ export function StartPositionEditor({
         <canvas
           ref={canvasRef}
           className="ds-startpos-canvas"
-          style={{ width: size, height: size, cursor: drag.current === 'move' ? 'grabbing' : 'grab' }}
+          /* width only — the CSS keeps it square via `aspect-ratio` so it can shrink
+             on a narrow phone without squashing (see `.ds-startpos-canvas`) */
+          style={{ width: size, cursor: drag.current === 'move' ? 'grabbing' : 'grab' }}
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={endDrag}

@@ -1,6 +1,6 @@
 import type { Artifact, GameId, RobotCommand, RobotSpec } from '../types';
 import type { RobotSetup } from '../sim/spawn';
-import type { MatchResultInfo, NetSession, NetStatus, Snapshot } from './session';
+import type { MatchResultInfo, NetSession, NetStatus, RematchVote, Snapshot } from './session';
 import type { Transport } from './transport';
 import { setServerNotice } from './notice';
 import { regionLabel, isKnownRegion, selectedServer } from './env';
@@ -87,11 +87,19 @@ export class ServerSession implements NetSession {
    * the ordered WebSocket, required once snapshots can arrive out of order on the
    * unreliable QUIC lane). Reset to -1 on a host restart (new world, tick 0). */
   private appliedTick = -1;
+  /** the MATCH GENERATION this session is playing, echoed on every input so the
+   *  server can drop anything produced for a match a rematch has replaced */
+  private gen = 0;
 
   // ---- connection-quality diagnostics (for the HUD net readout) --------------
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   /** smoothed round-trip time (EWMA over pong samples), null until the first pong */
   private rttMs: number | null = null;
+  /** live watcher count from the server (`spectators`), as players are told it */
+  private spectators = 0;
+  /** duo-record rematch tally from the server. `mine` is whether OUR vote is in, so
+   *  the button renders from the authority rather than an optimistic local guess. */
+  private rematch: RematchVote = { votes: 0, need: 0, mine: false };
   /** RAW round-trip samples (oldest→newest) for the ping graph — un-smoothed so a
    * spike shows as a spike */
   private readonly rttSamples: number[] = [];
@@ -122,6 +130,7 @@ export class ServerSession implements NetSession {
     this.setups = start.setups;
     this.ranked = start.ranked ?? false;
     this.intros = start.intros ?? [];
+    this.gen = (start as { gen?: number }).gen ?? 0;
     this.region = start.region;
     this.localRobotId = start.yourRobotId;
     this.otherRobots = Math.max(0, start.setups.length - 1);
@@ -170,7 +179,7 @@ export class ServerSession implements NetSession {
     // Piggyback the snapshot ACK (newest applied serverTick) so the server knows
     // which baseline we hold — free here, drivers send input every tick.
     const ack = this.appliedTick >= 0 ? this.appliedTick : undefined;
-    this.transport.send(encodeMsg({ t: 'input', tick, q: quantizeCommand(cmd), ack }), {
+    this.transport.send(encodeMsg({ t: 'input', tick, q: quantizeCommand(cmd), ack, gen: this.gen }), {
       reliable: false,
     });
   }
@@ -187,6 +196,20 @@ export class ServerSession implements NetSession {
 
   getRecordResult(): RecordRankInfo | null {
     return this.recordResult;
+  }
+
+  spectatorCount(): number {
+    return this.spectators;
+  }
+
+  rematchVote(): RematchVote {
+    return this.rematch;
+  }
+
+  /** toggle OUR rematch vote. The server counts; nothing restarts until every
+   *  connected driver has one in. */
+  setRematch(on: boolean): void {
+    this.transport.send(encodeMsg({ t: 'rematch', on }));
   }
 
   status(): NetStatus {
@@ -280,6 +303,10 @@ export class ServerSession implements NetSession {
       // also keep the RAW sample for the ping graph (spikes the EWMA would smooth away)
       this.rttSamples.push(sample);
       if (this.rttSamples.length > RTT_HISTORY) this.rttSamples.shift();
+    } else if (m.t === 'spectators') {
+      this.spectators = m.n;
+    } else if (m.t === 'rematch') {
+      this.rematch = { votes: m.votes, need: m.need, mine: m.you };
     } else if (m.t === 'matchResult') {
       this.matchResult = { kind: m.kind, record: m.record, result: m.result, replay: m.replay };
     } else if (m.t === 'eloResult') {
@@ -293,6 +320,8 @@ export class ServerSession implements NetSession {
       this.seed = m.seed;
       this.setups = m.setups;
       if (m.game) this.game = m.game;
+      this.gen = m.gen ?? 0;
+      this.rematch = { votes: 0, need: 0, mine: false }; // a new match, a clean tally
       this.ranked = m.ranked ?? false;
       this.intros = m.intros ?? [];
       this.eloResults = [];

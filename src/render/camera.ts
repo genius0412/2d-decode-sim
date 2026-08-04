@@ -53,8 +53,12 @@ export class Camera {
     // band matching the compact scorebar. This hands the map its top/vertical space back.
     // Kept in sync with the CSS media condition in styles.css.
     const compact = coarse || this.h < 520;
-    const topBand = compact ? 6 : HUD_TOP;
-    const bottomBand = compact ? (landscape ? 44 : 72) : HUD_BOTTOM;
+    // LANDSCAPE on a phone is height-starved and gutter-rich: the field is square,
+    // so fitting it to the height leaves ~250px of dead space on each side. The HUD
+    // moves into those gutters (see the landscape block in styles.css) and the field
+    // takes the full height — worth ~15% more field per side, ~30% more area.
+    const topBand = compact ? (landscape ? 4 : 6) : HUD_TOP;
+    const bottomBand = compact ? (landscape ? 4 : 72) : HUD_BOTTOM;
     const usableH = Math.max(this.h - topBand - bottomBand, 100);
     this.scale = Math.min(this.w / spanW, usableH / spanH);
     this.cx = this.w / 2;

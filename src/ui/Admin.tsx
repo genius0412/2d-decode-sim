@@ -22,6 +22,39 @@ import {
   type AnnouncementKind,
 } from '../net/api';
 import { Markdown } from './markdown';
+import { AdminLive } from './AdminLive';
+
+type AdminTab = 'live' | 'server' | 'content' | 'moderation';
+const TABS: { id: AdminTab; label: string }[] = [
+  { id: 'live', label: 'Live' },
+  { id: 'server', label: 'Server' },
+  { id: 'content', label: 'Content' },
+  { id: 'moderation', label: 'Moderation' },
+];
+
+/** the console's title + tab bar. Split out so the Live tab (which renders a very
+ *  different body) shares exactly the same chrome instead of a near-copy of it. */
+function AdminHeader({ tab, setTab }: { tab: AdminTab; setTab: (t: AdminTab) => void }) {
+  return (
+    <>
+      <p className="ds-eyebrow">Admin</p>
+      <h1 className="ds-h1">Control panel</h1>
+      <div className="adm-tabs" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`adm-tab${tab === t.id ? ' on' : ''}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
 
 type RecMode = 'solo' | 'duo';
 const DRIVETRAINS = ['overall', 'mecanum', 'tank', 'swerve', 'xdrive'] as const;
@@ -34,7 +67,10 @@ const ANN_KINDS: { value: AnnouncementKind; label: string }[] = [
 /** admin console — only reachable by the account(s) in the server's ADMIN_USER_IDS.
  * Broadcasts a scheduled-restart countdown to every connected player; then you
  * deploy when it reaches 0. Also manages competitive SEASONS. */
-export function Admin() {
+export function Admin({ onWatch }: { onWatch?: (room: string) => void }) {
+  // LIVE first: it is the tab you open during an incident, and the panel's other
+  // jobs are all deliberate, unhurried ones you go looking for.
+  const [tab, setTab] = useState<AdminTab>('live');
   const [minutes, setMinutes] = useState(5);
   const [message, setMessage] = useState('Scheduled server update');
   const [status, setStatus] = useState<string | null>(null);
@@ -255,10 +291,25 @@ export function Admin() {
 
   const isCinematic = annKind !== 'patch';
 
+  // TABS rather than one long scroll. The panel had grown to five unrelated jobs
+  // stacked vertically, so the one you actually needed was always a scroll away —
+  // and the live ops view (the thing you open during an incident) would have been
+  // furthest down. It leads instead.
+  if (tab === 'live') {
+    return (
+      <div className="ds-section adm-wide">
+        <AdminHeader tab={tab} setTab={setTab} />
+        <AdminLive onWatch={onWatch} />
+      </div>
+    );
+  }
+
   return (
-    <div className="ds-section" style={{ maxWidth: 520 }}>
-      <p className="ds-eyebrow">Admin</p>
-      <h1 className="ds-h1">Server controls</h1>
+    <div className="ds-section adm-wide">
+      <AdminHeader tab={tab} setTab={setTab} />
+
+      {tab === 'server' && (
+        <>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Announce a restart to every connected player with a live countdown, then deploy the
         server when it hits zero. Players see a banner; anyone already playing gets warned.
@@ -302,8 +353,12 @@ export function Admin() {
         Reminder: this only warns players - it doesn’t restart the server. Run your deploy when
         the countdown reaches 0.
       </p>
+        </>
+      )}
 
-      <h2 className="ds-h2" style={{ marginTop: 32 }}>Announcements</h2>
+      {tab === 'content' && (
+        <>
+      <h2 className="ds-h2">Announcements</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Publish patch notes, bug-fix summaries, or a new season / act. Each player sees it once -
         the first time they open the app after you publish. A new season or act plays a full-screen
@@ -420,7 +475,12 @@ export function Admin() {
         {seasonStatus && <p className="ds-hint" style={{ marginTop: 12 }}>{seasonStatus}</p>}
       </div>
 
-      <h2 className="ds-h2" style={{ marginTop: 32 }}>Moderation - records</h2>
+        </>
+      )}
+
+      {tab === 'moderation' && (
+        <>
+      <h2 className="ds-h2">Moderation - records</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Inspect a leaderboard bucket (live season) and remove cheated or invalid runs. Deleting a
         run also deletes its replay. “Clear all” wipes every run by that player - for confirmed
@@ -576,6 +636,8 @@ export function Admin() {
         )}
         {userStatus && <p className="ds-hint" style={{ marginTop: 12 }}>{userStatus}</p>}
       </div>
+        </>
+      )}
     </div>
   );
 }

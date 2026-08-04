@@ -2,9 +2,15 @@
  * Headless smoke test of the sim core: drives, shoots (incl. on the move),
  * opens the gate, and checks scoring math. Run with: npx tsx scripts/smoke.ts
  */
+import { readdirSync, readFileSync } from 'node:fs';
+import { join as joinPath } from 'node:path';
 import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceAssists, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
+import { queuedModes, queuedGames, queuesFor, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';
+import {
+  parkQueue, takeQueue, dropQueue, updateQueue, peekQueue, subscribeQueue, elapsedLabel, elapsedSeconds,
+} from '../src/ui/queueKeeper';
 import type { LobbyPlayer } from '../src/net/protocol';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from '../src/net/roomCode';
 import { step } from '../src/sim/world';
@@ -46,6 +52,7 @@ import { addClassified, addOverflow, assessMatchEnd } from '../src/sim/scoring';
 import type { Alliance, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
 import {
   SIM_DT,
+  PRE_COUNTDOWN as C_PRE_COUNTDOWN,
   GATE_STOP_S,
   GATE_OPEN_LATCH_S,
   GATE_TAPE_Y,
@@ -57,6 +64,7 @@ import {
   HP_INITIAL_STOCK,
   HP_PLACE_DELAY,
   BALANCE_VERSION,
+  SIM_VERSION,
   INTAKE_PRESETS,
   ROBOT_PRESETS,
   ROBOT_MAX_SIZE,
@@ -97,9 +105,13 @@ import {
   maxMatchTicks,
   REPLAY_FORMAT,
   type CommandSource,
+  replayViewpoint,
+  type Replay,
   type ReplayResult,
 } from '../src/sim/replay';
 import { Room, type Client } from '../server/room';
+import { maintenanceBiting } from '../server/db/repo';
+import { maintenanceLine } from '../src/ui/MaintenanceBanner';
 import { Matchmaker, radiusCeiling, type QueueEntry } from '../server/matchmaking';
 import { bestHost } from '../server/regions';
 import type { PendingMatch } from '../server/matchTypes';
@@ -1879,13 +1891,243 @@ const setup = (
   const legacyNoVoice = coerceSettings({ audio: { sounds: true, voice: false } });
   check('legacy voice:false migrates to voice 0, master untouched', legacyNoVoice.audio.volume.voice === 0 && legacyNoVoice.audio.volume.master === 1);
 
-  const junk = coerceSettings({ audio: { volume: { master: 9, game: -3, sfx: 'x', voice: NaN } } });
-  check('volumes clamp to 0–1 and non-numbers fall back', junk.audio.volume.master === 1 && junk.audio.volume.game === 0 && junk.audio.volume.sfx === 1 && junk.audio.volume.voice === 1, JSON.stringify(junk.audio.volume));
+  const junk = coerceSettings({ audio: { volume: { master: 9, game: -3, shoot: 'x', voice: NaN } } });
+  check('volumes clamp to 0–1 and non-numbers fall back', junk.audio.volume.master === 1 && junk.audio.volume.game === 0 && junk.audio.volume.shoot === 1 && junk.audio.volume.voice === 1, JSON.stringify(junk.audio.volume));
 
-  const muted = coerceSettings({ audio: { volume: { master: 0, game: 1, sfx: 1, voice: 1 } } });
+  // `sfx` was ONE level driving the shooter, intake, gate and countdown beep. It is
+  // now four, and a save from before the split must keep the player's choice on all
+  // four rather than silently resetting three of them to full.
+  const oldSfx = coerceSettings({ audio: { volume: { master: 1, game: 1, sfx: 0.2, voice: 1 } } });
+  const v = oldSfx.audio.volume;
+  check(
+    'legacy sfx level migrates onto ALL four emitters it used to drive',
+    v.shoot === 0.2 && v.intake === 0.2 && v.gate === 0.2 && v.beep === 0.2,
+    JSON.stringify(v),
+  );
+  // ...but an explicit new key wins over the legacy seed
+  const mixed = coerceSettings({ audio: { volume: { sfx: 0.2, shoot: 0.9 } } });
+  check(
+    'an explicit per-emitter level overrides the migrated sfx value',
+    mixed.audio.volume.shoot === 0.9 && mixed.audio.volume.gate === 0.2,
+    JSON.stringify(mixed.audio.volume),
+  );
+
+  const muted = coerceSettings({ audio: { volume: { master: 0, game: 1, shoot: 1, voice: 1 } } });
   check('master 0 derives BOTH legacy mirrors false', !muted.audio.sounds && !muted.audio.voice);
-  const voiceOff = coerceSettings({ audio: { volume: { master: 1, game: 1, sfx: 1, voice: 0 } } });
+  const voiceOff = coerceSettings({ audio: { volume: { master: 1, game: 1, shoot: 1, voice: 0 } } });
   check('voice 0 derives voice mirror false, sounds true', voiceOff.audio.sounds && !voiceOff.audio.voice);
+  // every emitter silent but voice on: `sounds` still true (voice IS sound)
+  const onlyVoice = coerceSettings({
+    audio: { volume: { master: 1, game: 0, shoot: 0, intake: 0, gate: 0, beep: 0, voice: 1 } },
+  });
+  check('sounds mirror stays true when only voice is audible', onlyVoice.audio.sounds);
+
+  // ---- ranked queue counts shown across the menus ------------------------
+  // The RULE is "omit a mode at zero, show nothing when nothing is queued" — a
+  // visible "0 waiting" reads as a verdict on whether to bother rather than as the
+  // absence of news. It is logic, not styling, so it is tested rather than eyeballed.
+  {
+    const pres = (a: number, b: number) =>
+      ({ online: 0, signedIn: 0, queues: { '1v1': a, '2v2': b } }) as never;
+    const j = (v: unknown) => JSON.stringify(v);
+    check('queue counts: both modes busy → both listed', j(queuedModes(pres(2, 3))) === j(['1v1', '2v2']));
+    check('queue counts: a mode at 0 is OMITTED', j(queuedModes(pres(2, 0))) === j(['1v1']));
+    check('queue counts: the other way round too', j(queuedModes(pres(0, 4))) === j(['2v2']));
+    check('queue counts: nothing queued → nothing rendered', queuedModes(pres(0, 0)).length === 0);
+    check('queue counts: no presence yet → nothing rendered', queuedModes(null).length === 0);
+    check('queue counts: a junk count is not shown as a number', queuedModes({ queues: { '1v1': NaN, '2v2': undefined } } as never).length === 0);
+    check('queue counts: anyoneQueued mirrors it', anyoneQueued(pres(0, 1)) && !anyoneQueued(pres(0, 0)));
+
+    // ---- PER-GAME depth --------------------------------------------------
+    // The matchmaker buckets by game, so a combined count told a DECODE player that
+    // a Chain Reaction queuer was waiting FOR THEM — a number they could act on and
+    // never match from, printed next to the button whose whole job is to get them to
+    // act on it. Depth is per game now, everywhere it is shown.
+    const gp = (decode: [number, number], chain: [number, number]) =>
+      ({
+        online: 0,
+        signedIn: 0,
+        queues: { '1v1': decode[0] + chain[0], '2v2': decode[1] + chain[1] },
+        gameQueues: {
+          decode: { '1v1': decode[0], '2v2': decode[1] },
+          chain: { '1v1': chain[0], '2v2': chain[1] },
+        },
+      }) as never;
+
+    check('per-game: DECODE reads its OWN 1v1 depth, not the combined one',
+      queuesFor(gp([1, 0], [5, 0]), 'decode')?.['1v1'] === 1);
+    check('per-game: ...and Chain Reaction reads its own',
+      queuesFor(gp([1, 0], [5, 0]), 'chain')?.['1v1'] === 5);
+    check('per-game: a game with an empty queue lists NO modes',
+      queuedModes(gp([0, 0], [3, 0]), 'decode').length === 0);
+    check('per-game: ...while the busy one still does',
+      j(queuedModes(gp([0, 0], [3, 0]), 'chain')) === j(['1v1']));
+    check('per-game: an unknown game reads as empty, never as the combined total',
+      queuesFor(gp([1, 1], [1, 1]), 'nope' as never)?.['1v1'] === 0);
+
+    // the TOP BAR lists every game that has somebody waiting, each labelled — and
+    // omits a game with an empty queue ENTIRELY, name included
+    const games = ['decode', 'chain'] as const;
+    const both = queuedGames(gp([1, 3], [2, 0]), games);
+    check('top bar: every busy game is listed', j(both.map((g) => g.game)) === j(['decode', 'chain']));
+    check('top bar: with each of its non-empty modes',
+      j(both[0].modes) === j([{ mode: '1v1', n: 1 }, { mode: '2v2', n: 3 }]));
+    check('top bar: a mode at 0 is dropped from a busy game',
+      j(both[1].modes) === j([{ mode: '1v1', n: 2 }]));
+    const oneGame = queuedGames(gp([0, 0], [2, 0]), games);
+    check('top bar: a game with NOTHING queued is omitted entirely (no label)',
+      oneGame.length === 1 && oneGame[0].game === 'chain');
+    check('top bar: nobody queued anywhere → nothing at all',
+      queuedGames(gp([0, 0], [0, 0]), games).length === 0);
+
+    // OLDER SERVER (no gameQueues): fall back to the combined total rather than
+    // rendering nothing. It is the pre-fix number, but it is the only one such a
+    // server can give, and a rollout window should not blank the count.
+    check('per-game: an old server without gameQueues still yields a count',
+      queuesFor(pres(2, 0), 'decode')?.['1v1'] === 2);
+    check('per-game: ...and the labelled top-bar form shows nothing rather than guessing',
+      queuedGames(pres(2, 0), games).length === 0);
+
+    // EXPAND SEARCH used to call the server and change nothing on screen, so it read
+    // as a dead button. These are the strings that now have to move when it is pressed.
+    check('expand: the button says so after a press', expandLabel(0) === 'EXPAND SEARCH' && expandLabel(2) === 'EXPANDED ×2');
+    check('expand: a press changes the hint immediately, at any elapsed time',
+      widenHint(1, 0) !== widenHint(0, 0) && widenHint(1, 0) === widenHint(1, 99));
+    check('expand: with no presses the hint still follows the automatic ramp',
+      widenHint(0, 0) !== widenHint(0, 4) && widenHint(0, 4) !== widenHint(0, 20));
+    // it must never claim to be searching "your region" — the queue opens wide
+    // enough for a same-continent match on the first attempt (see RADIUS_BASE_MS)
+    check('expand: the ramp reaches "worldwide", and never says region-only',
+      widenHint(0, 20).includes('worldwide') && ![0, 4, 20].some((s) => widenHint(0, s).includes('your region')));
+    check('expand: a manual press outranks the automatic line',
+      widenHint(3, 99).includes('3×'));
+  }
+
+  // ---- background ranked queue: the keeper store -------------------------
+  // The store is what makes a queue survive leaving the screen, so its contract is
+  // worth pinning: parking makes it visible, taking hands it back exactly once, a
+  // late assignment is remembered rather than lost, and cancel really cancels.
+  {
+    let disposed = 0, left = 0;
+    const fakeLobby = () => ({ dispose: () => disposed++, leaveQueue: () => left++ }) as never;
+    const mk = (over: Partial<Parameters<typeof parkQueue>[0]> = {}) => ({
+      lobby: fakeLobby(), mode: '1v1' as const, game: 'decode' as const, challenge: null,
+      since: 1000, size: 1, need: 2,
+      assignedRoom: null, start: null, strategy: null, found: false, error: null, ...over,
+    });
+
+    // THE GAME TRAVELS WITH THE SEARCH. Parking exists so the player can go and do
+    // something else, and "something else" can be the OTHER game — which moves
+    // `settings.game`. A queue that does not remember its own game gets adopted as
+    // whatever the player wandered into: queue Chain Reaction, start a DECODE run,
+    // and the match-found takeover came up as DECODE for a CR match. The parked
+    // search is the authority, not the live setting.
+    check('queue keeper: nothing parked to begin with', peekQueue() === null);
+    parkQueue(mk({ game: 'chain' }));
+    check('queue keeper: a search remembers WHICH GAME it queued for', peekQueue()?.game === 'chain');
+    check(
+      'queue keeper: ...and still carries it after an unrelated update',
+      (updateQueue({ size: 3 }), peekQueue()?.game === 'chain'),
+    );
+    check('queue keeper: ...and hands it back on adopt', takeQueue()?.game === 'chain');
+    check('queue keeper: DECODE searches carry their own game too', (parkQueue(mk()), peekQueue()?.game === 'decode'));
+    takeQueue();
+
+    let seen = 0;
+    const un = subscribeQueue(() => seen++);
+    parkQueue(mk());
+    check('queue keeper: parking makes the search visible', peekQueue()?.mode === '1v1');
+    check('queue keeper: ...and notifies subscribers', seen === 1, `seen=${seen}`);
+
+    const beforeUpdate = peekQueue();
+    updateQueue({ size: 2 });
+    check('queue keeper: an update lands on the parked search', peekQueue()?.size === 2);
+    // REFERENCE must change: useSyncExternalStore compares snapshots by identity, so
+    // an in-place mutation notifies subscribers who then re-read the same object and
+    // skip the render — which is exactly how the match-found takeover silently
+    // failed the first time this was written
+    check('queue keeper: an update yields a NEW snapshot, not a mutated one', peekQueue() !== beforeUpdate);
+    check('queue keeper: ...and notified again', seen === 2, `seen=${seen}`);
+
+    // an assignment that arrives while parked must be REMEMBERED — its event has
+    // already fired and will not fire again for the screen that adopts the socket
+    updateQueue({ assignedRoom: 'iad-abc', found: true });
+    check('queue keeper: a late assignment is remembered', peekQueue()?.assignedRoom === 'iad-abc');
+
+    // The SAME applies to the two signals that carry a whole match with them. On
+    // the single-region / no-DB path the match runs on the matchmaker socket
+    // itself, so `matchStart` / `strategyStart` arrive here rather than an
+    // assignment — and they were being recorded as a bare `found: true` with the
+    // payload dropped. Nothing can reconstruct it: the event is gone, so the
+    // adopting screen sat on "Finding a match…" for a match already in progress.
+    updateQueue({ start: { seed: 7, setups: [], yourRobotId: 1 } as never });
+    check('queue keeper: a late matchStart keeps its PAYLOAD, not just the fact', peekQueue()?.start?.seed === 7);
+    updateQueue({
+      strategy: { deadline: 42, yourRobotId: 0, mode: '1v1', intros: [], players: [], myClientId: 'c1' },
+    });
+    check('queue keeper: a late strategyStart keeps its deadline', peekQueue()?.strategy?.deadline === 42);
+
+    const taken = takeQueue();
+    check('queue keeper: taking hands back the same search', taken?.assignedRoom === 'iad-abc');
+    check('queue keeper: ...and only once', takeQueue() === null);
+    check('queue keeper: taking does NOT close the socket (the screen adopts it)', disposed === 0);
+
+    parkQueue(mk());
+    dropQueue();
+    check('queue keeper: cancelling leaves the queue AND closes the socket', left === 1 && disposed === 1);
+    check('queue keeper: ...and clears it', peekQueue() === null);
+    updateQueue({ size: 9 });
+    check('queue keeper: updating nothing is a no-op, not a crash', peekQueue() === null);
+    un();
+  }
+
+  {
+    check('queue keeper: elapsed formats as m:ss', elapsedLabel(0, 67_000) === '1:07', elapsedLabel(0, 67_000));
+    check('queue keeper: ...pads the seconds', elapsedLabel(0, 65_000) === '1:05');
+    check('queue keeper: ...and never goes negative on a clock skew', elapsedLabel(5_000, 0) === '0:00');
+
+    // THE STOPWATCH IS A FUNCTION OF `since`, never a counter started on mount.
+    // The search screen used to count up from when IT appeared, so adopting a
+    // parked queue restarted a wait the player had genuinely been sitting through.
+    check('queue keeper: elapsed is measured from the search START', elapsedSeconds(1_000, 96_000) === 95);
+    check('queue keeper: ...so adopting mid-search reports the real wait, not 0', elapsedSeconds(1_000, 96_000) > 0);
+    check('queue keeper: ...and a clock that runs backwards floors at 0', elapsedSeconds(96_000, 1_000) === 0);
+  }
+
+  // A CHALLENGE travels with the parked search, same as its game. Leaving the
+  // screen while waiting on a named opponent must not quietly turn a private
+  // challenge into an ordinary open-queue entry on the way back in.
+  {
+    const ch = {
+      token: 'TMFX2K', format: 'rated1v1', mode: '1v1' as const,
+      partyOnly: true, game: 'chain' as const, opponent: 'bob',
+    };
+    parkQueue({
+      lobby: {} as never, mode: '1v1', game: 'chain', challenge: ch, since: 1, size: 1, need: 2,
+      assignedRoom: null, start: null, strategy: null, found: false, error: null,
+    });
+    check('queue keeper: a parked search remembers its CHALLENGE', peekQueue()?.challenge?.opponent === 'bob');
+    const back = takeQueue();
+    check('queue keeper: ...and hands the token back on adopt', back?.challenge?.token === 'TMFX2K');
+    check('queue keeper: ...with the challenge’s own game', back?.challenge?.game === 'chain');
+  }
+
+  // the match-found alert is its own level: it plays while you are deliberately NOT
+  // looking at the game, so it must not be tied to the in-match effects
+  check('match alert has its own volume, defaulting on', coerceSettings({}).audio.volume.alert === 1);
+  check(
+    'match alert level survives a round trip',
+    coerceSettings({ audio: { volume: { alert: 0.4 } } }).audio.volume.alert === 0.4,
+  );
+  check(
+    'silencing every effect but the alert still reads as "sounds on"',
+    coerceSettings({
+      audio: { volume: { master: 1, game: 0, shoot: 0, intake: 0, gate: 0, beep: 0, alert: 1, voice: 0 } },
+    }).audio.sounds === true,
+  );
+
+  check('in-match event log defaults ON', coerceSettings({}).showEventLog === true);
+  check('...and the toggle persists', coerceSettings({ showEventLog: false }).showEventLog === false);
 
   // a slider drag writes the live object straight to storage, bypassing coerce
   const d = coerceSettings({});
@@ -3054,6 +3296,188 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- DUO RECORD REMATCH: a vote, not one driver's decision ------------------
+// A co-op run belongs to both people, so neither may restart it out from under the
+// other — mid-match or from the results screen. Everyone toggles their own vote and
+// the run only restarts on unanimity. The generation guard is what makes restarting
+// a LIVE match safe: a rebuild starts at tick 0, so inputs still in flight from the
+// old match carry tick numbers the new one will reach minutes later.
+{
+  const msgs: Record<string, ServerMsg[]> = { d1: [], d2: [] };
+  const mkD = (id: string): Client => ({
+    id,
+    send: (m) => msgs[id].push(m),
+    player: { clientId: id, name: id, teamName: 'T', teamNumber: 1, alliance: 'blue', startIndex: 0, ready: true, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } },
+    connected: true, disconnectAt: 0, userId: `u-${id}`,
+  });
+  const room = new Room('smoke-duo', () => {}, { kind: 'record', record: 'duo' });
+  room.add(mkD('d1'));
+  room.add(mkD('d2'));
+  room.onMessage('d1', { t: 'start' });
+  room.advanceForTest(30);
+  const gen0 = (msgs.d1.find((m) => m.t === 'matchStart') as Extract<ServerMsg, { t: 'matchStart' }>).gen;
+  check('duo rematch: the match is stamped with a generation', typeof gen0 === 'number');
+
+  const tally = (id: string) =>
+    [...msgs[id]].reverse().find((m) => m.t === 'rematch') as Extract<ServerMsg, { t: 'rematch' }> | undefined;
+
+  // ONE driver voting is not enough, and BOTH are told the count
+  room.onMessage('d1', { t: 'rematch', on: true });
+  check('duo rematch: one vote reads 1/2', tally('d1')?.votes === 1 && tally('d1')?.need === 2);
+  check('duo rematch: the PARTNER is told too (that is the point of showing 1/2)',
+    tally('d2')?.votes === 1 && tally('d2')?.need === 2);
+  check('duo rematch: each side is told whether the vote is THEIRS',
+    tally('d1')?.you === true && tally('d2')?.you === false);
+  check('duo rematch: one vote does NOT restart the run', room.tick > 0);
+
+  // ...and a vote can be TAKEN BACK
+  room.onMessage('d1', { t: 'rematch', on: false });
+  check('duo rematch: a vote can be un-pressed', tally('d1')?.votes === 0 && tally('d1')?.you === false);
+
+  // unanimity restarts, mid-match, with a fresh generation
+  room.onMessage('d1', { t: 'rematch', on: true });
+  msgs.d1.length = 0;
+  room.onMessage('d2', { t: 'rematch', on: true });
+  const restarted = msgs.d1.find((m) => m.t === 'matchStart') as Extract<ServerMsg, { t: 'matchStart' }> | undefined;
+  check('duo rematch: BOTH votes restart the run mid-match', !!restarted);
+  check('duo rematch: ...at tick 0 again', room.tick === 0, String(room.tick));
+  check('duo rematch: ...with a NEW generation (stale inputs become identifiable)',
+    (restarted?.gen ?? 0) > (gen0 ?? 0));
+  check('duo rematch: ...and a fresh seed, so it is a new run not a replay',
+    restarted?.seed !== undefined);
+  const after = tally('d1');
+  check('duo rematch: the tally resets after a restart', (after?.votes ?? 1) === 0);
+
+  // THE GENERATION GUARD: an input stamped with the old match must not be applied
+  // to the new one, even though its tick is perfectly plausible here.
+  const gNew = restarted?.gen ?? 1;
+  const drive = quantizeCommand({ driveX: 1, driveY: 1, rotate: 0, intake: false, fire: false });
+  const posOf = (): { x: number; y: number } => {
+    const r = room.worldForTest()?.robots.find((x) => x.id === 0);
+    return { x: r?.pos.x ?? 0, y: r?.pos.y ?? 0 };
+  };
+  // clear the pre-match countdown FIRST — robots are frozen during it, so measuring
+  // "did the input move anything" before auto begins measures nothing at all (the
+  // first cut of this check did exactly that and read a 0.1in physics settle as a
+  // pass on one line and a failure on the next)
+  room.advanceForTest(Math.ceil(C_PRE_COUNTDOWN / SIM_DT) + 30);
+  const base = posOf();
+  const t0 = room.tick;
+  for (let t = t0 + 1; t <= t0 + 60; t++) room.onMessage('d1', { t: 'input', tick: t, q: drive, gen: gNew - 1 });
+  room.advanceForTest(60);
+  const afterStale = posOf();
+  check('duo rematch: a STALE-generation input moves nothing',
+    Math.hypot(afterStale.x - base.x, afterStale.y - base.y) < 0.5,
+    `moved ${Math.hypot(afterStale.x - base.x, afterStale.y - base.y).toFixed(3)}`);
+  // positive control: the SAME command at the CURRENT generation DOES move it, so
+  // the check above is measuring the guard rather than a robot that cannot drive
+  const t1 = room.tick;
+  for (let t = t1 + 1; t <= t1 + 60; t++) room.onMessage('d1', { t: 'input', tick: t, q: drive, gen: gNew });
+  room.advanceForTest(60);
+  const afterFresh = posOf();
+  check('duo rematch: ...while a CURRENT-generation input does move it',
+    Math.hypot(afterFresh.x - afterStale.x, afterFresh.y - afterStale.y) > 2,
+    `moved ${Math.hypot(afterFresh.x - afterStale.x, afterFresh.y - afterStale.y).toFixed(2)}`);
+
+  // a versus room must NOT accept the vote at all — "both agree" is a co-op idea,
+  // and in a rated match it would just be a coercion surface
+  const vs: ServerMsg[] = [];
+  const vroom = new Room('smoke-vs-rematch', () => {}, { kind: 'versus' });
+  vroom.add({ ...mkD('v1'), send: (m) => vs.push(m) });
+  vroom.onMessage('v1', { t: 'rematch', on: true });
+  check('duo rematch: a VERSUS room ignores the vote entirely', !vs.some((m) => m.t === 'rematch'));
+}
+
+// ---- MAINTENANCE LOCKDOWN: when the window actually bites -------------------
+// The scheduling semantics are the whole feature: an armed window with a FUTURE
+// start must announce itself WITHOUT locking anyone out (otherwise it is just an
+// outage with extra steps), and an expired one must stop biting on its own so a
+// lockdown somebody forgets to lift cannot strand the service.
+{
+  const w = (over: Partial<Parameters<typeof maintenanceBiting>[0]> = {}) => ({
+    active: true, startsAt: null, endsAt: null, message: '', ...over,
+  });
+  const T = 1_000_000;
+  check('maintenance: inactive never bites', !maintenanceBiting(w({ active: false }), T));
+  check('maintenance: active with no window bites now', maintenanceBiting(w(), T));
+  check('maintenance: SCHEDULED (future start) does NOT lock anyone out yet',
+    !maintenanceBiting(w({ startsAt: T + 60_000 }), T));
+  check('maintenance: ...and does once its start passes',
+    maintenanceBiting(w({ startsAt: T - 1 }), T));
+  check('maintenance: an EXPIRED window stops biting by itself',
+    !maintenanceBiting(w({ startsAt: T - 60_000, endsAt: T - 1 }), T));
+  check('maintenance: inside the window it bites',
+    maintenanceBiting(w({ startsAt: T - 60_000, endsAt: T + 60_000 }), T));
+
+  // the copy players read is the part they act on, so it is asserted too
+  const line = (over: Record<string, unknown>, now: number) =>
+    maintenanceLine({ startsAt: null, endsAt: null, message: 'Season reset', biting: false, ...over } as never, now);
+  check('maintenance: a live window says new games are paused',
+    (line({ biting: true }, T) ?? '').includes('paused'));
+  check('maintenance: a scheduled one counts down instead of claiming to be live',
+    (line({ startsAt: T + 5 * 60_000 }, T) ?? '').includes('5 minutes'));
+  check('maintenance: nothing scheduled renders nothing at all', line({}, T) === null);
+  check('maintenance: the operator message is carried through to players',
+    (line({ biting: true }, T) ?? '').includes('Season reset'));
+}
+
+// ---- SOURCE GUARD: no engine-defined math anywhere the sim can reach --------
+// The accuracy checks below prove `dsin`/`dcos`/`datan2` are good replacements.
+// They do NOT prove anyone USED them, and that is the gap this closes: six
+// `Math.hypot` calls had drifted into drivetrain/field/physics/CR-penalties, one
+// of them in `motorStep` — every robot, every tick. `Math.hypot` is not
+// correctly-rounded, so its result is the engine's choice; the sim then produces
+// a different match on an engine that chooses differently, which is a desync in
+// live play (the client predicts) and a wrong game on replay (recorded in Node,
+// re-simulated in a browser). Swapping those six to `hyp` measurably moved a
+// match score, so this is load-bearing, not hygiene.
+//
+// A grep, deliberately: the rule is "don't write this", and only reading the
+// source can check it. `Math.round/floor/ceil/abs/min/max/sqrt/sign/trunc/imul`
+// are IEEE-exact and stay allowed.
+{
+  const BANNED = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'hypot',
+    'pow', 'exp', 'expm1', 'log', 'log2', 'log10', 'log1p', 'cbrt', 'fround', 'random'];
+  const rx = new RegExp(`Math\\.(${BANNED.join('|')})\\s*\\(`);
+  const roots = ['src/sim', 'src/games'];
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = joinPath(dir, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!e.name.endsWith('.ts') || e.name.endsWith('.d.ts')) continue;
+      // renderers are NOT sim-reachable — they read world state and draw it, so
+      // an engine-specific cosine there changes pixels, never the match
+      if (/^(draw|render)/i.test(e.name)) continue;
+      readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+        const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
+        if (rx.test(code)) offenders.push(`${p}:${i + 1}`);
+      });
+    }
+  };
+  for (const r of roots) walk(r);
+  check(
+    'sim source uses NO engine-defined Math (hypot/sin/cos/pow/random/…) — cross-engine desync',
+    offenders.length === 0,
+    offenders.join(', '),
+  );
+  // and the sim must not read wall-clock time either (same determinism contract)
+  const clockers: string[] = [];
+  const walkClock = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = joinPath(dir, e.name);
+      if (e.isDirectory()) { walkClock(p); continue; }
+      if (!e.name.endsWith('.ts') || /^(draw|render)/i.test(e.name)) continue;
+      readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+        const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
+        if (/\bDate\.now\s*\(|\bnew Date\s*\(|performance\.now\s*\(/.test(code)) clockers.push(`${p}:${i + 1}`);
+      });
+    }
+  };
+  for (const r of roots) walkClock(r);
+  check('sim source reads NO wall clock (Date/performance) — replays must be pure', clockers.length === 0, clockers.join(', '));
+}
+
 // ---- deterministic trig: cross-engine lockstep needs Math-free sin/cos/atan2 -
 // (Math.sin/cos/tan/atan2 are not correctly-rounded, so they differ across
 // browsers and fork a lockstep sim; dsin/dcos/dtan/datan2 are pure +,-,*,/ )
@@ -3140,6 +3564,12 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   const run = runRecordMatch(0x51ce, solo, drive);
   check('record match runs to phase "post"', run.world.match.phase === 'post');
   check('replay stamped with format + balance version', run.replay.format === REPLAY_FORMAT && run.replay.balanceVersion === BALANCE_VERSION);
+  // the SIM-BEHAVIOUR stamp: what decides whether THIS build can re-simulate the
+  // log at all. Separate from balanceVersion so a determinism fix can invalidate
+  // stale replays without resetting the competitive season (config.ts SIM_VERSION).
+  check('replay stamped with the sim-behaviour version', run.replay.sim === SIM_VERSION);
+  check('...and a replay with no sim stamp reads as 0, never as current',
+    ((({ ...run.replay, sim: undefined }) as Replay).sim ?? 0) === 0);
   const entries0 = (run.replay.tracks[0]?.length ?? 0) / 5;
   check('replay recorded a non-trivial run', run.replay.ticks > 1000 && entries0 >= 2);
   check('replay hold-last compresses (entries << ticks)', entries0 * 20 < run.replay.ticks, `${entries0} entries / ${run.replay.ticks} ticks`);
@@ -3149,6 +3579,36 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   check('verifyReplay reproduces the final worldHash', v.hash === run.result.hash, `${v.hash} vs ${run.result.hash}`);
   check('verifyReplay reproduces the score', v.score.blue === run.result.score.blue && v.score.red === run.result.score.red);
   check('verifyReplay reproduces the tick count', v.ticks === run.result.ticks);
+
+  // ---- WHOSE VIEW the replay is watched from ------------------------------
+  // The camera swings a full 180° between alliances, so the wrong seat shows every
+  // robot at the wrong end of the field driving the wrong way — which reads, to the
+  // person who played it, as the replay having DIVERGED. The viewer defaulted to
+  // setups[0], and a staged 1v1 roster always puts red at index 0, so it was wrong
+  // for exactly the blue player in every match: the two people in one match saw
+  // mirror images of the same replay.
+  {
+    const vs = [
+      { id: 0, alliance: 'red' as Alliance, spec: DEFAULT_SPEC, assists: DEFAULT_ASSISTS, startIndex: 0 },
+      { id: 1, alliance: 'blue' as Alliance, spec: DEFAULT_SPEC, assists: DEFAULT_ASSISTS, startIndex: 1 },
+    ];
+    check('viewpoint: the RED driver watches from red', replayViewpoint(vs, 0).alliance === 'red');
+    check('viewpoint: the BLUE driver watches from BLUE, not from roster order',
+      replayViewpoint(vs, 1).alliance === 'blue' && replayViewpoint(vs, 1).robotId === 1);
+    check('viewpoint: the two drivers get OPPOSITE cameras (the bug: they got the same one)',
+      replayViewpoint(vs, 0).alliance !== replayViewpoint(vs, 1).alliance);
+    check('viewpoint: ...and each is marked as their OWN robot',
+      replayViewpoint(vs, 0).robotId === 0 && replayViewpoint(vs, 1).robotId === 1);
+    // a non-participant (leaderboard link) has no seat — fall back to the first
+    // setup, which is right for the opponent-free record runs that fill the boards
+    check('viewpoint: a watcher who was not in the match falls back to setups[0]',
+      replayViewpoint(vs).alliance === 'red' && replayViewpoint(vs, null).alliance === 'red');
+    check('viewpoint: an unknown robot id falls back rather than throwing',
+      replayViewpoint(vs, 99).robotId === 0);
+    check('viewpoint: a solo record run reads its own alliance',
+      replayViewpoint([{ id: 0, alliance: 'blue' as Alliance, spec: DEFAULT_SPEC, assists: DEFAULT_ASSISTS, startIndex: 0 }]).alliance === 'blue');
+  }
+
   // referential determinism: a second re-sim is identical
   check('simulateReplay is referentially stable', worldHash(simulateReplay(run.replay)) === v.hash);
 
@@ -3222,6 +3682,54 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       `${verifyReplay(res.replay).hash} vs ${res.result.hash}`,
     );
     check('server replay stamped with balance version', res.replay.balanceVersion === BALANCE_VERSION);
+  }
+}
+
+// ---- a MULTIPLAYER match's replay must re-simulate exactly ------------------
+// The check above covers a solo record room: ONE robot, one input stream, no
+// robot-robot contact. That is the easy half, and it was the only half covered —
+// so nothing was watching the case the desync report was actually about. A versus
+// room runs two independently-commanded robots that shove each other through
+// Rapier, which is where a recording gap (a command applied but not logged, or
+// logged at the wrong tick) would actually show up.
+{
+  const msgs: ServerMsg[] = [];
+  const mkVs = (id: string, alliance: Alliance): Client => ({
+    id,
+    send: (m) => msgs.push(m),
+    player: {
+      clientId: id, name: id, teamName: 'T', teamNumber: 1, alliance,
+      startIndex: alliance === 'red' ? 0 : 1, ready: true,
+      spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS },
+    },
+    connected: true, disconnectAt: 0, userId: `u-${id}`,
+  });
+  const room = new Room('smoke-vs-replay', () => {}, { kind: 'versus' });
+  room.add(mkVs('va', 'red'));
+  room.add(mkVs('vb', 'blue'));
+  room.onMessage('va', { t: 'start' });
+  // two DIFFERENT time-varying streams, so the robots genuinely interact rather
+  // than sitting on their start poses running identical inputs
+  const vcap = maxMatchTicks();
+  for (let t = 1; t <= vcap; t++) {
+    room.onMessage('va', { t: 'input', tick: t, q: quantizeCommand({ driveX: dsin(t / 37), driveY: dcos(t / 53), rotate: dsin(t / 91), intake: true, fire: t % 7 === 0 }) });
+    room.onMessage('vb', { t: 'input', tick: t, q: quantizeCommand({ driveX: dcos(t / 41), driveY: dsin(t / 29), rotate: dcos(t / 67), intake: t % 3 !== 0, fire: t % 11 === 0 }) });
+  }
+  room.advanceForTest(vcap + 400);
+  const vres = msgs.find((m) => m.t === 'matchResult');
+  check('versus Room emits a matchResult', !!vres);
+  if (vres && vres.t === 'matchResult') {
+    const rv = verifyReplay(vres.replay);
+    check('MULTIPLAYER replay re-simulates to the authoritative world (no desync)',
+      rv.hash === vres.result.hash, `${rv.hash} vs ${vres.result.hash}`);
+    check('multiplayer replay reproduces BOTH alliances’ scores',
+      rv.score.red === vres.result.score.red && rv.score.blue === vres.result.score.blue,
+      `${JSON.stringify(rv.score)} vs ${JSON.stringify(vres.result.score)}`);
+    check('multiplayer replay reproduces the tick count', rv.ticks === vres.result.ticks);
+    check('multiplayer replay logged a track per robot', Object.keys(vres.replay.tracks).length === 2);
+    check('multiplayer replay is a real contested match (both sides scored)',
+      vres.result.score.red > 0 && vres.result.score.blue > 0,
+      JSON.stringify(vres.result.score));
   }
 }
 
@@ -3305,9 +3813,58 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   const sum = room.summary();
   check('spectate: Room.summary() reports the live match', sum !== null && sum.mode === '1v1' && sum.spectators === 1 && sum.players.length === 2);
 
+  // players are TOLD how many people are watching — edge-triggered, not on the
+  // snapshot path (it moves a handful of times a match; the hot loop runs at 30 Hz)
+  const specMsgs = (sink: ServerMsg[]): Extract<ServerMsg, { t: 'spectators' }>[] =>
+    sink.filter((m) => m.t === 'spectators') as Extract<ServerMsg, { t: 'spectators' }>[];
+  check('spectate: players are told the watcher count', specMsgs(rosterB).slice(-1)[0]?.n === 1);
+
+  // HIDDEN ADMIN OBSERVER: an operator can watch a suspected cheat without the
+  // count announcing their arrival — which is the whole point, since a count that
+  // ticks up is itself the tip-off. Server-set only; there is no client path to it.
+  rosterB.length = 0;
+  const hidden: ServerMsg[] = [];
+  room.addSpectator({ id: 'admin-1', send: (m) => hidden.push(m), player: { clientId: 'admin-1', name: 'Admin', teamName: '', teamNumber: 0, alliance: 'blue', startIndex: 0, ready: false, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } }, connected: true, disconnectAt: 0 });
+  room.hideSpectator('admin-1');
+  check('spectate: a hidden observer is NOT in the visible count', room.visibleSpectators() === 1);
+  check('spectate: ...nor in the Watch Live card', room.summary()?.spectators === 1);
+  check('spectate: ...and the hidden observer still gets the live stream', hidden.some((m) => m.t === 'snapshot'));
+  // the count went 1 -> 2 -> 1 across the hide, so players must end on 1 and must
+  // NOT have been left believing a phantom watcher is present
+  check('spectate: players end up back at the honest count after a hide',
+    (specMsgs(rosterB).slice(-1)[0]?.n ?? 1) === 1);
+
   // the spectator leaving is clean and never touches the match
   room.detach('watch-1');
   check('spectate: after the watcher leaves, the match summary drops the spectator', (room.summary()?.spectators ?? 1) === 0);
+  check('spectate: a room with ONLY a hidden observer reads as unwatched', room.visibleSpectators() === 0);
+
+  // ---- the operator snapshot: signed-in by id, anonymous by COUNT --------
+  // The privacy line lives here rather than in the UI: an anonymous session gets
+  // no identifier at any layer, so there is nothing for a later feature to
+  // accidentally surface. See 0021_presence_detail.sql.
+  {
+    const r2 = new Room('smoke-opsnap', () => {}, { kind: 'versus' });
+    r2.add(mkDriver('signed', 'red', []));
+    r2.add({ id: 'guest', send: () => {}, player: { clientId: 'guest', name: 'Guest', teamName: '', teamNumber: 0, alliance: 'blue', startIndex: 0, ready: true, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } }, connected: true, disconnectAt: 0 });
+    const snap = r2.presenceSnapshot();
+    check('operator snapshot: the signed-in driver is listed by account id',
+      snap.players.length === 1 && snap.players[0].userId === 'u-signed');
+    // GUESTS ARE ROWS NOW (operator's call), keyed by the per-socket connection id —
+    // not an IP, not a fingerprint, and gone when the socket closes. It separates two
+    // live sessions; it cannot connect either to a past one.
+    check('operator snapshot: the anonymous driver is a ROW, keyed by connection id',
+      snap.guests.length === 1 && snap.guests[0].id === 'guest');
+    check('operator snapshot: ...and carries no display name or account id',
+      !('userId' in snap.guests[0]) && !('name' in snap.guests[0]));
+    check('operator snapshot: a lobby reads as "lobby", not "match"',
+      snap.players[0].act === 'lobby' && snap.guests[0].act === 'lobby');
+    r2.onMessage('signed', { t: 'start' });
+    r2.advanceForTest(3);
+    const after = r2.presenceSnapshot();
+    check('operator snapshot: once the match runs BOTH read as "match"',
+      after.players[0].act === 'match' && after.guests[0].act === 'match');
+  }
 }
 
 // ---- snapshot ACK channel + self-healing keyframe (PR2) ---------------------
@@ -3731,11 +4288,15 @@ const mkMM = () => {
   check('bestHost: midpoint beats hosting on either endpoint (<210ms)', far.cost > 0 && far.cost < 210, `cost=${far.cost}`);
 }
 
-// radiusCeiling: region-local at t=0, widens with wait / expand, capped, noWiden pins 0
+// radiusCeiling: opens same-continent immediately, worldwide within seconds, capped,
+// noWiden pins 0. The times are the point of these checks, not incidental: this pool
+// is small enough that the radius schedule IS the matchmaking time, and quality is
+// held by nearest-first pairing rather than by making everyone wait (see findMatch).
 {
-  check('radius: 0 at t=0 (region-local only)', radiusCeiling(0, 0, false) === 0);
-  check('radius: one step after one interval', radiusCeiling(8000, 0, false) === 60);
-  check('radius: expand bumps add steps', radiusCeiling(0, 3, false) === 180);
+  check('radius: same-continent allowed from t=0 (iad↔lhr 76, iad↔sjc 85)', radiusCeiling(0, 0, false) >= 85);
+  check('radius: one step after one interval', radiusCeiling(3000, 0, false) === 195);
+  check('radius: WORLDWIDE within 6s (was 40)', radiusCeiling(6000, 0, false) === 300);
+  check('radius: expand bumps add steps', radiusCeiling(0, 2, false) === 300);
   check('radius: capped at max', radiusCeiling(10_000_000, 0, false) === 300);
   check('radius: noWiden pins to 0 forever', radiusCeiling(10_000_000, 9, true) === 0);
 }

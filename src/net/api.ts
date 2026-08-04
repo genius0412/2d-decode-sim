@@ -15,6 +15,26 @@ const gameParam = (game?: GameId): string => (game === 'chain' ? '&game=chain' :
  * loop on the server.
  */
 
+/**
+ * The badge fields that travel with EVERY name the server sends — a leaderboard
+ * row, a match-history participant, a friend, the sender of a challenge.
+ *
+ * One shared shape rather than a pair of fields copied into each interface,
+ * because the failure mode is silent: a row type that forgets them still
+ * compiles and still renders, just with no badge on that one surface — which is
+ * how the ranked board ended up bare while the record board next to it was fine.
+ *
+ * Both are OPTIONAL. One Fly app serves every client build, so a client can be
+ * newer than the server it is talking to and receive neither; "absent" must
+ * render exactly like "not a supporter", never as a broken field.
+ */
+export interface BadgeFields {
+  /** active supporter membership (staff are entitled without paying) */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge in place of the supporter one */
+  role?: StaffRole;
+}
+
 export interface RecordConfig {
   spec: RobotSpec;
   assists: AssistConfig;
@@ -23,7 +43,7 @@ export interface RecordConfig {
   partnerSpec?: RobotSpec;
 }
 
-export interface RecordRow {
+export interface RecordRow extends BadgeFields {
   userId: string;
   handle: string;
   username: string | null;
@@ -31,18 +51,16 @@ export interface RecordRow {
   /** duo partner's display name + username (null for solo runs / legacy) */
   partnerHandle: string | null;
   partnerUsername: string | null;
+  /** the partner's own badge — a duo row prints two names, so it carries two */
+  partnerSupporter?: boolean;
+  partnerRole?: StaffRole;
   score: number;
   replayId: string | null;
   createdAt: string;
   config: RecordConfig | null;
-  /** active supporter membership — renders the badge. Absent from a server older
-   *  than the perk, which renders identically to false. */
-  supporter?: boolean;
-  /** 'owner' | 'admin' — renders the staff badge in place of the supporter one */
-  role?: StaffRole;
 }
 
-export interface EloRow {
+export interface EloRow extends BadgeFields {
   userId: string;
   handle: string;
   username: string | null;
@@ -168,11 +186,28 @@ export interface Presence {
   online: number;
   /** distinct authenticated users currently connected */
   signedIn: number;
-  /** how many players are waiting in each ranked bucket right now */
+  /**
+   * Waiting players per bucket, EVERY GAME COMBINED.
+   *
+   * Kept for compatibility, and deliberately not what the UI shows: pairing is
+   * bucketed by game, so this number told a DECODE player that a Chain Reaction
+   * queuer was waiting for them. Read `gameQueues` instead.
+   */
   queues: { '1v1': number; '2v2': number };
+  /** waiting players per bucket, SPLIT BY GAME — the only version a player can act
+   *  on. Absent from servers older than this field; callers fall back to `queues`. */
+  gameQueues?: Record<string, { '1v1': number; '2v2': number }>;
   /** the live admin notice (scheduled restart / info), or null — mirrors the
    * WebSocket `serverNotice` so disconnected pages can show the banner too */
   notice?: { kind: 'restart' | 'info'; message: string; until?: number } | null;
+  /** a scheduled MAINTENANCE window, or null. `biting` is whether it is in force
+   *  right now — an armed window with a future start announces itself first. */
+  maintenance?: {
+    startsAt: number | null;
+    endsAt: number | null;
+    message: string;
+    biting: boolean;
+  } | null;
   /** what THIS deploy can honour (see SERVER_CAPS in protocol.ts). One Fly app
    * serves every client build, so a new client checks here before offering
    * something an older server would mishandle rather than ignore. */
@@ -216,7 +251,7 @@ export function fetchPresence(full = false): Promise<Presence> {
   return getJson(`/api/presence${full ? '?full=1' : ''}`);
 }
 
-export interface PublicProfile {
+export interface PublicProfile extends BadgeFields {
   userId: string;
   handle: string | null;
   username: string | null;
@@ -240,7 +275,7 @@ export function fetchUserStatsByUsername(username: string, season?: number): Pro
 
 // ---- unified match history (Career + public profile) -----------------------
 
-export interface MatchHistoryPlayer {
+export interface MatchHistoryPlayer extends BadgeFields {
   userId: string;
   handle: string;
   username: string | null;
@@ -492,6 +527,120 @@ export async function fetchAdminStatus(): Promise<{ isAdmin: boolean; userId: st
   }
 }
 
+/**
+ * The operator view of who is on the service right now.
+ *
+ * Deliberately scoped (server: GET /api/admin/presence). Signed-in accounts carry
+ * only state that is already public or already shown to their own friends;
+ * anonymous sessions are COUNTS with no identifier; nobody's screen or menu is
+ * reported; and there is no history, because the source row is a ~5s snapshot that
+ * overwrites itself.
+ */
+export interface AdminPresencePlayer {
+  userId: string;
+  /** how many SOCKETS this account holds — one player with two tabs is two
+   *  sessions and one account, which is why the tiles need both numbers */
+  sessions?: number;
+  handle: string | null;
+  username: string | null;
+  act: 'menu' | 'lobby' | 'match';
+  room?: string;
+  queue?: '1v1' | '2v2';
+  queuedS?: number;
+  /** the game they are QUEUED for, which can differ from the one they are in */
+  queueGame?: string;
+  game?: string;
+}
+/** ONE anonymous session. `id` is the server's per-socket connection id: not an IP,
+ *  not a fingerprint, gone when the socket closes. See 0024_presence_guests.sql. */
+export interface AdminPresenceGuest {
+  id: string;
+  act: 'menu' | 'lobby' | 'match';
+  room?: string;
+  game?: string;
+}
+export interface AdminAnonBucket {
+  total: number;
+  inMatch: number;
+  inLobby: number;
+  idle: number;
+}
+export interface AdminMachineRow {
+  machine: string;
+  region: string;
+  online: number;
+  updatedAt?: string;
+  players: AdminPresencePlayer[];
+  guests: AdminPresenceGuest[];
+  anon: AdminAnonBucket;
+}
+export interface AdminPresence {
+  region: string;
+  machines: AdminMachineRow[];
+  local: AdminMachineRow;
+  rooms: LiveRoom[];
+  queues: Record<string, number>;
+}
+
+export interface MaintenanceWindow {
+  active: boolean;
+  startsAt: number | null;
+  endsAt: number | null;
+  message: string;
+}
+
+export async function adminFetchMaintenance(): Promise<{ maintenance: MaintenanceWindow; biting: boolean } | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(base + '/api/admin/maintenance', {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { ok: boolean; maintenance: MaintenanceWindow; biting: boolean };
+    return j.ok ? { maintenance: j.maintenance, biting: j.biting } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function adminSetMaintenance(w: MaintenanceWindow): Promise<boolean> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return false;
+  const q = new URLSearchParams({ active: w.active ? '1' : '0', msg: w.message });
+  if (w.startsAt) q.set('startsAt', String(w.startsAt));
+  if (w.endsAt) q.set('endsAt', String(w.endsAt));
+  try {
+    const res = await fetch(base + '/api/admin/maintenance?' + q.toString(), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return false;
+    return ((await res.json()) as { ok: boolean }).ok === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function adminFetchPresence(): Promise<AdminPresence | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(base + '/api/admin/presence', {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as AdminPresence;
+  } catch {
+    return null;
+  }
+}
+
 /** broadcast a scheduled-restart countdown to every connected client */
 export async function adminAnnounce(seconds: number, message: string): Promise<boolean> {
   const base = gameServerHttpUrl();
@@ -723,7 +872,7 @@ export async function adminRenameUser(userId: string, handle: string): Promise<s
  * meaningful while `online`; null otherwise. */
 export type Activity = 'menu' | 'lobby' | 'match';
 
-export interface FriendRow {
+export interface FriendRow extends BadgeFields {
   userId: string;
   handle: string;
   username: string | null;
@@ -908,7 +1057,8 @@ export function cancelRoomInvite(id: string): Promise<unknown> {
   });
 }
 
-/** public username-prefix search for the add-a-friend box (min 2 chars) */
+/** public player search — matches the @username or the DISPLAY NAME (min 2 chars).
+ *  Feeds both the Records look-up bar and the add-a-friend box. */
 export async function searchUsers(query: string): Promise<PublicProfile[]> {
   const q = query.trim().toLowerCase();
   if (q.length < 2) return [];

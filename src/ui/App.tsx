@@ -28,6 +28,10 @@ import { Configure, isConfigureSection, type ConfigureSection } from './Configur
 import { Records, isRecordsTab, type RecordsTab } from './Records';
 import { RecordRun } from './RecordRun';
 import { Matchmaking } from './Matchmaking';
+import { QueueBar, useParkedQueue } from './QueueBar';
+import { usePresence } from './usePresence';
+import { maintenanceLine } from './MaintenanceBanner';
+import { peekQueue } from './queueKeeper';
 import { ReplayView } from './ReplayView';
 import { ProfileMenu } from './ProfileMenu';
 import { Download } from './Download';
@@ -283,10 +287,29 @@ export function App() {
   const [screen, setScreen] = useState<Screen>(start.screen);
   const [route, setRoute] = useState<RouteArgs>(start);
   const [session, setSession] = useState<NetSession | null>(null);
+  // read by the match-found takeover, which must fire on `found` alone — depending on
+  // `screen`/`session` directly would re-run it on every navigation instead
+  const sessionRef = useRef<NetSession | null>(null);
+  const screenRef = useRef<Screen>('home');
   // which flow opened the live session — only 'record' offers an in-game NEW RUN
   const [sessionKind, setSessionKind] = useState<ActiveGameRef['kind'] | null>(null);
+  /**
+   * Is the live session a CO-OP (duo record) run?
+   *
+   * Kept apart from `sessionKind`, which is 'record' for both solo and duo — and
+   * the two want opposite things from the restart control. A solo run tears itself
+   * down and opens a fresh room; a duo run belongs to BOTH drivers, so restarting
+   * is a vote and one player must never be able to take it away from the other. Duo
+   * previously fell through to the solo path, which sent the presser off to a SOLO
+   * record screen and left their partner alone in the run.
+   */
+  const [sessionCoop, setSessionCoop] = useState(false);
   // a just-played replay to watch in-memory (not yet persisted, so no URL id)
   const [replayObj, setReplayObj] = useState<Replay | null>(null);
+  // which robot the WATCHER drove in that replay, so the viewer puts them behind
+  // their own driver station instead of whichever alliance is first on the roster
+  // (the camera flips a full 180° between alliances — see `replayViewpoint`).
+  const [replayRobot, setReplayRobot] = useState<number | null>(null);
   // one-time "this simulation isn't realistic" disclaimer (shown the first time CR is
   // the selected game, on this device; dismissal persists in localStorage)
   const [showChainDisclaimer, setShowChainDisclaimer] = useState(false);
@@ -367,6 +390,12 @@ export function App() {
   // ranked queue rather than a resurrected challenge.
   const [pendingChallenge, setPendingChallenge] = useState<PendingChallenge | null>(null);
   const startChallenge = (c: PendingChallenge): void => {
+    // A challenge names its own GAME, and the recipient accepts it from wherever
+    // they already were — which is not necessarily the same game. Switch before
+    // queueing: the matchmaker buckets by game, so a challenge queued under the
+    // wrong one can never pair with its other half, and the pair simply waits for
+    // each other until they give up.
+    selectGame(c.game);
     setPendingChallenge(c);
     navigate('matchmaking');
   };
@@ -384,6 +413,10 @@ export function App() {
       startChallenge(challenge);
       return;
     }
+    // Same rule as a rated challenge: the INVITE names the game, and accepting it
+    // from the other one would leave the app configured for a game the room isn't
+    // playing — right room, wrong robot, wrong field.
+    selectGame(invite.game);
     const config: RoomConfig = { kind: invite.kind, game: invite.game };
     if (invite.kind === 'record' && invite.record) config.record = invite.record;
     setPendingAutoJoin({ room: invite.room, config });
@@ -481,6 +514,26 @@ export function App() {
     }
   };
 
+  /**
+   * Switch the ACTIVE game (and its saved loadout), safely for a caller that is
+   * about to `navigate` in the same tick.
+   *
+   * `settingsRef.current` is assigned BEFORE `update`, because `update` is a
+   * setState that will not have landed by the synchronous `navigate` that follows
+   * — and `navigate` builds its URL from the ref. Without it the app switched to
+   * Chain Reaction while the address bar still read /decode/…, and since the URL is
+   * authoritative for the game on load, a refresh from there landed back in the
+   * wrong one. Both callers (the parked-queue takeover and an accepted challenge)
+   * are exactly that shape.
+   */
+  const selectGame = (g: GameId): void => {
+    const s = settingsRef.current;
+    if (s.game === g) return;
+    const next = switchGame(s, g);
+    settingsRef.current = next;
+    update(next);
+  };
+
   const onSyncUser = useCallback((id: string | null) => setAccountUserId(id), []);
   const onSyncLoad = useCallback((s: GameSettings) => {
     // the URL is authoritative for the ACTIVE game — keep the currently-selected
@@ -496,10 +549,15 @@ export function App() {
   // the multiplayer game this browser is currently in (persisted to localStorage), so
   // the player can REJOIN it after navigating away and is stopped from starting a 2nd.
   const [activeGame, setActiveGame] = useState<ActiveGameRef | null>(() => loadActiveGame());
+  // A backgrounded ranked search that PAIRED. The match will not wait — the server
+  // holds the slot for RANKED_JOIN_GRACE_MS and then forfeits it — so this takes the
+  // screen back rather than offering a choice, and a solo run in flight is discarded
+  // (deliberate: a practice run is worth less than the rated match it would cost).
+  const parkedQueue = useParkedQueue();
 
   /** enter a networked game: remember it (for rejoin + the single-game guard), then
    * show the game screen. Solo play never calls this (it has no session). */
-  const beginSession = (s: NetSession, kind: ActiveGameRef['kind']): void => {
+  const beginSession = (s: NetSession, kind: ActiveGameRef['kind'], coop = false): void => {
     if (s.room && s.clientId) {
       const ref: ActiveGameRef = {
         room: s.room,
@@ -523,6 +581,7 @@ export function App() {
     }
     setSession(s);
     setSessionKind(kind);
+    setSessionCoop(coop);
     navigate('game');
   };
 
@@ -546,6 +605,8 @@ export function App() {
     const s = new ServerSession(transport, false, ref.start, ref.clientId, ref.room);
     setSession(s);
     setSessionKind(ref.kind);
+    // a duo run rejoined has more than one robot on the roster; a solo one does not
+    setSessionCoop(ref.kind === 'record' && (ref.start.setups?.length ?? 1) > 1);
     navigate('game');
   };
 
@@ -594,11 +655,64 @@ export function App() {
     navigate('record');
   };
 
+  /**
+   * TAKEOVER. A parked search paired while the player was elsewhere: pull them onto
+   * the matchmaking screen, which adopts the socket and carries on into the
+   * pre-match strategy window.
+   *
+   * It does NOT ask. The server holds the slot for RANKED_JOIN_GRACE_MS and then
+   * forfeits it, so a dialog would just be a way to lose the match slowly. Anything
+   * in progress is discarded — per the product call, a solo run in flight is worth
+   * less than the rated match it would otherwise cost.
+   */
+  /**
+   * Open the matchmaking screen FOR THE PARKED SEARCH, restoring its game first.
+   *
+   * The parked queue is the authority on which game the match is for, not
+   * `settings.game` — the player is free to wander into the other game while
+   * waiting, and that is the entire point of parking. Adopting the queue without
+   * this switched the app to the CURRENT game: queue Chain Reaction, start a DECODE
+   * run, and the takeover came up as DECODE for a Chain Reaction match (wrong
+   * ready-up, wrong robot, wrong field). Both ways into the queue screen — the
+   * automatic takeover and the bar's View button — go through here.
+   */
+  const openParkedQueue = (): void => {
+    const q = peekQueue();
+    if (q) selectGame(q.game);
+    navigate('matchmaking');
+  };
+
+  useEffect(() => {
+    if (!parkedQueue?.found) return;
+    if (screenRef.current === 'matchmaking') return; // already there; it will adopt
+    sessionRef.current?.dispose();
+    setSession(null);
+    setSessionKind(null);
+    // ABANDON whatever was in flight, for real. A record run is server-hosted, so
+    // it leaves behind a rejoin record AND a held server slot; keeping either would
+    // have this ranked match refused as a "second game" by the very guards that
+    // exist to stop you starting one. The run is discarded by design here — it is
+    // worth less than the rated match it would otherwise cost.
+    clearActiveGame();
+    setActiveGame(null);
+    openParkedQueue();
+    // `navigate` and the setters are stable for this component's life
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parkedQueue?.found]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
+
   const exitGame = (): void => {
     setEditMobileLayout(false);
     session?.dispose();
     setSession(null);
     setSessionKind(null);
+    setSessionCoop(false);
     // a match that FINISHED (or whose slot is gone) clears its rejoin record in
     // GameView; a mid-match exit keeps it so Home can offer "rejoin your match".
     setActiveGame(loadActiveGame());
@@ -613,6 +727,11 @@ export function App() {
   // game / queue — they'd just get dropped by the restart. People already in a game
   // are untouched (this only guards the start actions). Info notices don't block.
   const notice = useServerNotice();
+  // MAINTENANCE LOCKDOWN. The server refuses regardless (that is what makes it a
+  // lockdown rather than a suggestion); this stops a player from clicking into an
+  // error they could have been told about first. Admins are exempt on both sides.
+  const maintenance = usePresence()?.maintenance ?? null;
+  const lockedOut = !!maintenance?.biting && !isAdmin;
   const restartPending =
     !!notice && notice.kind === 'restart' && (notice.until === undefined || notice.until > Date.now());
   const [startBlocked, setStartBlocked] = useState(false);
@@ -630,6 +749,7 @@ export function App() {
     // start-pose legality is a DECODE (G304) check; other games have no legality yet
     const startOk = settings.game !== 'decode' || activeStartLegal(settings.spec, settings.alliance, settings.startPose);
     if (loadActiveGame()) setBlockedByActive(true);
+    else if (lockedOut) setStartBlocked(true);
     else if (restartPending) setStartBlocked(true);
     else if (!startOk) setBadStart(true);
     else if (newVersion) setPendingStart(() => go);
@@ -668,9 +788,26 @@ export function App() {
     return () => window.clearInterval(iv);
   }, [signedIn, screen]);
 
+  /**
+   * Wrap a FULL-SCREEN surface so the "you are still queued" indicator survives it.
+   *
+   * The bar itself is mounted inside the menu shell, which these screens replace
+   * outright — so the moment you started a practice match or a record run, the one
+   * thing telling you a ranked search was still live disappeared. That is precisely
+   * the situation the background queue exists to create, which made it the worst
+   * possible place to hide it. `overlay` renders the compact top chip instead of
+   * the bottom bar (see QueueBar).
+   */
+  const fullScreen = (node: JSX.Element): JSX.Element => (
+    <>
+      <QueueBar onOpen={openParkedQueue} overlay />
+      {node}
+    </>
+  );
+
   // full-screen surfaces (outside the shell)
   if (screen === 'game') {
-    return (
+    return fullScreen(
       <GameView
         settings={settings}
         session={session}
@@ -678,9 +815,12 @@ export function App() {
         onExit={exitGame}
         onSettingsChange={update}
         editLayout={editMobileLayout}
-        onRestartRun={sessionKind === 'record' ? restartRun : undefined}
+        onRestartRun={sessionKind === 'record' && !sessionCoop ? restartRun : undefined}
+        coop={sessionCoop}
         onWatchReplay={(r) => {
           setReplayObj(r);
+          // capture the seat NOW: `session` is torn down on the way out of the game
+          setReplayRobot(session?.localRobotId ?? null);
           navigate('replay');
         }}
       />
@@ -688,7 +828,7 @@ export function App() {
   }
   if (screen === 'lobby') {
     const auto = pendingAutoJoin?.config.kind === 'versus' ? pendingAutoJoin : undefined;
-    return (
+    return fullScreen(
       <Lobby
         settings={settings}
         onSettingsChange={update}
@@ -703,7 +843,7 @@ export function App() {
     );
   }
   if (screen === 'record') {
-    return (
+    return fullScreen(
       <RecordRun
         settings={settings}
         mode="solo"
@@ -714,12 +854,12 @@ export function App() {
   }
   if (screen === 'duorecord') {
     const auto = pendingAutoJoin?.config.kind === 'record' ? pendingAutoJoin : undefined;
-    return (
+    return fullScreen(
       <Lobby
         settings={settings}
         onSettingsChange={update}
         config={auto?.config ?? { kind: 'record', record: 'duo' }}
-        onStart={(s) => beginSession(s, 'record')}
+        onStart={(s) => beginSession(s, 'record', true)}
         onCancel={() => navigate('modes')}
         signedIn={signedIn}
         autoJoin={auto?.room}
@@ -743,10 +883,11 @@ export function App() {
     );
   }
   if (screen === 'replay' && (route.replayId || replayObj)) {
-    return (
+    return fullScreen(
       <ReplayView
         replayId={route.replayId ?? undefined}
         preloadReplay={replayObj ?? undefined}
+        viewerRobotId={replayObj ? replayRobot : null}
         onClose={() => (replayObj ? navigate('home') : navigate('records'))}
       />
     );
@@ -788,6 +929,9 @@ export function App() {
       onHostRoom={hostForChallenge}
       onQueueChallenge={startChallenge}
     >
+      {/* the standing "still queued" bar — only appears when a search is PARKED,
+          i.e. the player queued and then went somewhere else */}
+      <QueueBar onOpen={openParkedQueue} />
       <AppShell
         active={navFor(screen)}
         onNav={(n) => navigate(screenForNav(n))}
@@ -931,9 +1075,12 @@ export function App() {
       {startBlocked && (
         <div className="overlay">
           <div className="overlay-panel">
-            <h2>Server restarting soon</h2>
+            <h2>{lockedOut ? 'Down for maintenance' : 'Server restarting soon'}</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
-              A scheduled server update is about to happen, so new games are paused for a moment.
+              {lockedOut
+                ? maintenanceLine(maintenance) ??
+                  'DSIM is down for maintenance — new games are paused. Please try again shortly.'
+                : 'A scheduled server update is about to happen, so new games are paused for a moment.'}
             </p>
             <div className="overlay-buttons">
               <button onClick={() => setStartBlocked(false)}>OK</button>
@@ -1004,7 +1151,7 @@ export function App() {
           onDonate={() => navigate('donate')}
         />
       )}
-      {screen === 'admin' && isAdmin && <Admin />}
+      {screen === 'admin' && isAdmin && <Admin onWatch={spectateRoom} />}
 
       {/* Patch notes / new-season + new-act reveals — shown once on the menu shell,
           never over a live match (the game screen returns before this). Mounted

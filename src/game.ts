@@ -168,6 +168,12 @@ export interface HudSnapshot {
   toasts: Toast[];
   /** multiplayer status (null in solo): stall target + desync + connection quality */
   net: NetStatus | null;
+  /** how many people are watching this match (0 when nobody is, or in solo).
+   *  Hidden admin observers are excluded server-side and never reach this. */
+  spectators: number;
+  /** DUO RECORD rematch tally, or null when this run has no vote (solo, versus).
+   *  `need > 1` is what tells the UI a vote is even in play. */
+  rematch: { votes: number; need: number; mine: boolean } | null;
 }
 
 export class GameController {
@@ -236,6 +242,11 @@ export class GameController {
    * (session teardown + fresh room) instead of an in-place rebuild. Null elsewhere,
    * which is what keeps the binding inert in a versus match. */
   private restartRequestCb: (() => void) | null = null;
+  /** duo-record run: restarting is a mutual VOTE, never one driver's decision */
+  private coop = false;
+  /** last vote count we played a cue for — a vote landing is the thing worth
+   *  hearing, and only when the number actually moved */
+  private lastRematchVotes = 0;
   /** authoritative REMOTE-robot poses per received snapshot, for interpolating them
    * between snapshots. Captured BEFORE reconcile mutates the snapshot world. (Balls
    * are NOT interpolated — see displayWorld.) */
@@ -282,7 +293,11 @@ export class GameController {
     this.spectator = session?.spectator ?? false;
     this.audio.masterVolume = settings.audio.volume.master;
     this.audio.gameVolume = settings.audio.volume.game;
-    this.audio.sfxVolume = settings.audio.volume.sfx;
+    this.audio.shootVolume = settings.audio.volume.shoot;
+    this.audio.intakeVolume = settings.audio.volume.intake;
+    this.audio.gateVolume = settings.audio.volume.gate;
+    this.audio.beepVolume = settings.audio.volume.beep;
+    this.audio.alertVolume = settings.audio.volume.alert;
     this.audio.voiceVolume = settings.audio.volume.voice;
     this.input = new InputManager(settings.bindings);
 
@@ -454,6 +469,23 @@ export class GameController {
   /** shoot / intake / gate effects, edge-detected from world state (the sim
    * core stays event-free for these — same pattern as handlePhaseAudio).
    * All robots share the small field, so everyone's actions are audible. */
+  /**
+   * A rematch vote landed (or was taken back) — cue it.
+   *
+   * Edge-triggered on the COUNT, so it fires for your partner's vote as well as
+   * your own: the whole point of "1/2" is knowing the other person acted. A vote
+   * being withdrawn is cued too, with a falling figure, because a count silently
+   * dropping back is exactly the thing you would otherwise miss.
+   */
+  private handleRematchAudio(): void {
+    const v = this.coop ? this.session?.rematchVote?.() : null;
+    const n = v?.votes ?? 0;
+    if (n === this.lastRematchVotes) return;
+    const rose = n > this.lastRematchVotes;
+    this.lastRematchVotes = n;
+    if (n > 0 || !rose) this.audio.sfxRematchVote(rose);
+  }
+
   private handleActionAudio(): void {
     const chain = this.world.game === 'chain';
     for (const r of this.world.robots) {
@@ -568,6 +600,7 @@ export class GameController {
     this.hudCountdown = this.updateCountdown();
     this.handlePhaseAudio();
     this.handleActionAudio();
+    this.handleRematchAudio();
 
     // SOLO drains world.events directly; MULTIPLAYER drains netEvents (the de-duped
     // authoritative tail collected at reconcile), ignoring prediction/replay events.
@@ -677,7 +710,16 @@ export class GameController {
     // asks the UI to tear the session down and open a NEW run (a fresh room). We
     // only forward the request — nothing here rebuilds `this.world`, which is what
     // made the drivetrain stick against a server still running the old match.
-    if (this.input.restartPressed && this.restartRequestCb) {
+    // The restart binding (R by default) does exactly what the on-screen button
+    // does, which differs by run type:
+    //  - CO-OP (duo record): toggle this driver's rematch VOTE. It cannot tear the
+    //    run down unilaterally — the run belongs to both people — so it never
+    //    returns early here; the match keeps stepping while the vote sits.
+    //  - SOLO record: ask the UI for a whole new run (a fresh room).
+    if (this.input.restartPressed && this.coop) {
+      const v = this.session?.rematchVote?.();
+      this.session?.setRematch?.(!(v?.mine ?? false));
+    } else if (this.input.restartPressed && this.restartRequestCb) {
       this.restartRequestCb();
       return; // the session is going away this frame; don't predict into it
     }
@@ -907,6 +949,18 @@ export class GameController {
     this.restartRequestCb = cb;
   }
 
+  /** mark this as a CO-OP run, where restarting is a vote rather than a command.
+   *  Set by the UI from the room config; the controller has no other way to know. */
+  setCoop(on: boolean): void {
+    this.coop = on;
+  }
+
+  /** toggle our rematch vote (the on-screen button; the R binding does the same) */
+  toggleRematch(): void {
+    const v = this.session?.rematchVote?.();
+    this.session?.setRematch?.(!(v?.mine ?? false));
+  }
+
   /** trigger the pre-match countdown (e.g. from a UI button) */
   startMatch(): void {
     if (this.world.match.phase === 'pre' && this.countdownStart === null) {
@@ -1060,6 +1114,8 @@ export class GameController {
           : null,
       toasts: [...this.toasts],
       net: this.session ? this.session.status() : null,
+      spectators: this.session?.spectatorCount?.() ?? 0,
+      rematch: this.coop ? (this.session?.rematchVote?.() ?? null) : null,
     };
   }
 

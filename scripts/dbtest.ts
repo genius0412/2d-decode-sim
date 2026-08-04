@@ -352,6 +352,351 @@ async function main(): Promise<void> {
   check('staff: ...and is a supporter either way', paidStaff.supporter === true);
   await repo.syncStaffRoles(null, []);
 
+  // ------------------------------------------- badges on EVERY name surface
+  // The badge is only meaningful if it is everywhere a name is: it shipped on
+  // the record board and was silently missing from the ranked board beside it,
+  // from match history, and from the friends list — every one of those a query
+  // that simply did not project the two columns. Nothing in the type system
+  // catches that (an absent field renders as "no badge"), so the queries behind
+  // each surface are asserted here one by one.
+  await repo.ensureProfile('badge-own', 'Ownie');
+  await repo.ensureProfile('badge-sup', 'Suppy');
+  await repo.ensureProfile('badge-nil', 'Plain');
+  await repo.syncStaffRoles('badge-own', ['badge-own']);
+  await db.query(
+    `update profiles set supporter_until = now() + interval '30 days' where user_id = 'badge-sup'`,
+  );
+  await db.query(
+    `update profiles set username = 'ownie' where user_id = 'badge-own'`,
+  );
+
+  const SEASON = 99;
+  await repo.ensureSeason(SEASON, 'decode', 7);
+  const act = await repo.actForSeason(SEASON, 'decode');
+
+  // RANKED — the board that shipped bare. Placement gates the board, so each
+  // player needs PLACEMENT_GAMES rated results before they appear at all.
+  for (let i = 0; i < 5; i++) {
+    await repo.upsertRating('badge-own', '1v1', act, 1600, 60, 0.06, 'decode');
+    await repo.upsertRating('badge-nil', '1v1', act, 1400, 60, 0.06, 'decode');
+  }
+  await repo.upsertEloHistory('badge-own', '1v1', SEASON, 1600, 60, 0.06, 5, 'decode');
+  const eloRows = await repo.eloLeaderboard({ mode: '1v1', act, game: 'decode' });
+  const eloOwn = eloRows.find((r) => r.userId === 'badge-own');
+  const eloNil = eloRows.find((r) => r.userId === 'badge-nil');
+  check('badges/ranked: the live board carries the role', eloOwn?.role === 'owner');
+  check('badges/ranked: ...and the supporter flag it implies', eloOwn?.supporter === true);
+  check('badges/ranked: a plain player carries neither', !eloNil?.role && eloNil?.supporter === false);
+  const eloHist = await repo.eloHistoryLeaderboard({ mode: '1v1', balanceVersion: SEASON, game: 'decode' });
+  check(
+    'badges/ranked: the ARCHIVED season board carries them too',
+    eloHist.find((r) => r.userId === 'badge-own')?.role === 'owner',
+  );
+
+  // RECORDS — the primary name already had a badge; the DUO PARTNER did not,
+  // and a duo row prints two names.
+  await repo.submitRecord({
+    userId: 'badge-sup',
+    partnerId: 'badge-own',
+    mode: 'duo',
+    drivetrain: 'tank',
+    score: 250,
+    balanceVersion: SEASON,
+    replayId: null as unknown as string, // nullable FK; no replay needed here
+    game: 'decode',
+  });
+  await repo.submitRecord({
+    userId: 'badge-nil',
+    mode: 'solo',
+    drivetrain: 'tank',
+    score: 100,
+    balanceVersion: SEASON,
+    replayId: null as unknown as string,
+    game: 'decode',
+  });
+  const recRows = await repo.recordLeaderboard({ mode: 'duo', balanceVersion: SEASON, game: 'decode' });
+  const duo = recRows.find((r) => r.userId === 'badge-sup');
+  check('badges/records: the runner keeps their supporter flag', duo?.supporter === true);
+  check('badges/records: the duo PARTNER carries their own role', duo?.partnerRole === 'owner');
+  check('badges/records: ...and their own supporter flag', duo?.partnerSupporter === true);
+  const solo = (await repo.recordLeaderboard({ mode: 'solo', balanceVersion: SEASON, game: 'decode' }))[0];
+  check(
+    'badges/records: a SOLO row reports the absent partner as false, not null',
+    solo?.partnerSupporter === false,
+  );
+
+  // MATCH HISTORY — the Career page's list, and the one place a name appears
+  // for BOTH alliances of somebody else's match.
+  const matchId = await repo.saveMatch('1v1', SEASON, null as unknown as string, true, 'decode');
+  await repo.addMatchParticipant({
+    matchId, userId: 'badge-nil', alliance: 'red', drivetrain: 'tank',
+    score: 80, won: false, ratingBefore: 1000, ratingAfter: 990,
+  });
+  await repo.addMatchParticipant({
+    matchId, userId: 'badge-own', alliance: 'blue', drivetrain: 'tank',
+    score: 120, won: true, ratingBefore: 1000, ratingAfter: 1010,
+  });
+  const vsHist = await repo.userMatchHistory('badge-nil', { balanceVersion: SEASON, game: 'decode' });
+  const versus = vsHist.rows.find((r) => r.kind === 'versus');
+  const oppo = versus?.players.find((p) => p.userId === 'badge-own');
+  check('badges/history: an opponent in the list carries their role', oppo?.role === 'owner');
+  check(
+    'badges/history: ...and a plain participant carries neither',
+    versus?.players.find((p) => p.userId === 'badge-nil')?.supporter === false,
+  );
+  const runHist = await repo.userMatchHistory('badge-sup', { balanceVersion: SEASON, game: 'decode' });
+  const run = runHist.rows.find((r) => r.kind === 'record');
+  check(
+    'badges/history: a record run badges its PARTNER too',
+    run?.players.find((p) => p.userId === 'badge-own')?.role === 'owner',
+  );
+
+  // FRIENDS + SEARCH — polled surfaces. These deliberately used to skip the
+  // columns; they no longer do, because a badge that shows on the leaderboard
+  // and not beside the same person in your friends list reads as a bug.
+  await repo.sendFriendRequest('badge-own', 'badge-nil');
+  const pending = await repo.listFriends('badge-nil');
+  check('badges/friends: an INCOMING request carries the role', pending.incoming[0]?.role === 'owner');
+  await repo.acceptFriendRequest('badge-nil', 'badge-own');
+  const friendList = await repo.listFriends('badge-nil');
+  check('badges/friends: a friend row carries the role', friendList.friends[0]?.role === 'owner');
+  check('badges/friends: ...and the supporter flag', friendList.friends[0]?.supporter === true);
+
+  await repo.inviteToRoom('badge-own', 'badge-nil', 'ROOM01', 'decode', 'match', null, 'casual1v1');
+  const invited = await repo.listFriends('badge-nil');
+  check('badges/friends: the CHALLENGE sender is badged', invited.invites[0]?.from.role === 'owner');
+  // the SENT list shows the OTHER party, so it must project the badge from a
+  // different join than the received list does — assert it against staff, or the
+  // check passes on a query that selects nothing at all
+  await repo.inviteToRoom('badge-nil', 'badge-own', 'ROOM02', 'decode', 'match', null, 'casual1v1');
+  const asSender = await repo.listFriends('badge-nil');
+  check('badges/friends: and the recipient on the SENDER’s side', asSender.sent[0]?.to.role === 'owner');
+  check(
+    'badges/friends: the standalone invite read agrees with the folded one',
+    (await repo.listRoomInvites('badge-nil'))[0]?.from.role === 'owner',
+  );
+  check(
+    'badges/search: a username lookup carries the badge',
+    (await repo.searchUsersByName('own'))[0]?.role === 'owner',
+  );
+
+  // ---- global presence aggregation ---------------------------------------
+  // Rewritten from two statements into one (the sum, plus a distinct-count over the
+  // same rows) to halve the cost of the site's most-called query. It had no coverage,
+  // and the failure mode is a WRONG NUMBER rather than an error, so it needs some.
+  await db.query(`delete from presence`);
+  const beat = (m: string, region: string, online: number, authed: string[], q1 = 0, q2 = 0) =>
+    repo.upsertPresence(m, region, online, authed, q1, q2);
+  await beat('m-iad', 'iad', 3, ['u1', 'u2'], 1, 0);
+  await beat('m-lhr', 'lhr', 2, ['u2', 'u3'], 0, 2);
+  let pres = await repo.globalPresence();
+  check('presence: sockets are summed across regions', pres.online === 5, `online=${pres.online}`);
+  check(
+    'presence: signed-in users are DEDUPED across regions (u2 is on both)',
+    pres.signedIn === 3,
+    `signedIn=${pres.signedIn}`,
+  );
+  check(
+    'presence: queue depths are summed per bucket',
+    pres.queues['1v1'] === 1 && pres.queues['2v2'] === 2,
+    JSON.stringify(pres.queues),
+  );
+
+  // a machine that stopped beating drops out — that is how a crashed/stopped region
+  // is forgotten, and it is why a BUSY machine must keep writing inside the window
+  await db.query(`update presence set updated_at = now() - interval '60 seconds' where machine = 'm-lhr'`);
+  pres = await repo.globalPresence();
+  check('presence: a stale machine is excluded entirely', pres.online === 3, `online=${pres.online}`);
+  check('presence: ...including its signed-in users', pres.signedIn === 2, `signedIn=${pres.signedIn}`);
+  check(
+    'presence: ...and its queue depth',
+    pres.queues['2v2'] === 0,
+    JSON.stringify(pres.queues),
+  );
+
+  // re-beating the SAME machine id overwrites rather than accumulating a ghost row
+  await beat('m-iad', 'iad', 1, ['u1']);
+  const n = (await db.query<{ c: string }>(`select count(*)::text as c from presence`)).rows[0].c;
+  pres = await repo.globalPresence();
+  check('presence: a machine re-beating updates its row, never adds one', n === '2', `rows=${n}`);
+  check('presence: the updated count replaces the old one', pres.online === 1, `online=${pres.online}`);
+
+  // everything quiet: zero, not null/NaN
+  await db.query(`update presence set updated_at = now() - interval '60 seconds'`);
+  pres = await repo.globalPresence();
+  check(
+    'presence: an empty world aggregates to a clean zero',
+    pres.online === 0 && pres.signedIn === 0 && pres.queues['1v1'] === 0 && pres.queues['2v2'] === 0,
+    JSON.stringify(pres),
+  );
+  await db.query(`delete from presence`);
+
+  // ---- cross-region LIVE ROOMS + the operator view (0021) -----------------
+  // "Watch Live" listed only the caller's own region, because a machine knows only
+  // its own rooms and anycast picks which machine answers. Rooms now ride this same
+  // heartbeat, and the aggregate is what the list reads.
+  await repo.ensureProfile('op-1', 'Ada');
+  await repo.ensureProfile('op-2', 'Grace');
+  await repo.upsertPresence(
+    'm-iad', 'iad', 4, ['op-1'], 1, 0,
+    [{ room: 'iad-a1', mode: '1v1' }],
+    [{ userId: 'op-1', act: 'match', room: 'iad-a1' }],
+    { total: 2, inMatch: 1, inLobby: 0, idle: 1 },
+  );
+  await repo.upsertPresence(
+    'm-nrt', 'nrt', 2, ['op-2'], 0, 0,
+    [{ room: 'nrt-b2', mode: '2v2' }],
+    [{ userId: 'op-2', act: 'menu', queue: '1v1', queuedS: 42 }],
+    { total: 1, inMatch: 0, inLobby: 0, idle: 1 },
+  );
+  const liveAll = (await repo.globalLiveRooms()) as { room: string }[];
+  check(
+    'live rooms: matches from EVERY region come back, not just one',
+    liveAll.length === 2 && liveAll.some((r) => r.room === 'iad-a1') && liveAll.some((r) => r.room === 'nrt-b2'),
+    JSON.stringify(liveAll),
+  );
+  await db.query(`update presence set updated_at = now() - interval '60 seconds' where machine = 'm-nrt'`);
+  check('live rooms: a stale machine’s rooms drop out with it', ((await repo.globalLiveRooms()) as unknown[]).length === 1);
+  await repo.upsertPresence('m-nrt', 'nrt', 2, ['op-2'], 0, 0, [{ room: 'nrt-b2' }], [{ userId: 'op-2', act: 'menu', queue: '1v1', queuedS: 42 }], { total: 1, inMatch: 0, inLobby: 0, idle: 1 });
+
+  const opRows = await repo.adminPresence();
+  const allPlayers = opRows.flatMap((r) => r.players);
+  check('operator view: every region is reported', opRows.length === 2, JSON.stringify(opRows.map((r) => r.region)));
+  check(
+    'operator view: signed-in accounts resolve to a handle',
+    allPlayers.find((p) => p.userId === 'op-1')?.handle === 'Ada',
+  );
+  check(
+    'operator view: a queued player shows the bucket AND the wait (a stall is the point)',
+    allPlayers.find((p) => p.userId === 'op-2')?.queue === '1v1' &&
+      allPlayers.find((p) => p.userId === 'op-2')?.queuedS === 42,
+  );
+  check(
+    'operator view: anonymous sessions arrive as COUNTS',
+    opRows.reduce((n, r) => n + r.anon.total, 0) === 3,
+    JSON.stringify(opRows.map((r) => r.anon)),
+  );
+  // THE PRIVACY INVARIANT, asserted rather than assumed. If a later change starts
+  // itemising guest sessions or recording what screen someone is on, these are what
+  // say so out loud instead of it going unnoticed.
+  check(
+    'operator view: no anonymous session is identified anywhere in the payload',
+    opRows.every((r) => Object.keys(r.anon).every((k) => ['total', 'inMatch', 'inLobby', 'idle'].includes(k))),
+    JSON.stringify(opRows.map((r) => r.anon)),
+  );
+  check(
+    'operator view: and it carries NO screen/menu detail for anybody',
+    allPlayers.every((p) => !('screen' in p) && !('page' in p) && ['menu', 'lobby', 'match'].includes(p.act)),
+  );
+  // ---- PER-GAME queue depth aggregates across regions (0022) --------------
+  // The flat q1v1/q2v2 columns count every game together, which is not how pairing
+  // works — so a Chain Reaction queuer inflated DECODE's advertised depth.
+  await repo.upsertPresence('m-iad', 'iad', 4, ['op-1'], 1, 0, [], [], null, {
+    decode: { '1v1': 1, '2v2': 0 },
+  });
+  await repo.upsertPresence('m-nrt', 'nrt', 2, ['op-2'], 2, 1, [], [], null, {
+    decode: { '1v1': 1, '2v2': 0 },
+    chain: { '1v1': 1, '2v2': 1 },
+  });
+  const gq = await repo.globalPresence();
+  check('per-game: depths are summed per game ACROSS regions',
+    gq.gameQueues.decode['1v1'] === 2 && gq.gameQueues.chain['1v1'] === 1,
+    JSON.stringify(gq.gameQueues));
+  check('per-game: buckets stay separate within a game', gq.gameQueues.chain['2v2'] === 1);
+  check('per-game: a game nobody is queued for is absent, not zeroed in',
+    !('nope' in gq.gameQueues));
+  check('per-game: the COMBINED total still adds up for older clients',
+    gq.queues['1v1'] === 3 && gq.queues['2v2'] === 1, JSON.stringify(gq.queues));
+  await db.query(`update presence set updated_at = now() - interval '60 seconds' where machine = 'm-nrt'`);
+  const gq2 = await repo.globalPresence();
+  check('per-game: a stale machine drops out of the per-game aggregate too',
+    gq2.gameQueues.decode['1v1'] === 1 && !gq2.gameQueues.chain,
+    JSON.stringify(gq2.gameQueues));
+  await repo.upsertPresence('m-nrt', 'nrt', 2, ['op-2'], 0, 0, [{ room: 'nrt-b2' }], [{ userId: 'op-2', act: 'menu', queue: '1v1', queuedS: 42 }], { total: 1, inMatch: 0, inLobby: 0, idle: 1 });
+
+  // ---- MAINTENANCE lockdown round-trips through the DB (0023) -------------
+  // In the database rather than a machine's memory for two reasons that ARE the
+  // feature: it has to survive the restart it exists to protect, and every region
+  // has to agree (anycast puts players on different machines).
+  const m0 = await repo.getMaintenance();
+  check('maintenance: starts off', !m0.active && !repo.maintenanceBiting(m0));
+  const T = Date.now();
+  const m1 = await repo.setMaintenance({
+    active: true, startsAt: T + 600_000, endsAt: T + 1_800_000, message: 'Season reset',
+  });
+  check('maintenance: a scheduled window round-trips', m1.active && m1.message === 'Season reset');
+  check('maintenance: times survive the round trip', m1.startsAt === T + 600_000 && m1.endsAt === T + 1_800_000);
+  check('maintenance: SCHEDULED does not lock anyone out yet', !repo.maintenanceBiting(m1, T));
+  check('maintenance: ...but does once it starts', repo.maintenanceBiting(m1, T + 700_000));
+  check('maintenance: ...and stops on its own when it ends', !repo.maintenanceBiting(m1, T + 2_000_000));
+  const m2 = await repo.setMaintenance({ active: false, startsAt: null, endsAt: null, message: '' });
+  check('maintenance: lifting it clears the window', !m2.active && m2.startsAt === null);
+  check('maintenance: the row is a SINGLETON (no second window can exist)',
+    (await db.query<{ c: string }>(`select count(*)::text as c from maintenance`)).rows[0].c === '1');
+
+  // ---- guest sessions are ROWS now (0024) ---------------------------------
+  await repo.upsertPresence(
+    'm-iad', 'iad', 3, ['op-1'], 0, 0, [], [{ userId: 'op-1', act: 'match', room: 'r1', sessions: 2 }],
+    { total: 2, inMatch: 1, inLobby: 0, idle: 1 }, {},
+    [{ id: 'conn-a', act: 'match', room: 'r1' }, { id: 'conn-b', act: 'menu' }],
+  );
+  const gRows = (await repo.adminPresence()).find((r) => r.machine === 'm-iad');
+  check('guests: each session is its own row', gRows?.guests.length === 2, JSON.stringify(gRows?.guests));
+  check('guests: a row carries its activity and room', gRows?.guests[0].act === 'match' && gRows?.guests[0].room === 'r1');
+  check('guests: an idle guest is visible as idle, not just as a total', gRows?.guests[1].act === 'menu');
+  // the id is the SERVER's per-socket routing id — never an account id, and there is
+  // still nothing in a guest row that could identify the person behind it
+  check('guests: a guest row carries no account id, handle or username',
+    gRows?.guests.every((g) => !('userId' in g) && !('handle' in g) && !('username' in g)) === true);
+  check('accounts: a player\'s SOCKET count is reported (two tabs = one account, two sessions)',
+    gRows?.players[0].sessions === 2);
+
+  // a snapshot, never a timeline: re-beating REPLACES, so no history accumulates
+  await repo.upsertPresence('m-iad', 'iad', 0, [], 0, 0, [], [], { total: 0, inMatch: 0, inLobby: 0, idle: 0 });
+  const after = await repo.adminPresence();
+  check(
+    'operator view: a new beat REPLACES the last (snapshot, never a history)',
+    (after.find((r) => r.machine === 'm-iad')?.players.length ?? 1) === 0,
+  );
+  await db.query(`delete from presence`);
+
+  // ---- player search: @username OR display name --------------------------
+  // The box says "name or @username", so both have to actually find someone. The
+  // handle arm is a WORD prefix, which is the half that is easy to get wrong: it must
+  // catch a surname mid-name and must NOT become a free substring probe.
+  await repo.ensureProfile('find-1', 'Dohun Kim');
+  await repo.ensureProfile('find-2', 'kimberly');
+  await repo.ensureProfile('find-3', 'Nameless');
+  await db.query(`update profiles set username = 'acekim' where user_id = 'find-1'`);
+  await db.query(`update profiles set username = 'kimb' where user_id = 'find-2'`);
+  // deliberately NO username on find-3 — it must never be offered
+  const ids = async (qq: string): Promise<string[]> =>
+    (await repo.searchUsersByName(qq)).map((u) => u.userId);
+
+  check('search: finds by @username prefix', (await ids('acek')).includes('find-1'));
+  check('search: finds by display-name prefix', (await ids('dohun')).includes('find-1'));
+  check('search: finds by a WORD inside the display name', (await ids('kim')).includes('find-1'));
+  check('search: is case-insensitive on the display name', (await ids('DOHUN')).includes('find-1'));
+  check(
+    'search: one query can match a username AND someone else’s display name',
+    (async () => true)() && (await ids('kim')).includes('find-1') && (await ids('kim')).includes('find-2'),
+  );
+  check(
+    'search: a username match outranks a display-name-only match',
+    (await ids('kimb'))[0] === 'find-2',
+  );
+  check(
+    'search: does NOT match a mid-WORD fragment (not a free substring probe)',
+    !(await ids('ohun')).includes('find-1'),
+  );
+  check(
+    'search: never offers a profile with no username (nothing to open or friend)',
+    !(await ids('nameless')).includes('find-3'),
+  );
+  check('search: a LIKE wildcard cannot enumerate everyone', (await ids('%')).length === 0);
+
+  await repo.syncStaffRoles(null, []);
+
   // -------------------------------------------------- account deletion (9)
   await repo.ensureProfile('user-c', 'Cy');
   await repo.recordKofiPayment({

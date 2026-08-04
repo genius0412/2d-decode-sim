@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
 import { type UserStats } from '../net/api';
+import { SupporterBadge } from './SupporterBadge';
 
 /**
  * The competitive-stats panel shared by "My Stats" (own account) and the public
@@ -45,8 +46,13 @@ export function CareerPanel({
         </span>
         {archived && <span className="ds-dt lb-you-tag">FINAL</span>}
         <span className="ds-head-spacer" />
+        {/* the name chip is the ONLY place "My Stats" prints who you are — the
+            public profile has a header for it, Career does not — so this is where
+            a player sees their own badge. `stats` may still be loading; the badge
+            simply appears with the rest. */}
         <span className="ds-chip">
           <b>{name}</b>
+          <SupporterBadge supporter={stats?.supporter} role={stats?.role} />
         </span>
         {headerAction}
       </div>

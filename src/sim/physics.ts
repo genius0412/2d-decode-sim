@@ -812,7 +812,7 @@ function ballRobotContact(
       return pen > 0 ? toWorld(0, s, pen, local.x, s * half) : null;
     }
     const reach = tip - hl;
-    const L = Math.hypot(reach, mh - th);
+    const L = hyp(reach, mh - th);
     const nsx = (mh - th) / L;
     const nsy = (-s * reach) / L;
     const sd = (local.x - hl) * nsx + (local.y - s * th) * nsy;

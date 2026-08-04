@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { searchUsers, type PublicProfile } from '../net/api';
+import { SupporterBadge } from './SupporterBadge';
 
 /**
- * "Look up a username" — a standalone public search, independent of the friends
+ * "Search name or @username" — a standalone public search, independent of the friends
  * panel's own add-friend box. Same debounce/sequence-guard shape as
  * `FriendsPanel`'s `AddFriend` (250ms, drop stale responses), but this one just
  * opens a profile — no friend-request affordance.
@@ -39,8 +40,8 @@ export function UserSearchBar({ onOpenProfile }: { onOpenProfile: (username: str
       <input
         className="ds-input"
         value={query}
-        placeholder="Look up a username"
-        aria-label="Look up a player by username"
+        placeholder="Search name or @username"
+        aria-label="Search for a player by display name or username"
         onChange={(e) => setQuery(e.target.value)}
       />
       {results.length > 0 && (
@@ -53,7 +54,10 @@ export function UserSearchBar({ onOpenProfile }: { onOpenProfile: (username: str
               disabled={!p.username}
               title={p.username ? `View @${p.username}` : undefined}
             >
-              <span className="fr-name">{p.handle}</span>
+              <span className="fr-nameline">
+                <span className="fr-name">{p.handle}</span>
+                <SupporterBadge supporter={p.supporter} role={p.role} />
+              </span>
               <span className="fr-sub">@{p.username}</span>
             </button>
           ))}

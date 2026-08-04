@@ -32,8 +32,10 @@ export function SupporterBadge({
   role,
   size = 'sm',
 }: {
-  supporter?: boolean;
-  role?: StaffRole;
+  /** `null` is accepted alongside `undefined` because these come straight off a
+   * SQL row, where "no role" is a NULL column rather than a missing key. */
+  supporter?: boolean | null;
+  role?: StaffRole | null;
   /** `sm` inline beside a name; `md` on a profile header. Rendered as
    * `sup-sm`/`sup-md`, NOT as bare `sm`/`md` — `.md` is already the
    * rendered-Markdown class (announcement bodies), and a bare `md` here silently

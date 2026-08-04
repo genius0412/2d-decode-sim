@@ -15,6 +15,17 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  /* DYNAMIC viewport height, and it is load-bearing on phones. These three are
+     `overflow: hidden` (the game canvas must never let the page scroll), which makes
+     them a HARD CLIP on everything inside — so if the app shell is even slightly
+     taller than they are, the difference is not scrolled, it is cut off and gone.
+     A phone's retractable toolbar makes exactly that happen: `100vh` (and the
+     initial containing block that `height: 100%` resolves against) is the
+     toolbar-RETRACTED height, while the actually-visible area is shorter by the
+     toolbar. The footer sat in that clipped strip and could not be reached by
+     scrolling at all. `dvh` tracks the visible area as the toolbar moves.
+     Declared AFTER the `%` fallback so a browser without `dvh` keeps the old value. */
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -1626,6 +1637,26 @@ button {
     font-size: 10px;
     padding: 2px 7px;
   }
+  /* THE ROBOT STATUS CHIPS. `.status-wrap` is anchored `right: 12px` and grows
+     LEFTWARD, and `.robot-status` is a nowrap row — so on a phone the chip row
+     (TURRET / HOPPER / multiplier / …) measured 514px against a 320px screen and ran
+     206px off the LEFT edge, taking most of the chips with it. It is the one HUD
+     cluster the compact block never sized. Cap the wrapper and let the row break;
+     the chips already right-align, so a second line stacks under the first. */
+  .status-wrap {
+    max-width: calc(100vw - 24px);
+    /* and BELOW the MENU/RESET buttons. Both clusters are absolutely positioned into
+       the top corners, and once the chips are allowed to use the full width they run
+       under the buttons (they overlapped before this too — the row was just off-screen
+       where nobody saw it). The buttons end ~36px down, so clear them. */
+    top: 44px;
+  }
+  .robot-status {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px 8px;
+    padding: 6px 10px;
+  }
   /* compact top-left menu/reset so the map can use the top */
   .game-buttons {
     top: max(6px, env(safe-area-inset-top));
@@ -1654,12 +1685,65 @@ button {
   .timer-panel .timer-time {
     font-size: 17px;
   }
+  /* ---- HUD INTO THE GUTTERS -------------------------------------------------
+     The field is SQUARE. Fitting it to a phone's landscape height leaves a wide
+     empty column on each side and nothing to spare vertically, so the chrome that
+     normally sits above and below the field moves out to those columns instead.
+     The camera drops its top/bottom bands to match (see camera.ts) and the map
+     takes the full height. Everything here is a REPOSITION, not a redesign — the
+     same elements, docked somewhere that costs the field nothing. */
+
+  /* the scorebar becomes a vertical stack in the LEFT gutter. Vertical because a
+     ~230px horizontal bar does not fit the gutter of a narrow landscape phone
+     (667x375 leaves ~145px a side) while a stacked one is ~72px at any size. */
+  .scorebar {
+    left: max(6px, env(safe-area-inset-left));
+    right: auto;
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    flex-direction: column;
+    border-radius: var(--ds-round-md);
+    border-bottom: 1px solid var(--ds-hud-line);
+    overflow: hidden;
+  }
+  .score-panel,
+  .timer-panel {
+    min-width: 68px;
+    padding: 4px 8px;
+  }
+  /* the breakdown chips stack in the RIGHT gutter, mirroring the scorebar */
   .breakdown-row {
-    bottom: 42px;
+    left: auto;
+    right: max(6px, env(safe-area-inset-right));
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
   }
   .breakdown-row span {
     font-size: 9px;
     padding: 1px 6px;
+  }
+  /* the status chips keep the top-right corner but must stay INSIDE the gutter
+     rather than stretching back across the field */
+  /* MENU/RESET stack instead of sitting side by side: as a row they are ~183px,
+     which is wider than the gutter on a 667px-wide phone and clipped the field's
+     top-left corner. Stacked they are ~100px and fit any landscape gutter. */
+  .game-buttons {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .status-wrap {
+    top: max(6px, env(safe-area-inset-top));
+    /* CAP TO THE GUTTER, not to a guessed fraction of the width. The field is square
+       and fitted to the height, so each gutter is (100vw - 100vh) / 2; a flat `40vw`
+       was wider than that and the chips stretched back over the field's top-right
+       corner. The `max()` floor keeps them usable on a near-square viewport, where
+       there is no gutter to speak of and a little overlap beats a 20px column. */
+    max-width: max(120px, calc((100vw - 100vh) / 2 - 6px));
   }
 }
 
@@ -1729,6 +1813,191 @@ button {
    do, since those are what the light HUD cards are made of. Hence --ds-* here.
    See the bridge block in shell.css. Do not "unify" these back.
    --------------------------------------------------------------------------- */
+/* A standing tip on the queue screens. Bordered rather than another muted line:
+   it tells you the screen is safe to LEAVE, which is the opposite of what a
+   "searching…" screen normally implies, so it has to read as its own object
+   instead of blending into the status text above it. */
+.ds-tip {
+  margin: 14px 0 0;
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--ds-tile);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ds-mut);
+  text-align: left;
+}
+.ds-tip b { color: var(--ds-ink); }
+
+/* MAINTENANCE: the scheduled state informs, the biting state interrupts. Both use
+   an edge + ink rather than a saturated fill, so a banner that sits on every menu
+   screen for half an hour doesn't become something people stop seeing. */
+.ds-maint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--ds-warn);
+  border-radius: 10px;
+  background: var(--ds-tile);
+  color: var(--ds-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ds-maint.biting { border-color: var(--ds-danger); }
+
+.adm-maint { border-color: var(--ds-line-strong); }
+.adm-maint.biting { border-color: var(--ds-danger); }
+.adm-maint-h { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.adm-guest-id {
+  font-family: var(--ds-font-mono);
+  font-size: 12px;
+  color: var(--ds-mut);
+}
+
+/* the console is wider than a settings column now — it carries a live table */
+.adm-wide { max-width: 940px; }
+
+.adm-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 22px;
+  border-bottom: 1px solid var(--ds-line);
+  padding-bottom: 10px;
+}
+.adm-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ds-round-full);
+  padding: 7px 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--ds-mut);
+  cursor: pointer;
+}
+.adm-tab:hover { color: var(--ds-ink); }
+.adm-tab.on {
+  background: var(--ds-tile);
+  border-color: var(--ds-line-strong);
+  color: var(--ds-ink);
+}
+
+.adm-h3 {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ds-mut);
+  margin: 28px 0 12px;
+}
+
+.adm-stats { display: flex; flex-wrap: wrap; gap: 10px; }
+.adm-stat {
+  flex: 1 1 120px;
+  background: var(--ds-panel);
+  border: 1px solid var(--ds-line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.adm-stat b { font-size: 24px; line-height: 1.1; color: var(--ds-ink); }
+.adm-stat span {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ds-mut);
+}
+.adm-stats.small .adm-stat b { font-size: 18px; }
+
+.adm-regions { display: flex; flex-wrap: wrap; gap: 8px; }
+.adm-region {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  background: var(--ds-tile);
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+.adm-region b { text-transform: uppercase; letter-spacing: 0.06em; color: var(--ds-ink); }
+
+.adm-filter {
+  width: 100%;
+  background: var(--ds-tile);
+  border: 1px solid var(--ds-line-strong);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ds-ink);
+  margin-bottom: 12px;
+}
+
+/* the table is the one thing here that can outgrow a phone — let IT scroll rather
+   than the page, so the panel never scrolls sideways as a whole */
+.adm-table-wrap { overflow-x: auto; }
+.adm-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
+.adm-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ds-mut);
+  padding: 0 10px 8px 0;
+  border-bottom: 1px solid var(--ds-line);
+}
+.adm-table td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--ds-line); vertical-align: middle; }
+.adm-name { font-weight: 700; color: var(--ds-ink); }
+
+.adm-pill {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--ds-round-full);
+  font-size: 11.5px;
+  font-weight: 700;
+  background: var(--ds-tile);
+  border: 1px solid var(--ds-line-strong);
+  color: var(--ds-mut);
+  white-space: nowrap;
+}
+.adm-pill.match { color: var(--ds-ok-ink); border-color: var(--ds-ok-ink); }
+.adm-pill.queued { color: var(--ds-accent); border-color: var(--ds-accent); }
+
+.adm-rooms { display: flex; flex-direction: column; gap: 8px; }
+.adm-room {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--ds-panel);
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+/* the standing note about what this page can and cannot see. Bordered rather than
+   muted into the background on purpose: the limits are part of the feature, not a
+   footnote to it. */
+.adm-privacy {
+  margin-top: 28px;
+  border: 1px solid var(--ds-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--ds-tile);
+}
+
 .admin-card {
   background: var(--ds-panel);
   border: 1px solid var(--ds-line);
@@ -2068,6 +2337,11 @@ input.admin-months {
   font-size: 13.5px;
   line-height: 1.55;
   color: var(--ds-ink-dim);
+  /* a rendered page (Privacy, Terms, a changelog) can contain a bare URL, and a URL
+     is ONE unbreakable word — `policies.google.com/technologies/partner-sites` ran
+     47px past the panel on a 320px phone, where the panel's `overflow: hidden` then
+     cut it. Break inside the word only when there is no other option. */
+  overflow-wrap: anywhere;
 }
 .ann-md { margin-top: 9px; }
 /* collapse the outer margins of the first/last block so the card padding rules */

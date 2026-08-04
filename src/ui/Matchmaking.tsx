@@ -8,6 +8,9 @@ import { ServerSession } from '../net/serverSession';
 import type { NetSession } from '../net/session';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
+import { MatchAudio } from '../audio';
+import { expandLabel, widenHint, queuesFor } from './queueDepth';
+import { parkQueue, takeQueue, updateQueue, dropQueue, elapsedSeconds, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
 import { useServerNotice } from '../net/notice';
 import { APP_NAME } from '../seasons';
@@ -66,18 +69,32 @@ export function Matchmaking({
   // queue on the strength of it, so it gets an uncached read rather than the
   // ambient chip's up-to-a-minute-old one.
   const presence = usePresence(8000, true);
+  // depth for THIS game only — see the note where it renders
+  const depth = queuesFor(presence, settings.game) ?? { '1v1': 0, '2v2': 0 };
   // block queueing while a server restart is scheduled (you'd only get dropped)
   const notice = useServerNotice();
   const restartPending =
     !!notice && notice.kind === 'restart' && (notice.until === undefined || notice.until > Date.now());
   const [searching, setSearching] = useState(false);
   const [queue, setQueue] = useState({ size: 0, need: 2 });
+  /** manual EXPAND SEARCH presses this search — shown so the button visibly does
+   *  something. The server keeps its own count (`expandBumps`); this is only the
+   *  local echo of it, and it is reset with every new search. */
+  const [bumps, setBumps] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
   // set once a paired match opens its pre-match strategy window (see MatchStrategy)
   const [strategy, setStrategy] = useState<StrategyState | null>(null);
 
   const lobbyRef = useRef<LobbyClient | null>(null);
+  // The unmount cleanup runs with the closure from the FIRST render, so anything it
+  // needs has to be a ref rather than state — these mirror `searching`/`mode`/`queue`
+  // purely so `teardown` reads what is true NOW instead of what was true on mount.
+  const searchingRef = useRef(false);
+  const modeRef = useRef<QueueMode>(challenge?.mode ?? '1v1');
+  const queueRef = useRef({ size: 0, need: 2 });
+  const gameRef = useRef(settings.game);
+  const startedAtRef = useRef(0);
   const startedRef = useRef(false);
   const assigningRef = useRef(false); // reconnecting from matchmaker → host
   // The challenge is captured ONCE, in a ref. App clears its copy the moment this
@@ -91,26 +108,167 @@ export function Matchmaking({
   useEscape(onCancel, !strategy);
 
   const teardown = (): void => {
-    if (!startedRef.current) {
-      lobbyRef.current?.leaveQueue();
-      lobbyRef.current?.dispose();
-    }
+    const lobby = lobbyRef.current;
     lobbyRef.current = null;
+    if (startedRef.current || !lobby) return;
+    // BACKGROUND QUEUE: a search in flight is handed to the keeper instead of being
+    // dropped, so leaving this screen no longer cancels it. Only the LIFETIME
+    // changes here — the socket, the queue message and the match hand-off are all
+    // untouched, which is what keeps the blast radius small on a path that costs
+    // real ELO when it goes wrong.
+    //
+    // Two cases still tear down for real rather than park: a match that has already
+    // STARTED (the session owns the transport now) and a reconnect to the assigned
+    // host region already in flight (`assigning`) — parking either would leave a
+    // socket nobody is going to come back for.
+    if (searchingRef.current && !assigningRef.current) {
+      const parkedState: ParkedQueue = {
+        lobby,
+        mode: challengeRef.current?.mode ?? modeRef.current,
+        // the game this search was QUEUED for, not the one the player wanders into
+        game: challengeRef.current?.game ?? gameRef.current,
+        // a private challenge stays a private challenge across a park/adopt
+        challenge: challengeRef.current,
+        since: startedAtRef.current,
+        size: queueRef.current.size,
+        need: queueRef.current.need,
+        assignedRoom: null,
+        start: null,
+        strategy: null,
+        found: false,
+        error: null,
+      };
+      // REBIND to keeper-owned handlers: the ones registered below close over this
+      // component's state, and calling them after unmount would write into a tree
+      // that is gone. `on()` replaces, so this is a straight hand-over.
+      //
+      // Each "found" handler RECORDS ITS PAYLOAD, not just the fact of it. These
+      // events fire exactly once; the screen that adopts the socket arrives after
+      // they are gone, so anything dropped here is unrecoverable and the player
+      // waits forever on a match that has already started.
+      lobby.on('queued', (_m, size, need) => updateQueue({ size, need }));
+      lobby.on('matchAssigned', (room) => {
+        matchFound();
+        updateQueue({ assignedRoom: room, found: true });
+      });
+      lobby.on('matchStart', (m) => {
+        matchFound();
+        updateQueue({ start: m, found: true });
+      });
+      lobby.on('strategyStart', (deadline, yourRobotId, m, intros) => {
+        matchFound();
+        updateQueue({
+          strategy: { deadline, yourRobotId, mode: m, intros, players: lobby.players, myClientId: lobby.clientId },
+          found: true,
+        });
+      });
+      lobby.on('error', (msg) => updateQueue({ error: msg }));
+      lobby.on('closed', () => updateQueue({ error: 'Lost connection to the game server.' }));
+      parkQueue(parkedState);
+      return;
+    }
+    lobby.leaveQueue();
+    lobby.dispose();
   };
   useEffect(() => teardown, []); // cleanup on unmount
 
   useEffect(() => {
+    searchingRef.current = searching;
+  }, [searching]);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+  useEffect(() => {
+    gameRef.current = settings.game;
+  }, [settings.game]);
+
+  // The stopwatch is DERIVED from when the search actually began, never counted up
+  // from when this screen mounted. Adopting a parked queue re-enters this effect,
+  // and a local counter restarted at 0 there — so leaving and coming back reset a
+  // wait the player had genuinely been sitting through. `startedAtRef` is the
+  // keeper's `since` on that path, so the two agree by construction.
+  useEffect(() => {
     if (!searching) return;
-    let t = 0;
-    const iv = window.setInterval(() => setElapsed(++t), 1000);
+    // 0 is the ref's "no search has started" value, not a 1970 timestamp
+    const paint = (): void =>
+      setElapsed(startedAtRef.current ? elapsedSeconds(startedAtRef.current) : 0);
+    paint(); // show the real figure now, not a second from now
+    const iv = window.setInterval(paint, 1000);
     return () => window.clearInterval(iv);
   }, [searching]);
+
+  /**
+   * ADOPT a search that was running while this screen was away.
+   *
+   * Runs BEFORE the challenge auto-queue below, and returning true suppresses it:
+   * a parked queue means we are already in the bucket, and queueing again would put
+   * a second entry in for the same player.
+   */
+  const adoptParked = (): boolean => {
+    const p = takeQueue();
+    if (!p) return false;
+    const lobby = p.lobby;
+    lobbyRef.current = lobby;
+    setMode(p.mode);
+    modeRef.current = p.mode;
+    // a parked private challenge is still a private challenge on the way back in
+    challengeRef.current = p.challenge;
+    setQueue({ size: p.size, need: p.need });
+    queueRef.current = { size: p.size, need: p.need };
+    startedAtRef.current = p.since;
+    setSearching(true);
+    searchingRef.current = true;
+    if (p.error) setError(p.error);
+    // take the handlers back off the keeper
+    lobby.on('queued', (_m, size, need) => setQueue({ size, need }));
+    wireStrategy(lobby);
+    lobby.on('matchStart', (m: MatchStart) => {
+      startedRef.current = true;
+      matchFound();
+      onStart(new ServerSession(lobby.transport, lobby.isHost(), m, lobby.clientId, 'ranked'));
+    });
+    lobby.on('matchAssigned', (room) => {
+      matchFound();
+      joinAssignedMatch(room);
+    });
+    lobby.on('error', (msg) => strategyCancelled(msg));
+    lobby.on('closed', () => {
+      if (!startedRef.current && !assigningRef.current)
+        setError('Lost connection to the game server.');
+    });
+    // REPLAY whatever landed WHILE PARKED. These events have already fired and will
+    // not fire again for the handlers just registered above, so acting on the
+    // recorded payload is the only way the adopted screen ever learns about them.
+    // Ordered most-progressed first: a match that has actually STARTED supersedes
+    // the strategy window that preceded it, which supersedes a bare assignment.
+    if (p.start) {
+      startedRef.current = true;
+      onStart(new ServerSession(lobby.transport, lobby.isHost(), p.start, lobby.clientId, 'ranked'));
+    } else if (p.strategy) {
+      const s = p.strategy;
+      setStrategy({
+        lobby,
+        players: s.players.length ? s.players : lobby.players,
+        myClientId: s.myClientId || lobby.clientId,
+        deadline: s.deadline,
+        mode: s.mode,
+        intros: s.intros,
+      });
+    } else if (p.assignedRoom) {
+      joinAssignedMatch(p.assignedRoom);
+    }
+    return true;
+  };
 
   // Arriving from a challenge, there is nothing to choose and nothing to confirm —
   // both sides already agreed on the format, and whoever gets here first is
   // waiting on the other. So queue on mount rather than showing a FIND MATCH
   // button they'd have to press to start waiting.
   useEffect(() => {
+    if (adoptParked()) return; // already in the queue — do not enter it twice
     if (!challengeRef.current || !signedIn) return;
     onChallengeConsumed?.();
     void find();
@@ -118,6 +276,22 @@ export function Matchmaking({
     // and re-running would double-queue
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** "your match is ready" chime. Its own MatchAudio because the game controller is
+   *  not up yet on this screen, and a ref-guard so a search fires it exactly once —
+   *  `matchAssigned` and `strategyStart` are both "found" signals and on the
+   *  single-region path both can arrive. */
+  const alertRef = useRef<MatchAudio | null>(null);
+  const alertedRef = useRef(false);
+  const matchFound = (): void => {
+    if (alertedRef.current) return;
+    alertedRef.current = true;
+    alertRef.current ??= new MatchAudio();
+    const a = alertRef.current;
+    a.masterVolume = settings.audio.volume.master;
+    a.alertVolume = settings.audio.volume.alert;
+    a.sfxMatchFound();
+  };
 
   const playerInfo = () => ({
     name: settings.spec.teamName || 'Player',
@@ -168,7 +342,11 @@ export function Matchmaking({
     }
     setError('');
     setElapsed(0);
+    setBumps(0);
+    alertedRef.current = false;
+    startedAtRef.current = Date.now();
     setSearching(true);
+    searchingRef.current = true;
     // measure our home region + access latency (best-effort — the matchmaker falls
     // back to its own region if we can't report one)
     const home = await probeHome(gameServerHttpUrl());
@@ -187,10 +365,14 @@ export function Matchmaking({
     wireStrategy(lobby);
     lobby.on('matchStart', (m: MatchStart) => {
       startedRef.current = true;
+      matchFound();
       onStart(new ServerSession(transport, lobby.isHost(), m, lobby.clientId, 'ranked'));
     });
     // normal path: reconnect to the assigned host region to play
-    lobby.on('matchAssigned', (room) => joinAssignedMatch(room));
+    lobby.on('matchAssigned', (room) => {
+      matchFound();
+      joinAssignedMatch(room);
+    });
     lobby.on('error', (msg) => strategyCancelled(msg));
     lobby.on('closed', () => {
       if (!startedRef.current && !assigningRef.current)
@@ -205,7 +387,14 @@ export function Matchmaking({
       home?.region ?? '',
       home?.accessMs ?? 0,
       noWiden,
-      settings.game,
+      // THE CHALLENGE'S GAME, not the one this client happens to be sitting in.
+      // The matchmaker buckets by game (a CR queuer must never pair into a DECODE
+      // room), and a challenge is accepted from wherever the recipient already is
+      // — so queueing under `settings.game` put the two halves of one challenge in
+      // two different buckets whenever the friends were on different games. The
+      // closed pair then waits for each other forever: `findMatch` requires a
+      // single bucket, so it can never stage, and neither side is ever told why.
+      challengeRef.current?.game ?? settings.game,
       challengeRef.current
         ? {
             token: challengeRef.current.token,
@@ -242,10 +431,26 @@ export function Matchmaking({
     lobby.join(room, playerInfo());
   };
 
-  const expand = (): void => lobbyRef.current?.expandSearch();
+  /**
+   * Widen one step NOW rather than waiting for the next automatic one.
+   *
+   * The server call was already here; what was missing was any sign it happened.
+   * The button fired `expandSearch()` and nothing on screen moved — no counter, no
+   * text change — so it read as dead, and the natural response is to press it
+   * repeatedly. Tracking the presses locally is enough to say so out loud.
+   */
+  const expand = (): void => {
+    if (!lobbyRef.current) return;
+    lobbyRef.current.expandSearch();
+    setBumps((n) => n + 1);
+  };
 
   const cancel = (): void => {
+    // explicit cancel is NOT a park: pressing cancel means leave the queue, so drop
+    // the search here rather than letting `teardown` hand it to the keeper
+    searchingRef.current = false;
     teardown();
+    dropQueue();
     setSearching(false);
     // dropping out of a challenge leaves you on the ordinary ranked screen, not in
     // a state where FIND MATCH would silently re-enter the private queue
@@ -343,6 +548,12 @@ export function Matchmaking({
               ? 'They start the moment they accept. This match counts for ELO.'
               : 'Once they accept, you queue together as a team.'}
           </p>
+          {/* the wait here is somebody else's response time, so it is the screen
+              MOST worth telling people they can leave */}
+          <p className="ds-tip">
+            <b>Tip:</b> press <b>← Back</b> and keep playing — you stay in the queue, and
+            we’ll pull you in the moment they accept.
+          </p>
           {error && <p className="ds-form-err">⚠ {error}</p>}
           <div className="ds-actions">
             <button className="ds-cta ghost" onClick={cancel}>
@@ -361,14 +572,18 @@ export function Matchmaking({
         {/* region-local first; widen automatically as you wait, or on demand */}
         {!noWiden && multiServer() && (
           <p className="ds-hint">
-            {elapsed < 8 ? 'Searching your region…' : 'Widening search to nearby regions…'}
+            {widenHint(bumps, elapsed)}
           </p>
         )}
+        <p className="ds-tip">
+          <b>Tip:</b> press <b>← Back</b> and keep playing — your place in the queue is
+          kept, and we’ll pull you into the match the moment it’s found.
+        </p>
         {error && <p className="ds-form-err">⚠ {error}</p>}
         <div className="ds-actions">
           {!noWiden && multiServer() && (
             <button className="ds-cta ghost" onClick={expand}>
-              EXPAND SEARCH
+              {expandLabel(bumps)}
             </button>
           )}
           <button className="ds-cta ghost" onClick={cancel}>
@@ -396,8 +611,11 @@ export function Matchmaking({
       <p className="ds-hint">
         {presence ? (
           <>
-            <b style={{ color: 'var(--ds-ink)' }}>{presence.queues[mode]}</b> waiting in{' '}
-            {mode.toUpperCase()} · {presence.queues[mode === '1v1' ? '2v2' : '1v1']} in{' '}
+            {/* THIS GAME's depth. A combined count named people you cannot be paired
+                with — the matchmaker buckets by game — which made the number an
+                argument for queueing into a pool that, for you, was empty. */}
+            <b style={{ color: 'var(--ds-ink)' }}>{depth[mode]}</b> waiting in{' '}
+            {mode.toUpperCase()} · {depth[mode === '1v1' ? '2v2' : '1v1']} in{' '}
             {(mode === '1v1' ? '2v2' : '1v1').toUpperCase()} · {presence.online} online
           </>
         ) : (

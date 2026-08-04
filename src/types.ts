@@ -458,10 +458,25 @@ export interface GameSettings {
   bindings: ControlBindings;
   audio: {
     /** per-category levels, 0–1 — the source of truth. `master` scales the other
-     * three. `game` = the FIRST field-recording WAV cues; `sfx` = the synthesized
-     * shoot/intake/gate tones and the countdown beep; `voice` = announcer speech
-     * (at 0 the countdown falls back to beeps, exactly as the old toggle did). */
-    volume: { master: number; game: number; sfx: number; voice: number };
+     * the rest. ONE PER EMITTER — `game` = the FIRST field-recording WAV cues;
+     * `shoot`/`intake`/`gate` = the three synthesized mechanism effects; `beep` =
+     * the countdown beep; `voice` = announcer speech (at 0 the countdown falls back
+     * to beeps, exactly as the old toggle did).
+     *
+     * `shoot`/`intake`/`gate`/`beep` replaced a single `sfx` level whose slider was
+     * labelled "Beeping" — one control for four unrelated sounds, named after the
+     * least frequent of them. `coerceSettings` migrates an old `sfx` value onto all
+     * four so nobody's existing choice is lost. */
+    volume: {
+      master: number;
+      game: number;
+      shoot: number;
+      intake: number;
+      gate: number;
+      beep: number;
+      alert: number;
+      voice: number;
+    };
     /** LEGACY mirrors, re-derived from `volume` on every coerce — never read these
      * on the new path. Settings sync per ACCOUNT and one account is shared across
      * client versions (an old browser tab, an old Electron install), and those
@@ -470,6 +485,10 @@ export interface GameSettings {
     sounds: boolean;
     voice: boolean;
   };
+  /** show the in-match EVENT LOG — the stack of messages in the field's top-left
+   *  corner (scoring, gate, penalty notices). Off hides it entirely; it is a
+   *  read-out, never a control, so nothing is lost but the reading. */
+  showEventLog: boolean;
   // New fields for auto pathing
   autoPath: AutoPathData | null;
   autoPathEnabled: boolean;

@@ -308,18 +308,17 @@ export interface PublicProfile {
   /**
    * active supporter membership — drives the badge.
    *
-   * OPTIONAL because only the surfaces that actually render a badge pay for the
-   * extra column: the profile page and the leaderboards do, the friends-list
-   * queries (three per poll, every few seconds) deliberately do not. `undefined`
-   * means "not asked", which the client renders identically to false.
+   * OPTIONAL because a caller may not have asked for it, and because a client
+   * talking to a server older than the feature will not receive it at all. Both
+   * cases mean "not asked", which renders identically to false — never as a
+   * missing field somewhere upstream.
    */
   supporter?: boolean;
   /**
    * 'owner' | 'admin' for staff, absent otherwise — drives the staff badge.
    *
-   * Optional for the same reason `supporter` is: only the surfaces that render a
-   * badge pay for the column. `undefined` means "not asked" and renders as no
-   * badge, identically to a null role.
+   * Optional for the same reason `supporter` is. `undefined` means "not asked"
+   * and renders as no badge, identically to a null role.
    */
   role?: StaffRole;
 }
@@ -328,8 +327,10 @@ export interface PublicProfile {
  *  `profiles.role` at boot — see 0020_staff_roles.sql for why it is a column. */
 export type StaffRole = 'owner' | 'admin';
 
-/** is this row staff? Shared so "staff" means one thing in every query. */
-const STAFF_PRED = `role in ('owner', 'admin')`;
+/** is this row staff? Shared so "staff" means one thing in every query.
+ *  `a` qualifies the column for a joined query — `staffPred('pp.')`. */
+const staffPred = (a = ''): string => `${a}role in ('owner', 'admin')`;
+const STAFF_PRED = staffPred();
 
 /** narrow whatever the column holds. A value outside the check constraint could
  *  only come from a hand-edited row, and reads as no role. */
@@ -347,7 +348,27 @@ export const asRole = (v: unknown): StaffRole | undefined =>
  * makes it impossible for one surface to disagree with another about whether an
  * admin is entitled.
  */
-const SUPPORTER_COL = `((supporter_until is not null and supporter_until > now()) or ${STAFF_PRED}) as supporter`;
+const supporterPred = (a = ''): string =>
+  `((${a}supporter_until is not null and ${a}supporter_until > now()) or ${staffPred(a)})`;
+const SUPPORTER_COL = `${supporterPred()} as supporter`;
+
+/**
+ * The two badge columns for a JOINED `profiles` row — `badgeCols('p.')`.
+ *
+ * Every surface that prints a name prints the badge beside it, so every query
+ * behind such a surface needs the same two columns, and writing them out by hand
+ * is how a board ends up quietly badge-less (which is exactly what happened to
+ * the ranked board while the record board had them). `prefix` names a SECOND
+ * person in the same row — a duo partner — as `partnerRole`/`partnerSupporter`.
+ *
+ * `coalesce(..., false)` matters on a LEFT JOIN: a solo run has no partner row,
+ * and the predicate over all-NULL columns is NULL, not false.
+ */
+function badgeCols(a: string, prefix?: string): string {
+  const role = prefix ? `"${prefix}Role"` : 'role';
+  const sup = prefix ? `"${prefix}Supporter"` : 'supporter';
+  return `${a}role as ${role}, coalesce(${supporterPred(a)}, false) as ${sup}`;
+}
 
 /**
  * Reconcile `profiles.role` with the environment. Called once per boot, after
@@ -973,6 +994,10 @@ export interface BoardRow {
   supporter?: boolean;
   /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
   role?: StaffRole;
+  /** the PARTNER's badge on a duo row. A duo record is two people's run and both
+   *  names are printed, so both names carry their own badge. */
+  partnerSupporter?: boolean;
+  partnerRole?: StaffRole;
 }
 
 /** best score per player within a season × mode × drivetrain, ranked. Pass
@@ -1000,11 +1025,10 @@ export async function recordLeaderboard(opts: {
        where r.balance_version = $1 and r.mode = $2 and r.game = $3 ${dtFilter}
        order by r.user_id, r.score desc, r.created_at asc
      )
-     select b.user_id as "userId", p.handle, p.username, p.role,
-            ((p.supporter_until is not null and p.supporter_until > now())
-              or p.role in ('owner', 'admin')) as supporter,
+     select b.user_id as "userId", p.handle, p.username, ${badgeCols('p.')},
             b.partner_id as "partnerId",
             pp.handle as "partnerHandle", pp.username as "partnerUsername",
+            ${badgeCols('pp.', 'partner')},
             b.score, b.replay_id as "replayId", b.created_at as "createdAt", b.config
      from best b
        join profiles p on p.user_id = b.user_id
@@ -1314,6 +1338,20 @@ export async function upsertRating(
   return rows[0]?.games ?? 1;
 }
 
+/** one row of a ranked board. Same name-plus-badge shape as `BoardRow` — the two
+ *  boards sit behind one segmented control and render through the same cell. */
+export interface EloBoardRow {
+  userId: string;
+  handle: string;
+  username: string | null;
+  rating: number;
+  games: number;
+  /** active supporter membership — renders a small badge beside the name */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
+  role?: StaffRole;
+}
+
 /** The public leaderboard for an ACT's board — PLACED players only (games >=
  * PLACEMENT_GAMES). Players still in placements are intentionally omitted;
  * `eloUserStanding` reports the viewer's own standing separately. */
@@ -1322,9 +1360,10 @@ export async function eloLeaderboard(opts: {
   act: number;
   limit?: number;
   game?: Game;
-}): Promise<{ userId: string; handle: string; username: string | null; rating: number; games: number }[]> {
-  return q<{ userId: string; handle: string; username: string | null; rating: number; games: number }>(
-    `select e.user_id as "userId", p.handle, p.username, e.rating, e.games
+}): Promise<EloBoardRow[]> {
+  return q<EloBoardRow>(
+    `select e.user_id as "userId", p.handle, p.username, e.rating, e.games,
+            ${badgeCols('p.')}
      from elo_ratings e join profiles p on p.user_id = e.user_id
      where e.act = $1 and e.mode = $2 and e.game = $5 and e.games >= $4
      order by e.rating desc, e.games desc
@@ -1392,9 +1431,10 @@ export async function eloHistoryLeaderboard(opts: {
   balanceVersion: number;
   limit?: number;
   game?: Game;
-}): Promise<{ userId: string; handle: string; username: string | null; rating: number; games: number }[]> {
-  return q<{ userId: string; handle: string; username: string | null; rating: number; games: number }>(
-    `select h.user_id as "userId", p.handle, p.username, h.rating, h.games
+}): Promise<EloBoardRow[]> {
+  return q<EloBoardRow>(
+    `select h.user_id as "userId", p.handle, p.username, h.rating, h.games,
+            ${badgeCols('p.')}
      from elo_history h join profiles p on p.user_id = h.user_id
      where h.balance_version = $1 and h.mode = $2 and h.game = $5 and h.games >= $4
      order by h.rating desc, h.games desc
@@ -1652,6 +1692,10 @@ export interface MatchHistoryPlayer {
   handle: string;
   username: string | null;
   alliance: 'red' | 'blue' | null; // null for record-run partners
+  /** active supporter membership — renders a small badge beside the name */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
+  role?: StaffRole;
 }
 export interface MatchHistoryEntry {
   kind: 'versus' | 'record';
@@ -1772,15 +1816,25 @@ export async function userMatchHistory(
       score: number;
       handle: string;
       username: string | null;
+      role: string | null;
+      supporter: boolean;
     }>(
-      `select mp.match_id::text as id, mp.user_id, mp.alliance, mp.score, p.handle, p.username
+      `select mp.match_id::text as id, mp.user_id, mp.alliance, mp.score, p.handle, p.username,
+              ${badgeCols('p.')}
        from match_participants mp join profiles p on p.user_id = mp.user_id
        where mp.match_id = any($1::uuid[])`,
       [versusIds],
     );
     for (const p of parts) {
       const list = byMatch.get(p.id) ?? [];
-      list.push({ userId: p.user_id, handle: p.handle, username: p.username, alliance: p.alliance });
+      list.push({
+        userId: p.user_id,
+        handle: p.handle,
+        username: p.username,
+        alliance: p.alliance,
+        supporter: !!p.supporter,
+        role: asRole(p.role),
+      });
       byMatch.set(p.id, list);
       const s = scoreByMatch.get(p.id) ?? { red: null, blue: null };
       if (p.alliance === 'red') s.red = p.score;
@@ -1798,14 +1852,27 @@ export async function userMatchHistory(
     );
     const need = new Set<string>([userId]);
     for (const r of recs) if (r.partner_id) need.add(r.partner_id);
-    const profs = await q<{ user_id: string; handle: string; username: string | null }>(
-      `select user_id, handle, username from profiles where user_id = any($1::text[])`,
+    const profs = await q<{
+      user_id: string;
+      handle: string;
+      username: string | null;
+      role: string | null;
+      supporter: boolean;
+    }>(
+      `select user_id, handle, username, ${badgeCols('')} from profiles where user_id = any($1::text[])`,
       [[...need]],
     );
     const byUser = new Map(profs.map((p) => [p.user_id, p]));
     const mk = (uid: string): MatchHistoryPlayer => {
       const p = byUser.get(uid);
-      return { userId: uid, handle: p?.handle ?? 'Player', username: p?.username ?? null, alliance: null };
+      return {
+        userId: uid,
+        handle: p?.handle ?? 'Player',
+        username: p?.username ?? null,
+        alliance: null,
+        supporter: !!p?.supporter,
+        role: asRole(p?.role),
+      };
     };
     for (const r of recs) {
       const list = [mk(userId)];
@@ -1894,10 +1961,95 @@ export async function cleanupStalePending(olderThanMs: number): Promise<number> 
 export interface GlobalPresence {
   online: number;
   signedIn: number;
+  /** every game combined — the shape older clients read. Do not remove. */
   queues: { '1v1': number; '2v2': number };
+  /**
+   * Depth split BY GAME, which is the only version a player can act on: pairing is
+   * bucketed by game, so a DECODE player can never be matched with a Chain Reaction
+   * queuer and must not be told one is waiting for them. Keyed by game id.
+   */
+  gameQueues: Record<string, { '1v1': number; '2v2': number }>;
 }
 
-/** heartbeat THIS machine's live counts (upsert keyed by machine id). */
+/** merge per-game queue depths from one machine into an accumulator */
+function addGameQueues(
+  into: Record<string, { '1v1': number; '2v2': number }>,
+  from: unknown,
+): void {
+  if (!from || typeof from !== 'object') return;
+  for (const [game, q] of Object.entries(from as Record<string, unknown>)) {
+    if (!q || typeof q !== 'object') continue;
+    const one = q as Partial<Record<'1v1' | '2v2', unknown>>;
+    into[game] ??= { '1v1': 0, '2v2': 0 };
+    for (const m of ['1v1', '2v2'] as const) {
+      const n = one[m];
+      if (typeof n === 'number' && Number.isFinite(n)) into[game][m] += n;
+    }
+  }
+}
+
+/**
+ * What ONE signed-in account is doing, as the server already knows it.
+ *
+ * Everything here is state the match server must hold anyway to run a game — it is
+ * republished for operators, not gathered for them. And it stops short of a
+ * behavioural record on purpose: `act` is the same coarse bucket the player's own
+ * friends list already shows their friends, and there is deliberately no field for
+ * which screen or menu they are looking at.
+ */
+export interface PresencePlayer {
+  userId: string;
+  /** how many SOCKETS this account holds on this machine (two tabs, or a lobby
+   *  socket plus a match socket). Without it the tiles cannot be made to add up:
+   *  "online" counts sockets and "signed in" counts people, so one player with two
+   *  tabs makes the two numbers disagree with no visible reason. */
+  sessions?: number;
+  /** coarse activity — the friends-list vocabulary, nothing finer */
+  act: 'menu' | 'lobby' | 'match';
+  /** the room they are in, when they are in one (already public via /api/live) */
+  room?: string;
+  /** ranked queue bucket, when queued — the operational fact behind "why is
+   *  matchmaking not pairing?", and the one queue abuse is visible in */
+  queue?: '1v1' | '2v2';
+  /** whole seconds queued so far (a stuck queue is the thing worth seeing) */
+  queuedS?: number;
+  /** which GAME they are queued for — kept apart from `game` because the two can
+   *  differ (queued for Chain Reaction while in a DECODE practice room), and an
+   *  operator shown only one of them is being told a half-truth */
+  queueGame?: string;
+  game?: string;
+}
+
+/**
+ * ONE anonymous (not signed in) session, for the operator view.
+ *
+ * Listed individually at the operator's request — earlier this was counts only. The
+ * identifier is the SERVER'S OWN CONNECTION ID: a per-socket string this process
+ * already generates to route messages. It is not derived from anything about the
+ * person, it is not an IP or a fingerprint, it is not stored anywhere else, and it
+ * ceases to exist when the socket closes — reconnecting produces an unrelated id.
+ * So a guest can be told apart from another guest *right now*, which is what an
+ * operator needs to see "who is idle vs in a lobby", without becoming something
+ * that can follow anyone between sessions.
+ */
+export interface PresenceGuest {
+  /** ephemeral per-connection id; dies with the socket */
+  id: string;
+  act: 'menu' | 'lobby' | 'match';
+  room?: string;
+  game?: string;
+}
+
+/** rolled-up guest counts, derived from the rows (kept for the summary tiles) */
+export interface PresenceAnon {
+  total: number;
+  inMatch: number;
+  inLobby: number;
+  idle: number;
+}
+
+/** heartbeat THIS machine's live counts (upsert keyed by machine id). SNAPSHOT
+ * only: every field is replaced by the next beat, so nothing accumulates here. */
 export async function upsertPresence(
   machine: string,
   region: string,
@@ -1905,14 +2057,148 @@ export async function upsertPresence(
   authedUserIds: string[],
   q1v1: number,
   q2v2: number,
+  rooms: unknown[] = [],
+  players: PresencePlayer[] = [],
+  anon: PresenceAnon | null = null,
+  gameQueues: Record<string, { '1v1': number; '2v2': number }> = {},
+  guests: PresenceGuest[] = [],
 ): Promise<void> {
   await q(
-    `insert into presence (machine, region, online, authed, q1v1, q2v2, updated_at)
-       values ($1, $2, $3, $4::jsonb, $5, $6, now())
+    `insert into presence (machine, region, online, authed, q1v1, q2v2, rooms, players, anon, game_queues, guests, updated_at)
+       values ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, now())
      on conflict (machine) do update
-       set region = $2, online = $3, authed = $4::jsonb, q1v1 = $5, q2v2 = $6, updated_at = now()`,
-    [machine, region, online, JSON.stringify(authedUserIds), q1v1, q2v2],
+       set region = $2, online = $3, authed = $4::jsonb, q1v1 = $5, q2v2 = $6,
+           rooms = $7::jsonb, players = $8::jsonb, anon = $9::jsonb,
+           game_queues = $10::jsonb, guests = $11::jsonb, updated_at = now()`,
+    [
+      machine, region, online, JSON.stringify(authedUserIds), q1v1, q2v2,
+      JSON.stringify(rooms), JSON.stringify(players), JSON.stringify(anon ?? {}),
+      JSON.stringify(gameQueues), JSON.stringify(guests),
+    ],
   );
+}
+
+/** every live room across EVERY region with a fresh heartbeat. This is what makes
+ *  "Watch Live" show the whole service instead of whichever region anycast picked. */
+export async function globalLiveRooms(freshSeconds = 15): Promise<unknown[]> {
+  const rows = await q<{ rooms: unknown[] }>(
+    `select rooms from presence
+      where updated_at > now() - $1::interval and jsonb_array_length(rooms) > 0
+      order by region`,
+    [`${Math.max(1, Math.floor(freshSeconds))} seconds`],
+  );
+  return rows.flatMap((r) => (Array.isArray(r.rooms) ? r.rooms : []));
+}
+
+/** the operator view: per-machine rows with their players + anonymous buckets.
+ *  Handles are resolved HERE rather than stored on the heartbeat, so the snapshot
+ *  itself carries ids only and no names are duplicated into it. */
+export interface AdminPresenceRow {
+  machine: string;
+  region: string;
+  online: number;
+  updatedAt: string;
+  players: (PresencePlayer & { handle: string | null; username: string | null })[];
+  guests: PresenceGuest[];
+  anon: PresenceAnon;
+}
+export async function adminPresence(freshSeconds = 20): Promise<AdminPresenceRow[]> {
+  const rows = await q<{
+    machine: string; region: string; online: number; updated_at: string;
+    players: PresencePlayer[] | null; anon: PresenceAnon | null; guests: PresenceGuest[] | null;
+  }>(
+    `select machine, region, online, updated_at, players, anon, guests from presence
+      where updated_at > now() - $1::interval order by region`,
+    [`${Math.max(1, Math.floor(freshSeconds))} seconds`],
+  );
+  const ids = [...new Set(rows.flatMap((r) => (Array.isArray(r.players) ? r.players : []).map((p) => p.userId)))];
+  const names = new Map<string, { handle: string; username: string | null }>();
+  if (ids.length) {
+    const profs = await q<{ user_id: string; handle: string; username: string | null }>(
+      `select user_id, handle, username from profiles where user_id = any($1::text[])`,
+      [ids],
+    );
+    for (const p of profs) names.set(p.user_id, { handle: p.handle, username: p.username });
+  }
+  return rows.map((r) => ({
+    machine: r.machine,
+    region: r.region,
+    online: r.online,
+    updatedAt: r.updated_at,
+    players: (Array.isArray(r.players) ? r.players : []).map((p) => ({
+      ...p,
+      handle: names.get(p.userId)?.handle ?? null,
+      username: names.get(p.userId)?.username ?? null,
+    })),
+    guests: Array.isArray(r.guests) ? r.guests : [],
+    anon:
+      r.anon && typeof r.anon === 'object' && typeof (r.anon as PresenceAnon).total === 'number'
+        ? r.anon
+        : { total: 0, inMatch: 0, inLobby: 0, idle: 0 },
+  }));
+}
+
+// ---------------------------------------------------------- maintenance ----
+/**
+ * A scheduled MAINTENANCE LOCKDOWN: while it is live, only admins may start
+ * anything. See 0023_maintenance.sql for why this lives in the database rather
+ * than a machine's memory — it has to survive the restart it exists to protect,
+ * and every region has to agree about it.
+ */
+export interface MaintenanceWindow {
+  active: boolean;
+  /** ms epoch it begins; null = the moment it was armed */
+  startsAt: number | null;
+  /** ms epoch it ends; null = open-ended ("until we say otherwise") */
+  endsAt: number | null;
+  message: string;
+}
+
+const NO_MAINTENANCE: MaintenanceWindow = { active: false, startsAt: null, endsAt: null, message: '' };
+
+export async function getMaintenance(): Promise<MaintenanceWindow> {
+  const rows = await q<{ active: boolean; starts_at: string | null; ends_at: string | null; message: string }>(
+    `select active, starts_at, ends_at, message from maintenance where id = 1`,
+  );
+  const r = rows[0];
+  if (!r) return NO_MAINTENANCE;
+  return {
+    active: !!r.active,
+    startsAt: r.starts_at ? new Date(r.starts_at).getTime() : null,
+    endsAt: r.ends_at ? new Date(r.ends_at).getTime() : null,
+    message: r.message ?? '',
+  };
+}
+
+export async function setMaintenance(w: MaintenanceWindow): Promise<MaintenanceWindow> {
+  await q(
+    `update maintenance
+        set active = $1, starts_at = $2, ends_at = $3, message = $4, updated_at = now()
+      where id = 1`,
+    [
+      w.active,
+      w.startsAt ? new Date(w.startsAt).toISOString() : null,
+      w.endsAt ? new Date(w.endsAt).toISOString() : null,
+      w.message ?? '',
+    ],
+  );
+  return getMaintenance();
+}
+
+/**
+ * Is the lockdown BITING right now?
+ *
+ * Armed-but-not-yet-started deliberately does NOT lock. The point of scheduling a
+ * window is to warn people before it takes effect, and a schedule that bites the
+ * moment you set it cannot do that. A window whose end has passed also stops
+ * biting on its own, so a lockdown somebody forgets to lift expires instead of
+ * stranding the service until a human notices.
+ */
+export function maintenanceBiting(w: MaintenanceWindow, now = Date.now()): boolean {
+  if (!w.active) return false;
+  if (w.startsAt && now < w.startsAt) return false;
+  if (w.endsAt && now >= w.endsAt) return false;
+  return true;
 }
 
 /** aggregate presence over every machine heartbeating within `freshSeconds` (a few
@@ -1920,21 +2206,38 @@ export async function upsertPresence(
  * (a user connected from two regions counts once). */
 export async function globalPresence(freshSeconds = 15): Promise<GlobalPresence> {
   const win = `${Math.max(1, Math.floor(freshSeconds))} seconds`;
-  const agg = await q<{ online: number; q1: number; q2: number }>(
-    `select coalesce(sum(online), 0)::int as online,
+  // ONE round trip, not two. This is the most-called query on the service and every
+  // refresh used to cost a pair of statements — the sum, then a separate
+  // `count(distinct)` over the same rows. Folding the distinct into a sub-select on a
+  // shared CTE halves the per-refresh cost, which is what pays for the shorter cache
+  // TTL in server/index.ts: accuracy and cost were traded against each other here, and
+  // this is the move that buys both.
+  const rows = await q<{
+    online: number; q1: number; q2: number; signed_in: number; game_queues: unknown[];
+  }>(
+    `with fresh as (
+       select * from presence where updated_at > now() - $1::interval
+     )
+     select coalesce(sum(online), 0)::int as online,
             coalesce(sum(q1v1), 0)::int as q1,
-            coalesce(sum(q2v2), 0)::int as q2
-       from presence where updated_at > now() - $1::interval`,
+            coalesce(sum(q2v2), 0)::int as q2,
+            (select count(distinct uid)::int
+               from fresh f, jsonb_array_elements_text(f.authed) as uid) as signed_in,
+            -- carried on the SAME round trip: this is the service's most-called
+            -- query, and per-game depth is not worth a second one
+            coalesce(jsonb_agg(game_queues), '[]'::jsonb) as game_queues
+       from fresh`,
     [win],
   );
-  const su = await q<{ n: number }>(
-    `select count(distinct uid)::int as n
-       from presence p, jsonb_array_elements_text(p.authed) as uid
-      where p.updated_at > now() - $1::interval`,
-    [win],
-  );
-  const a = agg[0] ?? { online: 0, q1: 0, q2: 0 };
-  return { online: a.online, signedIn: su[0]?.n ?? 0, queues: { '1v1': a.q1, '2v2': a.q2 } };
+  const a = rows[0] ?? { online: 0, q1: 0, q2: 0, signed_in: 0, game_queues: [] };
+  const gameQueues: Record<string, { '1v1': number; '2v2': number }> = {};
+  for (const per of Array.isArray(a.game_queues) ? a.game_queues : []) addGameQueues(gameQueues, per);
+  return {
+    online: a.online,
+    signedIn: a.signed_in ?? 0,
+    queues: { '1v1': a.q1, '2v2': a.q2 },
+    gameQueues,
+  };
 }
 
 // ------------------------------------------------------------- friends ------
@@ -1979,6 +2282,10 @@ export interface FriendRow {
   activity: Activity | null;
   /** which game they're in ('decode' | 'chain') — only meaningful with `activity` */
   game: Game | null;
+  /** active supporter membership — renders a small badge beside the name */
+  supporter?: boolean;
+  /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
+  role?: StaffRole;
 }
 
 export interface FriendsPayload {
@@ -2059,6 +2366,8 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
       since: number | string | null;
       activity: string | null;
       activity_game: string | null;
+      role: string | null;
+      supporter: boolean;
     }[];
     incoming: ProfileCols[];
     outgoing: ProfileCols[];
@@ -2073,7 +2382,7 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
         where user_low = $1 or user_high = $1
      ),
      f as (
-       select p.user_id, p.handle, p.username,
+       select p.user_id, p.handle, p.username, ${badgeCols('p.')},
               case when up.status = 'invisible' then null else up.status end as status,
               case when up.status = 'invisible' then null
                    else extract(epoch from (now() - up.last_seen_at)) end as since,
@@ -2084,23 +2393,23 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
          left join user_presence up on up.user_id = pairs.friend_id
      ),
      inc as (
-       select p.user_id, p.handle, p.username, fr.created_at
+       select p.user_id, p.handle, p.username, ${badgeCols('p.')}, fr.created_at
          from friend_requests fr join profiles p on p.user_id = fr.from_user_id
         where fr.to_user_id = $1
      ),
      outg as (
-       select p.user_id, p.handle, p.username, fr.created_at
+       select p.user_id, p.handle, p.username, ${badgeCols('p.')}, fr.created_at
          from friend_requests fr join profiles p on p.user_id = fr.to_user_id
         where fr.from_user_id = $1
      ),
      blk as (
-       select p.user_id, p.handle, p.username
+       select p.user_id, p.handle, p.username, ${badgeCols('p.')}
          from friend_blocks b join profiles p on p.user_id = b.blocked_id
         where b.blocker_id = $1
      ),
      inv as (
-       select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
-              ri.record, ri.format, ri.created_at
+       select ri.id, ri.from_user_id, p.handle, p.username, ${badgeCols('p.')},
+              ri.room, ri.game, ri.kind, ri.record, ri.format, ri.created_at
          from room_invites ri join profiles p on p.user_id = ri.from_user_id
         -- a DECLINED challenge is gone for its recipient the instant they decline;
         -- the row lingers only so the SENDER can be told (see the snt CTE below)
@@ -2108,21 +2417,24 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
           and ri.created_at > now() - $2::interval
      ),
      snt as (
-       select ri.id, ri.to_user_id, p.handle, p.username, ri.room, ri.game, ri.kind,
-              ri.record, ri.format, ri.declined, ri.created_at
+       select ri.id, ri.to_user_id, p.handle, p.username, ${badgeCols('p.')},
+              ri.room, ri.game, ri.kind, ri.record, ri.format, ri.declined, ri.created_at
          from room_invites ri join profiles p on p.user_id = ri.to_user_id
         where ri.from_user_id = $1 and ri.created_at > now() - $2::interval
      )
      select
        coalesce((select json_agg(f order by f.handle) from f), '[]'::json) as friends,
        coalesce((select json_agg(json_build_object(
-         'user_id', inc.user_id, 'handle', inc.handle, 'username', inc.username)
+         'user_id', inc.user_id, 'handle', inc.handle, 'username', inc.username,
+         'role', inc.role, 'supporter', inc.supporter)
          order by inc.created_at desc) from inc), '[]'::json) as incoming,
        coalesce((select json_agg(json_build_object(
-         'user_id', outg.user_id, 'handle', outg.handle, 'username', outg.username)
+         'user_id', outg.user_id, 'handle', outg.handle, 'username', outg.username,
+         'role', outg.role, 'supporter', outg.supporter)
          order by outg.created_at desc) from outg), '[]'::json) as outgoing,
        coalesce((select json_agg(json_build_object(
-         'user_id', blk.user_id, 'handle', blk.handle, 'username', blk.username)
+         'user_id', blk.user_id, 'handle', blk.handle, 'username', blk.username,
+         'role', blk.role, 'supporter', blk.supporter)
          order by blk.handle) from blk), '[]'::json) as blocked,
        -- created_at is formatted EXPLICITLY rather than let json_agg serialize the
        -- timestamptz: Postgres would emit '...798296+00:00' where the pg driver's
@@ -2130,13 +2442,15 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
        -- handed to clients verbatim - so match the old wire format exactly.
        coalesce((select json_agg(json_build_object(
          'id', inv.id, 'from_user_id', inv.from_user_id, 'handle', inv.handle,
-         'username', inv.username, 'room', inv.room, 'game', inv.game,
+         'username', inv.username, 'role', inv.role, 'supporter', inv.supporter,
+         'room', inv.room, 'game', inv.game,
          'kind', inv.kind, 'record', inv.record, 'format', inv.format,
          'created_at', to_char(inv.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
          order by inv.created_at desc) from inv), '[]'::json) as invites,
        coalesce((select json_agg(json_build_object(
          'id', snt.id, 'to_user_id', snt.to_user_id, 'handle', snt.handle,
-         'username', snt.username, 'room', snt.room, 'game', snt.game,
+         'username', snt.username, 'role', snt.role, 'supporter', snt.supporter,
+         'room', snt.room, 'game', snt.game,
          'kind', snt.kind, 'record', snt.record, 'format', snt.format,
          'declined', snt.declined,
          'created_at', to_char(snt.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
@@ -2164,6 +2478,8 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
       offlineSeconds: online ? null : coarsen(since),
       activity,
       game: activity ? (r.activity_game === 'chain' ? 'chain' : 'decode') : null,
+      supporter: !!r.supporter,
+      role: asRole(r.role),
     };
   });
 
@@ -2181,16 +2497,27 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
 
 /** the exact profile columns every friends query selects — an allowlist, never
  * `select *`: `profiles` also holds `settings`, and a future column would
- * otherwise join the payload silently. */
+ * otherwise join the payload silently.
+ *
+ * The two badge columns are part of the allowlist because these rows are NAMES ON
+ * SCREEN — the friends list, the incoming/outgoing request lists, the challenge
+ * toast — and a badge that appears on the leaderboard but not next to the same
+ * person in your friends list reads as a bug. They cost nothing extra to read:
+ * the `profiles` row is already joined, and this projects two more of its
+ * columns rather than adding a lookup. */
 interface ProfileCols {
   user_id: string;
   handle: string;
   username: string | null;
+  role?: string | null;
+  supporter?: boolean | null;
 }
 const shapeProfile = (r: ProfileCols): PublicProfile => ({
   userId: r.user_id,
   handle: r.handle,
   username: r.username,
+  supporter: !!r.supporter,
+  role: asRole(r.role),
 });
 
 /** the invite row shape, shared by `listFriends` (aggregated to JSON in one trip)
@@ -2200,6 +2527,8 @@ interface InviteCols {
   from_user_id: string;
   handle: string;
   username: string | null;
+  role: string | null;
+  supporter: boolean | null;
   room: string;
   game: string;
   kind: string;
@@ -2209,7 +2538,13 @@ interface InviteCols {
 }
 const shapeInvite = (r: InviteCols): RoomInvite => ({
   id: r.id,
-  from: { userId: r.from_user_id, handle: r.handle, username: r.username },
+  from: {
+    userId: r.from_user_id,
+    handle: r.handle,
+    username: r.username,
+    supporter: !!r.supporter,
+    role: asRole(r.role),
+  },
   room: r.room,
   game: r.game === 'chain' ? 'chain' : 'decode',
   kind: r.kind,
@@ -2227,7 +2562,13 @@ interface SentCols extends Omit<InviteCols, 'from_user_id'> {
 }
 const shapeSent = (r: SentCols): SentInvite => ({
   id: r.id,
-  to: { userId: r.to_user_id, handle: r.handle, username: r.username },
+  to: {
+    userId: r.to_user_id,
+    handle: r.handle,
+    username: r.username,
+    supporter: !!r.supporter,
+    role: asRole(r.role),
+  },
   room: r.room,
   game: r.game === 'chain' ? 'chain' : 'decode',
   kind: r.kind,
@@ -2501,6 +2842,8 @@ export async function listRoomInvites(userId: string): Promise<RoomInvite[]> {
     from_user_id: string;
     handle: string;
     username: string | null;
+    role: string | null;
+    supporter: boolean | null;
     room: string;
     game: string;
     kind: string;
@@ -2508,8 +2851,8 @@ export async function listRoomInvites(userId: string): Promise<RoomInvite[]> {
     format: string | null;
     created_at: string;
   }>(
-    `select ri.id, ri.from_user_id, p.handle, p.username, ri.room, ri.game, ri.kind, ri.record,
-            ri.format, ri.created_at
+    `select ri.id, ri.from_user_id, p.handle, p.username, ${badgeCols('p.')},
+            ri.room, ri.game, ri.kind, ri.record, ri.format, ri.created_at
        from room_invites ri
        join profiles p on p.user_id = ri.from_user_id
       where ri.to_user_id = $1 and not ri.declined
@@ -2537,16 +2880,35 @@ export async function dismissRoomInvite(userId: string, id: string): Promise<boo
  * the unique `username` — the same public identifier already exposed one at a time
  * at /api/profile/<username>.
  */
-export async function searchUsersByUsername(prefix: string, limit = 20): Promise<PublicProfile[]> {
+export async function searchUsersByName(query: string, limit = 20): Promise<PublicProfile[]> {
   // Escape LIKE wildcards before appending `%`. Without this, searching for "%"
-  // or "_" matches every username at once, turning a prefix lookup back into the
+  // or "_" matches every row at once, turning a lookup back into the
   // full-enumeration endpoint this function exists to avoid.
-  const esc = prefix.replace(/[\\%_]/g, '\\$&');
+  const esc = query.replace(/[\\%_]/g, '\\$&');
   const rows = await q<ProfileCols>(
-    `select user_id, handle, username from profiles
-      where username ilike $1 escape '\\'
-      order by username limit $2`,
-    [esc + '%', Math.min(Math.max(1, limit), 50)],
+    // Matches the @username OR the DISPLAY NAME. The handle match is a WORD prefix
+    // (`kim` finds "Dohun Kim") rather than a free substring: a substring match makes
+    // the endpoint a general "give me every name containing these two letters" probe,
+    // and word-prefix covers what someone searching a name actually types. Display
+    // names are already public on every leaderboard row, so this exposes no new field
+    // — it changes how cheaply the set can be walked, which is why it stays bounded.
+    //
+    // `username is not null` because BOTH callers need one: the search bar opens
+    // /profile/<username> and the friends box sends a request by username, so a row
+    // without one is a dead result the UI has to disable.
+    `select user_id, handle, username, ${badgeCols('')} from profiles
+      where username is not null
+        and (username ilike $1 escape '\\'
+             or handle ilike $1 escape '\\'
+             or handle ilike $2 escape '\\')
+      order by
+        -- the thing they typed most literally, first
+        case when username ilike $1 escape '\\' then 0
+             when handle ilike $1 escape '\\' then 1
+             else 2 end,
+        username
+      limit $3`,
+    [esc + '%', '% ' + esc + '%', Math.min(Math.max(1, limit), 50)],
   );
   return rows.map(shapeProfile);
 }

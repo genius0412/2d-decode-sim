@@ -9,6 +9,8 @@ import { FriendToasts } from './friendsContext';
 import { Logo } from './Logo';
 import { NavRail } from './NavRail';
 import { usePresence } from './usePresence';
+import { MaintenanceBanner } from './MaintenanceBanner';
+import { PresenceProvider, QueueCounts } from './QueueCounts';
 import type { Presence, RoomInvite } from '../net/api';
 
 export type ShellNav = 'home' | 'play' | 'configure' | 'records' | 'profile' | 'admin';
@@ -113,6 +115,9 @@ export function AppShell({
   const presence = usePresence();
   const season = seasonFor(game);
   return (
+    // ONE poller for the whole shell — every menu that shows queue depth reads this
+    // value rather than starting its own (see QueueCounts.tsx)
+    <PresenceProvider value={presence} game={game}>
     <div className="ds-app">
       <header className="ds-bar">
         <button className="ds-mark" onClick={() => onNav('home')} aria-label={`${APP_NAME} home`}>
@@ -120,10 +125,19 @@ export function AppShell({
           {APP_NAME}
         </button>
         <div className="ds-bar-right">
+          {/* the header is on EVERY menu screen, so this is the one placement that
+              makes queue depth visible everywhere rather than only where someone
+              already went looking for a match */}
+          <QueueCounts className="bar" allGames />
           {presence && <PresenceChip p={presence} />}
           {right}
         </div>
       </header>
+      {/* the maintenance window, on every menu screen. Fed by the presence poll
+          rather than the socket so it also reaches the screens that hold no
+          connection — which is exactly where somebody stands when they are about to
+          start the thing we need them not to start. */}
+      <MaintenanceBanner presence={presence} />
 
       {showRail ? (
         <div className="ds-body">
@@ -193,6 +207,7 @@ export function AppShell({
         </span>
       </footer>
     </div>
+    </PresenceProvider>
   );
 }
 

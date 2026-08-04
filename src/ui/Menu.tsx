@@ -336,11 +336,24 @@ export function Menu({ settings, onChange }: Props) {
                   {r.teamNumber ? `${r.teamNumber} · ` : ''}
                   {r.teamName || 'No team'}
                 </span>
-                <span className="om">
-                  {DRIVETRAIN_LABELS[r.drivetrain]} · {r.massLb} lb · {r.driveRpm} RPM ·{' '}
-                  {INTAKE_SHORT[r.intake]} · {r.flywheelInertia} inertia
-                  {r.canSort ? ' · sorts' : ''}
-                </span>
+                {/* GAME-AWARE, like the preset cards above. This line used to print
+                    the DECODE fields whatever game you were in — intake preset,
+                    flywheel inertia, colour sorter — none of which a Chain Reaction
+                    robot has or uses, so a CR saved slot described a robot that did
+                    not exist. Same split the leaderboard's spec summary makes. */}
+                {isDecode ? (
+                  <span className="om">
+                    {DRIVETRAIN_LABELS[r.drivetrain]} · {r.massLb} lb · {r.driveRpm} RPM ·{' '}
+                    {INTAKE_SHORT[r.intake]} · {r.flywheelInertia} inertia
+                    {r.canSort ? ' · sorts' : ''}
+                  </span>
+                ) : (
+                  <span className="om">
+                    {DRIVETRAIN_LABELS[r.drivetrain]} · {r.massLb} lb · {r.driveRpm} RPM ·{' '}
+                    {CHAIN_INTAKE_LABELS[r.chainIntake ?? CHAIN_DEFAULT_INTAKE]} ·{' '}
+                    {CHAIN_MODE_LABELS[r.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]}
+                  </span>
+                )}
               </div>
             ))}
             {savedRobots.length < MAX_SAVED_ROBOTS && (

@@ -142,6 +142,23 @@ const themedPairs = (t) => {
        pairs rather than token pairs. */
     ['--ds-accent-soft-mut on --ds-accent-soft', t('--ds-accent-soft-mut'), t('--ds-accent-soft'), AA],
 
+    /* QUEUE COUNT CHIP (.ds-qcount) — the same text rides FOUR different grounds,
+       which is exactly how it shipped unreadable: the defaults are tuned for the
+       header bar and the recessed tile, and on the home menu's PLAY button, an
+       --ds-accent FILL, the bold number was --ds-accent on --ds-accent. 1:1. The
+       token pairs existed and passed; this pairing had simply never been declared,
+       so the suite had nothing to fail on. Every ground it can land on is listed
+       here now — adding a fifth placement means adding a fifth pair. */
+    ['qcount label on --ds-bar', t('--ds-mut'), t('--ds-bar'), AA],
+    ['qcount number on --ds-bar', t('--ds-accent'), t('--ds-bar'), AA],
+    ['qcount label on --ds-tile', t('--ds-mut'), t('--ds-tile'), AA],
+    ['qcount number on --ds-tile', t('--ds-accent'), t('--ds-tile'), AA],
+    ['qcount label on --ds-panel (menu button)', t('--ds-mut'), t('--ds-panel'), AA],
+    ['qcount number on --ds-panel (menu button)', t('--ds-accent'), t('--ds-panel'), AA],
+    ['qcount on --ds-accent (PLAY primary)', t('--ds-accent-ink'), t('--ds-accent'), AA],
+    ['qcount label on --ds-accent-soft (rail selected)', t('--ds-accent-soft-mut'), t('--ds-accent-soft'), AA],
+    ['qcount number on --ds-accent-soft (rail selected)', t('--ds-accent-soft-ink'), t('--ds-accent-soft'), AA],
+
     // pastels are fills that carry --ds-ink; they get tinted-dark siblings in dark mode
     ['--ds-ink on --ds-blush', t('--ds-ink'), t('--ds-blush'), AA],
     ['--ds-ink on --ds-sage', t('--ds-ink'), t('--ds-sage'), AA],
@@ -211,6 +228,15 @@ const hudPairs = (t) => {
     ['HUD alliance-blue chip', '#ffffff', t('--ds-blue-chip'), AA],
     ['HUD .res-side.red label', '#ffffff', '#991b1b', AA],
     ['HUD .res-side.blue label', '#ffffff', '#1d4ed8', AA],
+
+    // The standing "you are still queued" chip — the one menu-shell surface that
+    // ALSO floats over the field. Its fill is the panel, so its ink is measured
+    // there; its EDGE is what identifies it against the field, which
+    // `checkCardIdentifiable` already asserts for --ds-hud-line. It is opaque on
+    // purpose: fading it would blend ink and fill toward the field together and
+    // quietly drop this pair below the floor, where nothing here would see it.
+    ['HUD .ds-queuechip ink over the field', t('--ds-ink'), panel, AA],
+    ['HUD .ds-queuechip live dot (1.4.11)', t('--ds-accent'), panel, NON_TEXT],
 
     // the .overlay-panel is `--ds-panel` on a dark scrim, so its ink is the panel's
     ['HUD .record-total on the results panel', t('--ds-ink'), panel, AA],

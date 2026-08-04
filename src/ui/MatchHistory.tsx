@@ -5,6 +5,7 @@ import {
   type MatchHistoryPage,
   type MatchHistoryPlayer,
 } from '../net/api';
+import { SupporterBadge } from './SupporterBadge';
 
 type TypeFilter = NonNullable<MatchHistoryOpts['type']>;
 type ResultFilter = NonNullable<MatchHistoryOpts['result']>;
@@ -39,7 +40,13 @@ function typeLabel(r: MatchHistoryEntry): string {
   return `${r.ranked ? 'Ranked' : 'Custom'} ${r.mode.toUpperCase()}`;
 }
 
-/** one clickable @username (plain text if the player has no username yet) */
+/** one clickable @username (plain text if the player has no username yet), with
+ * the supporter/staff badge beside it.
+ *
+ * The badge is a SIBLING of the link, never a child: `.mh-player.link:hover`
+ * draws its underline on the element itself, so a badge inside would get
+ * underlined along with the name — and a badge decorates a name rather than
+ * being part of one. */
 function PlayerLink({
   p,
   onOpenProfile,
@@ -48,21 +55,30 @@ function PlayerLink({
   onOpenProfile?: (username: string) => void;
 }) {
   const cls = `mh-player ${p.alliance ? `al-${p.alliance}` : ''}`;
+  const badge = <SupporterBadge supporter={p.supporter} role={p.role} />;
   if (p.username && onOpenProfile) {
     return (
-      <button
-        className={`${cls} link`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpenProfile(p.username!);
-        }}
-        title={`View @${p.username}`}
-      >
-        {p.handle}
-      </button>
+      <>
+        <button
+          className={`${cls} link`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenProfile(p.username!);
+          }}
+          title={`View @${p.username}`}
+        >
+          {p.handle}
+        </button>
+        {badge}
+      </>
     );
   }
-  return <span className={cls}>{p.handle}</span>;
+  return (
+    <>
+      <span className={cls}>{p.handle}</span>
+      {badge}
+    </>
+  );
 }
 
 /** the players cell — versus shows red vs blue; a record run lists the driver(s) */

@@ -1,4 +1,5 @@
 import type { ShellNav } from './AppShell';
+import { QueueCounts } from './QueueCounts';
 
 /** the four top-level destinations, in the order they appear on the home menu */
 export const RAIL_ITEMS: ReadonlyArray<{ id: ShellNav; label: string; hint: string }> = [
@@ -37,7 +38,10 @@ export function NavRail({
             aria-current={active === it.id ? 'page' : undefined}
             onClick={() => onNav(it.id)}
           >
-            <span className="rl">{it.label}</span>
+            <span className="rl">
+              {it.label}
+              {it.id === 'play' && <QueueCounts className="rail" />}
+            </span>
             <span className="rh">{it.hint}</span>
           </button>
         ))}

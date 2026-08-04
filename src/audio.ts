@@ -21,8 +21,22 @@ export class MatchAudio {
   masterVolume = 1;
   /** the FIRST field-recording WAV cues */
   gameVolume = 1;
-  /** synthesized shoot/intake/gate tones + the countdown beep */
-  sfxVolume = 1;
+  /**
+   * ONE LEVEL PER EMITTER. These used to be a single `sfxVolume` behind a slider
+   * labelled "Beeping", which was three different mechanisms in a trench coat — the
+   * launcher, the intake, the classifier gate and the countdown beep all moved
+   * together, and the label only described the last of them. They are separate
+   * sounds with genuinely different reasons to turn down (the shooter fires
+   * constantly; the countdown beep is once a match), so they are separate levels.
+   */
+  shootVolume = 1;
+  intakeVolume = 1;
+  gateVolume = 1;
+  beepVolume = 1;
+  /** "your ranked match is ready" — its own level because it is the one sound that
+   *  plays when you are deliberately NOT looking at the game, so it wants to be
+   *  louder than the in-match effects rather than tied to them. */
+  alertVolume = 1;
   /** announcer voice lines; at 0, countdowns fall back to beeps */
   voiceVolume = 1;
 
@@ -120,10 +134,12 @@ export class MatchAudio {
     type: OscillatorType,
     vol: number,
     delay = 0,
+    category = 1,
   ): void {
     // every synthesized effect funnels through tone/noiseBurst, so scaling here is
-    // the only place the SFX level has to be applied
-    const level = this.gain(this.sfxVolume) * vol;
+    // the only place a category level has to be applied. The caller passes WHICH
+    // category, because one emitter (the gate) is built from several of these.
+    const level = this.gain(category) * vol;
     if (level <= 0) return;
     const ctx = this.ensureCtx();
     if (!ctx) return;
@@ -142,7 +158,7 @@ export class MatchAudio {
 
   /** short countdown beep — fires instantly, always in sync with the visual */
   beep(freq = 780, dur = 0.14, vol = 0.35): void {
-    this.tone(freq, freq, dur, 'square', vol);
+    this.tone(freq, freq, dur, 'square', vol, 0, this.beepVolume);
   }
 
   private noise: AudioBuffer | null = null;
@@ -166,8 +182,9 @@ export class MatchAudio {
     vol: number,
     q = 1.2,
     delay = 0,
+    category = 1,
   ): void {
-    const level = this.gain(this.sfxVolume) * vol;
+    const level = this.gain(category) * vol;
     if (level <= 0) return;
     const ctx = this.ensureCtx();
     if (!ctx) return;
@@ -189,13 +206,40 @@ export class MatchAudio {
 
   /** launcher "thwump": a falling noise whoosh with a low pitch-drop body */
   sfxShoot(): void {
-    this.noiseBurst(1800, 400, 0.13, 0.35);
-    this.tone(240, 90, 0.11, 'sawtooth', 0.16);
+    this.noiseBurst(1800, 400, 0.13, 0.35, 1.2, 0, this.shootVolume);
+    this.tone(240, 90, 0.11, 'sawtooth', 0.16, 0, this.shootVolume);
   }
 
   /** intake "slurp": one quick rising blip per swallowed artifact */
   sfxIntake(): void {
-    this.tone(150, 330, 0.08, 'sine', 0.22);
+    this.tone(150, 330, 0.08, 'sine', 0.22, 0, this.intakeVolume);
+  }
+
+  /**
+   * MATCH FOUND — a rising three-note chime, deliberately unlike anything the match
+   * itself makes. It has to cut through whatever the player is doing (browsing, or
+   * driving a practice run) and read as "come back now", so it is a melodic figure
+   * rather than one of the percussive mechanism effects.
+   */
+  sfxMatchFound(): void {
+    const v = this.alertVolume;
+    this.tone(660, 660, 0.12, 'triangle', 0.34, 0, v);
+    this.tone(880, 880, 0.12, 'triangle', 0.34, 0.13, v);
+    this.tone(1320, 1320, 0.26, 'triangle', 0.3, 0.26, v);
+  }
+
+  /**
+   * REMATCH VOTE — a short two-note blip, deliberately quieter and plainer than
+   * `sfxMatchFound`. It fires while both drivers are looking at the same screen, so
+   * it only has to say "something changed"; a fanfare here would be startling every
+   * time somebody changed their mind. Rising when a vote goes IN, falling when it
+   * comes back out, so the direction is audible without looking.
+   */
+  sfxRematchVote(on: boolean): void {
+    const v = this.alertVolume * 0.7;
+    const [a, b] = on ? [660, 880] : [660, 440];
+    this.tone(a, a, 0.07, 'triangle', 0.22, 0, v);
+    this.tone(b, b, 0.1, 'triangle', 0.2, 0.075, v);
   }
 
   /** wheel thumping over a terrain beam: a dull low "thunk" (knock + short low body) */
@@ -206,9 +250,9 @@ export class MatchAudio {
 
   /** classifier gate "clack-clunk": latch click, then the flap swinging open */
   sfxGate(): void {
-    this.noiseBurst(2600, 2600, 0.03, 0.25, 3);
-    this.tone(520, 520, 0.05, 'square', 0.14);
-    this.tone(340, 300, 0.08, 'square', 0.16, 0.07);
+    this.noiseBurst(2600, 2600, 0.03, 0.25, 3, 0, this.gateVolume);
+    this.tone(520, 520, 0.05, 'square', 0.14, 0, this.gateVolume);
+    this.tone(340, 300, 0.08, 'square', 0.16, 0.07, this.gateVolume);
   }
 
   private voice: SpeechSynthesisVoice | null = null;

@@ -285,8 +285,12 @@
 /* ---- app surface + top bar ------------------------------------------- */
 .ds-app {
   /* the app shell is the scroll container (html/body are overflow:hidden for the
-     full-screen game canvas), so shell screens taller than the viewport scroll */
+     full-screen game canvas), so shell screens taller than the viewport scroll.
+     `dvh` matches what html/body/#root now use — see the note there: with `vh` this
+     box was TALLER than its clipping parent by the height of a phone's toolbar, so
+     the footer sat in a strip that was cut off rather than scrollable. */
   height: 100vh;
+  height: 100dvh;
   /* `scroll`, not `auto`. A tall section (Configure ▸ Robot) gets a scrollbar and a
      short one (▸ Audio) doesn't; since `.ds-main` is centered, that appearing and
      disappearing scrollbar slid every centered element sideways by half its width
@@ -757,6 +761,16 @@
 .fr-who:hover:not(:disabled):not(.static) {
   background: var(--ds-panel);
 }
+/* the name and its badge on one line. `.fr-who` stacks the name OVER the sub-line,
+   so the badge needs a row of its own here — and it must be a SIBLING of
+   `.fr-name`, not a child: the name ellipsises on overflow, which would eat the
+   badge along with the tail of a long handle. `min-width: 0` is what lets a flex
+   child shrink far enough to ellipsise at all. */
+.fr-nameline {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
 .fr-name {
   font-size: 13px;
   font-weight: 700;
@@ -764,6 +778,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .fr-sub {
   font-size: 11px;
@@ -1213,9 +1228,19 @@
   font-family: var(--ds-font-mono);
   letter-spacing: 0.02em;
 }
+/* WRAP. `.ds-foot` itself wraps, so the brand and the links already stack on a
+   phone — but this row did not, and it is a flex row whose contents outgrew the
+   viewport: it went from four links (Download / Contributors / Changes / Discord)
+   to six when Privacy + Terms landed, and it carries two more whenever Support and
+   the consent link are live. At 375px that is 419px of content, and because the
+   row could not break, the 66px spilled out to `.ds-app` and scrolled the WHOLE
+   page sideways with Discord off the right edge. A footer link row must be free to
+   take a second line — it is the one part of the layout whose item COUNT changes
+   with build flags and region. */
 .ds-foot-links {
   display: flex;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: 8px 18px;
 }
 .ds-foot-links a {
   color: var(--ds-ink-dim);
@@ -1871,6 +1896,15 @@
   text-align: right;
   font-weight: 700;
   color: var(--ds-accent);
+  /* the score and its watch-replay arrow are ONE unit and must never break apart.
+     The cell is only ~38px of content box on a phone, so as soon as the score ran to
+     four digits the trailing ` ▶` wrapped onto a line of its own UNDERNEATH the
+     number. Data-dependent, which is why it hid: DECODE solo tops out at 3 digits and
+     looks fine, while Chain Reaction (20039) and DECODE duo (1614) show it on every
+     row. Match history's score cell rides this rule too — "353 - 765" should not
+     break mid-score either. Both tables scroll horizontally now, so the wider cell
+     has somewhere to go. */
+  white-space: nowrap;
 }
 .ds-table tr.you {
   background: var(--ds-you);
@@ -1912,7 +1946,12 @@
 .mh-filters .ds-select {
   flex: 0 1 auto;
 }
-.mh-scroll {
+/* the two table scrollers. A `.ds-panel` clips (`overflow: hidden`, for its rounded
+   corners), so any table wider than a phone has to carry its OWN horizontal scroller
+   or its right-hand columns are simply gone. `.lb-scroll` is the leaderboard's; it
+   went without one until a mobile sweep found ~200px of the Records table cut off. */
+.mh-scroll,
+.lb-scroll {
   overflow-x: auto;
 }
 .mh-table {
@@ -2021,9 +2060,14 @@
 }
 
 /* leaderboard driver names (display handle + clickable @username, duo pairs) */
+/* CENTRE, not baseline. A row pairs a 14px display name with a 12px muted @tag (and
+   a DUO/YOU tag, and a `+`). On a shared BASELINE the smaller text's cap-centre sits
+   below the larger one's, so the tag read as hanging low next to the name it belongs
+   to — the boxes were within a third of a pixel, but the INK was not. Centring the
+   items lines the two up the way the eye reads them. */
 .lb-drivers {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -2041,7 +2085,9 @@
   padding: 0;
   cursor: pointer;
   display: inline-flex;
-  align-items: baseline;
+  /* centre for the same reason as `.lb-drivers` above: name, badge and @tag are
+     different sizes and should share a middle, not a baseline */
+  align-items: center;
   gap: 6px;
   color: var(--ds-ink);
 }
@@ -2408,6 +2454,7 @@ tr.lb-detail td {
 /* ---- page scaffold --------------------------------------------------- */
 .ds-console {
   min-height: 100vh;
+  min-height: 100dvh; /* phone toolbar — see html/body in styles.css */
   height: 100%;
   /* same reason as `.ds-app`: its centered `.ds-console-in` must not slide when a
      lobby/queue screen grows past the viewport */
@@ -3178,6 +3225,88 @@ input[type='range']:focus-visible {
   .ds-main-home {
     align-items: flex-start;
   }
+  /* the footer is already two stacked lines at this width (`.ds-foot` wraps), and
+     with the links row now wrapping too it can be three. `space-between` on a
+     wrapped column reads as ragged left-alignment, so centre the whole stack —
+     and tighten the gap so six links still take two lines rather than three. */
+  .ds-foot {
+    justify-content: center;
+    text-align: center;
+    padding: 14px 16px;
+  }
+  .ds-foot-links {
+    justify-content: center;
+    gap: 8px 14px;
+  }
+
+  /* ---- TOUCH TARGETS ------------------------------------------------------
+     Everything below is POINTER-SIZE only: sizes, never colours or borders, and
+     scoped to this breakpoint so the desktop layout is byte-identical. A mouse
+     hits a 17px-tall text link; a thumb does not. These are the controls a sweep
+     at 320-414px found under ~32px that a player actually has to hit, sized so
+     the TAP AREA clears 32px even where the ink stays small — mostly via padding,
+     because growing the ink itself would reflow rows the shift audit guards.
+     Untouched on purpose: `.ds-key` (a keybinding readout — rebinding needs a
+     keyboard, so it is not a phone control) and the range TRACK (the thumb is the
+     target, and it is bumped below). */
+  .ds-seg {
+    min-height: 34px;
+    padding: 6px 12px;
+  }
+  .ds-foot-link,
+  .ds-foot-links a {
+    padding: 8px 2px; /* 17px of ink -> 33px of tap, without moving the row */
+  }
+  .ds-mark {
+    padding: 6px 2px;
+  }
+  .chassis-sw {
+    width: 32px;
+    height: 32px;
+  }
+  .contrib-icon {
+    width: 32px;
+    height: 32px;
+  }
+  .contrib-name,
+  .contrib-user,
+  .ds-hint a {
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+  }
+  /* the slider PUCK is the target, not the 22px track */
+  input[type='range'].ds-range::-webkit-slider-thumb,
+  .ds-bind-row input[type='range']::-webkit-slider-thumb,
+  .ds-replay-seek::-webkit-slider-thumb {
+    width: 26px;
+    height: 26px;
+    margin-top: -10px;
+  }
+  input[type='range'].ds-range::-moz-range-thumb,
+  .ds-bind-row input[type='range']::-moz-range-thumb,
+  .ds-replay-seek::-moz-range-thumb {
+    width: 26px;
+    height: 26px;
+  }
+  /* the start-position snap toggle: a 15px native checkbox */
+  .ds-startpos input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+  }
+  /* leaderboard row controls: the driver name opens a profile and the drivetrain
+     chip expands the robot card, so both are real targets, and both were ~19-24px */
+  /* Both centre their own content now, so a min-height grows them symmetrically and
+     everything stays on the row's midline. This was a `padding` hack while `.lb-name`
+     was still `align-items: baseline`, where a min-height pinned the baseline group to
+     the TOP of the taller box and floated every name ~7px high. */
+  .lb-name,
+  .lb-robot {
+    min-height: 32px;
+  }
+  .ds-startpos-tab {
+    min-height: 32px;
+  }
 }
 
 /* ---- primary CTA + hint --------------------------------------------- */
@@ -3552,7 +3681,12 @@ button.ds-key:active {
   align-items: flex-start;
 }
 .ds-startpos-stage {
-  flex: 0 0 auto;
+  /* SHRINKABLE. As `0 0 auto` this held the canvas's full 300px whatever the column
+     was, so on a 320px phone ~41px of the field — and of the draggable area — was
+     cut off by the panel. The drag maths normalises by `getBoundingClientRect()`
+     (see `pointerWorld`), so a CSS-scaled canvas still maps pointers correctly. */
+  flex: 0 1 auto;
+  min-width: 0;
   line-height: 0;
 }
 .ds-startpos-canvas {
@@ -3561,6 +3695,12 @@ button.ds-key:active {
   border: 1px solid var(--ds-line);
   touch-action: none; /* pointer drag, not scroll */
   max-width: 100%;
+  /* the field is square, and `max-width` only caps the WIDTH — without these the
+     canvas squashed into a rectangle once it started shrinking. The component sets
+     the display width inline and leaves height to this rule (its backing store is
+     sized separately, from the `width`/`height` attributes). */
+  height: auto;
+  aspect-ratio: 1;
   display: block;
 }
 .ds-startpos-side {
@@ -3778,3 +3918,169 @@ button.ds-key:active {
 }
 .ds-claim-msg.ok { color: var(--ds-ok-ink); }
 .ds-claim-msg.err { color: var(--ds-red-ink); }
+
+/* ---- live ranked queue depth (QueueCounts.tsx) ------------------------
+   Shown wherever a player might decide to queue: the header on every menu
+   screen, the PLAY item, and the Ranked tile. A mode at zero is omitted and an
+   empty queue renders nothing at all — "0 waiting" reads as a verdict on
+   whether to bother, so the number only ever appears when it argues FOR
+   queueing. Sized/coloured to sit UNDER the label it decorates, never to
+   compete with it. */
+.ds-qcount {
+  font-family: var(--ds-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ds-mut);
+  white-space: nowrap;
+}
+.ds-qcount b {
+  color: var(--ds-accent);
+  font-weight: 800;
+}
+/* the top bar names each game, because it reports the WHOLE service rather than
+   the game you happen to be in. Set apart from the mode labels beside it so
+   "DECODE 1V1 1 2V2 3 · CHAIN REACTION 1V1 2" parses as two groups, not one run-on
+   string. A game with an empty queue never reaches here — see `queuedGames`. */
+.ds-qcount-game {
+  color: var(--ds-ink);
+  text-transform: uppercase;
+}
+/* the bar can carry several games; let it wrap rather than push the bar wider */
+.ds-qcount.bar { white-space: normal; }
+/* ON A FILLED SURFACE the defaults above are wrong, and one of them was invisible:
+   the home menu's PLAY button is `.primary`, i.e. an --ds-accent FILL, and the count
+   painted --ds-accent on it — the same colour as its own background, 1:1. The muted
+   label was little better.
+
+   Every filled surface here already ships the ink tokens meant for it (the rail does
+   exactly this for its own sub-label), so use those rather than inventing a colour.
+   The label/number distinction is carried by WEIGHT on these surfaces, since a
+   second tinted ink would be another pair to keep above AA for no real gain. */
+.ds-menu-btn.primary .ds-qcount,
+.ds-menu-btn.primary .ds-qcount b,
+.ds-tile.primary .ds-qcount,
+.ds-tile.primary .ds-qcount b {
+  color: var(--ds-accent-ink);
+}
+.ds-rail-btn.on .ds-qcount {
+  color: var(--ds-accent-soft-mut);
+}
+.ds-rail-btn.on .ds-qcount b {
+  color: var(--ds-accent-soft-ink);
+}
+.ds-qcount-sep {
+  opacity: 0.55;
+}
+/* beside a label rather than under it: the rail item, the home button, the tile */
+.ds-qcount.rail,
+.ds-qcount.menu,
+.ds-qcount.tile {
+  margin-left: 8px;
+}
+.ds-qcount.bar {
+  margin-right: 2px;
+}
+
+/* ---- background ranked queue bar (QueueBar.tsx) -----------------------
+   Fixed to the bottom of the viewport, above everything, and only present while a
+   search is PARKED. It is the one thing telling a player their queue is still
+   live while they read a leaderboard, so it does not scroll away with the page
+   and it always carries the way out. */
+.ds-queuebar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--ds-line-strong);
+  border-radius: var(--ds-round-full);
+  background: var(--ds-panel);
+  box-shadow: var(--ds-block);
+  font-size: 13px;
+  color: var(--ds-ink);
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.ds-queuebar .qb-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ds-accent);
+  flex: none;
+}
+/* found: the bar stops being ambient and starts being the most important thing
+   on screen, because the match slot expires */
+.ds-queuebar.found {
+  border-color: var(--ds-accent);
+}
+.ds-queuebar.found .qb-dot {
+  background: var(--ds-ok);
+}
+.ds-queuebar .qb-txt {
+  white-space: nowrap;
+}
+.ds-queuebar .qb-err {
+  color: var(--ds-danger);
+  font-size: 12px;
+}
+
+/* ---- the queue on a FULL-SCREEN surface (live match, record run, lobby) ------
+   Anchored TOP, never bottom: the score display owns the bottom of a match (see
+   the HUD product decision), and a status bar parked over it is the one place it
+   must never be. `--ds-hud-line` rather than `--ds-line` for the same reason the
+   other floating HUD surfaces use it — a dark card on the dark field is barely
+   1.4:1 by fill, so its edge is what says where it ends. */
+.ds-queuebar.over {
+  bottom: auto;
+  top: max(10px, env(safe-area-inset-top));
+  border-color: var(--ds-hud-line);
+}
+/* Centred and tucked UNDER the top HUD row, not level with it. The top strip is
+   already spoken for at both ends — MENU/RESET on the left, the robot status on
+   the right — and on a phone those two nearly meet in the middle, so a chip on
+   that line lands right on top of RESET. One row down is empty at every width:
+   the event log runs down the left edge and the field sits lower still. */
+.ds-queuechip {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  top: calc(max(10px, env(safe-area-inset-top)) + 54px);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid var(--ds-hud-line);
+  border-radius: var(--ds-round-full);
+  background: var(--ds-panel);
+  box-shadow: var(--ds-block);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ds-ink);
+  cursor: pointer;
+}
+/* deliberately NOT faded down to sit back: a translucent card blends its text AND
+   its fill toward the field behind it, which drops the pair below the bar the rest
+   of the app holds (worst in light theme, where a light panel darkens toward the
+   dark field while the ink stays dark). Being small is what makes it unobtrusive. */
+.ds-queuechip:hover,
+.ds-queuechip:focus-visible {
+  border-color: var(--ds-accent);
+}
+.ds-queuechip .qb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ds-accent);
+  flex: none;
+}
+.ds-queuechip .qb-txt {
+  white-space: nowrap;
+}

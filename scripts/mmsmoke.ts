@@ -257,6 +257,155 @@ const namesOf = (m: PendingMatch | undefined): string =>
   }
 }
 
+// ---- NEAREST-FIRST pairing (what makes the fast radius safe) ----------------
+// The radius no longer buys locality by refusing to look — it opens same-continent
+// immediately and worldwide within 6s. Locality is bought here instead, by picking
+// the CLOSEST eligible opponent rather than the first one in the queue that fits.
+// Under the old first-fit rule these were one knob, so matching faster necessarily
+// meant matching worse; if this regresses, that trade quietly comes back.
+{
+  // the anchor is in iad; a far opponent (nrt, 164) is ahead of a near one (lhr, 76)
+  // in the queue. First-fit would take nrt purely for being earlier.
+  const { staged } = await pair([
+    entry('anchor', '1v1', { homeRegion: 'iad' }),
+    entry('far', '1v1', { homeRegion: 'nrt' }),
+    entry('near', '1v1', { homeRegion: 'lhr' }),
+  ]);
+  check('nearest-first: the CLOSER opponent wins over the earlier one',
+    namesOf(staged[0]) === 'anchor,near', namesOf(staged[0]));
+}
+{
+  // ...and a same-region opponent beats everyone, however late they queued
+  const { staged } = await pair([
+    entry('anchor', '1v1', { homeRegion: 'iad' }),
+    entry('cross', '1v1', { homeRegion: 'syd' }),
+    entry('local', '1v1', { homeRegion: 'iad' }),
+  ]);
+  check('nearest-first: a same-region opponent still wins at a wide radius',
+    namesOf(staged[0]) === 'anchor,local', namesOf(staged[0]));
+  check('nearest-first: ...and the match hosts in that shared region', staged[0]?.hostRegion === 'iad');
+}
+{
+  // FIFO fairness survives it: equally-close candidates are taken in queue order,
+  // because a tie does NOT displace the incumbent
+  const { staged } = await pair([
+    entry('anchor', '1v1', { homeRegion: 'iad' }),
+    entry('first', '1v1', { homeRegion: 'iad' }),
+    entry('second', '1v1', { homeRegion: 'iad' }),
+  ]);
+  check('nearest-first: a TIE goes to whoever waited longer', namesOf(staged[0]) === 'anchor,first', namesOf(staged[0]));
+}
+{
+  // The radius still MEANS something: the worst pair on the map is held back on the
+  // first attempt, so a wide-open queue never instantly commits someone to a distant
+  // match that a few seconds of waiting might have improved. (lhr↔syd is 251ms
+  // direct, but the gate reads `bestHost`'s SPREAD — 148 — because the minimax host
+  // lands on sjc in the middle. 148 is the worst spread any pair can produce, which
+  // is why one widening step now covers the entire map.)
+  const { staged } = await pair([
+    entry('a', '1v1', { homeRegion: 'lhr' }),
+    entry('b', '1v1', { homeRegion: 'syd' }),
+  ]);
+  check('radius: the worst-case pair is NOT taken on the first attempt', staged.length === 0);
+}
+{
+  // ...but nobody is stranded — once the radius has opened (here via two expand
+  // bumps, which the frozen test clock lets us reach directly) it does match.
+  const { staged } = await pair([
+    entry('a', '1v1', { homeRegion: 'lhr', expandBumps: 2 }),
+    entry('b', '1v1', { homeRegion: 'syd', expandBumps: 2 }),
+  ]);
+  check('radius: ...and DOES match once widened (nobody is stranded)', staged.length === 1);
+}
+
+// ---- a challenge must be queued under the CHALLENGE'S game -------------------
+// The matchmaker buckets by game so a Chain Reaction queuer can never be paired
+// into a DECODE room. That rule is correct, and it is also what made a cross-game
+// challenge silently impossible: a challenge is accepted from wherever the
+// recipient already is, and the client queued under the game it was CURRENTLY in
+// rather than the one the challenge names. The closed pair then sat in two
+// different buckets waiting for each other, with nothing on either screen to say
+// why. These pin both halves — the bucket rule stays strict, and the fix is that
+// both entries carry the challenge's own game.
+{
+  const { staged } = await pair([
+    entry('a', '1v1', { party: 'tok', partySize: 2, partyOnly: true, game: 'decode' }),
+    entry('b', '1v1', { party: 'tok', partySize: 2, partyOnly: true, game: 'chain' }),
+  ]);
+  check('challenge: a pair split across GAMES never stages (bucket rule holds)', staged.length === 0);
+}
+{
+  const { staged } = await pair([
+    entry('a', '1v1', { party: 'tok', partySize: 2, partyOnly: true, game: 'chain' }),
+    entry('b', '1v1', { party: 'tok', partySize: 2, partyOnly: true, game: 'chain' }),
+  ]);
+  check('challenge: both sides on the challenge’s game DO pair', staged.length === 1);
+  check('challenge: ...and the room is staged for that game', staged[0]?.game === 'chain', String(staged[0]?.game));
+}
+
+// ---- the one-live-game guard must not forfeit a staged ranked match ----------
+// `Room.stagedFor` is the predicate that lets a matchmaker-staged join through
+// the "you already have a game in progress" refusal. Without it, being matched
+// out of a BACKGROUND queue while a solo record run was still in flight was an
+// automatic forfeit: the run's slot is held for the reconnect grace, so the join
+// that pays ELO is the one that gets refused. It must answer for exactly the
+// roster and nobody else — a random code-joiner must still be turned away.
+{
+  const { Room } = await import('../server/room');
+  const roster = [
+    { userId: 'u-a', name: 'a', alliance: 'red' as const, startIndex: 0, introElo: null },
+    { userId: 'u-b', name: 'b', alliance: 'blue' as const, startIndex: 0, introElo: null },
+  ] as never;
+  const plain = new Room('plain', () => {}, { kind: 'versus' }, undefined as never);
+  check('stagedFor: an ordinary room is staged for nobody', !plain.stagedFor('u-a'));
+  const staged = new Room('iad-1v1x', () => {}, { kind: 'versus' }, undefined as never);
+  staged.applyPending({ code: 'iad-1v1x', hostRegion: 'iad', mode: '1v1', seed: 1, roster, ranked: true });
+  check('stagedFor: a staged ranked room answers for its roster', staged.stagedFor('u-a') && staged.stagedFor('u-b'));
+  check('stagedFor: ...and for nobody else (a code-guesser is still refused)', !staged.stagedFor('u-stranger'));
+}
+
+// ---- queue depth is PER GAME ------------------------------------------------
+// Pairing buckets by game, so a combined count advertised a pool the reader could
+// never match from: one Chain Reaction queuer made every DECODE menu read "1V1 1".
+{
+  const { mm } = await pair([
+    entry('d1', '1v1', { game: 'decode' }),
+    entry('c1', '1v1', { game: 'chain' }),
+    entry('c2', '2v2', { game: 'chain' }),
+  ]);
+  const byGame = mm.queueSizesByGame();
+  check('per-game depth: DECODE counts only its own queuer', byGame.decode?.['1v1'] === 1, JSON.stringify(byGame));
+  check('per-game depth: Chain Reaction counts only its own', byGame.chain?.['1v1'] === 1);
+  check('per-game depth: ...in each bucket separately', byGame.chain?.['2v2'] === 1 && byGame.decode?.['2v2'] === 0);
+  check('per-game depth: a game with nobody waiting has no entry at all', !byGame.nope);
+  // the combined shape stays correct too — older clients still read it
+  check('per-game depth: the combined total is unchanged for old clients', mm.queueSizes()['1v1'] === 2);
+}
+{
+  // a CLOSED challenge is not an open pool in either shape
+  const { mm } = await pair([
+    entry('p1', '1v1', { game: 'decode', party: 'tok', partySize: 2, partyOnly: true }),
+  ]);
+  check('per-game depth: a closed challenge is not advertised as available',
+    (mm.queueSizesByGame().decode?.['1v1'] ?? 0) === 0);
+}
+
+// ---- the operator view of the queue -----------------------------------------
+// A depth count cannot distinguish "nobody is queueing" from "everybody is queueing
+// and nothing is pairing", which is exactly the failure an operator gets called
+// about. The bucket + the WAIT is what separates them. Ranked requires an account,
+// so every row here already belongs to a signed-in player — there is no guest data
+// in this surface by construction.
+{
+  const { mm } = await pair([entry('a', '1v1'), entry('x', '2v2')]);
+  const q = mm.queuedPlayers(30_000);
+  check('operator queue: reports each waiting account', q.length === 2, JSON.stringify(q));
+  check('operator queue: with its bucket', q.find((e) => e.userId === 'u-a')?.mode === '1v1');
+  check('operator queue: and how long it has been waiting', q.find((e) => e.userId === 'u-a')?.waitedS === 30);
+  check('operator queue: an anonymous entry cannot appear (ranked needs an account)',
+    q.every((e) => !!e.userId));
+}
+
 // ---- queue depth reporting --------------------------------------------------
 {
   const { mm } = await pair([

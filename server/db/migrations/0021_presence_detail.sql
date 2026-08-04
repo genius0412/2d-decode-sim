@@ -1,0 +1,33 @@
+-- Cross-region LIVE ROOMS + operational player status, on the existing per-machine
+-- presence heartbeat.
+--
+-- WHY HERE: each machine only knows its own sockets, and anycast routes a caller to
+-- whichever region is nearest them. "Watch Live" therefore listed only the matches
+-- running in the caller's region and silently hid every other one. Presence already
+-- solved exactly this shape (see 0015), so live rooms ride the same heartbeat rather
+-- than growing a second aggregation mechanism.
+--
+-- PRIVACY — the shape of these columns is deliberate, not incidental:
+--
+--   * This table holds a SNAPSHOT, never a history. Every column is overwritten by
+--     that machine's next beat (~5s) and the row ages out of the freshness window
+--     when the machine goes quiet. Nothing here accumulates into a timeline of what
+--     any individual did, and nothing is written anywhere that does.
+--
+--   * `players` covers SIGNED-IN accounts only, and carries only state the server
+--     must already track to run a match: which room you are in, whether you are in
+--     the ranked queue, and the same coarse menu/lobby/match bucket your own friends
+--     list already shows your friends. No new information is collected from anyone
+--     to populate it, and it deliberately does NOT record which screen or menu a
+--     player is looking at — that would be new collection, purely behavioural, and
+--     of no use in moderating a game.
+--
+--   * ANONYMOUS sessions are COUNTS ONLY (`anon`). A guest who never made an account
+--     gets no row, no identifier, and no per-session record. There is no moderation
+--     action that can be taken against an anonymous session other than ending its
+--     connection or its room, so identifying one individually would be surveillance
+--     without a purpose. Their sockets are counted so operators can see load and
+--     spot abuse patterns; that is where it stops.
+alter table presence add column if not exists rooms jsonb not null default '[]'::jsonb;
+alter table presence add column if not exists players jsonb not null default '[]'::jsonb;
+alter table presence add column if not exists anon jsonb not null default '{}'::jsonb;

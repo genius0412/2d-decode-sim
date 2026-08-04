@@ -47,6 +47,16 @@ export interface Replay {
   /** C.BALANCE_VERSION when recorded — a replay only re-sims exactly under its
    * own balance version's sim build (see config.ts BALANCE_VERSION) */
   balanceVersion: number;
+  /**
+   * C.SIM_VERSION when recorded — which sim BEHAVIOUR this log was captured
+   * against. Separate from `balanceVersion` on purpose: a determinism fix moves
+   * what `step()` produces without being a balance decision, and without this the
+   * only options are resetting the competitive season over a bug fix or letting
+   * stored replays re-simulate into a different game than the one that was
+   * played. ABSENT ⇒ 0 (recorded before this existed), correctly read as "cannot
+   * be replayed accurately on this build".
+   */
+  sim?: number;
   /** which game this replay is of — picks the sim module to re-simulate it (createWorld
    * + step). Absent on old replays ⇒ DECODE. */
   game?: GameId;
@@ -108,6 +118,7 @@ export class ReplayRecorder {
     return {
       format: REPLAY_FORMAT,
       balanceVersion: C.BALANCE_VERSION,
+      sim: C.SIM_VERSION,
       game: this.game,
       mode: this.mode,
       seed: this.seed,
@@ -171,6 +182,33 @@ export class ReplayPlayer {
     this.mod.step(this.world, C.SIM_DT, this.current);
     return true;
   }
+}
+
+/**
+ * WHOSE VIEW a replay is watched from: the robot to highlight as "yours", and the
+ * alliance whose driver station the camera sits behind.
+ *
+ * This is not cosmetic polish. The camera rotates a full 180° between alliances
+ * (`viewAngleOf`: red +π/2, blue −π/2), so watching your own match from the other
+ * side shows every robot on the wrong end of the field driving the wrong way —
+ * indistinguishable, to the person who played it, from the replay having
+ * diverged. The viewer defaulted to `setups[0]`, and a matchmaker-staged roster
+ * always puts red at index 0, so it was right for exactly half the players in
+ * every 1v1 and wrong for the other half — including which robot got labelled as
+ * theirs. Two people watching the same replay saw mirror images of each other.
+ *
+ * `viewerRobotId` is the robot the watcher actually drove. Absent (a leaderboard
+ * replay by someone who wasn't in the match, an old link) falls back to the first
+ * setup, which is correct for the opponent-free record runs that make up the
+ * boards — those have one alliance on the field.
+ */
+export function replayViewpoint(
+  setups: RobotSetup[],
+  viewerRobotId?: number | null,
+): { robotId: number; alliance: Alliance } {
+  const me =
+    (viewerRobotId != null ? setups.find((s) => s.id === viewerRobotId) : undefined) ?? setups[0];
+  return { robotId: me?.id ?? 0, alliance: me?.alliance ?? 'blue' };
 }
 
 /** re-simulate a replay to completion and return the final world (playback +

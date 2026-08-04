@@ -4,6 +4,7 @@ import type { RoomInvite } from '../net/api';
 import { useFriends } from './useFriends';
 import { challengeLine, challengeOf } from './challenge';
 import { PeopleGlyph } from './FriendsPanel';
+import { SupporterBadge } from './SupporterBadge';
 
 /**
  * Compact friend flyout for `Lobby`, which bypasses `AppShell` (and its
@@ -94,7 +95,10 @@ export function InviteFlyout({
                     return (
                       <div className="fr-row" key={inv.id}>
                         <span className="fr-who static">
-                          <span className="fr-name">{inv.from.handle}</span>
+                          <span className="fr-nameline">
+                            <span className="fr-name">{inv.from.handle}</span>
+                            <SupporterBadge supporter={inv.from.supporter} role={inv.from.role} />
+                          </span>
                           <span className="fr-sub">{challengeLine(inv.format)}</span>
                         </span>
                         <span className="fr-actions">
@@ -140,7 +144,10 @@ export function InviteFlyout({
                     online.map((f) => (
                       <div className="fr-row" key={f.userId}>
                         <span className="fr-who static">
-                          <span className="fr-name">{f.handle}</span>
+                          <span className="fr-nameline">
+                            <span className="fr-name">{f.handle}</span>
+                            <SupporterBadge supporter={f.supporter} role={f.role} />
+                          </span>
                           <span className="fr-sub">@{f.username}</span>
                         </span>
                         <span className="fr-actions">

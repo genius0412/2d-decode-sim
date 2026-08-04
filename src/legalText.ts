@@ -17,7 +17,7 @@
  */
 
 /** last substantive revision — shown on both pages */
-export const LEGAL_UPDATED = 'July 27, 2026';
+export const LEGAL_UPDATED = 'August 4, 2026';
 
 /** where privacy / data-deletion requests go */
 export const LEGAL_CONTACT = 'genius0412.tech@gmail.com';
@@ -98,6 +98,54 @@ Only if you create an account:
 Our game servers also process your IP address to route your connection, as any
 network service must. It is not stored in the database or used to build a profile.
 
+## Live status while you are connected
+
+To run matchmaking, host matches and keep the service healthy, each game server
+keeps a **live snapshot** of what is happening on it right now. This is operational
+state, not history:
+
+- **If you are signed in**, the snapshot can include your account id, a coarse
+  activity (in menus / in a lobby / in a match), the room code of a match you are
+  in, and whether you are waiting in a ranked queue and for how long.
+- **If you are not signed in**, your session appears with the same coarse activity,
+  identified by a **connection id**. That id is the one our server generates to
+  route messages on your socket: it is **not** your IP address, **not** a device
+  fingerprint, it is stored nowhere else, and it **ceases to exist when you
+  disconnect** - reconnecting gives you a completely unrelated one. It can tell two
+  sessions that are live at the same moment apart. It cannot link you to anything
+  you did before, or to any other session.
+- **For nobody** do we record which screen or menu you are looking at, what you
+  click, or your inputs.
+
+Every snapshot is **overwritten by the next one** a few seconds later, and a
+server's entry disappears when it stops reporting. Nothing here accumulates into a
+timeline, so it cannot be used to reconstruct what anyone was doing earlier.
+
+Separately, matches in progress are **listed publicly** so anyone can spectate
+them, including the display names and team numbers of the players in them. That
+list is what the "Watch Live" screen shows.
+
+## Site administrators
+
+Administrators of DSIM can see the live snapshot described above, for moderation
+(investigating cheating or abuse) and for keeping the servers running. Concretely,
+an administrator can see every connected session - signed-in accounts by name, and
+sessions without an account by the temporary connection id described above - along
+with the coarse activity, the room, and the ranked queue state for each. They
+**cannot** see which screen you are on, your inputs, your messages, or any history
+of your activity, and the connection id gives them no way to recognise a returning
+visitor.
+
+Administrators can also put DSIM into **maintenance**, which pauses new matches for
+everyone else while an update or a season reset is applied. When one is scheduled or
+running you will see a banner saying so, with the times.
+
+Administrators can also **watch a live match without appearing in the spectator
+count** that players see. We are stating this rather than leaving it implicit: the
+count shown during a match reflects ordinary spectators, and an administrator
+observing for moderation is deliberately not included in it. Matches are already
+publicly spectatable by anyone, so this changes who is *visible*, not what is.
+
 ## Cookies and similar technologies
 
 DSIM itself sets **no cookies**. Your settings live in your browser's local
@@ -162,6 +210,11 @@ We do not sell your data, and we do not share it with anyone else.
 Account data is kept while your account exists. Replays and records may be removed
 at the end of a competitive season. Delete your account and the associated profile,
 records, replays, ratings, presets, and social data are deleted with it.
+
+The **live status snapshot** described above is not kept at all: each update
+replaces the last, and a server's entry disappears within seconds of it going
+quiet. Connection ids are gone the moment the socket closes. There is nothing there
+to export or delete after you disconnect.
 
 ## Your choices
 

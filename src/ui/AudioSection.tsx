@@ -87,7 +87,11 @@ export function AudioSection({
   const audio = audioRef.current;
   audio.masterVolume = vol.master;
   audio.gameVolume = vol.game;
-  audio.sfxVolume = vol.sfx;
+  audio.shootVolume = vol.shoot;
+  audio.intakeVolume = vol.intake;
+  audio.gateVolume = vol.gate;
+  audio.beepVolume = vol.beep;
+  audio.alertVolume = vol.alert;
   audio.voiceVolume = vol.voice;
 
   const silent = vol.master <= 0;
@@ -118,12 +122,44 @@ export function AudioSection({
             onChange={(game) => setVolume({ game })}
             onAudition={() => audio.play('resume')}
           />
+          {/* ONE ROW PER EMITTER. These four were a single slider labelled
+              "Beeping" — which moved the launcher, the intake and the gate as well,
+              and was named after the rarest of them. Each auditions its own sound,
+              so the label is checkable rather than a claim. */}
           <VolumeRow
-            label="Beeping"
-            value={vol.sfx}
+            label="Shooter"
+            value={vol.shoot}
             muted={silent}
-            onChange={(sfx) => setVolume({ sfx })}
+            onChange={(shoot) => setVolume({ shoot })}
             onAudition={() => audio.sfxShoot()}
+          />
+          <VolumeRow
+            label="Intake"
+            value={vol.intake}
+            muted={silent}
+            onChange={(intake) => setVolume({ intake })}
+            onAudition={() => audio.sfxIntake()}
+          />
+          <VolumeRow
+            label="Classifier gate"
+            value={vol.gate}
+            muted={silent}
+            onChange={(gate) => setVolume({ gate })}
+            onAudition={() => audio.sfxGate()}
+          />
+          <VolumeRow
+            label="Countdown beeps"
+            value={vol.beep}
+            muted={silent}
+            onChange={(beep) => setVolume({ beep })}
+            onAudition={() => audio.beep()}
+          />
+          <VolumeRow
+            label="Match alerts"
+            value={vol.alert}
+            muted={silent}
+            onChange={(alert) => setVolume({ alert })}
+            onAudition={() => audio.sfxMatchFound()}
           />
           <VolumeRow
             label="Voice lines"
@@ -154,6 +190,19 @@ export function AudioSection({
                 <span className="ot">{t.title}</span>
               </button>
             ))}
+          </div>
+          {/* the stack of messages in the field's top-left corner during a match
+              (scoring, gate, penalties). It is a read-out and never a control, so
+              turning it off costs nothing but the reading. */}
+          <div className="ds-opts">
+            <button
+              className={`ds-opt ${settings.showEventLog ? 'on' : ''}`}
+              aria-pressed={settings.showEventLog}
+              onClick={() => onChange({ ...settings, showEventLog: !settings.showEventLog })}
+            >
+              <span className="ot">In-match messages {settings.showEventLog ? 'ON' : 'OFF'}</span>
+              <span className="od">Scoring and penalty notices in the field’s top-left corner</span>
+            </button>
           </div>
         </div>
       </section>
