@@ -75,10 +75,20 @@ export function drawChainBalls(ctx: CanvasRenderingContext2D, world: World, scre
   // free / carried catalysts (not yet seated) render at their world position
   for (const c of world.chain?.catalysts ?? []) {
     if (c.hook) continue;
+    // a FLUNG ring is airborne: draw its ground shadow, then the ring lifted toward the
+    // screen-up axis, so a catapult throw reads as an arc rather than a slide
+    const lift = c.z > 0.05 ? c.z * 0.06 : 0;
+    if (lift > 0) {
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+      ctx.beginPath();
+      ctx.arc(c.pos.x, c.pos.y, rMid * 0.85, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.lineWidth = 1.6;
     ctx.strokeStyle = CATALYST;
     ctx.beginPath();
-    ctx.arc(c.pos.x, c.pos.y, rMid, 0, Math.PI * 2);
+    ctx.arc(c.pos.x + screenUp.x * lift, c.pos.y + screenUp.y * lift, rMid, 0, Math.PI * 2);
     ctx.stroke();
   }
 

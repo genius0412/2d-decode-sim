@@ -120,7 +120,7 @@ import { bestHost } from '../server/regions';
 import type { PendingMatch } from '../server/matchTypes';
 import { computeGlicko, glicko2Update, eloMode, RD_PROVISIONAL, type EloParticipant } from '../server/ranked';
 import type { ServerMsg, QueueMode } from '../src/net/protocol';
-import { dsin, dcos, dtan, datan2, rot, wrapAngle } from '../src/math';
+import { dsin, dcos, dtan, datan2, hyp, rot, wrapAngle } from '../src/math';
 import { initPhysics } from '../src/sim/physicsEngine';
 import { moduleFor, gameOf } from '../src/games';
 import { decodeColliders } from '../src/games/decode/colliders';
@@ -145,7 +145,13 @@ import {
   CHAIN_MAX_LENGTH,
 } from '../src/games/chain/config';
 import { accelMultiplier, chainIntakeMouths, hookPos, labAreas, ringStands } from '../src/games/chain/state';
-import { CHAIN_CATALYSTS, CHAIN_CATALYST_TYPES, CHAIN_DEFAULT_CATALYST } from '../src/games/chain/config';
+import {
+  CHAIN_CATALYSTS,
+  CHAIN_CATALYST_TYPES,
+  CHAIN_DEFAULT_CATALYST,
+  CHAIN_HALF_Y,
+  CHAIN_STORAGE_MAX,
+} from '../src/games/chain/config';
 import { intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
@@ -5812,9 +5818,14 @@ const mkMM = () => {
     // coerceSpec clamps ballStorage down to the archetype+size max
     const over = coerceSpec({ ...base, ballStorage: 99 });
     check('chain storage: coerceSpec clamps ballStorage to the archetype max', over.ballStorage === turretMax, `${over.ballStorage} vs ${turretMax}`);
-    // a big open-hopper launcher can reach ~60 (the raised ceiling)
+    // a big open-hopper launcher reaches the ceiling (raised to 90 — a hopper stacks
+    // Particles rather than laying out one flat layer)
     const bigDrum = chainStorageMax({ ...base, scoreMode: 'drum', length: 18, width: 18 });
-    check('chain storage: a large launcher tops out near the 60 ceiling', bigDrum >= 55 && bigDrum <= 60, `bigDrum=${bigDrum}`);
+    check(
+      'chain storage: a large launcher tops out at the CHAIN_STORAGE_MAX ceiling',
+      bigDrum >= CHAIN_STORAGE_MAX - 5 && bigDrum <= CHAIN_STORAGE_MAX,
+      `bigDrum=${bigDrum} ceiling=${CHAIN_STORAGE_MAX}`,
+    );
     // CR chassis can be up to 18" long (coerceSpec with game 'chain' uses CR's length range,
     // not the DECODE intake-limited one) — DECODE stays clamped to its intake preset.
     const crLong = coerceSpec({ ...DEFAULT_SPEC, length: 18 }, undefined, 'chain');
@@ -6128,30 +6139,90 @@ const mkMM = () => {
       return ring.carriedBy === rob.id;
     };
 
-    // REACH ORDER: the arm out-grabs the turret, which out-grabs the launcher's scoop.
-    // Measured through the real action, not by reading the table back.
+    // REACH: each mechanism grabs just INSIDE its own claw reach and refuses just outside
+    // it — derived from the geometry (mouth sits length/2 ahead of centre) rather than
+    // hand-picked distances, so retuning a reach doesn't silently invalidate the test.
+    const mouthAt = DEFAULT_SPEC.length / 2;
+    let reachOk = true;
+    const detail: string[] = [];
+    for (const t of CHAIN_CATALYST_TYPES) {
+      const R = CHAIN_CATALYSTS[t].reach;
+      const inside = grabsAt(t, mouthAt + R - 1);
+      const outside = grabsAt(t, mouthAt + R + 1);
+      if (!inside || outside) reachOk = false;
+      detail.push(`${t} in=${inside} out=${outside}`);
+    }
+    check('catalyst: each claw grabs inside its reach and refuses outside it', reachOk, detail.join(' '));
+    // ...and the reaches are ordered arm > turret > launcher (the arm is the reach pick,
+    // the launcher's ground-intake claw is the shortest)
     check(
-      'catalyst: grab reach order arm > turret > launcher (the arm is the reach pick)',
-      grabsAt('arm', 20) && !grabsAt('turret', 20) && grabsAt('turret', 17) && !grabsAt('launcher', 17),
-      `arm@20 ${grabsAt('arm', 20)} turret@20 ${grabsAt('turret', 20)} turret@17 ${grabsAt('turret', 17)} launcher@17 ${grabsAt('launcher', 17)}`,
+      'catalyst: reach order arm > turret > launcher',
+      CHAIN_CATALYSTS.arm.reach > CHAIN_CATALYSTS.turret.reach &&
+        CHAIN_CATALYSTS.turret.reach > CHAIN_CATALYSTS.launcher.reach,
+      `${CHAIN_CATALYSTS.arm.reach} / ${CHAIN_CATALYSTS.turret.reach} / ${CHAIN_CATALYSTS.launcher.reach}`,
     );
 
-    // THE LAUNCHER'S POINT: it seats a ring on a hook from far outside everyone else's
-    // range, because it throws it — hook points without driving to the wall.
-    const seatsFrom = (t: RobotSpec['catalystType'], back: number) => {
-      const { w, rob, ring } = mk(t);
-      const h = hookPos('blue', 0);
-      // park `back` inches out from the hook, facing it
-      rob.heading = Math.atan2(0 - h.y, 0 - h.x) + Math.PI;
-      rob.pos = { x: h.x - Math.cos(rob.heading) * back, y: h.y - Math.sin(rob.heading) * back };
+    // THE CATAPULT: with no hook in claw reach, a launcher THROWS the ring downfield
+    // instead of dropping it. It is transport, not placement — and deliberately imprecise.
+    const fling = (t: RobotSpec['catalystType'], seed: number) => {
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, catalystType: t, catalystMount: 'front', massLb: 34 };
+      const w = createChainWorld('match', seed, [setup]);
+      w.match.phase = 'teleop';
+      w.match.phaseTimeLeft = 120;
+      const rob = w.robots[0];
+      rob.pos = { x: -40, y: 0 };
+      rob.heading = 0; // catapult points at +x, far from any hook
+      for (const c of w.chain!.catalysts) {
+        c.carriedBy = null;
+        c.hook = null;
+        c.pos = { x: 500, y: 500 };
+        c.vel = { x: 0, y: 0 };
+        c.z = 0;
+        c.vz = 0;
+      }
+      const ring = w.chain!.catalysts[0];
       ring.carriedBy = rob.id;
-      press(w, rob);
-      return ring.hook !== null;
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ catalyst: true })]]));
+      const airborne = ring.z > 0; // it LEFT the ground — a real throw, not a teleport
+      let ticks = 0;
+      while ((ring.z > 0 || hyp(ring.vel.x, ring.vel.y) > 0.01) && ticks < 600) {
+        chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
+        ticks++;
+      }
+      return { airborne, ticks, dist: hyp(ring.pos.x - rob.pos.x, ring.pos.y - rob.pos.y), pos: { ...ring.pos } };
     };
+    const f1 = fling('launcher', 101);
     check(
-      'catalyst: the catapult seats a ring from range no other mechanism reaches',
-      seatsFrom('launcher', 28) && !seatsFrom('arm', 28) && !seatsFrom('turret', 28),
-      `launcher@28 ${seatsFrom('launcher', 28)} arm ${seatsFrom('arm', 28)} turret ${seatsFrom('turret', 28)}`,
+      'catalyst: the catapult throws a carried ring FAR downfield (a real arc, not a teleport)',
+      f1.airborne && f1.ticks > 20 && f1.dist > 45,
+      `airborne=${f1.airborne} flightTicks=${f1.ticks} landed ${f1.dist.toFixed(0)}" away`,
+    );
+    // a plain CLAW does not throw — it just puts the ring down where it stands
+    const dropOf = (t: RobotSpec['catalystType']) => fling(t, 101);
+    check(
+      'catalyst: a plain claw drops the ring at the robot instead of throwing it',
+      dropOf('arm').dist < 12 && dropOf('turret').dist < 12 && !dropOf('arm').airborne,
+      `arm ${dropOf('arm').dist.toFixed(1)}" turret ${dropOf('turret').dist.toFixed(1)}"`,
+    );
+    // ACCURACY DOES NOT MATTER: the same throw from the same pose lands somewhere different
+    // every time (speed variance + a lateral kick), so it can never be used as a placer
+    {
+      const spots = [201, 202, 203, 204, 205].map((sd) => fling('launcher', sd).pos);
+      const spread = Math.max(...spots.map((a) => Math.max(...spots.map((b) => hyp(a.x - b.x, a.y - b.y)))));
+      check(
+        'catalyst: the catapult is INACCURATE — repeated throws scatter their landing spot',
+        spread > 12,
+        `landing spread ${spread.toFixed(0)}" across 5 throws`,
+      );
+    }
+    // and a thrown ring never leaves the field
+    check(
+      'catalyst: a flung ring stays inside the field walls',
+      [301, 302, 303].every((sd) => {
+        const p = fling('launcher', sd).pos;
+        return Math.abs(p.x) <= CHAIN_HALF_X && Math.abs(p.y) <= CHAIN_HALF_Y;
+      }),
     );
 
     // FACING: arm/launcher work through a CONE, the rail turret is omnidirectional. Same

@@ -152,7 +152,7 @@ export const CHAIN_CLEARANCE_DEFAULT = 1;
  * the forward push down toward `CHAIN_BEAM_GROUND_FLOOR` (all four up = high-centered on the ridge
  * = barely any grip). */
 export const CHAIN_BEAM_WHEEL_R = 2.5; // in — a wheel this close to the beam line is up on the ridge
-export const CHAIN_BEAM_GROUND_FLOOR = 0.82; // forward traction kept with wheels lifted (never 0 — grounded wheels still push)
+export const CHAIN_BEAM_GROUND_FLOOR = 0.86; // forward traction kept with wheels lifted (never 0 — grounded wheels still push; raised 2026-08 alongside TRACTION so terrain bites less)
 /** MECANUM STRAFE-INTO-BEAM is a WALL, not a drag. Real mecanum wheels climb a bump they DRIVE
  * straight at — the full-diameter wheel rolls over it and the suspension keeps all four loaded
  * (exactly why mecanum has the BEST forward beam traction). But STRAFING is a different mechanism:
@@ -337,8 +337,13 @@ export const CHAIN_THROWBACK_SPREAD = 45; // in/s lateral spread on the throw-in
  * clamped to that ceiling. The `ballStorage` slider picks any capacity up to `chainStorageMax`.
  */
 export const CHAIN_STORAGE_MIN = 1;
-export const CHAIN_STORAGE_MAX = 60; // ceiling: the control prism packs a bit over one layer
-export const CHAIN_STORAGE_DEFAULT = 8;
+// CEILING. The old 60 assumed roughly ONE layer of Particles across the control footprint.
+// That was too pessimistic: the G02 control prism is 18" TALL and a Particle is 3" OD, so
+// the height is not the binding constraint — hopper design is, and real hoppers stack. 90
+// corresponds to about a layer and a half across the 18"×24" prism, which is what a
+// well-packed open hopper actually manages.
+export const CHAIN_STORAGE_MAX = 90;
+export const CHAIN_STORAGE_DEFAULT = 12;
 
 /** Chain Reaction chassis LENGTH range (in). Unlike DECODE, CR's intake doesn't eat into an
  * 18" cube (the sweeper deploys), so a CR chassis can run the full 18" long. */
@@ -348,7 +353,11 @@ export const CHAIN_MAX_LENGTH = 18;
 // then G03 EXPANSION (the deployed hopper reaches past the 18"×18" frame into the 18"×24"
 // control prism) lets a full-frame launcher approach the ceiling: ~5.4 in²/ball → an 18×18
 // open-hopper launcher tops out near 60.
-export const CHAIN_STORE_AREA_PER_BALL = 5.4;
+// effective sq in of chassis footprint per stored Particle. Lowered from 5.4 for the same
+// reason the ceiling rose — 5.4 priced a single flat layer, and hoppers stack. 3.6 is that
+// same packing at ~1.5 layers, which lifts EVERY archetype by ~50% while leaving all the
+// relative tradeoffs (archetype factor × intake-mount factor) exactly where they were.
+export const CHAIN_STORE_AREA_PER_BALL = 3.6;
 export const CHAIN_STORE_TURRET_MULT = 0.55; // turret loses center volume to the rotor+shooter
 export const CHAIN_STORE_LAUNCHER_MULT = 1.0; // drum + dumper: open hopper (large, equal)
 // INTAKE MOUNT storage cost — every mounted edge is an OPENING the hopper can't use.
@@ -429,26 +438,27 @@ export const CHAIN_CATALYST_PICK_R = 9;
 export const CHAIN_HOOK_PLACE_R = 12;
 
 /**
- * CATALYST MECHANISMS — how a robot picks up rings and seats them on hooks.
+ * CATALYST MECHANISMS — how a robot handles the rings.
  *
- * Every number is measured from the mechanism's MOUTH (a point on the mounted chassis
- * edge), not the robot centre, so where you bolt it genuinely matters. `cone` is the
- * half-angle either side of that edge's outward normal that the mechanism can work
- * through; `Math.PI` means omnidirectional. `cycle` is the cooldown between catalyst
- * actions. `massLb` is added to the chassis mass FLOOR.
+ * ONE CLAW does BOTH jobs on every archetype: it grabs a ring and it seats a ring on a
+ * hook, so each mechanism has a single `reach` rather than separate grab/place radii.
+ * Reach is measured from the mechanism's MOUTH (a point on the mounted chassis edge), not
+ * the robot centre, so where you bolt it genuinely matters. `cone` is the half-angle
+ * either side of that edge's outward normal it can work through (`Math.PI` = omni).
+ * `cycle` is the cooldown between claw actions. `massLb` is added to the chassis mass FLOOR.
  *
- * The three are deliberately shaped so no one of them dominates:
- *  • ARM — the reach specialist. A long arm out one edge: the biggest pickup radius, and
- *    it can pluck a ring off a hook from further back than anything else. Pays for it by
- *    having to FACE the target (a ±50° cone) and by being slow to extend/retract.
- *  • LAUNCHER — the range specialist, and the most interesting one: its pickup is the
- *    SHORTEST (it scoops off the floor right at the edge), but because it THROWS the ring
- *    it can seat one on a hook from most of a tile away. That buys hook points without
- *    committing the robot to the wall. Narrowest cone (you must aim a catapult) and the
- *    slowest cycle (it has to re-cock).
- *  • TURRET — the convenience specialist. A claw on a rail + turret that tracks the
- *    nearest hook, so it works in ANY direction and never asks the driver to reorient,
- *    and it cycles fastest. Middling reach, and the heaviest of the three.
+ * What separates the three is NOT how far they can place — it is reach, facing, tempo, and
+ * whether they can throw:
+ *  • ARM — the reach specialist. A long arm out one edge: the biggest working radius, so it
+ *    both grabs and seats from further back than anything else. Pays for it by having to
+ *    FACE the target (a ±50° cone) and by being slow to extend and retract.
+ *  • LAUNCHER — a short ground-intake claw PLUS a catapult. The claw is the shortest of the
+ *    three (it scoops right at the edge) and does the grabbing and placing as usual. The
+ *    CATAPULT is a separate trick: it FLINGS a carried ring far downfield to reposition it,
+ *    and it is deliberately INACCURATE — see `CHAIN_FLING_*`. It is transport, not scoring.
+ *  • TURRET — the convenience specialist. A claw on a rail + turret that tracks the nearest
+ *    hook, so it works in ANY direction and never asks the driver to reorient, and it cycles
+ *    fastest. Middling reach, and the heaviest of the three.
  *
  * WEIGHTS are all small in absolute terms (1.4-2.6 lb on a 20-42 lb chassis) — these are
  * claws and linkages, not drivetrains. The ORDER is what carries the balance: arm (bare
@@ -456,23 +466,43 @@ export const CHAIN_HOOK_PLACE_R = 12;
  * a turret ring, and a second motor).
  */
 export interface ChainCatalystGeom {
-  pickR: number; // in — grab radius, from the mechanism mouth
-  placeR: number; // in — hook seat/steal radius, from the mechanism mouth
+  /** in — the CLAW's working radius, used for BOTH grabbing and seating (one claw does both) */
+  reach: number;
   cone: number; // rad — half-angle either side of the mount's outward normal (PI = omni)
-  cycle: number; // s — cooldown between catalyst actions
+  cycle: number; // s — cooldown between claw actions
   massLb: number; // lb added to the chassis mass floor
+  /** can this mechanism also FLING a carried ring downfield? (the catapult) */
+  fling: boolean;
 }
 export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
-  arm: { pickR: 14, placeR: 14, cone: 0.87, cycle: 0.9, massLb: 1.4 },
-  launcher: { pickR: 8, placeR: 26, cone: 0.61, cycle: 1.3, massLb: 2.0 },
-  turret: { pickR: 11, placeR: 15, cone: Math.PI, cycle: 0.55, massLb: 2.6 },
+  arm: { reach: 14, cone: 0.87, cycle: 0.9, massLb: 1.4, fling: false },
+  launcher: { reach: 8, cone: 0.61, cycle: 1.0, massLb: 2.0, fling: true },
+  turret: { reach: 13, cone: Math.PI, cycle: 0.55, massLb: 2.6, fling: false },
 };
+
+/**
+ * THE CATAPULT FLING (launcher only). Holding a ring with no hook in claw reach and pressing
+ * the catalyst button THROWS it downfield instead of dropping it — the point is repositioning
+ * a ring across the field without driving it there, NOT placing it.
+ *
+ * It is meant to be INACCURATE, so the landing spot is scattered three ways: the launch speed
+ * varies ±`SPEED_VAR` (which moves the distance a lot, since both the airborne leg and the
+ * ground slide scale with it), a random lateral kick up to ±`SPREAD`, and the ring then slides
+ * to rest under friction. Typical throws land ~55-130" out along the catapult's facing — most
+ * of a 144" field — with no promise about where exactly.
+ */
+export const CHAIN_FLING_SPEED = 85; // in/s base horizontal launch
+export const CHAIN_FLING_SPEED_VAR = 0.4; // ± fraction — the dominant source of scatter
+export const CHAIN_FLING_VZ = 110; // in/s upward (≈0.57 s hang time at GRAVITY 386)
+export const CHAIN_FLING_SPREAD = 20; // in/s random lateral kick
+export const CHAIN_FLING_FRICTION = 90; // in/s² ground decay once it lands
+export const CHAIN_FLING_CYCLE = 1.6; // s — re-cocking the catapult is slower than a claw cycle
+
 /** Within this distance of the mechanism's mouth the reach CONE does not apply — the ring
  * is already in the claw's grasp, so the angle it sits at is irrelevant. Without this, a
  * ring you had just driven onto (and so nudged slightly under the bumper, BEHIND the claw
  * line) would become ungrabbable, which is a real gameplay annoyance rather than a
- * meaningful constraint. The cone still governs everything further out, which is where
- * "does the mechanism point the right way" is an actual decision. */
+ * meaningful constraint. The cone still governs everything further out. */
 export const CHAIN_CATALYST_NEAR = 5;
 
 export const CHAIN_CATALYST_TYPES = ['arm', 'launcher', 'turret'] as const;

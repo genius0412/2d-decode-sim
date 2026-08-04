@@ -60,8 +60,8 @@ export const CHAIN_CATALYST_LABELS: Record<ChainCatalystType, string> = {
 };
 
 export const CHAIN_CATALYST_BLURBS: Record<ChainCatalystType, string> = {
-  arm: 'Longest grab · must face it · slow',
-  launcher: 'Seats rings from range · short grab',
+  arm: 'Longest reach · must face it · slow',
+  launcher: 'Short reach · throws rings downfield',
   turret: 'Tracks hooks · any direction · fastest',
 };
 

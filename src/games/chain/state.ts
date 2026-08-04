@@ -81,6 +81,12 @@ export type EndgameState = 'none' | 'parked' | 'ascended';
 export interface ChainCatalyst {
   id: number;
   pos: Vec2;
+  /** IN-FLIGHT / SLIDING motion after a catapult fling. A flung ring flies a real arc and
+   * then slides to rest — it is never teleported to a landing spot (same no-teleporting
+   * rule the Particles follow). All three are 0 for a ring at rest, carried, or hooked. */
+  vel: Vec2;
+  z: number;
+  vz: number;
   /** robot id currently carrying it (max 1 per robot), else null */
   carriedBy: number | null;
   /** the hook it is seated on (scored ⇒ contributes a multiplier), else null */

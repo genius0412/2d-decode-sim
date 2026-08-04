@@ -61,15 +61,20 @@ export const CHAIN_BEAMS: { rect: Rect; axis: 'x' | 'y' }[] = [
  * it easily runs compliant/suspension wheels while keeping a LOW center of gravity, so it soaks
  * up the bump. Tank is close behind (grippy). SWERVE is worst — its tall steering pods ride high
  * (high CG) and scrub over the tube. X-drive sits between (omni rollers, low CG, but skittish). */
+// Retuned 2026-08: every value had its per-tick LOSS cut by ~28% (e.g. mecanum kept 0.91,
+// losing 0.09 → now keeps 0.935, losing 0.065). Crossing a beam was costing more speed than
+// it was worth playing around, so terrain now bites noticeably less for EVERY drivetrain.
+// The ORDER and the relative gaps are untouched — this is a uniform softening, not a
+// rebalance between drivetrains.
 const TRACTION: Record<DrivetrainType, number> = {
-  mecanum: 0.91,
-  tank: 0.9,
-  xdrive: 0.89,
+  mecanum: 0.935,
+  tank: 0.928,
+  xdrive: 0.921,
   // BUTTERFLY: whichever set is down rides on the LIFT LINKAGE rather than a hard-mounted
   // axle, and the STOWED set sits high in the chassis — so it soaks up a 1" ridge worse than
   // either dedicated drivetrain, but its CG is still nowhere near swerve's tall pods.
-  butterfly: 0.88,
-  swerve: 0.87,
+  butterfly: 0.914,
+  swerve: 0.906,
 };
 
 export function clearanceOf(spec: RobotSpec): number {

@@ -553,6 +553,21 @@ export function Menu({ settings, onChange }: Props) {
                     <span className="ot">{CHAIN_INTAKE_LABELS.sweeper}</span>
                   </div>
                 </div>
+                <h3 className="ds-subh">Intake mount</h3>
+                <div className="ds-opts four">
+                  {CHAIN_INTAKE_MOUNTS.map((m) => (
+                    <button
+                      key={m}
+                      className={`ds-opt mini ${intakeMountOf(spec) === m ? 'on' : ''}`}
+                      onClick={() => setSpec({ intakeMount: m })}
+                    >
+                      <span className="ot">{CHAIN_INTAKE_MOUNT_LABELS[m]}</span>
+                      {CHAIN_INTAKE_MOUNT_BLURBS[m] ? (
+                        <span className="od">{CHAIN_INTAKE_MOUNT_BLURBS[m]}</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
                 <h3 className="ds-subh">Catalyst mechanism</h3>
                 <div className="ds-opts">
                   {CHAIN_CATALYST_TYPES.map((t) => (
@@ -575,21 +590,6 @@ export function Menu({ settings, onChange }: Props) {
                       onClick={() => setSpec({ catalystMount: m })}
                     >
                       <span className="ot">{CHAIN_CATALYST_MOUNT_LABELS[m]}</span>
-                    </button>
-                  ))}
-                </div>
-                <h3 className="ds-subh">Intake mount</h3>
-                <div className="ds-opts four">
-                  {CHAIN_INTAKE_MOUNTS.map((m) => (
-                    <button
-                      key={m}
-                      className={`ds-opt mini ${intakeMountOf(spec) === m ? 'on' : ''}`}
-                      onClick={() => setSpec({ intakeMount: m })}
-                    >
-                      <span className="ot">{CHAIN_INTAKE_MOUNT_LABELS[m]}</span>
-                      {CHAIN_INTAKE_MOUNT_BLURBS[m] ? (
-                        <span className="od">{CHAIN_INTAKE_MOUNT_BLURBS[m]}</span>
-                      ) : null}
                     </button>
                   ))}
                 </div>

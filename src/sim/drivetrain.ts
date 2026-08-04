@@ -203,10 +203,12 @@ export function massLimits(
   // does not — today Chain Reaction's twin-turret assembly (`chainMassFloorBump`). Keeping
   // it a parameter is what lets a game add a heavy mechanism without leaking that game's
   // enums into the shared drivetrain model.
-  const min = clamp(
-    L.minMass + C.INERTIA_MASS_FLOOR * flywheelInertia + extraFloor,
-    L.minMass,
-    L.maxMass,
-  );
+  // ROUNDED to 0.01 lb. The floor is a sum of decimal constants (base + inertia term +
+  // mechanism weights), and binary floating point turns e.g. 19.6 + 0.6 into
+  // 20.200000000000003 — which then became the robot's actual clamped mass and rendered
+  // as-is in the builder. Rounding here fixes it at the source, so every consumer (the
+  // slider floor, coerceSpec's clamp, the displayed value) gets the same clean number.
+  const raw = L.minMass + C.INERTIA_MASS_FLOOR * flywheelInertia + extraFloor;
+  const min = clamp(Math.round(raw * 100) / 100, L.minMass, L.maxMass);
   return { min, max: L.maxMass };
 }

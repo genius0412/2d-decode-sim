@@ -16,6 +16,13 @@ import {
   CHAIN_HALF_Y,
   chainHopperCap,
   chainCatalystGeom,
+  CHAIN_CATALYST_OD,
+  CHAIN_FLING_SPEED,
+  CHAIN_FLING_SPEED_VAR,
+  CHAIN_FLING_VZ,
+  CHAIN_FLING_SPREAD,
+  CHAIN_FLING_FRICTION,
+  CHAIN_FLING_CYCLE,
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_TURRET_SLEW,
   CHAIN_AIM_TOL,
@@ -62,7 +69,7 @@ import {
   CHAIN_HOOKS_PER_GOAL,
   type ChainState,
 } from './state';
-import { EDGE_ANGLE, EDGE_DIR, EDGE_PERP, edgeGeom, shooterMountOf } from './mounts';
+import { EDGE_ANGLE, EDGE_DIR, EDGE_PERP, catalystMountOf, edgeGeom, shooterMountOf } from './mounts';
 
 /**
  * Chain Reaction gameplay step (called from `chainStep` after the robots move).
@@ -88,6 +95,38 @@ export function updateChain(
     world.rngState = n.state;
     return n.value;
   };
+
+  // FLUNG catalysts: a real ballistic arc, then a ground slide to rest. Never a teleport to
+  // a landing spot — the landing emerges from the throw, which is exactly why it is imprecise.
+  for (const c of chain.catalysts) {
+    if (c.carriedBy !== null || c.hook) continue;
+    if (c.z <= 0 && c.vel.x === 0 && c.vel.y === 0) continue; // at rest, nothing to do
+    c.pos.x += c.vel.x * dt;
+    c.pos.y += c.vel.y * dt;
+    if (c.z > 0) {
+      c.z += c.vz * dt;
+      c.vz -= C.GRAVITY * dt;
+      if (c.z <= 0) {
+        c.z = 0;
+        c.vz = 0;
+      }
+    } else {
+      const sp = hyp(c.vel.x, c.vel.y);
+      const next = Math.max(0, sp - CHAIN_FLING_FRICTION * dt);
+      c.vel = next <= 0.01 ? { x: 0, y: 0 } : { x: (c.vel.x / sp) * next, y: (c.vel.y / sp) * next };
+    }
+    // rings stay on the field, like everything else
+    const limX = CHAIN_HALF_X - CHAIN_CATALYST_OD / 2;
+    const limY = CHAIN_HALF_Y - CHAIN_CATALYST_OD / 2;
+    if (Math.abs(c.pos.x) > limX) {
+      c.pos.x = Math.sign(c.pos.x) * limX;
+      c.vel.x = -c.vel.x * 0.3;
+    }
+    if (Math.abs(c.pos.y) > limY) {
+      c.pos.y = Math.sign(c.pos.y) * limY;
+      c.vel.y = -c.vel.y * 0.3;
+    }
+  }
 
   // carried catalysts ride their robot
   for (const c of chain.catalysts) {
@@ -171,8 +210,9 @@ export function updateChain(
     const held = chain.catalystHeld[r.id] ?? false;
     const now = enabled && (cmd?.catalyst ?? false);
     if (now && !held && world.time >= (chain.catalystReadyAt[r.id] ?? 0)) {
-      catalystAction(chain, r);
+      // the claw cycle by default; a FLING overrides it with its own longer re-cock
       chain.catalystReadyAt[r.id] = world.time + chainCatalystGeom(r.spec).cycle;
+      catalystAction(world, chain, r, rand);
     }
     chain.catalystHeld[r.id] = now;
   }
@@ -728,17 +768,16 @@ function emptyHooks(chain: ChainState): { alliance: Alliance; index: number; pos
 /** edge action: place a carried ring on a reachable empty hook (else drop it), or pick
  * up the nearest reachable ring if not carrying one. Reach is the MECHANISM's — its
  * mouth on the mounted edge, its radius, and its cone (see `catalystCanReach`). */
-function catalystAction(chain: ChainState, rob: RobotState): void {
+function catalystAction(world: World, chain: ChainState, rob: RobotState, rand: () => number): void {
   const g = chainCatalystGeom(rob.spec);
   const mine = chain.catalysts.find((c) => c.carriedBy === rob.id);
   if (mine) {
-    // seat on the NEAREST REACHABLE empty hook of either goal. A `launcher` throws the
-    // ring, so its placeR reaches most of a tile — it can score hooks without driving to
-    // the wall, which is the whole reason to pick it.
+    // seat on the NEAREST REACHABLE empty hook of either goal, using the CLAW's reach —
+    // the same claw that grabs. (The catapult is not a placing tool; see the fling below.)
     let bestHook: { alliance: Alliance; index: number } | null = null;
     let bestHookD = Infinity;
     for (const h of emptyHooks(chain)) {
-      if (!catalystCanReach(rob, h.pos, g.placeR)) continue;
+      if (!catalystCanReach(rob, h.pos, g.reach)) continue;
       const d = catalystDist(rob, h.pos);
       if (d < bestHookD) {
         bestHookD = d;
@@ -750,9 +789,28 @@ function catalystAction(chain: ChainState, rob: RobotState): void {
       mine.carriedBy = null;
       return;
     }
-    // no hook in reach → drop it at the mechanism's mouth (where the claw actually is)
+    // No hook in claw reach. A plain claw simply puts the ring down; a CATAPULT throws it
+    // downfield instead — that is what the catapult is FOR (repositioning a ring across the
+    // field without driving it there), and it is deliberately imprecise about where it lands.
     mine.carriedBy = null;
-    mine.pos = catalystMouth(rob);
+    mine.pos = catalystMouth(rob); // the ring leaves from the claw, not the chassis centre
+    if (g.fling) {
+      const edge = catalystMountOf(rob.spec);
+      const dir = wrapAngle(rob.heading + EDGE_ANGLE[edge]); // the catapult points out its edge
+      // scatter: the speed varies a lot (it moves BOTH the airborne leg and the ground
+      // slide), plus a lateral kick. There is no aim solution anywhere in here — where it
+      // lands is an outcome, not a promise.
+      const spd = CHAIN_FLING_SPEED * (1 + (rand() * 2 - 1) * CHAIN_FLING_SPEED_VAR);
+      const lat = (rand() * 2 - 1) * CHAIN_FLING_SPREAD;
+      mine.vel = {
+        x: dcos(dir) * spd - dsin(dir) * lat,
+        y: dsin(dir) * spd + dcos(dir) * lat,
+      };
+      mine.z = 6;
+      mine.vz = CHAIN_FLING_VZ;
+      // re-cocking a catapult is slower than a claw cycle (overrides the cycle just set)
+      chain.catalystReadyAt[rob.id] = world.time + CHAIN_FLING_CYCLE;
+    }
     return;
   }
   // not carrying → take the nearest reachable ring: a FREE ring on the field, OR a
@@ -764,7 +822,7 @@ function catalystAction(chain: ChainState, rob: RobotState): void {
     // a SEATED ring is taken off its hook (de-scoring, legal on either goal) and so uses
     // the hook-reach radius; a loose ring on the floor uses the grab radius.
     const target = c.hook ? hookPos(c.hook.alliance, c.hook.index) : c.pos;
-    const radius = c.hook ? g.placeR : g.pickR;
+    const radius = g.reach; // one claw does both jobs
     if (!catalystCanReach(rob, target, radius)) continue;
     const d = catalystDist(rob, target);
     if (d < bestD) {
@@ -775,6 +833,9 @@ function catalystAction(chain: ChainState, rob: RobotState): void {
   if (best) {
     best.hook = null; // if it was seated, this removes it from the goal (de-score)
     best.carriedBy = rob.id;
+    best.vel = { x: 0, y: 0 }; // catching it mid-slide stops it dead
+    best.z = 0;
+    best.vz = 0;
   }
 }
 
@@ -795,7 +856,7 @@ export function chainCatalystPrompt(
     let best: { x: number; y: number } | null = null;
     let bestD = Infinity;
     for (const h of emptyHooks(chain)) {
-      if (!catalystCanReach(rob, h.pos, g.placeR)) continue;
+      if (!catalystCanReach(rob, h.pos, g.reach)) continue;
       const d = catalystDist(rob, h.pos);
       if (d < bestD) {
         bestD = d;
@@ -809,7 +870,7 @@ export function chainCatalystPrompt(
   for (const c of chain.catalysts) {
     if (c.carriedBy !== null) continue;
     const target = c.hook ? hookPos(c.hook.alliance, c.hook.index) : c.pos;
-    const radius = c.hook ? g.placeR : g.pickR;
+    const radius = g.reach; // one claw does both jobs
     if (!catalystCanReach(rob, target, radius)) continue;
     const d = catalystDist(rob, target);
     if (d < bestD) {

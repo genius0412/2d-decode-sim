@@ -161,8 +161,10 @@ export type ChainShooterMount = 'front' | 'back' | 'left' | 'right';
  * the 6" rings. Three real archetypes, each with a genuinely different reach envelope:
  *  • arm      — a claw on a LONG arm out the mounted edge. The longest reach of the three,
  *    but it must roughly FACE what it is grabbing and the arm is slow to cycle.
- *  • launcher — a claw ground-intake feeding a CATAPULT. Short pickup (it scoops at the
- *    edge) but it can SEAT a ring on a hook from far away, because it throws it.
+ *  • launcher — a short ground-intake CLAW plus a CATAPULT. The claw grabs and places as
+ *    normal (shortest reach of the three); the catapult is a separate trick that FLINGS a
+ *    carried ring far downfield to reposition it, deliberately inaccurately. Transport,
+ *    not scoring.
  *  • turret   — a claw on a rail + turret that auto-tracks the nearest hook. Reaches in
  *    ANY direction (no need to point the chassis) and cycles fastest, but is the heaviest
  *    and its reach is middling. */
