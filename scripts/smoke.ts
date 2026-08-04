@@ -145,6 +145,7 @@ import {
   CHAIN_MAX_LENGTH,
 } from '../src/games/chain/config';
 import { accelMultiplier, chainIntakeMouths, hookPos, labAreas, ringStands } from '../src/games/chain/state';
+import { CHAIN_CATALYSTS, CHAIN_CATALYST_TYPES, CHAIN_DEFAULT_CATALYST } from '../src/games/chain/config';
 import { intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
@@ -6095,6 +6096,164 @@ const mkMM = () => {
     check('chain beams: a robot that cannot clear a beam is pushed off it', !robotIntersectsRect(rob, beam.rect));
   }
 
+  // ---- CATALYST MECHANISMS: three archetypes, configurable type AND mount ----------
+  {
+    /** a CR world with one robot carrying the given mechanism, parked facing +x at origin */
+    const mk = (catalystType: RobotSpec['catalystType'], catalystMount: RobotSpec['catalystMount'] = 'front') => {
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, catalystType, catalystMount, massLb: 34 };
+      const w = createChainWorld('match', 77, [setup]);
+      w.match.phase = 'teleop';
+      w.match.phaseTimeLeft = 120;
+      const rob = w.robots[0];
+      rob.pos = { x: 0, y: 0 };
+      rob.heading = 0;
+      // park every ring far away so a test can place exactly the one it cares about
+      for (const c of w.chain!.catalysts) {
+        c.carriedBy = null;
+        c.hook = null;
+        c.pos = { x: 500, y: 500 };
+      }
+      return { w, rob, ring: w.chain!.catalysts[0] };
+    };
+    const press = (w: World, rob: { id: number }) =>
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ catalyst: true })]]));
+    const release = (w: World, rob: { id: number }) =>
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
+    /** can this build grab a ring placed `d` inches straight off its FRONT? */
+    const grabsAt = (t: RobotSpec['catalystType'], d: number, mount: RobotSpec['catalystMount'] = 'front') => {
+      const { w, rob, ring } = mk(t, mount);
+      ring.pos = { x: d, y: 0 };
+      press(w, rob);
+      return ring.carriedBy === rob.id;
+    };
+
+    // REACH ORDER: the arm out-grabs the turret, which out-grabs the launcher's scoop.
+    // Measured through the real action, not by reading the table back.
+    check(
+      'catalyst: grab reach order arm > turret > launcher (the arm is the reach pick)',
+      grabsAt('arm', 20) && !grabsAt('turret', 20) && grabsAt('turret', 17) && !grabsAt('launcher', 17),
+      `arm@20 ${grabsAt('arm', 20)} turret@20 ${grabsAt('turret', 20)} turret@17 ${grabsAt('turret', 17)} launcher@17 ${grabsAt('launcher', 17)}`,
+    );
+
+    // THE LAUNCHER'S POINT: it seats a ring on a hook from far outside everyone else's
+    // range, because it throws it — hook points without driving to the wall.
+    const seatsFrom = (t: RobotSpec['catalystType'], back: number) => {
+      const { w, rob, ring } = mk(t);
+      const h = hookPos('blue', 0);
+      // park `back` inches out from the hook, facing it
+      rob.heading = Math.atan2(0 - h.y, 0 - h.x) + Math.PI;
+      rob.pos = { x: h.x - Math.cos(rob.heading) * back, y: h.y - Math.sin(rob.heading) * back };
+      ring.carriedBy = rob.id;
+      press(w, rob);
+      return ring.hook !== null;
+    };
+    check(
+      'catalyst: the catapult seats a ring from range no other mechanism reaches',
+      seatsFrom('launcher', 28) && !seatsFrom('arm', 28) && !seatsFrom('turret', 28),
+      `launcher@28 ${seatsFrom('launcher', 28)} arm ${seatsFrom('arm', 28)} turret ${seatsFrom('turret', 28)}`,
+    );
+
+    // FACING: arm/launcher work through a CONE, the rail turret is omnidirectional. Same
+    // ring, same distance, placed off the robot's SIDE instead of its front.
+    const grabsBeside = (t: RobotSpec['catalystType']) => {
+      const { w, rob, ring } = mk(t);
+      ring.pos = { x: 0, y: 7 }; // straight off the left flank
+      press(w, rob);
+      return ring.carriedBy === rob.id;
+    };
+    check(
+      'catalyst: the rail turret reaches sideways; the arm and catapult must face it',
+      grabsBeside('turret') && !grabsBeside('arm') && !grabsBeside('launcher'),
+      `turret ${grabsBeside('turret')} arm ${grabsBeside('arm')} launcher ${grabsBeside('launcher')}`,
+    );
+
+    // MOUNT: bolting the SAME mechanism to the back flips which side it can work from.
+    check(
+      'catalyst: the MOUNT moves the reach — a back-mounted arm grabs behind, not ahead',
+      (() => {
+        const behind = mk('arm', 'back');
+        behind.ring.pos = { x: -12, y: 0 };
+        press(behind.w, behind.rob);
+        const gotBehind = behind.ring.carriedBy === behind.rob.id;
+        const ahead = mk('arm', 'back');
+        ahead.ring.pos = { x: 12, y: 0 };
+        press(ahead.w, ahead.rob);
+        return gotBehind && ahead.ring.carriedBy === null;
+      })(),
+    );
+
+    // CYCLE TIME: the reach/range specialists pay for it in rate. Count how many actions
+    // land in a fixed window of alternating press/release.
+    const actionsIn = (t: RobotSpec['catalystType'], seconds: number) => {
+      const { w, rob, ring } = mk(t);
+      ring.pos = { x: 11, y: 0 }; // just past the front mouth — in reach of all three
+      let n = 0;
+      const ticks = Math.round(seconds / SIM_DT);
+      for (let i = 0; i < ticks; i++) {
+        const carriedBefore = ring.carriedBy;
+        if (i % 2 === 0) press(w, rob);
+        else release(w, rob);
+        if (ring.carriedBy !== carriedBefore) n++;
+        // keep it grabbable: drop it back at the robot so the next press can re-grab
+        if (ring.carriedBy === null) ring.pos = { x: rob.pos.x + 11, y: rob.pos.y };
+      }
+      return n;
+    };
+    const nTurret = actionsIn('turret', 4);
+    const nArm = actionsIn('arm', 4);
+    const nLauncher = actionsIn('launcher', 4);
+    check(
+      'catalyst: cycle rate turret > arm > catapult (reach and range cost tempo)',
+      nTurret > nArm && nArm > nLauncher,
+      `turret ${nTurret} arm ${nArm} launcher ${nLauncher} actions / 4s`,
+    );
+
+    // WEIGHT: ordered arm < launcher < turret, and ALL modest in absolute terms — these
+    // are claws and linkages, not drivetrains (the user's explicit guidance).
+    check(
+      'catalyst: weight order arm < catapult < turret, and every delta stays small',
+      CHAIN_CATALYSTS.arm.massLb < CHAIN_CATALYSTS.launcher.massLb &&
+        CHAIN_CATALYSTS.launcher.massLb < CHAIN_CATALYSTS.turret.massLb &&
+        CHAIN_CATALYSTS.turret.massLb <= 3,
+      `${CHAIN_CATALYSTS.arm.massLb} / ${CHAIN_CATALYSTS.launcher.massLb} / ${CHAIN_CATALYSTS.turret.massLb} lb`,
+    );
+    // and it reaches the actual mass floor, differentially (arm is the baseline)
+    const floorFor = (t: RobotSpec['catalystType']) =>
+      coerceSpec({ ...DEFAULT_SPEC, catalystType: t, massLb: 1 }, undefined, 'chain').massLb;
+    check(
+      'catalyst: the heavier mechanisms really raise the chassis mass floor',
+      floorFor('turret') > floorFor('launcher') && floorFor('launcher') > floorFor('arm'),
+      `arm ${floorFor('arm')} launcher ${floorFor('launcher')} turret ${floorFor('turret')} lb`,
+    );
+
+    // the HUD prompt must agree with the action — a prompt that offers something the
+    // button then refuses is worse than no prompt
+    check(
+      'catalyst: the HUD prompt uses the same reach as the action (no phantom offers)',
+      (() => {
+        for (const t of CHAIN_CATALYST_TYPES) {
+          for (const d of [5, 9, 13, 17, 24]) {
+            const { w, rob, ring } = mk(t);
+            ring.pos = { x: d, y: 0 };
+            const offered = chainCatalystPrompt(w.chain!, rob)?.action === 'pickup';
+            press(w, rob);
+            if (offered !== (ring.carriedBy === rob.id)) return false;
+          }
+        }
+        return true;
+      })(),
+    );
+
+    // coerceSpec owns both fields (enum-checked, defaulted)
+    const junk = coerceSpec({ ...DEFAULT_SPEC, catalystType: 'grabber', catalystMount: 'up' }, undefined, 'chain');
+    check(
+      'catalyst: a bogus type/mount coerces to the default',
+      junk.catalystType === CHAIN_DEFAULT_CATALYST && junk.catalystMount === 'front',
+      `${junk.catalystType}/${junk.catalystMount}`,
+    );
+  }
+
   // catalyst BUTTON: pick up a nearby ring, then seat it on a hook (edge-triggered)
   {
     const w = createChainWorld('match', 5, [chainSetup(0, 'blue')]);
@@ -6102,15 +6261,25 @@ const mkMM = () => {
     w.match.phaseTimeLeft = 120;
     const rob = w.robots[0];
     const free = w.chain!.catalysts.find((c) => c.hook === null)!;
-    free.pos = { x: rob.pos.x + 3, y: rob.pos.y };
+    // the mechanism reaches out its MOUNTED EDGE now, so put the ring in front of the claw
+    // rather than an arbitrary +x offset from the chassis centre
+    rob.heading = 0;
+    free.pos = { x: rob.pos.x + 10, y: rob.pos.y };
     free.carriedBy = null;
     const one = (c: RobotCommand): void => chainStep(w, SIM_DT, new Map([[rob.id, c]]));
     one(cmd({ catalyst: true })); // press → pick up
     check('chain: catalyst button picks up a nearby ring', w.chain!.catalysts.some((c) => c.carriedBy === rob.id));
     one(cmd({})); // release
+    // the mechanism now has a CYCLE time (an arm has to extend and retract), so a second
+    // action a few ticks later is correctly refused — wait it out before seating.
+    for (let i = 0; i < 60; i++) one(cmd({}));
     const hk = hookPos('blue', 0);
-    rob.pos = { x: hk.x - 6, y: hk.y };
+    rob.pos = { x: hk.x - 12, y: hk.y };
     rob.vel = { x: 0, y: 0 };
+    // the default mechanism is the CLAW ARM, which reaches through a cone out its mounted
+    // edge — so it has to be POINTED at the hook. (A rail turret would not care; that is
+    // exactly what you buy with it.) Facing was irrelevant under the old centre-radius model.
+    rob.heading = 0; // front mount, hook is straight ahead at +x
     one(cmd({ catalyst: true })); // press again → seat on the hook
     check('chain: catalyst button seats a carried ring on a hook', w.chain!.catalysts.some((c) => c.hook?.alliance === 'blue'));
   }
@@ -6143,13 +6312,15 @@ const mkMM = () => {
     // far from any ring → no prompt
     rob.pos = { x: 60, y: 60 };
     const farNull = chainCatalystPrompt(w.chain!, rob) === null;
-    // next to the free ring → pickup
-    rob.pos = { x: 3, y: 0 };
+    // next to the free ring, claw pointed at it → pickup
+    rob.pos = { x: -10, y: 0 };
+    rob.heading = 0;
     const canPick = chainCatalystPrompt(w.chain!, rob)?.action === 'pickup';
-    // carrying, next to an empty own hook → place
+    // carrying, facing an empty own hook → place
     free.carriedBy = rob.id;
     const hk = hookPos('blue', 0);
-    rob.pos = { x: hk.x - 6, y: hk.y };
+    rob.pos = { x: hk.x - 12, y: hk.y };
+    rob.heading = 0;
     const canPlace = chainCatalystPrompt(w.chain!, rob)?.action === 'place';
     check('chain ring prompt: reports pickup/place availability (and null when out of range)', farNull && canPick && canPlace, `far=${farNull} pick=${canPick} place=${canPlace}`);
   }
@@ -6165,7 +6336,8 @@ const mkMM = () => {
     // own goal: seat on a blue hook, drive to it, press → removed + carried
     cat.hook = { alliance: 'blue', index: 0 };
     const bh = hookPos('blue', 0);
-    rob.pos = { x: bh.x - 6, y: bh.y };
+    rob.pos = { x: bh.x - 12, y: bh.y };
+    rob.heading = 0; // claw pointed at the hook (see the mechanism reach model)
     rob.vel = { x: 0, y: 0 };
     chainStep(w, SIM_DT, new Map([[rob.id, cmd({ catalyst: true })]]));
     check('chain: take a ring OUT of your own goal', cat.hook === null && cat.carriedBy === rob.id);

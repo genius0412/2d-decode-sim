@@ -30,6 +30,9 @@ import {
   CHAIN_STORAGE_MIN,
   chainStorageMax,
   chainMassFloorBump,
+  CHAIN_CATALYST_TYPES,
+  CHAIN_DEFAULT_CATALYST,
+  CHAIN_DEFAULT_CATALYST_MOUNT,
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_DEFAULT_INTAKE,
   CHAIN_SCORE_MODES,
@@ -40,6 +43,7 @@ import {
 import {
   CHAIN_DEFAULT_INTAKE_MOUNT,
   CHAIN_DEFAULT_SHOOTER_MOUNT,
+  CHAIN_CATALYST_MOUNTS,
   intakeMountOf,
   shooterMountOf,
 } from '../games/chain/mounts';
@@ -75,6 +79,8 @@ export const DEFAULT_SPEC: RobotSpec = {
   chainIntake: CHAIN_DEFAULT_INTAKE,
   intakeMount: CHAIN_DEFAULT_INTAKE_MOUNT,
   shooterMount: CHAIN_DEFAULT_SHOOTER_MOUNT,
+  catalystType: CHAIN_DEFAULT_CATALYST,
+  catalystMount: CHAIN_DEFAULT_CATALYST_MOUNT,
   // deprecated mirrors of the two mounts above (kept in sync by coerceSpec)
   intakeSide: false,
   shooterRear: false,
@@ -197,10 +203,13 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   const preMode = (CHAIN_SCORE_MODES as readonly string[]).includes(sp.scoreMode as string)
     ? (sp.scoreMode as RobotSpec['scoreMode'])
     : (base.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE);
+  const preCatalyst = (CHAIN_CATALYST_TYPES as readonly string[]).includes(sp.catalystType as string)
+    ? (sp.catalystType as RobotSpec['catalystType'])
+    : (base.catalystType ?? CHAIN_DEFAULT_CATALYST);
   const mass = massLimits(
     out.drivetrain,
     out.flywheelInertia,
-    game === 'chain' ? chainMassFloorBump({ ...out, scoreMode: preMode }) : 0,
+    game === 'chain' ? chainMassFloorBump({ ...out, scoreMode: preMode, catalystType: preCatalyst }) : 0,
   );
   out.massLb = clampFinite(sp.massLb, mass.min, mass.max, base.massLb);
 
@@ -224,6 +233,15 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   const rawMounts = sp as Pick<RobotSpec, 'intakeMount' | 'intakeSide' | 'shooterMount' | 'shooterRear'>;
   const hasIntakeMount = sp.intakeMount !== undefined || sp.intakeSide !== undefined;
   const hasShooterMount = sp.shooterMount !== undefined || sp.shooterRear !== undefined;
+  // CATALYST mechanism: type + mount, enum-checked like the others. Resolved BEFORE the
+  // mass clamp above reads it? No — mass is clamped earlier, so the floor uses the RAW
+  // type via `preMode`'s sibling below; keep both in sync if a new heavy mechanism lands.
+  out.catalystType = (CHAIN_CATALYST_TYPES as readonly string[]).includes(sp.catalystType as string)
+    ? (sp.catalystType as RobotSpec['catalystType'])
+    : (base.catalystType ?? CHAIN_DEFAULT_CATALYST);
+  out.catalystMount = (CHAIN_CATALYST_MOUNTS as readonly string[]).includes(sp.catalystMount as string)
+    ? (sp.catalystMount as RobotSpec['catalystMount'])
+    : (base.catalystMount ?? CHAIN_DEFAULT_CATALYST_MOUNT);
   out.intakeMount = hasIntakeMount ? intakeMountOf(rawMounts) : intakeMountOf(base);
   out.shooterMount = hasShooterMount ? shooterMountOf(rawMounts) : shooterMountOf(base);
   // MOUNTS ARE CHAIN-ONLY. They are the one CR field with a SHARED physics effect — the intake

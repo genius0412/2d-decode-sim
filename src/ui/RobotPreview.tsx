@@ -5,9 +5,10 @@ import {
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_LAUNCH_LINE_FRAC,
   CHAIN_TWIN_BARREL_OFFSET,
+  CHAIN_DEFAULT_CATALYST,
 } from '../games/chain/config';
 import { chainIntakeMouths } from '../games/chain/state';
-import { EDGE_ANGLE, edgeGeom, isEndEdge, shooterMountOf } from '../games/chain/mounts';
+import { EDGE_ANGLE, catalystMountOf, edgeGeom, isEndEdge, shooterMountOf } from '../games/chain/mounts';
 import { footprintExtents } from '../sim/field';
 
 /** dimension-label type size, in the viewBox's inch units */
@@ -63,13 +64,22 @@ export function RobotPreview({
   // The dimension label is centered and can be WIDER than a narrow chassis, so it
   // has to be measured in too — an <svg> clips to its viewport, and a 10"-wide
   // robot would otherwise lop the ends off "16.5" wide · 14.5" long".
+  const catEdge = catalystMountOf(spec);
+  const catDist = edgeGeom(spec, catEdge).dist;
+  const catType = spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
+  // how far the CATALYST mechanism protrudes past its mounted edge (the arm is the longest);
+  // folded into the viewBox below so a claw tip is never clipped off the drawing
+  const catOut = chain ? (catType === 'arm' ? 6.2 : catType === 'turret' ? 3.0 : 2.0) : 0;
+  const catTop = chain && catEdge === 'front' ? -(catDist + catOut) : 0;
+  const catBottom = chain && catEdge === 'back' ? catDist + catOut : 0;
+  const catSide = chain && (catEdge === 'left' || catEdge === 'right') ? catDist + catOut : 0;
   const dimLabel = `${w}" wide · ${len}" long`;
   const labelHalf = (dimLabel.length * DIM_FONT * 0.56) / 2; // ~0.56em avg advance
-  const halfSpan = Math.max(w / 2, chain ? cHalf : mouthHalf, labelHalf) + 2.5;
-  const top = tipY - 2;
+  const halfSpan = Math.max(w / 2, chain ? cHalf : mouthHalf, labelHalf, catSide) + 2.5;
+  const top = Math.min(tipY, catTop) - 2;
   // room for the width dimension label — plus a rear-mounted CR intake, which grows the
   // footprint BACKWARD (a viewBox off the chassis alone would clip it off).
-  const bottom = (chain ? cRearY : len / 2) + 3.5;
+  const bottom = Math.max(chain ? cRearY : len / 2, catBottom) + 3.5;
   const vbW = halfSpan * 2;
   const vbH = bottom - top;
 
@@ -181,6 +191,35 @@ export function RobotPreview({
     </g>
   ) : null;
 
+  // CATALYST mechanism, on ITS mounted edge — authored in the robot frame like the intake
+  // and launcher, so the schematic shows where the claw actually reaches from.
+  const cCatalystEl = chain ? (
+    <g transform={`${ROBOT_FRAME} rotate(${deg(EDGE_ANGLE[catEdge])})`} opacity={0.9}>
+      {catType === 'arm' ? (
+        <>
+          <line x1={catDist - 1} y1={0} x2={catDist + 4.6} y2={0} stroke={stroke} strokeWidth={0.5} />
+          <line x1={catDist + 4.6} y1={-1.3} x2={catDist + 6} y2={-0.5} stroke={stroke} strokeWidth={0.5} />
+          <line x1={catDist + 4.6} y1={1.3} x2={catDist + 6} y2={0.5} stroke={stroke} strokeWidth={0.5} />
+        </>
+      ) : catType === 'launcher' ? (
+        <>
+          <polygon
+            points={`${catDist - 0.4},-2.2 ${catDist + 1.9},-1.2 ${catDist + 1.9},1.2 ${catDist - 0.4},2.2`}
+            fill="var(--ds-bg)"
+            stroke={stroke}
+            strokeWidth={0.4}
+          />
+          <line x1={catDist - 0.6} y1={0} x2={catDist - 4.4} y2={-1.8} stroke={stroke} strokeWidth={0.5} />
+        </>
+      ) : (
+        <>
+          <circle cx={catDist - 0.8} cy={0} r={2.1} fill="var(--ds-bg)" stroke={stroke} strokeWidth={0.4} />
+          <line x1={catDist - 0.8} y1={0} x2={catDist + 2.8} y2={0} stroke={accent} strokeWidth={0.5} />
+        </>
+      )}
+    </g>
+  ) : null;
+
   // Chain Reaction archetype launcher: drum = slotted bar along the mounted edge; dumper =
   // catapult bucket; turret = ring + barrel (top-mounted, so it ignores the mount).
   // Drum/dumper are authored along robot +x and rotated onto their mounted edge, so a
@@ -243,6 +282,7 @@ export function RobotPreview({
       }
     >
       {chain ? cIntakeEl : intakeEl}
+      {cCatalystEl}
 
       {/* chassis.
 

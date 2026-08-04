@@ -16,6 +16,8 @@ import {
   CHAIN_MAX_LENGTH,
   chainStorageMax,
   chainMassFloorBump,
+  CHAIN_CATALYST_TYPES,
+  CHAIN_DEFAULT_CATALYST,
 } from '../games/chain/config';
 import {
   CHAIN_MODE_LABELS,
@@ -24,10 +26,15 @@ import {
   CHAIN_INTAKE_MOUNT_BLURBS,
   CHAIN_SHOOTER_MOUNT_LABELS,
   CHAIN_SHOOTER_MOUNT_BLURBS,
+  CHAIN_CATALYST_LABELS,
+  CHAIN_CATALYST_BLURBS,
+  CHAIN_CATALYST_MOUNT_LABELS,
 } from '../games/chain/labels';
 import {
+  CHAIN_CATALYST_MOUNTS,
   CHAIN_INTAKE_MOUNTS,
   CHAIN_SHOOTER_MOUNTS,
+  catalystMountOf,
   intakeMountOf,
   isTurreted,
   shooterMountOf,
@@ -545,6 +552,31 @@ export function Menu({ settings, onChange }: Props) {
                   <div className="ds-opt on" aria-disabled>
                     <span className="ot">{CHAIN_INTAKE_LABELS.sweeper}</span>
                   </div>
+                </div>
+                <h3 className="ds-subh">Catalyst mechanism</h3>
+                <div className="ds-opts">
+                  {CHAIN_CATALYST_TYPES.map((t) => (
+                    <button
+                      key={t}
+                      className={`ds-opt ${(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === t ? 'on' : ''}`}
+                      onClick={() => setSpec({ catalystType: t })}
+                    >
+                      <span className="ot">{CHAIN_CATALYST_LABELS[t]}</span>
+                      <span className="od">{CHAIN_CATALYST_BLURBS[t]}</span>
+                    </button>
+                  ))}
+                </div>
+                <h3 className="ds-subh">Catalyst mount</h3>
+                <div className="ds-opts four">
+                  {CHAIN_CATALYST_MOUNTS.map((m) => (
+                    <button
+                      key={m}
+                      className={`ds-opt mini ${catalystMountOf(spec) === m ? 'on' : ''}`}
+                      onClick={() => setSpec({ catalystMount: m })}
+                    >
+                      <span className="ot">{CHAIN_CATALYST_MOUNT_LABELS[m]}</span>
+                    </button>
+                  ))}
                 </div>
                 <h3 className="ds-subh">Intake mount</h3>
                 <div className="ds-opts four">

@@ -1,4 +1,11 @@
-import type { ChainIntakeMount, ChainIntakeStyle, ChainScoreMode, ChainShooterMount } from '../../types';
+import type {
+  ChainCatalystMount,
+  ChainCatalystType,
+  ChainIntakeMount,
+  ChainIntakeStyle,
+  ChainScoreMode,
+  ChainShooterMount,
+} from '../../types';
 
 /**
  * Shared display labels for Chain Reaction robot-config choices, so the builder
@@ -43,3 +50,24 @@ export const CHAIN_SHOOTER_MOUNT_LABELS: Record<ChainShooterMount, string> = {
 /** The shooter mounts cost nothing and the label already names the edge, so none of them
  * carry a blurb — see the note on the intake blurbs above. */
 export const CHAIN_SHOOTER_MOUNT_BLURBS: Partial<Record<ChainShooterMount, string>> = {};
+
+
+/** CATALYST mechanism labels + the one-line tradeoff each archetype is actually picked for. */
+export const CHAIN_CATALYST_LABELS: Record<ChainCatalystType, string> = {
+  arm: 'Claw arm',
+  launcher: 'Claw + catapult',
+  turret: 'Rail turret claw',
+};
+
+export const CHAIN_CATALYST_BLURBS: Record<ChainCatalystType, string> = {
+  arm: 'Longest grab · must face it · slow',
+  launcher: 'Seats rings from range · short grab',
+  turret: 'Tracks hooks · any direction · fastest',
+};
+
+export const CHAIN_CATALYST_MOUNT_LABELS: Record<ChainCatalystMount, string> = {
+  front: 'FRONT',
+  back: 'BACK',
+  left: 'LEFT',
+  right: 'RIGHT',
+};

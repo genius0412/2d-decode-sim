@@ -1,4 +1,4 @@
-import type { Alliance, RobotSpec, Vec2 } from '../../types';
+import type { Alliance, RobotSpec, RobotState, Vec2 } from '../../types';
 import type { Rect } from '../../sim/field';
 import { INTAKE_PRESETS } from '../../config';
 import {
@@ -11,7 +11,9 @@ import {
   CHAIN_INTAKES,
   CHAIN_DEFAULT_INTAKE,
 } from './config';
-import { type ChainEdge, intakeMountEdges, intakeMountOf } from './mounts';
+import { type ChainEdge, EDGE_ANGLE, EDGE_DIR, catalystMountOf, edgeGeom, intakeMountEdges, intakeMountOf } from './mounts';
+import { CHAIN_CATALYST_NEAR, chainCatalystGeom } from './config';
+import { datan2, hyp, rot, wrapAngle } from '../../math';
 
 /**
  * The CR intake MOUTHS in the robot-local frame — the ONE source of truth shared by the capture
@@ -101,6 +103,10 @@ export interface ChainState {
   descended: Record<number, boolean>;
   /** last catalyst-button state per robot id (for edge-triggered pick/place) */
   catalystHeld: Record<number, boolean>;
+  /** world.time each robot's catalyst mechanism may next act — the per-archetype CYCLE
+   * cooldown (an arm extends/retracts, a catapult re-cocks, a rail turret just indexes).
+   * Plain numbers keyed by robot id, so snapshots/replays carry it. */
+  catalystReadyAt: Record<number, number>;
   /** monotonic ball-id allocator (deterministic — no module global). Set past the
    * initial particle ids at spawn; `updateChain` increments it for reject/flight balls. */
   nextBallId: number;
@@ -118,6 +124,7 @@ export function emptyChainState(): ChainState {
     descentArmed: {},
     descended: {},
     catalystHeld: {},
+    catalystReadyAt: {},
     nextBallId: 1,
     foulEdge: {},
   };
@@ -192,4 +199,54 @@ export function accelMultiplier(state: ChainState, a: Alliance): number {
   let mult = 1;
   for (const c of state.catalysts) if (c.hook && c.hook.alliance === a) mult++;
   return mult;
+}
+
+
+// ─────────────────────────────────────────────────────────── catalyst mechanism ──
+
+/**
+ * The catalyst mechanism's MOUTH in WORLD space — the point on the mounted chassis edge
+ * that its reach is measured from. Bolting the mechanism to a different edge really does
+ * move where it can work from, which is the whole point of making the mount configurable.
+ */
+export function catalystMouth(rob: RobotState): Vec2 {
+  const edge = catalystMountOf(rob.spec);
+  const { dist } = edgeGeom(rob.spec, edge);
+  const d = EDGE_DIR[edge];
+  // deterministic rotate (`rot` → dcos/dsin) — this is SIM code, so an engine-defined
+  // cosine here would be a cross-engine desync, not just different pixels
+  const w = rot({ x: d.x * dist, y: d.y * dist }, rob.heading);
+  return { x: rob.pos.x + w.x, y: rob.pos.y + w.y };
+}
+
+/**
+ * Can this robot's catalyst mechanism work on `target` right now, within `radius`?
+ *
+ * Two gates, and BOTH matter to how each archetype plays:
+ *  • DISTANCE from the mechanism's mouth (not the robot centre), and
+ *  • the reach CONE — the target must lie within `cone` of the mounted edge's outward
+ *    normal. A `turret` has cone = π and so ignores facing entirely (that IS its perk);
+ *    an `arm` or a `launcher` has to be pointed roughly the right way.
+ *
+ * ONE function so the action and the HUD prompt can never disagree about what is in
+ * reach — the prompt saying "place" while the action refuses would be maddening.
+ */
+export function catalystCanReach(rob: RobotState, target: Vec2, radius: number): boolean {
+  const mouth = catalystMouth(rob);
+  const dx = target.x - mouth.x;
+  const dy = target.y - mouth.y;
+  if (hyp(dx, dy) >= radius) return false;
+  const cone = chainCatalystGeom(rob.spec).cone;
+  if (cone >= Math.PI) return true; // omnidirectional (turret)
+  // already in the claw's grasp ⇒ the angle doesn't matter (see CHAIN_CATALYST_NEAR)
+  if (hyp(dx, dy) <= CHAIN_CATALYST_NEAR) return true;
+  const edge = catalystMountOf(rob.spec);
+  const facing = wrapAngle(rob.heading + EDGE_ANGLE[edge]);
+  return Math.abs(wrapAngle(datan2(dy, dx) - facing)) <= cone;
+}
+
+/** distance from the mechanism mouth to `target` (for nearest-target selection). */
+export function catalystDist(rob: RobotState, target: Vec2): number {
+  const m = catalystMouth(rob);
+  return hyp(target.x - m.x, target.y - m.y);
 }

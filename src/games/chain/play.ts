@@ -1,4 +1,4 @@
-import type { Alliance, Artifact, RobotCommand, RobotState, World } from '../../types';
+import type { Alliance, Artifact, RobotCommand, RobotState, Vec2, World } from '../../types';
 import * as C from '../../config';
 import { clamp, datan2, dcos, dsin, hyp, nextRandom, rot, wrapAngle } from '../../math';
 import { robotExtents } from '../../sim/physics';
@@ -6,7 +6,6 @@ import {
   CHAIN_ACCEL_DEPTH,
   CHAIN_ACCEL_HALF_Y,
   CHAIN_PTS,
-  CHAIN_CATALYST_PICK_R,
   CHAIN_EJECT_SPEED,
   CHAIN_EJECT_SPREAD,
   CHAIN_EJECT_VZ,
@@ -15,8 +14,8 @@ import {
   CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_HALF_X,
   CHAIN_HALF_Y,
-  CHAIN_HOOK_PLACE_R,
   chainHopperCap,
+  chainCatalystGeom,
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_TURRET_SLEW,
   CHAIN_AIM_TOL,
@@ -52,6 +51,9 @@ import {
 import {
   accelMultiplier,
   accelSide,
+  catalystCanReach,
+  catalystDist,
+  catalystMouth,
   chainIntakeMouths,
   mouthContains,
   hookPos,
@@ -95,7 +97,7 @@ export function updateChain(
       c.carriedBy = null;
       continue;
     }
-    c.pos = { x: rob.pos.x, y: rob.pos.y };
+    c.pos = catalystMouth(rob); // the ring rides in the claw, not at the chassis centre
   }
 
   // ── robots: aim, fire/dump, catalyst button ────────────────────────────────
@@ -162,10 +164,16 @@ export function updateChain(
       }
     }
 
-    // catalyst pick-up / place-down — EDGE-triggered (acts once per press)
+    // catalyst pick-up / place-down — EDGE-triggered (acts once per press) AND rate-limited
+    // by the mechanism's CYCLE time: an arm has to extend and retract, a catapult has to
+    // re-cock, a rail turret just indexes. That cooldown is what stops the reach-heavy
+    // archetypes from also being the fastest.
     const held = chain.catalystHeld[r.id] ?? false;
     const now = enabled && (cmd?.catalyst ?? false);
-    if (now && !held) catalystAction(chain, r);
+    if (now && !held && world.time >= (chain.catalystReadyAt[r.id] ?? 0)) {
+      catalystAction(chain, r);
+      chain.catalystReadyAt[r.id] = world.time + chainCatalystGeom(r.spec).cycle;
+    }
     chain.catalystHeld[r.id] = now;
   }
 
@@ -705,24 +713,36 @@ function interact(
   return 'none';
 }
 
-/** edge action: place a carried ring on a nearby empty hook (else drop it), or pick
- * up the nearest free ring in range if not carrying one. */
+/** every empty hook on either goal (yours OR the opponent's — seating on either is legal) */
+function emptyHooks(chain: ChainState): { alliance: Alliance; index: number; pos: Vec2 }[] {
+  const out: { alliance: Alliance; index: number; pos: Vec2 }[] = [];
+  for (const a of ['red', 'blue'] as Alliance[]) {
+    for (let i = 0; i < CHAIN_HOOKS_PER_GOAL; i++) {
+      if (chain.catalysts.some((o) => o.hook && o.hook.alliance === a && o.hook.index === i)) continue;
+      out.push({ alliance: a, index: i, pos: hookPos(a, i) });
+    }
+  }
+  return out;
+}
+
+/** edge action: place a carried ring on a reachable empty hook (else drop it), or pick
+ * up the nearest reachable ring if not carrying one. Reach is the MECHANISM's — its
+ * mouth on the mounted edge, its radius, and its cone (see `catalystCanReach`). */
 function catalystAction(chain: ChainState, rob: RobotState): void {
+  const g = chainCatalystGeom(rob.spec);
   const mine = chain.catalysts.find((c) => c.carriedBy === rob.id);
   if (mine) {
-    // seat on the NEAREST reachable empty hook of EITHER goal — your own OR the opponent's
+    // seat on the NEAREST REACHABLE empty hook of either goal. A `launcher` throws the
+    // ring, so its placeR reaches most of a tile — it can score hooks without driving to
+    // the wall, which is the whole reason to pick it.
     let bestHook: { alliance: Alliance; index: number } | null = null;
-    let bestHookD = CHAIN_HOOK_PLACE_R;
-    for (const a of ['red', 'blue'] as Alliance[]) {
-      for (let i = 0; i < CHAIN_HOOKS_PER_GOAL; i++) {
-        const taken = chain.catalysts.some((o) => o.hook && o.hook.alliance === a && o.hook.index === i);
-        if (taken) continue;
-        const h = hookPos(a, i);
-        const d = hyp(h.x - rob.pos.x, h.y - rob.pos.y);
-        if (d < bestHookD) {
-          bestHookD = d;
-          bestHook = { alliance: a, index: i };
-        }
+    let bestHookD = Infinity;
+    for (const h of emptyHooks(chain)) {
+      if (!catalystCanReach(rob, h.pos, g.placeR)) continue;
+      const d = catalystDist(rob, h.pos);
+      if (d < bestHookD) {
+        bestHookD = d;
+        bestHook = { alliance: h.alliance, index: h.index };
       }
     }
     if (bestHook) {
@@ -730,9 +750,9 @@ function catalystAction(chain: ChainState, rob: RobotState): void {
       mine.carriedBy = null;
       return;
     }
-    // no hook in range → drop it here
+    // no hook in reach → drop it at the mechanism's mouth (where the claw actually is)
     mine.carriedBy = null;
-    mine.pos = { x: rob.pos.x, y: rob.pos.y };
+    mine.pos = catalystMouth(rob);
     return;
   }
   // not carrying → take the nearest reachable ring: a FREE ring on the field, OR a
@@ -741,15 +761,12 @@ function catalystAction(chain: ChainState, rob: RobotState): void {
   let bestD = Infinity;
   for (const c of chain.catalysts) {
     if (c.carriedBy !== null) continue;
-    let d: number;
-    if (c.hook) {
-      const h = hookPos(c.hook.alliance, c.hook.index); // reach to the hook (any goal)
-      d = hyp(h.x - rob.pos.x, h.y - rob.pos.y);
-      if (d >= CHAIN_HOOK_PLACE_R) continue;
-    } else {
-      d = hyp(c.pos.x - rob.pos.x, c.pos.y - rob.pos.y);
-      if (d >= CHAIN_CATALYST_PICK_R) continue;
-    }
+    // a SEATED ring is taken off its hook (de-scoring, legal on either goal) and so uses
+    // the hook-reach radius; a loose ring on the floor uses the grab radius.
+    const target = c.hook ? hookPos(c.hook.alliance, c.hook.index) : c.pos;
+    const radius = c.hook ? g.placeR : g.pickR;
+    if (!catalystCanReach(rob, target, radius)) continue;
+    const d = catalystDist(rob, target);
     if (d < bestD) {
       bestD = d;
       best = c;
@@ -770,21 +787,19 @@ export function chainCatalystPrompt(
   chain: ChainState,
   rob: RobotState,
 ): { action: 'pickup' | 'place'; target: { x: number; y: number } } | null {
+  // the SAME reach rules the action uses (`catalystCanReach`), so the prompt can never
+  // promise something the button then refuses to do
+  const g = chainCatalystGeom(rob.spec);
   const mine = chain.catalysts.find((c) => c.carriedBy === rob.id);
   if (mine) {
-    // an empty hook on EITHER goal (your own or the opponent's) is a valid place target
     let best: { x: number; y: number } | null = null;
-    let bestD = CHAIN_HOOK_PLACE_R;
-    for (const a of ['red', 'blue'] as Alliance[]) {
-      for (let i = 0; i < CHAIN_HOOKS_PER_GOAL; i++) {
-        const taken = chain.catalysts.some((o) => o.hook && o.hook.alliance === a && o.hook.index === i);
-        if (taken) continue;
-        const h = hookPos(a, i);
-        const d = hyp(h.x - rob.pos.x, h.y - rob.pos.y);
-        if (d < bestD) {
-          bestD = d;
-          best = h;
-        }
+    let bestD = Infinity;
+    for (const h of emptyHooks(chain)) {
+      if (!catalystCanReach(rob, h.pos, g.placeR)) continue;
+      const d = catalystDist(rob, h.pos);
+      if (d < bestD) {
+        bestD = d;
+        best = h.pos;
       }
     }
     return best ? { action: 'place', target: best } : null;
@@ -794,9 +809,10 @@ export function chainCatalystPrompt(
   for (const c of chain.catalysts) {
     if (c.carriedBy !== null) continue;
     const target = c.hook ? hookPos(c.hook.alliance, c.hook.index) : c.pos;
-    const range = c.hook ? CHAIN_HOOK_PLACE_R : CHAIN_CATALYST_PICK_R;
-    const d = hyp(target.x - rob.pos.x, target.y - rob.pos.y);
-    if (d < range && d < bestD) {
+    const radius = c.hook ? g.placeR : g.pickR;
+    if (!catalystCanReach(rob, target, radius)) continue;
+    const d = catalystDist(rob, target);
+    if (d < bestD) {
       bestD = d;
       best = { action: 'pickup', target };
     }

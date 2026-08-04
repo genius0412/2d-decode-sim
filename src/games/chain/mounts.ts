@@ -1,4 +1,10 @@
-import type { ChainIntakeMount, ChainScoreMode, ChainShooterMount, RobotSpec } from '../../types';
+import type {
+  ChainCatalystMount,
+  ChainIntakeMount,
+  ChainScoreMode,
+  ChainShooterMount,
+  RobotSpec,
+} from '../../types';
 
 /**
  * Chain Reaction MECHANISM MOUNTS — which chassis edge(s) the intake rollers ride on and which
@@ -19,6 +25,7 @@ import type { ChainIntakeMount, ChainScoreMode, ChainShooterMount, RobotSpec } f
 
 export const CHAIN_INTAKE_MOUNTS = ['front', 'back', 'side', 'frontback'] as const;
 export const CHAIN_SHOOTER_MOUNTS = ['front', 'back', 'left', 'right'] as const;
+export const CHAIN_CATALYST_MOUNTS = ['front', 'back', 'left', 'right'] as const;
 export const CHAIN_DEFAULT_INTAKE_MOUNT: ChainIntakeMount = 'front';
 export const CHAIN_DEFAULT_SHOOTER_MOUNT: ChainShooterMount = 'front';
 
@@ -38,6 +45,13 @@ export function shooterMountOf(spec: Pick<RobotSpec, 'shooterMount' | 'shooterRe
   const m = spec.shooterMount;
   if (m && (CHAIN_SHOOTER_MOUNTS as readonly string[]).includes(m)) return m;
   return spec.shooterRear ? 'back' : CHAIN_DEFAULT_SHOOTER_MOUNT;
+}
+
+/** the resolved catalyst mount (same contract as the others). */
+export function catalystMountOf(spec: Pick<RobotSpec, 'catalystMount'>): ChainCatalystMount {
+  const m = spec.catalystMount;
+  if (m && (CHAIN_CATALYST_MOUNTS as readonly string[]).includes(m)) return m;
+  return 'front';
 }
 
 /** the chassis edges an intake mount puts rollers on (order is stable: ends before flanks). */

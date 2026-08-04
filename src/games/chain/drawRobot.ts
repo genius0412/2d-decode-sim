@@ -1,4 +1,4 @@
-import type { Artifact, RobotState, Vec2 } from '../../types';
+import type { Alliance, Artifact, RobotState, Vec2 } from '../../types';
 import * as C from '../../config';
 import { drawWheels, roundRect } from '../../render/drawRobot';
 import {
@@ -8,9 +8,10 @@ import {
   CHAIN_BEAM_RENDER_H,
   CHAIN_BEAM_RUMBLE,
   CHAIN_TWIN_BARREL_OFFSET,
+  CHAIN_DEFAULT_CATALYST,
 } from './config';
-import { chainIntakeMouths } from './state';
-import { EDGE_ANGLE, edgeGeom, isEndEdge, shooterMountOf } from './mounts';
+import { CHAIN_HOOKS_PER_GOAL, catalystMouth, chainIntakeMouths, hookPos } from './state';
+import { EDGE_ANGLE, catalystMountOf, edgeGeom, isEndEdge, shooterMountOf } from './mounts';
 import { beamRide } from './beams';
 
 /** cosmetic clock for the crossing shudder (render-only, so a wall clock is fine + deterministic-safe) */
@@ -96,6 +97,8 @@ export function drawChainRobot(
     else drawCatapult(ctx, g.dist, g.span, loaded);
     ctx.restore();
   }
+
+  drawCatalystMech(ctx, r);
 
   drawHopperFill(ctx, r, hw);
 
@@ -259,4 +262,91 @@ function drawHopperFill(ctx: CanvasRenderingContext2D, r: RobotState, hw: number
   ctx.lineWidth = 0.35;
   roundRect(ctx, x, y, w, 1.7, 0.6);
   ctx.stroke();
+}
+
+
+/**
+ * The CATALYST mechanism, drawn on its mounted edge in the robot frame so what you see is
+ * where `catalystMouth` actually reaches from. Each archetype reads differently on sight:
+ *  • arm      — a long thin arm with a claw at the tip (the reach specialist)
+ *  • launcher — a low scoop at the edge plus a cocked throwing arm behind it
+ *  • turret   — a pivot ring whose claw TRACKS the nearest hook, so it visibly swivels
+ *    independently of the chassis (its whole perk is not needing to point the robot)
+ */
+function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
+  const type = r.spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
+  const edge = catalystMountOf(r.spec);
+  const { dist } = edgeGeom(r.spec, edge);
+  const carrying = false; // colour cue is driven by the ring sprite itself, drawn in draw.ts
+  ctx.save();
+  ctx.rotate(EDGE_ANGLE[edge]); // +x now points OUT of the mounted edge
+  const ink = carrying ? GREEN : '#8a94a4';
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = STEEL_DK;
+  ctx.lineWidth = 0.55;
+
+  if (type === 'arm') {
+    // a long arm out the edge, claw at the tip
+    const reach = 4.6;
+    ctx.beginPath();
+    ctx.moveTo(dist - 1.2, 0);
+    ctx.lineTo(dist + reach, 0);
+    ctx.stroke();
+    ctx.beginPath(); // the claw: two short jaws
+    ctx.moveTo(dist + reach, -1.3);
+    ctx.lineTo(dist + reach + 1.4, -0.5);
+    ctx.moveTo(dist + reach, 1.3);
+    ctx.lineTo(dist + reach + 1.4, 0.5);
+    ctx.stroke();
+  } else if (type === 'launcher') {
+    // a low scoop at the edge + a throwing arm cocked back over the frame
+    ctx.beginPath();
+    ctx.moveTo(dist - 0.4, -2.2);
+    ctx.lineTo(dist + 1.9, -1.2);
+    ctx.lineTo(dist + 1.9, 1.2);
+    ctx.lineTo(dist - 0.4, 2.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath(); // the cocked arm
+    ctx.moveTo(dist - 0.6, 0);
+    ctx.lineTo(dist - 4.4, -1.8);
+    ctx.stroke();
+  } else {
+    // TURRET: a pivot at the edge with a claw arm swivelled toward the NEAREST hook, so
+    // the sprite shows the tracking the archetype is sold on. `hookPos` is pure, so this
+    // needs no world state and stays deterministic.
+    const mouth = catalystMouth(r);
+    let bestA = 0;
+    let bestD = Infinity;
+    for (const a of ['red', 'blue'] as Alliance[]) {
+      for (let i = 0; i < CHAIN_HOOKS_PER_GOAL; i++) {
+        const h = hookPos(a, i);
+        const d = Math.hypot(h.x - mouth.x, h.y - mouth.y);
+        if (d < bestD) {
+          bestD = d;
+          bestA = Math.atan2(h.y - mouth.y, h.x - mouth.x);
+        }
+      }
+    }
+    ctx.beginPath();
+    ctx.arc(dist - 0.8, 0, 2.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.save();
+    ctx.translate(dist - 0.8, 0);
+    // world aim → this local frame (chassis heading + the mount rotation already applied)
+    ctx.rotate(bestA - r.heading - EDGE_ANGLE[edge]);
+    ctx.strokeStyle = GREEN;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(3.6, 0);
+    ctx.moveTo(3.6, -0.9);
+    ctx.lineTo(4.6, -0.3);
+    ctx.moveTo(3.6, 0.9);
+    ctx.lineTo(4.6, 0.3);
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
 }

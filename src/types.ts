@@ -112,6 +112,12 @@ export interface RobotSpec {
    * THAT edge to the goal to shoot. No effect on a turret (top-mounted). Optional (defaulted in
    * coerceSpec, which also migrates the legacy `shooterRear` flag). */
   shooterMount?: ChainShooterMount;
+  /** Chain Reaction: the CATALYST mechanism archetype (arm / launcher / turret). Optional
+   * (defaulted in coerceSpec). */
+  catalystType?: ChainCatalystType;
+  /** Chain Reaction: which chassis edge the catalyst mechanism is mounted on. Optional
+   * (defaulted in coerceSpec). */
+  catalystMount?: ChainCatalystMount;
   /** @deprecated superseded by `intakeMount`. Kept so older saves migrate and older peers/
    * servers (which only know this flag) still see the closest equivalent — `coerceSpec`
    * MIRRORS it from `intakeMount`. Never read it directly; use `intakeMountOf`. */
@@ -150,6 +156,23 @@ export type ChainIntakeMount = 'front' | 'back' | 'side' | 'frontback';
  * forward, +y is the robot's LEFT, so 'left'/'right' fire along ±y and span the chassis LENGTH
  * (not its width). No effect on a turret. */
 export type ChainShooterMount = 'front' | 'back' | 'left' | 'right';
+
+/** Chain Reaction CATALYST mechanism (see `RobotSpec.catalystType`) — how the robot handles
+ * the 6" rings. Three real archetypes, each with a genuinely different reach envelope:
+ *  • arm      — a claw on a LONG arm out the mounted edge. The longest reach of the three,
+ *    but it must roughly FACE what it is grabbing and the arm is slow to cycle.
+ *  • launcher — a claw ground-intake feeding a CATAPULT. Short pickup (it scoops at the
+ *    edge) but it can SEAT a ring on a hook from far away, because it throws it.
+ *  • turret   — a claw on a rail + turret that auto-tracks the nearest hook. Reaches in
+ *    ANY direction (no need to point the chassis) and cycles fastest, but is the heaviest
+ *    and its reach is middling. */
+export type ChainCatalystType = 'arm' | 'launcher' | 'turret';
+
+/** Which chassis edge the catalyst mechanism is mounted on — the same four-edge model the
+ * intake and shooter mounts use. Sets where the mechanism REACHES FROM, and which way its
+ * reach cone points (the `turret` type is omnidirectional, so the mount only moves the
+ * pivot). */
+export type ChainCatalystMount = 'front' | 'back' | 'left' | 'right';
 
 export type BallState =
   | { kind: 'ground' }

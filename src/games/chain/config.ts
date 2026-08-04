@@ -39,7 +39,15 @@
  * below. Refine those constants rather than inventing new ones.
  */
 
-import type { ChainIntakeMount, ChainIntakeStyle, ChainScoreMode, RobotSpec, StartCat } from '../../types';
+import type {
+  ChainCatalystMount,
+  ChainCatalystType,
+  ChainIntakeMount,
+  ChainIntakeStyle,
+  ChainScoreMode,
+  RobotSpec,
+  StartCat,
+} from '../../types';
 import { intakeMountOf } from './mounts';
 
 /** millimetres → inches (the sim's world unit) */
@@ -357,7 +365,12 @@ export const CHAIN_STORE_FRONTBACK_MULT = 0.75; // FRONT+BACK: two open ends, le
  * is already priced into the base chassis. Threaded into `massLimits` by coerceSpec and by
  * the builder's mass slider, so the floor the UI offers is the floor the sim enforces. */
 export function chainMassFloorBump(spec: RobotSpec): number {
-  return (spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) === 'twinturret' ? CHAIN_TWIN_MASS_FLOOR : 0;
+  const scoring = (spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) === 'twinturret' ? CHAIN_TWIN_MASS_FLOOR : 0;
+  // every robot carries SOME catalyst mechanism, so this is a differential cost between
+  // the three archetypes rather than a tax on having one at all — the lightest (arm) is
+  // the baseline a chassis is expected to carry.
+  const catalyst = chainCatalystGeom(spec).massLb - CHAIN_CATALYSTS[CHAIN_DEFAULT_CATALYST].massLb;
+  return scoring + catalyst;
 }
 
 /** the hopper-volume factor an intake mount costs (1 = no cost). */
@@ -408,10 +421,68 @@ export const CHAIN_SHOT_VZ = 70; // in/s initial upward (visual arc)
  * CHASSIS HEADING (`chainGoalAimHeading` returns the lead angle, so the whole robot points off-
  * goal by the lead). `leadDir` (play.ts) solves the projectile-lead angle. */
 
-/** catalysts: auto-pick a nearby free catalyst (if not already carrying one); seat it
- * on a hook when carried near one. */
-export const CHAIN_CATALYST_PICK_R = 9; // pick-up radius (to robot center)
-export const CHAIN_HOOK_PLACE_R = 12; // seat-on-hook radius (carried catalyst → hook)
+/** LEGACY catalyst radii — the old one-size-fits-all grabber, measured from the robot
+ * CENTRE with no facing requirement and no cycle time. Kept only as the reference the
+ * per-archetype numbers below are calibrated against (the `arm` is the closest match).
+ * Nothing reads these at runtime any more; `CHAIN_CATALYSTS` does. */
+export const CHAIN_CATALYST_PICK_R = 9;
+export const CHAIN_HOOK_PLACE_R = 12;
+
+/**
+ * CATALYST MECHANISMS — how a robot picks up rings and seats them on hooks.
+ *
+ * Every number is measured from the mechanism's MOUTH (a point on the mounted chassis
+ * edge), not the robot centre, so where you bolt it genuinely matters. `cone` is the
+ * half-angle either side of that edge's outward normal that the mechanism can work
+ * through; `Math.PI` means omnidirectional. `cycle` is the cooldown between catalyst
+ * actions. `massLb` is added to the chassis mass FLOOR.
+ *
+ * The three are deliberately shaped so no one of them dominates:
+ *  • ARM — the reach specialist. A long arm out one edge: the biggest pickup radius, and
+ *    it can pluck a ring off a hook from further back than anything else. Pays for it by
+ *    having to FACE the target (a ±50° cone) and by being slow to extend/retract.
+ *  • LAUNCHER — the range specialist, and the most interesting one: its pickup is the
+ *    SHORTEST (it scoops off the floor right at the edge), but because it THROWS the ring
+ *    it can seat one on a hook from most of a tile away. That buys hook points without
+ *    committing the robot to the wall. Narrowest cone (you must aim a catapult) and the
+ *    slowest cycle (it has to re-cock).
+ *  • TURRET — the convenience specialist. A claw on a rail + turret that tracks the
+ *    nearest hook, so it works in ANY direction and never asks the driver to reorient,
+ *    and it cycles fastest. Middling reach, and the heaviest of the three.
+ *
+ * WEIGHTS are all small in absolute terms (1.4-2.6 lb on a 20-42 lb chassis) — these are
+ * claws and linkages, not drivetrains. The ORDER is what carries the balance: arm (bare
+ * extrusion + a servo) < launcher (adds a catapult and its motor) < turret (adds a rail,
+ * a turret ring, and a second motor).
+ */
+export interface ChainCatalystGeom {
+  pickR: number; // in — grab radius, from the mechanism mouth
+  placeR: number; // in — hook seat/steal radius, from the mechanism mouth
+  cone: number; // rad — half-angle either side of the mount's outward normal (PI = omni)
+  cycle: number; // s — cooldown between catalyst actions
+  massLb: number; // lb added to the chassis mass floor
+}
+export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
+  arm: { pickR: 14, placeR: 14, cone: 0.87, cycle: 0.9, massLb: 1.4 },
+  launcher: { pickR: 8, placeR: 26, cone: 0.61, cycle: 1.3, massLb: 2.0 },
+  turret: { pickR: 11, placeR: 15, cone: Math.PI, cycle: 0.55, massLb: 2.6 },
+};
+/** Within this distance of the mechanism's mouth the reach CONE does not apply — the ring
+ * is already in the claw's grasp, so the angle it sits at is irrelevant. Without this, a
+ * ring you had just driven onto (and so nudged slightly under the bumper, BEHIND the claw
+ * line) would become ungrabbable, which is a real gameplay annoyance rather than a
+ * meaningful constraint. The cone still governs everything further out, which is where
+ * "does the mechanism point the right way" is an actual decision. */
+export const CHAIN_CATALYST_NEAR = 5;
+
+export const CHAIN_CATALYST_TYPES = ['arm', 'launcher', 'turret'] as const;
+export const CHAIN_DEFAULT_CATALYST: ChainCatalystType = 'arm';
+export const CHAIN_DEFAULT_CATALYST_MOUNT: ChainCatalystMount = 'front';
+
+/** the catalyst mechanism's geometry for a spec (defaulted). */
+export function chainCatalystGeom(spec: RobotSpec): ChainCatalystGeom {
+  return CHAIN_CATALYSTS[spec.catalystType ?? CHAIN_DEFAULT_CATALYST];
+}
 
 /** endgame: park fully inside a Lab-Area corner square (5 pt) / ascend within this
  * radius of a Ring Stand (100 pt). The SAME radius decides the AUTO descent: a robot
