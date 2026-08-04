@@ -155,6 +155,9 @@ import {
   CHAIN_CATAPULT_RANGE_MAX,
   catapultMassFor,
   catapultCycleFor,
+  CHAIN_NET_RESTITUTION,
+  CHAIN_WALL_RESTITUTION,
+  CHAIN_NET_VZ_KEEP,
 } from '../src/games/chain/config';
 import { intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
 
@@ -6346,44 +6349,56 @@ const mkMM = () => {
       }),
     );
 
-    // RED CARD: eject a Catalyst OVER the wall and the alliance loses outright. Aim a
-    // long-range catapult at a nearby wall so the ring is still above wall height when it
-    // crosses the perimeter.
+    // NETTING: the field is walled low and NETTED above, so nothing ever leaves play. Throw
+    // a long-range catapult straight at a wall from close range — on a high arc, at a flat
+    // one, and hard into a corner — and the ring must always end up back inside.
     {
-      const setup = chainSetup(0, 'blue');
-      setup.spec = { ...DEFAULT_SPEC, catalystType: 'launcher', catapultRange: 120, catapultYaw: 0, massLb: 34 };
-      const w = createChainWorld('match', 909, [setup]);
-      w.match.phase = 'teleop';
-      w.match.phaseTimeLeft = 120;
-      const rob = w.robots[0];
-      rob.pos = { x: CHAIN_HALF_X - 40, y: 0 }; // far enough out that the arc clears the wall top
-      rob.heading = 0; // catapult points straight at it
-      for (const c of w.chain!.catalysts) {
-        c.carriedBy = null;
-        c.hook = null;
-        c.pos = { x: 500, y: 500 };
-        c.vel = { x: 0, y: 0 };
-        c.z = 0;
-        c.vz = 0;
-        c.flungBy = null;
-        c.outOfPlay = false;
-      }
-      const ring = w.chain!.catalysts[0];
-      ring.carriedBy = rob.id;
-      w.chain!.particlePoints.blue = 50; // it HAD a real score before the red card
-      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ fling: true })]]));
-      for (let i = 0; i < 120; i++) chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
+      const atWall = (yawDeg: number, standoff: number, seed: number) => {
+        const setup = chainSetup(0, 'blue');
+        setup.spec = { ...DEFAULT_SPEC, catalystType: 'launcher', catapultRange: 120, catapultYaw: yawDeg, massLb: 36 };
+        const w = createChainWorld('match', seed, [setup]);
+        w.match.phase = 'teleop';
+        w.match.phaseTimeLeft = 120;
+        const rob = w.robots[0];
+        rob.pos = { x: CHAIN_HALF_X - standoff, y: CHAIN_HALF_Y - standoff };
+        rob.heading = 0;
+        for (const c of w.chain!.catalysts) {
+          c.carriedBy = null; c.hook = null; c.pos = { x: 0, y: 0 };
+          c.vel = { x: 0, y: 0 }; c.z = 0; c.vz = 0;
+        }
+        const ring = w.chain!.catalysts[0];
+        ring.carriedBy = rob.id;
+        chainStep(w, SIM_DT, new Map([[rob.id, cmd({ fling: true })]]));
+        let n = 0;
+        while ((ring.z > 0 || hyp(ring.vel.x, ring.vel.y) > 0.01) && n < 900) {
+          chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
+          n++;
+        }
+        return ring.pos;
+      };
+      const cases: [number, number, number][] = [
+        [0, 10, 701], [0, 30, 702], [45, 8, 703], [90, 12, 704], [30, 20, 705],
+      ];
+      const inside = cases.map(([y, d, sd]) => atWall(y, d, sd))
+        .every((p) => Math.abs(p.x) <= CHAIN_HALF_X && Math.abs(p.y) <= CHAIN_HALF_Y);
+      check('catalyst: the netting keeps every throw in play — nothing can leave the field', inside);
+
+      // the NET is slacker than the wall: a ring that hits it high rebounds LESS than one
+      // that hits the rigid wall low, so a wild high throw dies against the perimeter
       check(
-        'catalyst: ejecting a ring over the wall RED CARDS the alliance (score forced to 0)',
-        w.chain!.redCard.blue === true && ring.outOfPlay === true && w.match.scores.blue.total === 0,
-        `redCard=${w.chain!.redCard.blue} outOfPlay=${ring.outOfPlay} total=${w.match.scores.blue.total}`,
+        'catalyst: netting rebounds less than the rigid wall (slack absorbs the energy)',
+        CHAIN_NET_RESTITUTION < CHAIN_WALL_RESTITUTION && CHAIN_NET_VZ_KEEP < 1,
+        `net ${CHAIN_NET_RESTITUTION} vs wall ${CHAIN_WALL_RESTITUTION}`,
       );
-      // ...and it is latched: scoring more afterwards still totals 0
-      w.chain!.particlePoints.blue = 120;
-      chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
-      check('catalyst: the red card is LATCHED — later points cannot undo it', w.match.scores.blue.total === 0);
-      // the opponent is untouched
-      check('catalyst: a red card hits only the offending alliance', w.chain!.redCard.red === false);
+      // and a ring is never removed from play — all four are always grabbable somewhere
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, catalystType: 'launcher', catapultRange: 120, massLb: 36 };
+      const w = createChainWorld('match', 706, [setup]);
+      check(
+        'catalyst: all four rings stay in play (no out-of-bounds removal)',
+        w.chain!.catalysts.length === 4,
+        `${w.chain!.catalysts.length} rings`,
+      );
     }
 
     // A ring that ends up ON a robot slides off instead of perching on the chassis.

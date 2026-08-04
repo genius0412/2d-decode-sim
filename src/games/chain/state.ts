@@ -81,13 +81,6 @@ export type EndgameState = 'none' | 'parked' | 'ascended';
 export interface ChainCatalyst {
   id: number;
   pos: Vec2;
-  /** the robot id that last FLUNG this ring, until it rests or is picked up. If a flung
-   * ring leaves the field this is who gets the red card — responsibility has to survive the
-   * flight, since the ring lands long after the button press. */
-  flungBy: number | null;
-  /** ejected from the field (red card). It is OUT OF PLAY and stays out: putting it back
-   * would quietly undo the thing the rule punishes. */
-  outOfPlay?: boolean;
   /** IN-FLIGHT / SLIDING motion after a catapult fling. A flung ring flies a real arc and
    * then slides to rest — it is never teleported to a landing spot (same no-teleporting
    * rule the Particles follow). All three are 0 for a ring at rest, carried, or hooked. */
@@ -122,10 +115,6 @@ export interface ChainState {
   catalystReadyAt: Record<number, number>;
   /** was the CATAPULT throw button held last tick, per robot (its own edge). */
   flingHeld: Record<number, boolean>;
-  /** RED CARD — this alliance ejected a Catalyst from the field. Per the manual that is an
-   * immediate red card: the alliance LOSES, so its score is forced to 0 for the rest of the
-   * match. Latched; there is no way back. */
-  redCard: Record<Alliance, boolean>;
   /** monotonic ball-id allocator (deterministic — no module global). Set past the
    * initial particle ids at spawn; `updateChain` increments it for reject/flight balls. */
   nextBallId: number;
@@ -145,7 +134,6 @@ export function emptyChainState(): ChainState {
     catalystHeld: {},
     catalystReadyAt: {},
     flingHeld: {},
-    redCard: { red: false, blue: false },
     nextBallId: 1,
     foulEdge: {},
   };

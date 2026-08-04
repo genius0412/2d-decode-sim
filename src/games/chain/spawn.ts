@@ -172,7 +172,7 @@ export function createChainWorld(
   const chain = emptyChainState();
   chain.nextBallId = id; // runtime spawns continue past the initial particle ids
   ringStands().forEach((rs, i) => {
-    const cat: ChainCatalyst = { id: i, pos: { ...rs }, carriedBy: null, hook: null, flungBy: null, vel: { x: 0, y: 0 }, z: 0, vz: 0 };
+    const cat: ChainCatalyst = { id: i, pos: { ...rs }, carriedBy: null, hook: null, vel: { x: 0, y: 0 }, z: 0, vz: 0 };
     chain.catalysts.push(cat);
   });
 

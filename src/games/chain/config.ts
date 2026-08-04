@@ -57,10 +57,21 @@ export const mm = (v: number): number => v / 25.4;
 export const CHAIN_HALF_X = 72;
 export const CHAIN_HALF_Y = 72;
 
-/** perimeter WALL HEIGHT (in). Load-bearing for the catapult: a ring thrown on a high arc
- * can CLEAR the wall and leave the field, which is a red card (see `CHAIN_FLING_VZ` —
- * apex ≈ vz²/2g ≈ 15.7", comfortably over a 12" wall). A low, flat throw stays contained. */
-export const CHAIN_WALL_H = 12;
+/**
+ * PERIMETER CONTAINMENT. The real field is walled to `CHAIN_WALL_H` and then NETTED above
+ * that, so nothing can leave play — a Catalyst thrown on a high arc hits the net and drops
+ * back in rather than escaping.
+ *
+ * The two surfaces behave differently, which is the point of modelling them separately: the
+ * rigid lower wall gives a real (if damped) rebound, while netting is slack and absorbs most
+ * of the energy — a ring that hits the net barely comes back, it mostly just falls. That
+ * makes a wild long throw self-punishing (your ring ends up dead against the perimeter)
+ * without ever removing it from play.
+ */
+export const CHAIN_WALL_H = 12; // in — rigid wall below this, netting above
+export const CHAIN_WALL_RESTITUTION = 0.3; // rigid wall: a modest bounce
+export const CHAIN_NET_RESTITUTION = 0.12; // netting: slack, soaks up most of the energy
+export const CHAIN_NET_VZ_KEEP = 0.25; // netting also kills most of the ring's climb
 
 /** perimeter-wall build params (inner faces exactly at ±half) */
 export const CHAIN_WALL_T = 10; // half-thickness, well outside the field
