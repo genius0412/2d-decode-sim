@@ -81,10 +81,11 @@ function makeChainRobot(setup: RobotSetup, nth: number): RobotState {
   // turret branch in play.ts — so it must begin aimed, not have to swing around from the spawn
   // heading). Turretless launchers keep the chassis heading.
   const mouthX = accelSide(setup.alliance) * CHAIN_HALF_X;
-  const turretHeading =
-    (spec.scoreMode ?? 'turret') === 'turret'
-      ? datan2(0 - pose.pos.y, mouthX - pose.pos.x)
-      : pose.heading;
+  // BOTH turreted archetypes start already POINTED at their accelerator (the turret slews
+  // at a finite rate, so it must begin aimed rather than swing around from the spawn
+  // heading). Turretless launchers keep the chassis heading.
+  const turreted = (spec.scoreMode ?? 'turret') === 'turret' || spec.scoreMode === 'twinturret';
+  const turretHeading = turreted ? datan2(0 - pose.pos.y, mouthX - pose.pos.x) : pose.heading;
   return {
     id: setup.id,
     alliance: setup.alliance,
@@ -100,6 +101,7 @@ function makeChainRobot(setup: RobotSetup, nth: number): RobotState {
     // drop traction, and it matches DRIVETRAIN_PRESETS.butterfly (the mecanum half).
     butterflyTank: false,
     driveModeHeld: false,
+    twinBarrel: false,
     hopper: [],
     fieldCentric: assists.fieldCentric,
     aimAssist: assists.aimAssist,

@@ -240,7 +240,36 @@ export const CHAIN_DEFAULT_INTAKE: ChainIntakeStyle = 'sweeper';
  *    (`CHAIN_DUMP_RANGE`); balls stored on opposite sides leave at DIFFERENT speeds
  *    (`CHAIN_DUMP_SIDE_VAR`) ⇒ real scatter (< 100% accuracy).
  */
-export const CHAIN_SCORE_MODES = ['turret', 'drum', 'dumper'] as const;
+export const CHAIN_SCORE_MODES = ['turret', 'twinturret', 'drum', 'dumper'] as const;
+
+/**
+ * TWIN TURRET — two shooters on one turret.
+ *
+ * THROUGHPUT (`CHAIN_TWIN_FIRE_MULT` 1.65, i.e. ~21.5 bps vs the single turret's 13):
+ * deliberately NOT 2.0. Two barrels on ONE turret still share the parts that actually
+ * gate a turret's rate — a single dye-rotor/indexer lifting Particles out of the hopper,
+ * and a single aim solution. Doubling the barrels does not double the indexer, and
+ * alternating between them costs a small handoff each cycle. 1.65 reads as "both barrels
+ * firing, minus ~17% for indexer contention and alternation overhead", which lands it
+ * clearly ahead of a single turret and clearly behind the drum's 24 bps stream.
+ *
+ * STORAGE (`CHAIN_STORE_TWIN_MULT` 0.42 vs the single turret's 0.55): a second flywheel,
+ * its motor, and a second feed path all eat the centre volume the hopper wants — about a
+ * quarter less than the already-cramped single turret.
+ *
+ * WEIGHT (`CHAIN_TWIN_MASS_FLOOR` +2.5 lb on the chassis mass FLOOR): one more flywheel
+ * assembly — motor ~0.8 lb plus wheel, hood, and plate ~1.5 lb. Modest against a 20-42 lb
+ * chassis, but it stacks with the drivetrain floor, so a twin turret can't be built at the
+ * very lightest weights.
+ *
+ * The two barrels sit `CHAIN_TWIN_BARREL_OFFSET` either side of the turret centreline and
+ * fire ALTERNATELY, so shots visibly leave from both — a real muzzle offset rather than
+ * two sprites firing from the same point.
+ */
+export const CHAIN_TWIN_FIRE_MULT = 1.65;
+export const CHAIN_STORE_TWIN_MULT = 0.42;
+export const CHAIN_TWIN_MASS_FLOOR = 2.5; // lb added to the chassis mass floor
+export const CHAIN_TWIN_BARREL_OFFSET = 1.5; // in — lateral spacing of the two muzzles
 export const CHAIN_DEFAULT_SCORE_MODE: ChainScoreMode = 'turret';
 
 /** turret slew rate (rad/s). The turret tracks the lead solution at THIS max rate — it follows
@@ -323,6 +352,14 @@ export const CHAIN_STORE_LAUNCHER_MULT = 1.0; // drum + dumper: open hopper (lar
 export const CHAIN_STORE_SIDE_MULT = 0.6; // SIDE intake: open flanks eat into the hopper ⇒ smaller
 export const CHAIN_STORE_FRONTBACK_MULT = 0.75; // FRONT+BACK: two open ends, less costly than flanks
 
+/** extra lb on the chassis MASS FLOOR from the Chain Reaction scoring mechanism. Only the
+ * twin turret carries one today (a whole second flywheel assembly); every other archetype
+ * is already priced into the base chassis. Threaded into `massLimits` by coerceSpec and by
+ * the builder's mass slider, so the floor the UI offers is the floor the sim enforces. */
+export function chainMassFloorBump(spec: RobotSpec): number {
+  return (spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) === 'twinturret' ? CHAIN_TWIN_MASS_FLOOR : 0;
+}
+
 /** the hopper-volume factor an intake mount costs (1 = no cost). */
 export function chainMountStoreMult(mount: ChainIntakeMount): number {
   if (mount === 'side') return CHAIN_STORE_SIDE_MULT;
@@ -338,8 +375,11 @@ export function chainStorageMax(spec: RobotSpec): number {
   const area = spec.length * spec.width;
   const mode = spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE;
   const mult =
-    (mode === 'turret' ? CHAIN_STORE_TURRET_MULT : CHAIN_STORE_LAUNCHER_MULT) *
-    chainMountStoreMult(intakeMountOf(spec));
+    (mode === 'turret'
+      ? CHAIN_STORE_TURRET_MULT
+      : mode === 'twinturret'
+        ? CHAIN_STORE_TWIN_MULT // a second shooter assembly eats even more centre volume
+        : CHAIN_STORE_LAUNCHER_MULT) * chainMountStoreMult(intakeMountOf(spec));
   const cap = Math.round((area / CHAIN_STORE_AREA_PER_BALL) * mult);
   return Math.max(CHAIN_STORAGE_MIN, Math.min(CHAIN_STORAGE_MAX, cap));
 }

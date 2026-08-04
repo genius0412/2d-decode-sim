@@ -11,6 +11,8 @@ import {
   CHAIN_EJECT_SPREAD,
   CHAIN_EJECT_VZ,
   CHAIN_FIRE_INTERVAL,
+  CHAIN_TWIN_FIRE_MULT,
+  CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_HALF_X,
   CHAIN_HALF_Y,
   CHAIN_HOOK_PLACE_R,
@@ -105,7 +107,7 @@ export function updateChain(
     const mode = r.spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE;
     const distMouth = hyp(mouth.x - r.pos.x, mouth.y - r.pos.y);
 
-    if (mode === 'turret') {
+    if (mode === 'turret' || mode === 'twinturret') {
       // TURRET single-shooter: auto-aim + index ONE particle per cadence, from ANY range.
       // SHOOTING ON THE MOVE: the turret leads (aims where muzzle + inherited chassis velocity
       // heads at the mouth), BUT it SLEWS toward that solution at a finite rate — it can't snap.
@@ -115,12 +117,19 @@ export function updateChain(
       const desiredTurret = leadDir(r.pos, mouth, CHAIN_SHOT_SPEED, r.vel);
       r.turretHeading = slewAngle(r.turretHeading, desiredTurret, CHAIN_TURRET_SLEW * dt);
       if (wantsFire && r.hopper.length > 0 && world.time >= r.fireReadyAt) {
+        const twin = mode === 'twinturret';
         r.hopper.shift();
-        launchToAccel(world, chain, r, mouth, CHAIN_SHOT_SPEED, 0);
+        // TWIN: alternate the two muzzles. `twinBarrel` flips every shot, so the stream
+        // visibly leaves from both barrels rather than one point — and it is plain state,
+        // so snapshots/replays reproduce which barrel fired.
+        const lat = twin ? (r.twinBarrel ? CHAIN_TWIN_BARREL_OFFSET : -CHAIN_TWIN_BARREL_OFFSET) : 0;
+        if (twin) r.twinBarrel = !r.twinBarrel;
+        launchToAccel(world, chain, r, mouth, CHAIN_SHOT_SPEED, 0, lat);
         // ACCUMULATE the interval (don't re-anchor to world.time) so the sub-tick remainder
-        // carries and the cadence averages EXACTLY 13 bps; clamp forward when the hopper has
-        // been idle so a resumed burst can't catch up on accumulated debt.
-        r.fireReadyAt += CHAIN_FIRE_INTERVAL;
+        // carries and the cadence averages EXACTLY its nominal rate; clamp forward when the
+        // hopper has been idle so a resumed burst can't catch up on accumulated debt.
+        // A twin divides the interval by CHAIN_TWIN_FIRE_MULT — two barrels, one indexer.
+        r.fireReadyAt += twin ? CHAIN_FIRE_INTERVAL / CHAIN_TWIN_FIRE_MULT : CHAIN_FIRE_INTERVAL;
         if (r.fireReadyAt < world.time) r.fireReadyAt = world.time;
         r.lastFireAt = world.time;
       }
@@ -373,6 +382,10 @@ function launchToAccel(
   mouth: { x: number; y: number },
   horizSpeed: number,
   latVel: number,
+  /** lateral muzzle offset (in) from the turret centreline — the twin turret's two
+   * barrels. Shifts where the Particle is BORN, not where it is aimed: both barrels
+   * share the one aim solution, exactly as they share the one turret. */
+  muzzleLat = 0,
 ): void {
   const distMouth = Math.max(1, hyp(mouth.x - r.pos.x, mouth.y - r.pos.y));
   // PHYSICAL launch: the ball leaves along the turret's ACTUAL heading (`r.turretHeading`, which
@@ -393,7 +406,11 @@ function launchToAccel(
     id: chain.nextBallId++,
     color: 'green',
     state: { kind: 'flight', target: r.alliance },
-    pos: { x: r.pos.x + dir.x * 4, y: r.pos.y + dir.y * 4 }, // leaves from the barrel tip
+    // leaves from the barrel tip, offset across the turret for a twin's two muzzles
+    pos: {
+      x: r.pos.x + dir.x * 4 + perp.x * muzzleLat,
+      y: r.pos.y + dir.y * 4 + perp.y * muzzleLat,
+    },
     vel: { x: netx, y: nety },
     z: z0,
     vz,

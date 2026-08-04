@@ -81,6 +81,11 @@ async function main() {
     return JSON.stringify({heads,caps,dts,on});
   })()`);
   console.log('BUILDER', built);
+  // crop to the PREVIEW's real DOM rect — a deterministic target, unlike guessing at
+  // where the robot happens to be on the field
+  const pv = await js(`(()=>{const s=document.querySelector('svg[role=img]');if(!s)return null;
+    const r=s.getBoundingClientRect();return JSON.stringify({x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)});})()`);
+  if (pv) { const r = JSON.parse(pv); await crop('01b-preview', r); }
 
   // ---- LIVE MATCH ----
   await clickText('Play');

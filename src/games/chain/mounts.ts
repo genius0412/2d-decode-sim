@@ -1,4 +1,4 @@
-import type { ChainIntakeMount, ChainShooterMount, RobotSpec } from '../../types';
+import type { ChainIntakeMount, ChainScoreMode, ChainShooterMount, RobotSpec } from '../../types';
 
 /**
  * Chain Reaction MECHANISM MOUNTS — which chassis edge(s) the intake rollers ride on and which
@@ -93,4 +93,12 @@ export function edgeGeom(spec: RobotSpec, edge: ChainEdge): { dist: number; span
   const hl = spec.length / 2;
   const hw = spec.width / 2;
   return isEndEdge(edge) ? { dist: hl, span: hw } : { dist: hw, span: hl };
+}
+
+/** is this archetype TURRETED (top-mounted, aims itself)? Turreted launchers ignore
+ * `shooterMount` entirely — the turret rotates, so there is no chassis edge to pick — and
+ * they must NOT be steered by the fire button the way a turretless drum/dumper is. One
+ * predicate so every UI + sim site agrees, including any future turret variant. */
+export function isTurreted(mode: ChainScoreMode | undefined): boolean {
+  return mode === undefined || mode === 'turret' || mode === 'twinturret';
 }

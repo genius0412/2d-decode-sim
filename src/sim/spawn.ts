@@ -29,6 +29,7 @@ import {
   CHAIN_STORAGE_DEFAULT,
   CHAIN_STORAGE_MIN,
   chainStorageMax,
+  chainMassFloorBump,
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_DEFAULT_INTAKE,
   CHAIN_SCORE_MODES,
@@ -189,8 +190,18 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   // 3) INERTIA in 0..1
   out.flywheelInertia = clampFinite(sp.flywheelInertia, 0, 1, base.flywheelInertia);
 
-  // 4) MASS range from DRIVETRAIN × INERTIA (the floor rises with inertia)
-  const mass = massLimits(out.drivetrain, out.flywheelInertia);
+  // 4) MASS range from DRIVETRAIN × INERTIA (the floor rises with inertia), PLUS any
+  // heavy game mechanism. The CR scoring archetype is resolved just below for storage,
+  // so read it here from the raw/base input the same way — a twin turret carries a whole
+  // second flywheel assembly and cannot be built at the lightest weights.
+  const preMode = (CHAIN_SCORE_MODES as readonly string[]).includes(sp.scoreMode as string)
+    ? (sp.scoreMode as RobotSpec['scoreMode'])
+    : (base.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE);
+  const mass = massLimits(
+    out.drivetrain,
+    out.flywheelInertia,
+    game === 'chain' ? chainMassFloorBump({ ...out, scoreMode: preMode }) : 0,
+  );
   out.massLb = clampFinite(sp.massLb, mass.min, mass.max, base.massLb);
 
   // Chain Reaction scoring archetype + intake design (enum checks, defaulted). Resolved
@@ -547,6 +558,7 @@ export function createWorld(mode: GameMode, seed: number, setups: RobotSetup[], 
       // drop traction, and it matches DRIVETRAIN_PRESETS.butterfly (the mecanum half).
       butterflyTank: false,
       driveModeHeld: false,
+      twinBarrel: false,
       hopper: nth === 0 ? [...C.PRELOAD] : [...C.HP_INITIAL_STOCK],
       fieldCentric: s.assists.fieldCentric,
       aimAssist: s.assists.aimAssist,

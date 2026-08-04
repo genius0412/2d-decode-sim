@@ -16,6 +16,7 @@ import type { MatchResultInfo, NetSession, NetStatus } from '../net/session';
 import { clearActiveGame } from '../net/activeGame';
 import type { RecordRankInfo } from '../net/protocol';
 import type { Replay } from '../sim/replay';
+import { CHAIN_MODE_LABELS } from '../games/chain/labels';
 import type { Alliance, DrivetrainType, ScoreBreakdown } from '../types';
 
 /** top-right connection-quality readout (multiplayer only): a coloured signal dot
@@ -601,7 +602,7 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
             )}
             {cr && hud.chain && (
               <>
-                <span className="chip">{hud.chain.mode.toUpperCase()}</span>
+                <span className="chip">{CHAIN_MODE_LABELS[hud.chain.mode].toUpperCase()}</span>
                 <span className="chip">HOPPER {hud.hopper.length}/{hud.chain.storage}</span>
                 <span className={`chip ${hud.chain.mult > 1 ? 'on' : ''}`}>×{hud.chain.mult}</span>
                 {hud.chain.carrying && <span className="chip on">◍ CARRYING RING</span>}

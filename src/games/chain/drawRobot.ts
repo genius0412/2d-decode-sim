@@ -7,6 +7,7 @@ import {
   CHAIN_LAUNCH_LINE_FRAC,
   CHAIN_BEAM_RENDER_H,
   CHAIN_BEAM_RUMBLE,
+  CHAIN_TWIN_BARREL_OFFSET,
 } from './config';
 import { chainIntakeMouths } from './state';
 import { EDGE_ANGLE, edgeGeom, isEndEdge, shooterMountOf } from './mounts';
@@ -109,7 +110,7 @@ export function drawChainRobot(
 
   ctx.restore();
 
-  if (mode === 'turret') drawTurret(ctx, r, loaded, ox, oy);
+  if (mode === 'turret' || mode === 'twinturret') drawTurret(ctx, r, loaded, ox, oy, mode === 'twinturret');
 }
 
 /** CR intake — the full-width sweeper roller, drawn on every MOUNTED edge (front, back, both
@@ -197,7 +198,14 @@ function drawCatapult(ctx: CanvasRenderingContext2D, dist: number, span: number,
 
 /** turret on top (world orientation), ring + barrel toward the aim heading. `ox`/`oy` = the
  * chassis terrain-bob offset so the turret rides up with the body. */
-function drawTurret(ctx: CanvasRenderingContext2D, r: RobotState, loaded: boolean, ox = 0, oy = 0): void {
+function drawTurret(
+  ctx: CanvasRenderingContext2D,
+  r: RobotState,
+  loaded: boolean,
+  ox = 0,
+  oy = 0,
+  twin = false,
+): void {
   const hl = r.spec.length / 2;
   const hw = r.spec.width / 2;
   const off = Math.abs(r.spec.length * C.TURRET_OFFSET_FRAC);
@@ -220,7 +228,15 @@ function drawTurret(ctx: CanvasRenderingContext2D, r: RobotState, loaded: boolea
   ctx.arc(0, 0, Math.max(ring - 1, 1.5), 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = '#525b6b';
-  ctx.fillRect(0, -1.2, reach, 2.4);
+  if (twin) {
+    // TWO barrels straddling the centreline at the same offset the sim launches from,
+    // so what you see is where the Particles actually come out.
+    for (const s of [1, -1] as const) {
+      ctx.fillRect(0, s * CHAIN_TWIN_BARREL_OFFSET - 0.85, reach, 1.7);
+    }
+  } else {
+    ctx.fillRect(0, -1.2, reach, 2.4);
+  }
   ctx.restore();
 }
 

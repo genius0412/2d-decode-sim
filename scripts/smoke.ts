@@ -73,6 +73,7 @@ import {
   SWERVE_MIN_WIDTH,
   intakeMouth,
   DRIVETRAIN_PRESETS,
+  DRIVETRAIN_LIMITS,
   BUTTERFLY_MODES,
   START_POSES,
   SPEED_PER_RPM,
@@ -137,6 +138,8 @@ import {
   CHAIN_PARTICLE_R,
   CHAIN_PRESETS,
   chainStorageMax,
+  CHAIN_TWIN_MASS_FLOOR,
+  CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_DRUM_SPEED,
   CHAIN_MIN_LENGTH,
   CHAIN_MAX_LENGTH,
@@ -4947,6 +4950,124 @@ const mkMM = () => {
     runChain(gw, cmd({}), T);
     const bps = (h0 - rob.hopper.length) / T;
     check('chain turret: cadence averages ~13 balls/s', bps >= 12.5 && bps <= 13.5, `${bps.toFixed(2)} bps`);
+  }
+
+  // TWIN TURRET: two shooters on one turret — MEASURED rate, storage, and weight, so the
+  // archetype's whole tradeoff is pinned by behaviour rather than by reading constants back.
+  {
+    const rateOf = (mode: RobotSpec['scoreMode']): number => {
+      const s = chainSetup(0, 'blue');
+      s.spec = { ...DEFAULT_SPEC, scoreMode: mode, massLb: 34 };
+      const gw = createChainWorld('match', 806, [s]);
+      gw.match.phase = 'teleop';
+      gw.match.phaseTimeLeft = 120;
+      const rob = gw.robots[0];
+      rob.autoIntake = false;
+      rob.autoFire = true;
+      rob.pos = { x: -30, y: 0 };
+      const T = 6;
+      rob.hopper = Array(30 * T + 60).fill('green');
+      const h0 = rob.hopper.length;
+      runChain(gw, cmd({}), T);
+      return (h0 - rob.hopper.length) / T;
+    };
+    const single = rateOf('turret');
+    const twinBps = rateOf('twinturret');
+    const ratio = twinBps / single;
+    // the headline: a lot more than one turret, and clearly NOT two of them
+    check(
+      'chain twin turret: fires ~1.65x a single turret — well above 1, well below 2',
+      ratio > 1.5 && ratio < 1.8,
+      `${single.toFixed(1)} → ${twinBps.toFixed(1)} bps (x${ratio.toFixed(2)})`,
+    );
+    // ...and still slower than the drum, which is the dedicated volume archetype
+    check(
+      'chain twin turret: still streams slower than the drum',
+      twinBps < 24,
+      `${twinBps.toFixed(1)} bps vs drum ~24`,
+    );
+    // STORAGE: a second shooter assembly eats centre volume — strictly less than a single
+    // turret, which is already the most cramped archetype
+    const capOf = (mode: RobotSpec['scoreMode']) =>
+      chainStorageMax({ ...DEFAULT_SPEC, scoreMode: mode, intakeMount: 'front' });
+    check(
+      'chain twin turret: holds LESS than a single turret (and far less than a drum)',
+      capOf('twinturret') < capOf('turret') && capOf('turret') < capOf('drum'),
+      `twin ${capOf('twinturret')} < turret ${capOf('turret')} < drum ${capOf('drum')}`,
+    );
+    // WEIGHT: the second flywheel raises the chassis mass FLOOR, so it can't be built
+    // at the lightest weights a single turret can
+    const floorOf = (mode: RobotSpec['scoreMode']) =>
+      coerceSpec({ ...DEFAULT_SPEC, scoreMode: mode, massLb: 1 }, undefined, 'chain').massLb;
+    check(
+      'chain twin turret: raises the mass floor (a whole second flywheel assembly)',
+      floorOf('twinturret') > floorOf('turret') &&
+        floorOf('twinturret') - floorOf('turret') <= CHAIN_TWIN_MASS_FLOOR + 0.01,
+      `turret ${floorOf('turret')} → twin ${floorOf('twinturret')} lb`,
+    );
+    // the weight is MODEST — a second shooter, not a second robot
+    check(
+      'chain twin turret: the weight cost stays modest (< 15% of the mass range)',
+      CHAIN_TWIN_MASS_FLOOR / (DRIVETRAIN_LIMITS.mecanum.maxMass - DRIVETRAIN_LIMITS.mecanum.minMass) < 0.15,
+    );
+    // it is TURRETED: it aims itself, so the fire button must NOT hijack the heading the
+    // way it does for a turretless drum/dumper
+    {
+      const s2 = chainSetup(0, 'blue');
+      s2.spec = { ...DEFAULT_SPEC, scoreMode: 'twinturret' };
+      const gw2 = createChainWorld('match', 807, [s2]);
+      gw2.match.phase = 'teleop';
+      gw2.match.phaseTimeLeft = 120;
+      const rob2 = gw2.robots[0];
+      rob2.pos = { x: -30, y: 20 };
+      rob2.heading = 1.0;
+      const h0 = rob2.heading;
+      runChain(gw2, cmd({ fire: true }), 0.5);
+      check(
+        'chain twin turret: is turreted — holding fire does not steer the chassis',
+        Math.abs(wrapAngle(rob2.heading - h0)) < 1e-6,
+      );
+      // BOTH barrels are really used: fire a short burst and check consecutive shots are
+      // born on OPPOSITE sides of the turret centreline (a mirror pair, not one muzzle).
+      const s3 = chainSetup(0, 'blue');
+      s3.spec = { ...DEFAULT_SPEC, scoreMode: 'twinturret', massLb: 34 };
+      const gw3 = createChainWorld('match', 808, [s3]);
+      gw3.match.phase = 'teleop';
+      gw3.match.phaseTimeLeft = 120;
+      const rob3 = gw3.robots[0];
+      rob3.autoIntake = false;
+      rob3.autoFire = true;
+      rob3.pos = { x: -30, y: 0 };
+      rob3.hopper = Array(20).fill('green');
+      // measure each shot AT BIRTH — a ball sampled later has flown tens of inches, which
+      // would swamp a 1.5" muzzle offset (and make this assertion pass by accident)
+      const seen = new Set(gw3.balls.map((b) => b.id));
+      const lats: number[] = [];
+      for (let i = 0; i < 24; i++) {
+        runChain(gw3, cmd({}), SIM_DT);
+        const dir = { x: dcos(rob3.turretHeading), y: dsin(rob3.turretHeading) };
+        for (const b of gw3.balls) {
+          if (seen.has(b.id)) continue;
+          seen.add(b.id);
+          lats.push((b.pos.x - rob3.pos.x) * -dir.y + (b.pos.y - rob3.pos.y) * dir.x);
+        }
+      }
+      const near = (v: number, t: number) => Math.abs(v - t) < 0.25;
+      check(
+        'chain twin turret: consecutive shots leave from OPPOSITE barrels (±offset, alternating)',
+        lats.length >= 4 &&
+          lats.every((l) => near(l, CHAIN_TWIN_BARREL_OFFSET) || near(l, -CHAIN_TWIN_BARREL_OFFSET)) &&
+          lats.slice(1).every((l, i) => Math.sign(l) === -Math.sign(lats[i])),
+        `${lats.length} shots, lats ${lats.slice(0, 4).map((l) => l.toFixed(2)).join(' ')}`,
+      );
+    }
+    // both barrels share ONE aim solution — the muzzle offset moves where the ball is BORN,
+    // not where it is pointed, so a twin is no less accurate than a single turret
+    check(
+      'chain twin turret: the barrel offset is a muzzle position, not an aim change',
+      CHAIN_TWIN_BARREL_OFFSET > 0 && CHAIN_TWIN_BARREL_OFFSET < 3,
+      `${CHAIN_TWIN_BARREL_OFFSET}"`,
+    );
   }
 
   // TURN-TO-AIM control: holding fire steers a turretless shooter to face the goal, then it fires

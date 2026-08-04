@@ -4,6 +4,7 @@ import {
   CHAIN_DEFAULT_INTAKE,
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_LAUNCH_LINE_FRAC,
+  CHAIN_TWIN_BARREL_OFFSET,
 } from '../games/chain/config';
 import { chainIntakeMouths } from '../games/chain/state';
 import { EDGE_ANGLE, edgeGeom, isEndEdge, shooterMountOf } from '../games/chain/mounts';
@@ -213,7 +214,19 @@ export function RobotPreview({
     ) : (
       <g>
         <circle cx={0} cy={turretY} r={turretR} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
-        <line x1={0} y1={turretY} x2={0} y2={turretY - turretR - 1.2} stroke={accent} strokeWidth={0.7} strokeLinecap="round" />
+        {/* a TWIN draws both barrels at the offset the sim actually launches from */}
+        {(cMode === 'twinturret' ? [CHAIN_TWIN_BARREL_OFFSET, -CHAIN_TWIN_BARREL_OFFSET] : [0]).map((o) => (
+          <line
+            key={o}
+            x1={o}
+            y1={turretY}
+            x2={o}
+            y2={turretY - turretR - 1.2}
+            stroke={accent}
+            strokeWidth={0.7}
+            strokeLinecap="round"
+          />
+        ))}
       </g>
     );
 

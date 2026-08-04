@@ -15,6 +15,7 @@ import {
   CHAIN_MIN_LENGTH,
   CHAIN_MAX_LENGTH,
   chainStorageMax,
+  chainMassFloorBump,
 } from '../games/chain/config';
 import {
   CHAIN_MODE_LABELS,
@@ -28,6 +29,7 @@ import {
   CHAIN_INTAKE_MOUNTS,
   CHAIN_SHOOTER_MOUNTS,
   intakeMountOf,
+  isTurreted,
   shooterMountOf,
 } from '../games/chain/mounts';
 import {
@@ -64,6 +66,7 @@ function optimizedZone(inertia: number): string {
 // summary via ../games/chain/labels so both name the archetype/intake identically.
 const CHAIN_MODE_BLURBS: Record<ChainScoreMode, string> = {
   turret: 'Aims itself and fires one at a time',
+  twinturret: 'Two shooters on one turret · faster, holds less',
   drum: 'Face the goal and fire a fast stream',
   dumper: 'Face the goal and dump the whole load up close',
 };
@@ -229,7 +232,13 @@ export function Menu({ settings, onChange }: Props) {
   const isButterfly = spec.drivetrain === 'butterfly';
   const { min: minTankRpm, max: maxTankRpm } = butterflyTankRpmLimits();
   const tankRpmValue = butterflyTankRpm(spec);
-  const { min: minMass, max: maxMass } = massLimits(spec.drivetrain, spec.flywheelInertia);
+  const { min: minMass, max: maxMass } = massLimits(
+    spec.drivetrain,
+    spec.flywheelInertia,
+    // CR mechanisms that weigh something (today: the twin turret's second flywheel). Same
+    // value coerceSpec uses, so the slider floor IS the enforced floor.
+    isDecode ? 0 : chainMassFloorBump(spec),
+  );
   const dp = driveParams(spec);
   // the builder shows DECODE robot presets or CR archetype presets per the active game
   const presets = isDecode ? ROBOT_PRESETS : CHAIN_PRESETS;
@@ -432,7 +441,7 @@ export function Menu({ settings, onChange }: Props) {
                     {/* a turret is top-mounted, so naming its shooter mount would be noise */}
                     <span className="oz">
                       🎯 {CHAIN_MODE_LABELS[p.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]}
-                      {(p.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) !== 'turret'
+                      {!isTurreted(p.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE)
                         ? ` · ${CHAIN_SHOOTER_MOUNT_LABELS[shooterMountOf(p)]}`
                         : ''}
                     </span>
@@ -512,7 +521,7 @@ export function Menu({ settings, onChange }: Props) {
                     </button>
                   ))}
                 </div>
-                {(spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) !== 'turret' && (
+                {!isTurreted(spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) && (
                   <>
                     <h3 className="ds-subh">Shooter mount</h3>
                     <div className="ds-opts four">

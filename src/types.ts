@@ -123,11 +123,14 @@ export interface RobotSpec {
 
 /** Chain Reaction scoring archetype (see `RobotSpec.scoreMode`).
  *  • turret — turreted single-shooter, indexes one at a time, aims itself, any range.
+ *  • twinturret — TWO shooters on one turret, fired alternately from two barrels: far more
+ *    throughput than a single turret but well short of double (they share one indexer and
+ *    one aim solution), and the second assembly costs hopper volume and weight.
  *  • drum   — a chassis-wide flywheel drum (no turret): the robot turns to face the goal,
  *    then fires up to 6 at once in a parallel line from ANY range (uniform velocity).
  *  • dumper — a chassis-wide catapult (no turret): turns to face the goal, then flings the
  *    WHOLE hopper at once from LIMITED range (side-to-side velocity variance ⇒ scatter). */
-export type ChainScoreMode = 'turret' | 'drum' | 'dumper';
+export type ChainScoreMode = 'turret' | 'twinturret' | 'drum' | 'dumper';
 /** Chain Reaction intake design (see `RobotSpec.chainIntake`). Only the full-width sweeper
  * exists for now; the type is kept open for future designs. */
 export type ChainIntakeStyle = 'sweeper';
@@ -213,6 +216,9 @@ export interface RobotState {
    * `driveParams`). Always present so snapshots/replays carry it; every other drivetrain
    * ignores it. */
   butterflyTank: boolean;
+  /** TWIN TURRET: which of the two barrels fires NEXT (they alternate). Plain bool so
+   * snapshots/replays reproduce the same muzzle; unused by every other archetype. */
+  twinBarrel: boolean;
   /** was the `driveMode` button held last tick? The sim edge-triggers the butterfly swap
    * off this, so holding the button swaps once (not every tick). Plain bool ⇒ snapshot-safe. */
   driveModeHeld: boolean;

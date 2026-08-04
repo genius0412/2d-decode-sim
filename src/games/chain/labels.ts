@@ -7,6 +7,7 @@ import type { ChainIntakeMount, ChainIntakeStyle, ChainScoreMode, ChainShooterMo
  */
 export const CHAIN_MODE_LABELS: Record<ChainScoreMode, string> = {
   turret: 'Turret shooter',
+  twinturret: 'Twin turret',
   drum: 'Drum shooter',
   dumper: 'Dumper',
 };

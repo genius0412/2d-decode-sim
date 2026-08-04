@@ -196,8 +196,17 @@ export function butterflyTankRpmLimits(): { min: number; max: number } {
 export function massLimits(
   dt: DrivetrainType,
   flywheelInertia: number,
+  extraFloor = 0,
 ): { min: number; max: number } {
   const L = C.DRIVETRAIN_LIMITS[dt];
-  const min = clamp(L.minMass + C.INERTIA_MASS_FLOOR * flywheelInertia, L.minMass, L.maxMass);
+  // `extraFloor` is lb of MECHANISM the caller knows about and this module deliberately
+  // does not — today Chain Reaction's twin-turret assembly (`chainMassFloorBump`). Keeping
+  // it a parameter is what lets a game add a heavy mechanism without leaking that game's
+  // enums into the shared drivetrain model.
+  const min = clamp(
+    L.minMass + C.INERTIA_MASS_FLOOR * flywheelInertia + extraFloor,
+    L.minMass,
+    L.maxMass,
+  );
   return { min, max: L.maxMass };
 }
