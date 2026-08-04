@@ -33,6 +33,11 @@ import {
   CHAIN_CATALYST_TYPES,
   CHAIN_DEFAULT_CATALYST,
   CHAIN_DEFAULT_CATALYST_MOUNT,
+  CHAIN_CATAPULT_RANGE_MIN,
+  CHAIN_CATAPULT_RANGE_MAX,
+  CHAIN_CATAPULT_RANGE_DEFAULT,
+  CHAIN_CATAPULT_YAW_DEFAULT,
+  CHAIN_CATAPULT_YAW_STEP,
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_DEFAULT_INTAKE,
   CHAIN_SCORE_MODES,
@@ -81,6 +86,8 @@ export const DEFAULT_SPEC: RobotSpec = {
   shooterMount: CHAIN_DEFAULT_SHOOTER_MOUNT,
   catalystType: CHAIN_DEFAULT_CATALYST,
   catalystMount: CHAIN_DEFAULT_CATALYST_MOUNT,
+  catapultRange: CHAIN_CATAPULT_RANGE_DEFAULT,
+  catapultYaw: CHAIN_CATAPULT_YAW_DEFAULT,
   // deprecated mirrors of the two mounts above (kept in sync by coerceSpec)
   intakeSide: false,
   shooterRear: false,
@@ -242,6 +249,22 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   out.catalystMount = (CHAIN_CATALYST_MOUNTS as readonly string[]).includes(sp.catalystMount as string)
     ? (sp.catalystMount as RobotSpec['catalystMount'])
     : (base.catalystMount ?? CHAIN_DEFAULT_CATALYST_MOUNT);
+  // CATAPULT build: range (in) and the fixed mounting yaw (deg, 15° steps). Only meaningful
+  // on the launcher, but kept on the spec unconditionally so switching mechanism back and
+  // forth doesn't silently discard the build.
+  out.catapultRange = Math.round(
+    clampFinite(
+      sp.catapultRange !== undefined ? sp.catapultRange : base.catapultRange,
+      CHAIN_CATAPULT_RANGE_MIN,
+      CHAIN_CATAPULT_RANGE_MAX,
+      CHAIN_CATAPULT_RANGE_DEFAULT,
+    ),
+  );
+  {
+    const rawYaw = sp.catapultYaw !== undefined ? sp.catapultYaw : base.catapultYaw;
+    const y = clampFinite(rawYaw, -180, 180, CHAIN_CATAPULT_YAW_DEFAULT);
+    out.catapultYaw = Math.round(y / CHAIN_CATAPULT_YAW_STEP) * CHAIN_CATAPULT_YAW_STEP;
+  }
   out.intakeMount = hasIntakeMount ? intakeMountOf(rawMounts) : intakeMountOf(base);
   out.shooterMount = hasShooterMount ? shooterMountOf(rawMounts) : shooterMountOf(base);
   // MOUNTS ARE CHAIN-ONLY. They are the one CR field with a SHARED physics effect — the intake

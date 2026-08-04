@@ -17,12 +17,16 @@ import {
   chainHopperCap,
   chainCatalystGeom,
   CHAIN_CATALYST_OD,
-  CHAIN_FLING_SPEED,
+  CHAIN_WALL_H,
+  CHAIN_RING_SLIDE_MIN,
   CHAIN_FLING_SPEED_VAR,
   CHAIN_FLING_VZ,
   CHAIN_FLING_SPREAD,
   CHAIN_FLING_FRICTION,
-  CHAIN_FLING_CYCLE,
+  chainCatapultRange,
+  chainCatapultYaw,
+  catapultSpeedFor,
+  catapultCycleFor,
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_TURRET_SLEW,
   CHAIN_AIM_TOL,
@@ -68,8 +72,9 @@ import {
   onRingStand,
   CHAIN_HOOKS_PER_GOAL,
   type ChainState,
+  type ChainCatalyst,
 } from './state';
-import { EDGE_ANGLE, EDGE_DIR, EDGE_PERP, catalystMountOf, edgeGeom, shooterMountOf } from './mounts';
+import { EDGE_ANGLE, EDGE_DIR, EDGE_PERP, edgeGeom, shooterMountOf } from './mounts';
 
 /**
  * Chain Reaction gameplay step (called from `chainStep` after the robots move).
@@ -99,7 +104,7 @@ export function updateChain(
   // FLUNG catalysts: a real ballistic arc, then a ground slide to rest. Never a teleport to
   // a landing spot — the landing emerges from the throw, which is exactly why it is imprecise.
   for (const c of chain.catalysts) {
-    if (c.carriedBy !== null || c.hook) continue;
+    if (c.carriedBy !== null || c.hook || c.outOfPlay) continue;
     if (c.z <= 0 && c.vel.x === 0 && c.vel.y === 0) continue; // at rest, nothing to do
     c.pos.x += c.vel.x * dt;
     c.pos.y += c.vel.y * dt;
@@ -115,16 +120,59 @@ export function updateChain(
       const next = Math.max(0, sp - CHAIN_FLING_FRICTION * dt);
       c.vel = next <= 0.01 ? { x: 0, y: 0 } : { x: (c.vel.x / sp) * next, y: (c.vel.y / sp) * next };
     }
-    // rings stay on the field, like everything else
+    // THE WALL. A ring travelling BELOW the wall top bounces back into the field. A ring
+    // riding ABOVE it clears the perimeter and leaves — which the manual treats as an
+    // immediate RED CARD for whoever threw it. That is the real risk the catapult carries:
+    // a long, high throw taken near a wall can lose the match outright.
     const limX = CHAIN_HALF_X - CHAIN_CATALYST_OD / 2;
     const limY = CHAIN_HALF_Y - CHAIN_CATALYST_OD / 2;
-    if (Math.abs(c.pos.x) > limX) {
+    const overWall = c.z > CHAIN_WALL_H;
+    const outX = Math.abs(c.pos.x) > limX;
+    const outY = Math.abs(c.pos.y) > limY;
+    if ((outX || outY) && overWall) {
+      ejectCatalyst(world, chain, c);
+      continue;
+    }
+    if (outX) {
       c.pos.x = Math.sign(c.pos.x) * limX;
       c.vel.x = -c.vel.x * 0.3;
     }
-    if (Math.abs(c.pos.y) > limY) {
+    if (outY) {
       c.pos.y = Math.sign(c.pos.y) * limY;
       c.vel.y = -c.vel.y * 0.3;
+    }
+    // came to rest → the throw is over, nobody is on the hook for it any more
+    if (c.z <= 0 && c.vel.x === 0 && c.vel.y === 0) c.flungBy = null;
+  }
+
+  // A ring that comes down ON a robot must not perch there. Once it is at floor level and
+  // inside a robot's footprint, push it out along the shallowest axis and let it SLIDE off
+  // with friction, so it ends up on the tiles beside the robot instead of riding around on
+  // the chassis (where nothing could ever pick it up). Runs for every loose ring, not just
+  // flung ones — a robot can also simply drive onto a ring lying on the floor.
+  for (const c of chain.catalysts) {
+    if (c.carriedBy !== null || c.hook || c.outOfPlay || c.z > 0.5) continue;
+    for (const rob of world.robots) {
+      const e = robotExtents(rob);
+      const rel = rot({ x: c.pos.x - rob.pos.x, y: c.pos.y - rob.pos.y }, -rob.heading);
+      const rr = CHAIN_CATALYST_OD / 2;
+      if (rel.x > e.front + rr || rel.x < -e.rear - rr || Math.abs(rel.y) > e.half + rr) continue;
+      // shallowest way out (robot-local), then convert back to the world
+      const penFwd = e.front + rr - rel.x;
+      const penBack = rel.x + e.rear + rr;
+      const penSide = e.half + rr - Math.abs(rel.y);
+      let nx = 0;
+      let ny = 0;
+      if (Math.min(penFwd, penBack) < penSide) nx = penFwd < penBack ? 1 : -1;
+      else ny = rel.y >= 0 ? 1 : -1;
+      const push = rot({ x: nx, y: ny }, rob.heading);
+      c.pos.x += push.x * 0.9;
+      c.pos.y += push.y * 0.9;
+      // give it a nudge so it slides clear and settles under CHAIN_FLING_FRICTION rather
+      // than teleporting out — the ring visibly rolls off the side of the robot
+      const shove = Math.max(CHAIN_RING_SLIDE_MIN, hyp(rob.vel.x, rob.vel.y) * 0.6);
+      c.vel = { x: push.x * shove, y: push.y * shove };
+      break;
     }
   }
 
@@ -209,12 +257,18 @@ export function updateChain(
     // archetypes from also being the fastest.
     const held = chain.catalystHeld[r.id] ?? false;
     const now = enabled && (cmd?.catalyst ?? false);
-    if (now && !held && world.time >= (chain.catalystReadyAt[r.id] ?? 0)) {
-      // the claw cycle by default; a FLING overrides it with its own longer re-cock
+    const ready = world.time >= (chain.catalystReadyAt[r.id] ?? 0);
+    if (now && !held && ready) {
       chain.catalystReadyAt[r.id] = world.time + chainCatalystGeom(r.spec).cycle;
-      catalystAction(world, chain, r, rand);
+      catalystAction(chain, r);
     }
     chain.catalystHeld[r.id] = now;
+    // CATAPULT THROW — its own button, its own edge, sharing the one mechanism cooldown
+    // (you cannot claw and throw in the same instant; it is one mechanism).
+    const fHeld = chain.flingHeld[r.id] ?? false;
+    const fNow = enabled && (cmd?.fling ?? false);
+    if (fNow && !fHeld && ready) flingCatalyst(world, chain, r, rand);
+    chain.flingHeld[r.id] = fNow;
   }
 
   // ── flight particles: fly at the goal → score + FUNNEL down → wall-side launcher
@@ -412,7 +466,11 @@ export function updateChain(
       eg += st === 'ascended' ? CHAIN_PTS.ringStandAscend : st === 'parked' ? CHAIN_PTS.labPark : 0;
       if (descended[rob.id]) eg += CHAIN_PTS.ringStandDescend; // auto descent (latched)
     }
-    world.match.scores[a].total = chain.particlePoints[a] + eg + world.match.scores[a].foulPoints;
+    // RED CARD (a Catalyst ejected from the field) ⇒ that alliance loses: nothing it does
+    // for the rest of the match can score.
+    world.match.scores[a].total = chain.redCard[a]
+      ? 0
+      : chain.particlePoints[a] + eg + world.match.scores[a].foulPoints;
     world.goals[a].classifiedCount = chain.scored[a]; // surfaces in worldHash
   }
 }
@@ -753,6 +811,59 @@ function interact(
   return 'none';
 }
 
+/**
+ * CATAPULT THROW (launcher archetype only). Flings the carried ring downfield to reposition
+ * it — transport, not scoring.
+ *
+ * The catapult is NOT turreted: it fires along the chassis heading plus its fixed build
+ * YAW (`catapultYaw`), so aiming means pointing the robot. How far it throws is the build's
+ * `catapultRange`, converted to a launch speed by `catapultSpeedFor` so the slider is a
+ * distance rather than a raw velocity. Where it actually lands is scattered on purpose —
+ * ±SPEED_VAR on the speed (which moves both the airborne leg and the ground slide) plus a
+ * lateral kick — so it can never be used as a placer.
+ */
+function flingCatalyst(world: World, chain: ChainState, rob: RobotState, rand: () => number): boolean {
+  if (!chainCatalystGeom(rob.spec).fling) return false;
+  const mine = chain.catalysts.find((c) => c.carriedBy === rob.id);
+  if (!mine) return false;
+  const range = chainCatapultRange(rob.spec);
+  const dir = wrapAngle(rob.heading + chainCatapultYaw(rob.spec));
+  const spd = catapultSpeedFor(range) * (1 + (rand() * 2 - 1) * CHAIN_FLING_SPEED_VAR);
+  const lat = (rand() * 2 - 1) * CHAIN_FLING_SPREAD;
+  mine.carriedBy = null;
+  mine.pos = catalystMouth(rob);
+  mine.vel = { x: dcos(dir) * spd - dsin(dir) * lat, y: dsin(dir) * spd + dcos(dir) * lat };
+  mine.z = 6;
+  mine.vz = CHAIN_FLING_VZ;
+  mine.flungBy = rob.id; // whose red card it is if this ring leaves the field
+  // re-cocking scales with the energy stored, i.e. with the range it was built for
+  chain.catalystReadyAt[rob.id] = world.time + catapultCycleFor(range);
+  return true;
+}
+
+/**
+ * A Catalyst has LEFT THE FIELD. Per the manual this is an immediate RED CARD against the
+ * alliance that ejected it, and a red card means that alliance LOSES — so the score is
+ * forced to 0 for the rest of the match (latched in `chain.redCard`, recomputed every tick
+ * in the scoring pass).
+ *
+ * The ring itself is parked out of bounds and left there: it is out of play, and putting it
+ * back would quietly undo the very thing the rule is punishing.
+ */
+function ejectCatalyst(world: World, chain: ChainState, c: ChainCatalyst): void {
+  const thrower = world.robots.find((r) => r.id === c.flungBy);
+  c.vel = { x: 0, y: 0 };
+  c.vz = 0;
+  c.z = 0;
+  c.carriedBy = null;
+  c.hook = null;
+  c.flungBy = null;
+  c.outOfPlay = true;
+  if (!thrower) return; // left the field with nobody responsible (can't happen today)
+  chain.redCard[thrower.alliance] = true;
+  world.events.push(`RED CARD — ${thrower.alliance.toUpperCase()} ejected a Catalyst`);
+}
+
 /** every empty hook on either goal (yours OR the opponent's — seating on either is legal) */
 function emptyHooks(chain: ChainState): { alliance: Alliance; index: number; pos: Vec2 }[] {
   const out: { alliance: Alliance; index: number; pos: Vec2 }[] = [];
@@ -768,7 +879,7 @@ function emptyHooks(chain: ChainState): { alliance: Alliance; index: number; pos
 /** edge action: place a carried ring on a reachable empty hook (else drop it), or pick
  * up the nearest reachable ring if not carrying one. Reach is the MECHANISM's — its
  * mouth on the mounted edge, its radius, and its cone (see `catalystCanReach`). */
-function catalystAction(world: World, chain: ChainState, rob: RobotState, rand: () => number): void {
+function catalystAction(chain: ChainState, rob: RobotState): void {
   const g = chainCatalystGeom(rob.spec);
   const mine = chain.catalysts.find((c) => c.carriedBy === rob.id);
   if (mine) {
@@ -789,28 +900,10 @@ function catalystAction(world: World, chain: ChainState, rob: RobotState, rand: 
       mine.carriedBy = null;
       return;
     }
-    // No hook in claw reach. A plain claw simply puts the ring down; a CATAPULT throws it
-    // downfield instead — that is what the catapult is FOR (repositioning a ring across the
-    // field without driving it there), and it is deliberately imprecise about where it lands.
+    // No hook in claw reach → the claw simply puts the ring down. Throwing is a SEPARATE
+    // action on its own button (`flingCatalyst`), so a press is never ambiguous.
     mine.carriedBy = null;
     mine.pos = catalystMouth(rob); // the ring leaves from the claw, not the chassis centre
-    if (g.fling) {
-      const edge = catalystMountOf(rob.spec);
-      const dir = wrapAngle(rob.heading + EDGE_ANGLE[edge]); // the catapult points out its edge
-      // scatter: the speed varies a lot (it moves BOTH the airborne leg and the ground
-      // slide), plus a lateral kick. There is no aim solution anywhere in here — where it
-      // lands is an outcome, not a promise.
-      const spd = CHAIN_FLING_SPEED * (1 + (rand() * 2 - 1) * CHAIN_FLING_SPEED_VAR);
-      const lat = (rand() * 2 - 1) * CHAIN_FLING_SPREAD;
-      mine.vel = {
-        x: dcos(dir) * spd - dsin(dir) * lat,
-        y: dsin(dir) * spd + dcos(dir) * lat,
-      };
-      mine.z = 6;
-      mine.vz = CHAIN_FLING_VZ;
-      // re-cocking a catapult is slower than a claw cycle (overrides the cycle just set)
-      chain.catalystReadyAt[rob.id] = world.time + CHAIN_FLING_CYCLE;
-    }
     return;
   }
   // not carrying → take the nearest reachable ring: a FREE ring on the field, OR a
@@ -818,7 +911,7 @@ function catalystAction(world: World, chain: ChainState, rob: RobotState, rand: 
   let best: (typeof chain.catalysts)[number] | null = null;
   let bestD = Infinity;
   for (const c of chain.catalysts) {
-    if (c.carriedBy !== null) continue;
+    if (c.carriedBy !== null || c.outOfPlay) continue; // an ejected ring is gone for good
     // a SEATED ring is taken off its hook (de-scoring, legal on either goal) and so uses
     // the hook-reach radius; a loose ring on the floor uses the grab radius.
     const target = c.hook ? hookPos(c.hook.alliance, c.hook.index) : c.pos;
@@ -836,6 +929,7 @@ function catalystAction(world: World, chain: ChainState, rob: RobotState, rand: 
     best.vel = { x: 0, y: 0 }; // catching it mid-slide stops it dead
     best.z = 0;
     best.vz = 0;
+    best.flungBy = null; // caught before it left — no longer anyone's liability
   }
 }
 
@@ -868,7 +962,7 @@ export function chainCatalystPrompt(
   let best: { action: 'pickup'; target: { x: number; y: number } } | null = null;
   let bestD = Infinity;
   for (const c of chain.catalysts) {
-    if (c.carriedBy !== null) continue;
+    if (c.carriedBy !== null || c.outOfPlay) continue;
     const target = c.hook ? hookPos(c.hook.alliance, c.hook.index) : c.pos;
     const radius = g.reach; // one claw does both jobs
     if (!catalystCanReach(rob, target, radius)) continue;

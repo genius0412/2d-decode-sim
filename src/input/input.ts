@@ -13,6 +13,7 @@ export interface VirtualInput {
   intake: boolean;
   fire: boolean;
   catalyst: boolean;
+  fling: boolean;
   driveMode: boolean;
 }
 
@@ -40,6 +41,7 @@ export class InputManager {
     intake: false,
     fire: false,
     catalyst: false,
+    fling: false,
     driveMode: false,
   };
 
@@ -102,6 +104,8 @@ export class InputManager {
       fire: heldAny(keys.fire) || g.fire || this.virtualState.fire,
       // Chain Reaction ring pick-up/place — held; the sim edge-triggers it
       catalyst: heldAny(keys.catalyst) || g.catalyst || this.virtualState.catalyst,
+      // CATAPULT throw — held; the sim edge-triggers it (same contract as `catalyst`)
+      fling: heldAny(keys.fling) || g.fling || this.virtualState.fling,
       // BUTTERFLY wheel-set swap — also passed HELD, edge-triggered in the sim. Doing the
       // edge sim-side (not here) keeps it deterministic under prediction + reconcile:
       // a replayed input can't double-toggle the way a client-side edge flag would.

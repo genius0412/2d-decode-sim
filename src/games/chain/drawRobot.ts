@@ -9,6 +9,11 @@ import {
   CHAIN_BEAM_RUMBLE,
   CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_DEFAULT_CATALYST,
+  CHAIN_CATAPULT_RANGE_MIN,
+  CHAIN_CATAPULT_RANGE_MAX,
+  chainCatalystGeom,
+  chainCatapultRange,
+  chainCatapultYaw,
 } from './config';
 import { CHAIN_HOOKS_PER_GOAL, catalystMouth, chainIntakeMouths, hookPos } from './state';
 import { EDGE_ANGLE, catalystMountOf, edgeGeom, isEndEdge, shooterMountOf } from './mounts';
@@ -241,6 +246,29 @@ function drawTurret(
     ctx.fillRect(0, -1.2, reach, 2.4);
   }
   ctx.restore();
+
+  // THE CATAPULT — its own fixed mounting yaw, independent of the claw's edge, and NOT
+  // turreted: it throws wherever the chassis points plus this offset. Drawn as a throwing
+  // arm whose LENGTH grows with the range it is built for, so a long-throw build reads as
+  // a bigger machine.
+  if (chainCatalystGeom(r.spec).fling) {
+    const yaw = chainCatapultYaw(r.spec);
+    const rng = chainCatapultRange(r.spec);
+    const f = (rng - CHAIN_CATAPULT_RANGE_MIN) / (CHAIN_CATAPULT_RANGE_MAX - CHAIN_CATAPULT_RANGE_MIN);
+    const arm = 3.4 + 3.2 * f;
+    ctx.save();
+    ctx.rotate(yaw);
+    ctx.strokeStyle = '#c9a227'; // brass — reads as the throwing mechanism, not the claw
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-1.5, 0);
+    ctx.lineTo(arm, 0);
+    ctx.stroke();
+    ctx.beginPath(); // the cup at the tip
+    ctx.arc(arm, 0, 1.5, -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 /** a slim hopper-fill bar (stored particles ÷ capacity) near the rear of the chassis. */
@@ -299,7 +327,7 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
     ctx.lineTo(dist + reach + 1.4, 0.5);
     ctx.stroke();
   } else if (type === 'launcher') {
-    // a low scoop at the edge + a throwing arm cocked back over the frame
+    // the CLAW: a low scoop at the mounted edge (this is what grabs and places)
     ctx.beginPath();
     ctx.moveTo(dist - 0.4, -2.2);
     ctx.lineTo(dist + 1.9, -1.2);
@@ -307,10 +335,6 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
     ctx.lineTo(dist - 0.4, 2.2);
     ctx.closePath();
     ctx.fill();
-    ctx.stroke();
-    ctx.beginPath(); // the cocked arm
-    ctx.moveTo(dist - 0.6, 0);
-    ctx.lineTo(dist - 4.4, -1.8);
     ctx.stroke();
   } else {
     // TURRET: a pivot at the edge with a claw arm swivelled toward the NEAREST hook, so

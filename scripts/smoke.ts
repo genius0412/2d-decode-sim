@@ -151,6 +151,10 @@ import {
   CHAIN_DEFAULT_CATALYST,
   CHAIN_HALF_Y,
   CHAIN_STORAGE_MAX,
+  CHAIN_CATAPULT_RANGE_MIN,
+  CHAIN_CATAPULT_RANGE_MAX,
+  catapultMassFor,
+  catapultCycleFor,
 } from '../src/games/chain/config';
 import { intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
 
@@ -6183,14 +6187,20 @@ const mkMM = () => {
       }
       const ring = w.chain!.catalysts[0];
       ring.carriedBy = rob.id;
-      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ catalyst: true })]]));
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ fling: true })]])); // the CATAPULT button
       const airborne = ring.z > 0; // it LEFT the ground — a real throw, not a teleport
       let ticks = 0;
       while ((ring.z > 0 || hyp(ring.vel.x, ring.vel.y) > 0.01) && ticks < 600) {
         chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
         ticks++;
       }
-      return { airborne, ticks, dist: hyp(ring.pos.x - rob.pos.x, ring.pos.y - rob.pos.y), pos: { ...ring.pos } };
+      return {
+        airborne,
+        ticks,
+        carried: ring.carriedBy === rob.id,
+        dist: hyp(ring.pos.x - rob.pos.x, ring.pos.y - rob.pos.y),
+        pos: { ...ring.pos },
+      };
     };
     const f1 = fling('launcher', 101);
     check(
@@ -6198,12 +6208,13 @@ const mkMM = () => {
       f1.airborne && f1.ticks > 20 && f1.dist > 45,
       `airborne=${f1.airborne} flightTicks=${f1.ticks} landed ${f1.dist.toFixed(0)}" away`,
     );
-    // a plain CLAW does not throw — it just puts the ring down where it stands
-    const dropOf = (t: RobotSpec['catalystType']) => fling(t, 101);
+    // a plain CLAW has no catapult at all: the throw button does nothing, so it keeps the ring
+    // (dist stays ~7" for these because a CARRIED ring rides at the claw mouth — the point
+    // is that it is still carried, not that it is at the chassis centre)
     check(
-      'catalyst: a plain claw drops the ring at the robot instead of throwing it',
-      dropOf('arm').dist < 12 && dropOf('turret').dist < 12 && !dropOf('arm').airborne,
-      `arm ${dropOf('arm').dist.toFixed(1)}" turret ${dropOf('turret').dist.toFixed(1)}"`,
+      'catalyst: the throw button does nothing without a catapult (arm / rail turret keep the ring)',
+      fling('arm', 101).carried && !fling('arm', 101).airborne && fling('turret', 101).carried,
+      `arm carried=${fling('arm', 101).carried} turret carried=${fling('turret', 101).carried}`,
     );
     // ACCURACY DOES NOT MATTER: the same throw from the same pose lands somewhere different
     // every time (speed variance + a lateral kick), so it can never be used as a placer
@@ -6216,14 +6227,199 @@ const mkMM = () => {
         `landing spread ${spread.toFixed(0)}" across 5 throws`,
       );
     }
-    // and a thrown ring never leaves the field
+    // RANGE is a BUILD OPTION: a longer-range catapult really does throw further, and the
+    // slider is a DISTANCE (catapultSpeedFor solves for the speed), not a raw velocity.
+    const rangeOf = (range: number, seed = 555) => {
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, catalystType: 'launcher', catapultRange: range, catapultYaw: 0, massLb: 36 };
+      const w = createChainWorld('match', seed, [setup]);
+      w.match.phase = 'teleop';
+      w.match.phaseTimeLeft = 120;
+      const rob = w.robots[0];
+      rob.pos = { x: -60, y: 0 };
+      rob.heading = 0;
+      for (const c of w.chain!.catalysts) {
+        c.carriedBy = null; c.hook = null; c.pos = { x: 500, y: 500 };
+        c.vel = { x: 0, y: 0 }; c.z = 0; c.vz = 0; c.flungBy = null; c.outOfPlay = false;
+      }
+      const ring = w.chain!.catalysts[0];
+      ring.carriedBy = rob.id;
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ fling: true })]]));
+      let n = 0;
+      while ((ring.z > 0 || hyp(ring.vel.x, ring.vel.y) > 0.01) && n < 900) {
+        chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
+        n++;
+      }
+      return hyp(ring.pos.x - rob.pos.x, ring.pos.y - rob.pos.y);
+    };
+    // AVERAGE several throws — a single sample carries the deliberate ±40% speed roll, which
+    // is exactly the thing that must not be read as a calibration error
+    const meanRange = (range: number) => {
+      const seeds = [555, 556, 557, 558, 559, 560, 561, 562, 563];
+      return seeds.reduce((a, sd) => a + rangeOf(range, sd), 0) / seeds.length;
+    };
+    const shortR = meanRange(CHAIN_CATAPULT_RANGE_MIN);
+    const longR = meanRange(CHAIN_CATAPULT_RANGE_MAX);
     check(
-      'catalyst: a flung ring stays inside the field walls',
+      'catapult: the RANGE slider really changes how far it throws',
+      longR > shortR * 1.6,
+      `${CHAIN_CATAPULT_RANGE_MIN}" build → ${shortR.toFixed(0)}"  ·  ${CHAIN_CATAPULT_RANGE_MAX}" build → ${longR.toFixed(0)}"`,
+    );
+    // the slider is calibrated: `catapultSpeedFor` inverts the throw, so the nominal build
+    // range should land near the actual distance (before the deliberate ±scatter)
+    // distances are measured from the robot CENTRE, so subtract the claw mouth the ring
+    // leaves from; what remains should sit near the nominal build range
+    const mouthOff = DEFAULT_SPEC.length / 2;
+    check(
+      'catapult: the range slider is a real distance, not a raw speed',
+      Math.abs(shortR - mouthOff - CHAIN_CATAPULT_RANGE_MIN) < CHAIN_CATAPULT_RANGE_MIN * 0.3 &&
+        Math.abs(longR - mouthOff - CHAIN_CATAPULT_RANGE_MAX) < CHAIN_CATAPULT_RANGE_MAX * 0.3,
+      `${CHAIN_CATAPULT_RANGE_MIN}"→${(shortR - mouthOff).toFixed(0)}"  ${CHAIN_CATAPULT_RANGE_MAX}"→${(longR - mouthOff).toFixed(0)}" (mean of 9)`,
+    );
+    // buying range COSTS: heavier, and slower to re-cock
+    check(
+      'catapult: a longer-range build is heavier and re-cocks slower',
+      catapultMassFor(CHAIN_CATAPULT_RANGE_MAX) > catapultMassFor(CHAIN_CATAPULT_RANGE_MIN) &&
+        catapultCycleFor(CHAIN_CATAPULT_RANGE_MAX) > catapultCycleFor(CHAIN_CATAPULT_RANGE_MIN) &&
+        catapultMassFor(CHAIN_CATAPULT_RANGE_MAX) <= 1.25,
+      `+${catapultMassFor(CHAIN_CATAPULT_RANGE_MAX).toFixed(2)} lb, ${catapultCycleFor(CHAIN_CATAPULT_RANGE_MIN).toFixed(2)}→${catapultCycleFor(CHAIN_CATAPULT_RANGE_MAX).toFixed(2)} s`,
+    );
+
+    // YAW is a BUILD OPTION and the catapult is NOT turreted: it throws along chassis
+    // heading + the built yaw, so a 90° mount throws off the side of the robot.
+    {
+      const throwDir = (yawDeg: number) => {
+        const setup = chainSetup(0, 'blue');
+        setup.spec = { ...DEFAULT_SPEC, catalystType: 'launcher', catapultRange: 70, catapultYaw: yawDeg, massLb: 36 };
+        const w = createChainWorld('match', 556, [setup]);
+        w.match.phase = 'teleop';
+        w.match.phaseTimeLeft = 120;
+        const rob = w.robots[0];
+        rob.pos = { x: 0, y: 0 };
+        rob.heading = 0;
+        for (const c of w.chain!.catalysts) {
+          c.carriedBy = null; c.hook = null; c.pos = { x: 500, y: 500 };
+          c.vel = { x: 0, y: 0 }; c.z = 0; c.vz = 0; c.flungBy = null; c.outOfPlay = false;
+        }
+        const ring = w.chain!.catalysts[0];
+        ring.carriedBy = rob.id;
+        chainStep(w, SIM_DT, new Map([[rob.id, cmd({ fling: true })]]));
+        return datan2(ring.vel.y, ring.vel.x); // the launch direction
+      };
+      const fwd = throwDir(0);
+      const left = throwDir(90);
+      const back = throwDir(180);
+      const near = (a: number, b: number) => Math.abs(wrapAngle(a - b)) < 0.35; // scatter kick
+      check(
+        'catapult: the YAW slider aims it (fixed mount — 0° forward, 90° left, 180° back)',
+        near(fwd, 0) && near(left, Math.PI / 2) && near(back, Math.PI),
+        `0°→${fwd.toFixed(2)} 90°→${left.toFixed(2)} 180°→${back.toFixed(2)} rad`,
+      );
+      // and it is NOT turreted: turning the chassis turns the throw with it
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, catalystType: 'launcher', catapultRange: 70, catapultYaw: 0, massLb: 36 };
+      const w = createChainWorld('match', 557, [setup]);
+      w.match.phase = 'teleop';
+      w.match.phaseTimeLeft = 120;
+      const rob = w.robots[0];
+      rob.pos = { x: 0, y: 0 };
+      rob.heading = Math.PI / 2; // chassis turned 90°
+      for (const c of w.chain!.catalysts) {
+        c.carriedBy = null; c.hook = null; c.pos = { x: 500, y: 500 };
+        c.vel = { x: 0, y: 0 }; c.z = 0; c.vz = 0; c.flungBy = null; c.outOfPlay = false;
+      }
+      const ring = w.chain!.catalysts[0];
+      ring.carriedBy = rob.id;
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ fling: true })]]));
+      check(
+        'catapult: it is NOT turreted — the throw follows the chassis heading',
+        Math.abs(wrapAngle(datan2(ring.vel.y, ring.vel.x) - Math.PI / 2)) < 0.35,
+      );
+    }
+
+    // A throw that stays BELOW the wall top bounces back in and is contained.
+    check(
+      'catalyst: a contained throw stays inside the field walls',
       [301, 302, 303].every((sd) => {
         const p = fling('launcher', sd).pos;
         return Math.abs(p.x) <= CHAIN_HALF_X && Math.abs(p.y) <= CHAIN_HALF_Y;
       }),
     );
+
+    // RED CARD: eject a Catalyst OVER the wall and the alliance loses outright. Aim a
+    // long-range catapult at a nearby wall so the ring is still above wall height when it
+    // crosses the perimeter.
+    {
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, catalystType: 'launcher', catapultRange: 120, catapultYaw: 0, massLb: 34 };
+      const w = createChainWorld('match', 909, [setup]);
+      w.match.phase = 'teleop';
+      w.match.phaseTimeLeft = 120;
+      const rob = w.robots[0];
+      rob.pos = { x: CHAIN_HALF_X - 40, y: 0 }; // far enough out that the arc clears the wall top
+      rob.heading = 0; // catapult points straight at it
+      for (const c of w.chain!.catalysts) {
+        c.carriedBy = null;
+        c.hook = null;
+        c.pos = { x: 500, y: 500 };
+        c.vel = { x: 0, y: 0 };
+        c.z = 0;
+        c.vz = 0;
+        c.flungBy = null;
+        c.outOfPlay = false;
+      }
+      const ring = w.chain!.catalysts[0];
+      ring.carriedBy = rob.id;
+      w.chain!.particlePoints.blue = 50; // it HAD a real score before the red card
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ fling: true })]]));
+      for (let i = 0; i < 120; i++) chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
+      check(
+        'catalyst: ejecting a ring over the wall RED CARDS the alliance (score forced to 0)',
+        w.chain!.redCard.blue === true && ring.outOfPlay === true && w.match.scores.blue.total === 0,
+        `redCard=${w.chain!.redCard.blue} outOfPlay=${ring.outOfPlay} total=${w.match.scores.blue.total}`,
+      );
+      // ...and it is latched: scoring more afterwards still totals 0
+      w.chain!.particlePoints.blue = 120;
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
+      check('catalyst: the red card is LATCHED — later points cannot undo it', w.match.scores.blue.total === 0);
+      // the opponent is untouched
+      check('catalyst: a red card hits only the offending alliance', w.chain!.redCard.red === false);
+    }
+
+    // A ring that ends up ON a robot slides off instead of perching on the chassis.
+    {
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, catalystType: 'arm', massLb: 34 };
+      const w = createChainWorld('match', 910, [setup]);
+      w.match.phase = 'teleop';
+      w.match.phaseTimeLeft = 120;
+      const rob = w.robots[0];
+      rob.pos = { x: 0, y: 0 };
+      rob.heading = 0;
+      for (const c of w.chain!.catalysts) {
+        c.carriedBy = null;
+        c.hook = null;
+        c.pos = { x: 500, y: 500 };
+        c.vel = { x: 0, y: 0 };
+        c.z = 0;
+        c.vz = 0;
+      }
+      const ring = w.chain!.catalysts[0];
+      ring.pos = { x: 0, y: 0 }; // dead centre of the chassis
+      let moved = false;
+      for (let i = 0; i < 90; i++) {
+        chainStep(w, SIM_DT, new Map([[rob.id, cmd({})]]));
+        if (hyp(ring.vel.x, ring.vel.y) > 0.01) moved = true;
+      }
+      const e = robotExtents(rob);
+      const rel = rot({ x: ring.pos.x - rob.pos.x, y: ring.pos.y - rob.pos.y }, -rob.heading);
+      const clear = Math.abs(rel.x) > e.front || Math.abs(rel.y) > e.half;
+      check(
+        'catalyst: a ring under a robot SLIDES off the chassis instead of riding on it',
+        moved && clear && hyp(ring.vel.x, ring.vel.y) < 0.02,
+        `slid=${moved} clear=${clear} restPos=(${ring.pos.x.toFixed(1)},${ring.pos.y.toFixed(1)})`,
+      );
+    }
 
     // FACING: arm/launcher work through a CONE, the rail turret is omnidirectional. Same
     // ring, same distance, placed off the robot's SIDE instead of its front.

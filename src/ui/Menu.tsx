@@ -18,6 +18,10 @@ import {
   chainMassFloorBump,
   CHAIN_CATALYST_TYPES,
   CHAIN_DEFAULT_CATALYST,
+  CHAIN_CATAPULT_RANGE_MIN,
+  CHAIN_CATAPULT_RANGE_MAX,
+  CHAIN_CATAPULT_YAW_STEP,
+  chainCatapultRange,
 } from '../games/chain/config';
 import {
   CHAIN_MODE_LABELS,
@@ -643,6 +647,40 @@ export function Menu({ settings, onChange }: Props) {
                 />
               </label>
             </div>
+                {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'launcher' && (
+                  <div className="ds-fields">
+                    <label className="ds-field">
+                      <span className="cap">
+                        Catapult range <span className="val">{chainCatapultRange(spec)}"</span>
+                      </span>
+                      <input
+                        className="ds-range"
+                        type="range"
+                        min={CHAIN_CATAPULT_RANGE_MIN}
+                        max={CHAIN_CATAPULT_RANGE_MAX}
+                        step={5}
+                        value={chainCatapultRange(spec)}
+                        style={rangeFill(chainCatapultRange(spec), CHAIN_CATAPULT_RANGE_MIN, CHAIN_CATAPULT_RANGE_MAX)}
+                        onChange={(e) => setSpec({ catapultRange: Number(e.target.value) })}
+                      />
+                    </label>
+                    <label className="ds-field">
+                      <span className="cap">
+                        Catapult yaw <span className="val">{spec.catapultYaw ?? 0}°</span>
+                      </span>
+                      <input
+                        className="ds-range"
+                        type="range"
+                        min={-180}
+                        max={180}
+                        step={CHAIN_CATAPULT_YAW_STEP}
+                        value={spec.catapultYaw ?? 0}
+                        style={rangeFill(spec.catapultYaw ?? 0, -180, 180)}
+                        onChange={(e) => setSpec({ catapultYaw: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+                )}
 
             <div className="ds-fields">
               <label className="ds-field">

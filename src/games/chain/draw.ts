@@ -74,7 +74,7 @@ export function drawChainBalls(ctx: CanvasRenderingContext2D, world: World, scre
 
   // free / carried catalysts (not yet seated) render at their world position
   for (const c of world.chain?.catalysts ?? []) {
-    if (c.hook) continue;
+    if (c.hook || c.outOfPlay) continue; // ejected from the field ⇒ out of play, not drawn
     // a FLUNG ring is airborne: draw its ground shadow, then the ring lifted toward the
     // screen-up axis, so a catapult throw reads as an arc rather than a slide
     const lift = c.z > 0.05 ? c.z * 0.06 : 0;

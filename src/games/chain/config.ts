@@ -57,6 +57,11 @@ export const mm = (v: number): number => v / 25.4;
 export const CHAIN_HALF_X = 72;
 export const CHAIN_HALF_Y = 72;
 
+/** perimeter WALL HEIGHT (in). Load-bearing for the catapult: a ring thrown on a high arc
+ * can CLEAR the wall and leave the field, which is a red card (see `CHAIN_FLING_VZ` —
+ * apex ≈ vz²/2g ≈ 15.7", comfortably over a 12" wall). A low, flat throw stays contained. */
+export const CHAIN_WALL_H = 12;
+
 /** perimeter-wall build params (inner faces exactly at ±half) */
 export const CHAIN_WALL_T = 10; // half-thickness, well outside the field
 
@@ -379,7 +384,9 @@ export function chainMassFloorBump(spec: RobotSpec): number {
   // the three archetypes rather than a tax on having one at all — the lightest (arm) is
   // the baseline a chassis is expected to carry.
   const catalyst = chainCatalystGeom(spec).massLb - CHAIN_CATALYSTS[CHAIN_DEFAULT_CATALYST].massLb;
-  return scoring + catalyst;
+  // a catapult built to throw further stores more energy: bigger spring, stouter frame
+  const catapult = chainCatalystGeom(spec).fling ? catapultMassFor(chainCatapultRange(spec)) : 0;
+  return scoring + catalyst + catapult;
 }
 
 /** the hopper-volume factor an intake mount costs (1 = no cost). */
@@ -491,12 +498,56 @@ export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
  * to rest under friction. Typical throws land ~55-130" out along the catapult's facing — most
  * of a 144" field — with no promise about where exactly.
  */
-export const CHAIN_FLING_SPEED = 85; // in/s base horizontal launch
-export const CHAIN_FLING_SPEED_VAR = 0.4; // ± fraction — the dominant source of scatter
+/** the catapult's BUILD RANGE slider (inches) — the nominal distance it is built to throw.
+ * A short-range build is light and re-cocks fast; a long one is heavier and slower. */
+export const CHAIN_CATAPULT_RANGE_MIN = 40;
+export const CHAIN_CATAPULT_RANGE_MAX = 120;
+export const CHAIN_CATAPULT_RANGE_DEFAULT = 70;
+/** the catapult's fixed mounting YAW (degrees from chassis forward), in 15° steps. It is
+ * NOT turreted, so this is a build-time choice and the chassis must be pointed to aim. */
+export const CHAIN_CATAPULT_YAW_STEP = 15;
+export const CHAIN_CATAPULT_YAW_DEFAULT = 0;
+
 export const CHAIN_FLING_VZ = 110; // in/s upward (≈0.57 s hang time at GRAVITY 386)
+export const CHAIN_FLING_SPEED_VAR = 0.4; // ± fraction — the dominant source of scatter
 export const CHAIN_FLING_SPREAD = 20; // in/s random lateral kick
+/** the minimum speed a ring is nudged with when it is evicted from under/on a robot, so it
+ * always visibly SLIDES clear (and then decays under CHAIN_FLING_FRICTION) instead of being
+ * snapped to the chassis edge. A moving robot pushes it out faster than this floor. */
+export const CHAIN_RING_SLIDE_MIN = 26;
 export const CHAIN_FLING_FRICTION = 90; // in/s² ground decay once it lands
-export const CHAIN_FLING_CYCLE = 1.6; // s — re-cocking the catapult is slower than a claw cycle
+
+/**
+ * The launch speed that makes a catapult throw land `range` inches away.
+ *
+ * A throw is an airborne leg plus a ground slide, and BOTH scale with the launch speed:
+ *   range = v·t + v²/(2·friction),  t = 2·VZ/GRAVITY  (the hang time, fixed by the arc)
+ * Solving that quadratic for v is what turns the builder's "how far does it throw" slider
+ * into physics, instead of the slider secretly being the speed. The ±SPEED_VAR scatter is
+ * applied to the RESULT, so a longer-range build is proportionally less precise too —
+ * which is the right relationship (you cannot buy accuracy by buying range).
+ */
+export function catapultSpeedFor(range: number): number {
+  const t = (2 * CHAIN_FLING_VZ) / 386; // GRAVITY; local so config stays dependency-free
+  const a = 1 / (2 * CHAIN_FLING_FRICTION);
+  // a·v² + t·v − range = 0
+  return (-t + Math.sqrt(t * t + 4 * a * range)) / (2 * a);
+}
+
+/** lb added to the mass floor by a catapult built for `range` — more range means a bigger
+ * spring/motor and a stouter frame to survive the recoil. Small in absolute terms (≤1.2 lb),
+ * on top of the launcher mechanism's own weight. */
+export function catapultMassFor(range: number): number {
+  const f = (range - CHAIN_CATAPULT_RANGE_MIN) / (CHAIN_CATAPULT_RANGE_MAX - CHAIN_CATAPULT_RANGE_MIN);
+  return 1.2 * Math.max(0, Math.min(1, f));
+}
+
+/** seconds to re-cock a catapult built for `range` — storing more energy takes longer, so
+ * the long-throw build also throws less often. This is the main cost of buying range. */
+export function catapultCycleFor(range: number): number {
+  const f = (range - CHAIN_CATAPULT_RANGE_MIN) / (CHAIN_CATAPULT_RANGE_MAX - CHAIN_CATAPULT_RANGE_MIN);
+  return 1.1 + 1.0 * Math.max(0, Math.min(1, f));
+}
 
 /** Within this distance of the mechanism's mouth the reach CONE does not apply — the ring
  * is already in the claw's grasp, so the angle it sits at is irrelevant. Without this, a
@@ -508,6 +559,20 @@ export const CHAIN_CATALYST_NEAR = 5;
 export const CHAIN_CATALYST_TYPES = ['arm', 'launcher', 'turret'] as const;
 export const CHAIN_DEFAULT_CATALYST: ChainCatalystType = 'arm';
 export const CHAIN_DEFAULT_CATALYST_MOUNT: ChainCatalystMount = 'front';
+
+/** the catapult's configured range (in), clamped + defaulted. */
+export function chainCatapultRange(spec: RobotSpec): number {
+  const r = spec.catapultRange;
+  if (typeof r !== 'number' || !Number.isFinite(r)) return CHAIN_CATAPULT_RANGE_DEFAULT;
+  return Math.max(CHAIN_CATAPULT_RANGE_MIN, Math.min(CHAIN_CATAPULT_RANGE_MAX, r));
+}
+
+/** the catapult's fixed mounting yaw in RADIANS (from chassis forward), clamped + defaulted. */
+export function chainCatapultYaw(spec: RobotSpec): number {
+  const y = spec.catapultYaw;
+  const deg = typeof y === 'number' && Number.isFinite(y) ? Math.max(-180, Math.min(180, y)) : CHAIN_CATAPULT_YAW_DEFAULT;
+  return (deg * Math.PI) / 180;
+}
 
 /** the catalyst mechanism's geometry for a spec (defaulted). */
 export function chainCatalystGeom(spec: RobotSpec): ChainCatalystGeom {

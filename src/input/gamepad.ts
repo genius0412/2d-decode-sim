@@ -22,6 +22,7 @@ export interface GamepadSample {
   fire: boolean;
   intake: boolean;
   catalyst: boolean;
+  fling: boolean;
   driveMode: boolean;
   flipFront: boolean;
   park: boolean;
@@ -39,6 +40,7 @@ const EMPTY: GamepadSample = {
   fire: false,
   intake: false,
   catalyst: false,
+  fling: false,
   driveMode: false,
   flipFront: false,
   park: false,
@@ -85,6 +87,7 @@ export class GamepadInput {
       fire: anyBtn(bindings.buttons.fire),
       intake: anyBtn(bindings.buttons.intake),
       catalyst: anyBtn(bindings.buttons.catalyst),
+      fling: anyBtn(bindings.buttons.fling),
       driveMode: anyBtn(bindings.buttons.driveMode),
       flipFront: flipNow && !this.prevFlip,
       park: parkNow && !this.prevPark,

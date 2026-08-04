@@ -12,13 +12,14 @@ export type KeyAction =
   | 'intake'
   | 'fire'
   | 'catalyst'
+  | 'fling'
   | 'driveMode'
   | 'flipFront'
   | 'park'
   | 'start'
   | 'restart';
 
-export type PadAction = 'fire' | 'intake' | 'catalyst' | 'driveMode' | 'flipFront' | 'park' | 'start' | 'restart';
+export type PadAction = 'fire' | 'intake' | 'catalyst' | 'fling' | 'driveMode' | 'flipFront' | 'park' | 'start' | 'restart';
 
 export interface PadBindings {
   /** which stick translates the robot — the other stick's X axis turns */
@@ -51,6 +52,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   'intake',
   'fire',
   'catalyst',
+  'fling',
   'driveMode',
   'flipFront',
   'park',
@@ -58,7 +60,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   'restart',
 ];
 
-export const PAD_ACTIONS: PadAction[] = ['fire', 'intake', 'catalyst', 'driveMode', 'flipFront', 'park', 'start', 'restart'];
+export const PAD_ACTIONS: PadAction[] = ['fire', 'intake', 'catalyst', 'fling', 'driveMode', 'flipFront', 'park', 'start', 'restart'];
 
 export const DEFAULT_BINDINGS: ControlBindings = {
   keys: {
@@ -71,6 +73,9 @@ export const DEFAULT_BINDINGS: ControlBindings = {
     intake: ['shift', 'k'],
     fire: [' '],
     catalyst: ['c'],
+    // CATAPULT throw (launcher catalyst mechanism) — its OWN button, so it is never
+    // ambiguous with the claw's grab/place on the same press.
+    fling: ['v'],
     // BUTTERFLY: drop the other wheel set. 'b' for butterfly; free on the default map.
     driveMode: ['b'],
     flipFront: ['f'],
@@ -84,6 +89,7 @@ export const DEFAULT_BINDINGS: ControlBindings = {
       fire: [7, 0], // RT or A
       intake: [6, 1], // LT or B
       catalyst: [4], // LB
+      fling: [10], // L3 (left stick click)
       driveMode: [5], // RB — the only unused face/shoulder button
       flipFront: [3], // Y
       park: [2], // X

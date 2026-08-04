@@ -28,6 +28,10 @@ export interface RobotCommand {
   /** Chain Reaction: pick up a nearby ring / place a carried ring on a hook. Edge-
    * triggered in the sim (acts once per press). Optional (DECODE omits it). */
   catalyst?: boolean;
+  /** Chain Reaction, LAUNCHER catalyst: THROW the carried ring downfield from the catapult.
+   * Its own button so it is never ambiguous with the claw's grab/place. Edge-triggered in
+   * the sim. Optional (old clients/replays omit it). */
+  fling?: boolean;
   /** BUTTERFLY drivetrain: drop the other wheel set (tank ⇄ mecanum). Edge-triggered
    * in the sim like `catalyst`, so a held button flips once. Ignored by every other
    * drivetrain. Optional (old clients/replays omit it). */
@@ -115,9 +119,20 @@ export interface RobotSpec {
   /** Chain Reaction: the CATALYST mechanism archetype (arm / launcher / turret). Optional
    * (defaulted in coerceSpec). */
   catalystType?: ChainCatalystType;
-  /** Chain Reaction: which chassis edge the catalyst mechanism is mounted on. Optional
+  /** Chain Reaction: which chassis edge the catalyst CLAW is mounted on. Optional
    * (defaulted in coerceSpec). */
   catalystMount?: ChainCatalystMount;
+  /** Chain Reaction, LAUNCHER archetype only: the fixed YAW the catapult is bolted at,
+   * in DEGREES relative to chassis forward (−180..180, 15° steps). The catapult is NOT on
+   * a turret — it throws wherever the chassis is pointed plus this offset — so which way
+   * you mount it is a real build decision, and it is INDEPENDENT of the claw's mount edge.
+   * Optional (defaulted in coerceSpec). */
+  catapultYaw?: number;
+  /** Chain Reaction, LAUNCHER archetype only: how far the catapult is built to throw, in
+   * INCHES (the nominal range; the actual landing scatters around it). A longer throw
+   * needs more stored energy, so it costs weight and takes longer to re-cock. Optional
+   * (defaulted in coerceSpec). */
+  catapultRange?: number;
   /** @deprecated superseded by `intakeMount`. Kept so older saves migrate and older peers/
    * servers (which only know this flag) still see the closest equivalent — `coerceSpec`
    * MIRRORS it from `intakeMount`. Never read it directly; use `intakeMountOf`. */
