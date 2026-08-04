@@ -42,8 +42,8 @@ import {
   CHAIN_DEFAULT_INTAKE,
   CHAIN_SCORE_MODES,
   CHAIN_INTAKE_STYLES,
-  CHAIN_MIN_LENGTH,
-  CHAIN_MAX_LENGTH,
+  chainSizeLimits,
+  chainMountFits,
 } from '../games/chain/config';
 import {
   CHAIN_DEFAULT_INTAKE_MOUNT,
@@ -175,13 +175,25 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
     out.drivetrain = sp.drivetrain;
   }
 
-  // 1) SIZE: length from the intake preset, width floored per drivetrain. Chain Reaction runs
-  // its own length range (its sweeper doesn't eat into an 18" cube — see CHAIN_MAX_LENGTH).
+  // 1) SIZE: length from the intake preset, width floored per drivetrain (DECODE).
+  // CR sizes are bounded per BUILD: the sweeper is structure inside the 18" start cube, and
+  // its MOUNT decides which axis it eats (ends → length, flanks → width). Resolve the mount
+  // first — it is normalised further down, but the size clamp needs it now.
+  let preMount = intakeMountOf(
+    (sp.intakeMount !== undefined || sp.intakeSide !== undefined ? sp : base) as RobotSpec,
+  );
+  // a mount whose intake cannot fit the start cube is not a legal build — fall back to the
+  // single front sweeper rather than clamping to an oversized chassis
+  if (game === 'chain' && !chainMountFits({ ...out, intakeMount: preMount }, preMount)) preMount = 'front';
+  const crSize = chainSizeLimits({ ...out, intakeMount: preMount });
   const len =
     game === 'chain'
-      ? { min: CHAIN_MIN_LENGTH, max: CHAIN_MAX_LENGTH }
+      ? { min: crSize.minLength, max: crSize.maxLength }
       : lengthLimits(out.intake);
-  const wid = widthLimits(out.intake, out.drivetrain);
+  const wid =
+    game === 'chain'
+      ? { min: crSize.minWidth, max: crSize.maxWidth }
+      : widthLimits(out.intake, out.drivetrain);
   out.length = clampFinite(sp.length, len.min, len.max, base.length);
   out.width = clampFinite(sp.width, wid.min, wid.max, base.width);
 
@@ -275,7 +287,7 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
     const y = clampFinite(rawYaw, -180, 180, CHAIN_CATAPULT_YAW_DEFAULT);
     out.catapultYaw = Math.round(y / CHAIN_CATAPULT_YAW_STEP) * CHAIN_CATAPULT_YAW_STEP;
   }
-  out.intakeMount = hasIntakeMount ? intakeMountOf(rawMounts) : intakeMountOf(base);
+  out.intakeMount = game === 'chain' ? preMount : hasIntakeMount ? intakeMountOf(rawMounts) : intakeMountOf(base);
   out.shooterMount = hasShooterMount ? shooterMountOf(rawMounts) : shooterMountOf(base);
   // MOUNTS ARE CHAIN-ONLY. They are the one CR field with a SHARED physics effect — the intake
   // mount moves the collision footprint (`footprintExtents`), so a CR build's side sweeper

@@ -49,6 +49,7 @@ import type {
   StartCat,
 } from '../../types';
 import { intakeMountOf } from './mounts';
+import { INTAKE_PRESETS, ROBOT_MAX_SIZE, ROBOT_MIN_WIDTH } from '../../config';
 
 /** millimetres → inches (the sim's world unit) */
 export const mm = (v: number): number => v / 25.4;
@@ -105,7 +106,12 @@ export const CHAIN_RINGSTAND_H = 22.5; // vertical climb pole height (context on
  * simplest shape that matches what is actually there, and it makes the corner a real
  * obstacle to path around rather than a pixel-thin post to clip.
  */
-export const CHAIN_RINGSTAND_BOX = 12; // in — side of the corner square, flush to both walls
+// SIZE IS CONSTRAINED, not free. A robot must be able to start COMPLETELY inside its Lab
+// square (G04) while clear of this solid corner — which is only possible when
+// `CHAIN_RINGSTAND_BOX <= CHAIN_LAB - 2·(chassis half-extent)`. At the 24" Lab that caps it
+// at 6" for the widest legal (18") chassis. Smoke asserts the relationship, so raising this
+// without raising the Lab fails loudly instead of quietly making G04 unsatisfiable.
+export const CHAIN_RINGSTAND_BOX = 6; // in — side of the corner square, flush to both walls
 export const CHAIN_PARTICLE_COUNT = 300;
 export const CHAIN_CATALYST_COUNT = 4;
 
@@ -133,6 +139,14 @@ export const CHAIN_ENDGAME_S = 20;
  * ringed posts in the render). Small inset from the corner (per the user); refine
  * with exact manual coordinates. Four total: (±(72−inset), ±(72−inset)).
  */
+// Post half-size. Kept SLIM relative to the 6" assembly block so the post can actually sit
+// near the block's inner corner with a visible gap — at 1.4 it filled half the block and
+// read as centred no matter where it was placed.
+export const CHAIN_RINGSTAND_POST = 0.9;
+/** clearance between the POST and the assembly block's INNER corner. The post stands near
+ * that corner (the one opposite the field corner) but is NOT flush into it — the plate
+ * carries it a little way in, so there is a visible gap on both inner faces. */
+export const CHAIN_RINGSTAND_GAP = 0.8;
 export const CHAIN_RINGSTAND_INSET = 5; // APPROX — "very close to each corner"
 export const CHAIN_RINGSTAND_XY = CHAIN_HALF_X - CHAIN_RINGSTAND_INSET; // 67"
 
@@ -373,14 +387,59 @@ export const CHAIN_STORAGE_DEFAULT = 12;
  * 18" cube (the sweeper deploys), so a CR chassis can run the full 18" long. */
 export const CHAIN_MIN_LENGTH = 10;
 export const CHAIN_MAX_LENGTH = 18;
-// effective sq in of chassis footprint per stored Particle — a 3"×3" ball hex-packs at ~8,
-// then G03 EXPANSION (the deployed hopper reaches past the 18"×18" frame into the 18"×24"
-// control prism) lets a full-frame launcher approach the ceiling: ~5.4 in²/ball → an 18×18
-// open-hopper launcher tops out near 60.
-// effective sq in of chassis footprint per stored Particle. Lowered from 5.4 for the same
-// reason the ceiling rose — 5.4 priced a single flat layer, and hoppers stack. 3.6 is that
-// same packing at ~1.5 layers, which lifts EVERY archetype by ~50% while leaving all the
-// relative tradeoffs (archetype factor × intake-mount factor) exactly where they were.
+
+/**
+ * CR CHASSIS SIZE LIMITS, per build.
+ *
+ * A Robot must START inside an 18" cube (G03), and the INTAKE is structure that counts —
+ * so the sweeper's reach eats into the cube on whichever axis it is MOUNTED on, exactly
+ * the way DECODE's per-intake `lengthLimits` works. Which axis depends on the mount, which
+ * is the whole point of having mounts:
+ *   • front / back      → one reach off the LENGTH
+ *   • front+back        → TWO reaches off the LENGTH (a sweeper on each end)
+ *   • side              → TWO reaches off the WIDTH (a sweeper on each flank)
+ * The catalyst mechanism is deliberately NOT counted: it is an EXPANSION (G02/G03 let it
+ * reach into the 24" control prism after the match starts), not part of the starting cube.
+ *
+ * Without this, a "legal" CR build could be an 18×18 chassis with a 5" triangle sweeper on
+ * both ends — a 28" starting footprint.
+ */
+export function chainSizeLimits(spec: RobotSpec): {
+  minLength: number;
+  maxLength: number;
+  minWidth: number;
+  maxWidth: number;
+} {
+  const reach = INTAKE_PRESETS[spec.intake].reach;
+  const mount = intakeMountOf(spec);
+  const ends = mount === 'front' || mount === 'back' ? 1 : mount === 'frontback' ? 2 : 0;
+  const flanks = mount === 'side' ? 2 : 0;
+  // NOT floored to the minimum on purpose: when the intake eats so much of the cube that
+  // nothing legal is left, the max drops BELOW the min and `chainMountFits` reports the
+  // combination as impossible. Flooring here would instead hand back a chassis that plus
+  // its intake exceeds 18" — an illegal robot the builder had quietly produced.
+  // The width floor is the plain chassis minimum, NOT the DECODE preset's `minWidth`. That
+  // number exists to house a DECODE funnel's side slopes; CR's intake is its own full-width
+  // SWEEPER (`CHAIN_INTAKES`) and only borrows the preset's REACH. Applying the funnel floor
+  // here would make flank mounts impossible for two of the three presets for a reason that
+  // does not exist in this game.
+  return {
+    minLength: CHAIN_MIN_LENGTH,
+    maxLength: CHAIN_MAX_LENGTH - ends * reach,
+    minWidth: ROBOT_MIN_WIDTH,
+    maxWidth: ROBOT_MAX_SIZE - flanks * reach,
+  };
+}
+
+/** Can this intake preset be mounted this way at all? A sweeper on BOTH ends of a chassis
+ * that already has a 10" minimum needs the reach to fit in 18 − 10 = 8" total; a long-reach
+ * intake simply cannot be double-mounted. The builder greys these out rather than offering
+ * a build that `coerceSpec` would have to rewrite. */
+export function chainMountFits(spec: RobotSpec, mount: ChainIntakeMount): boolean {
+  const l = chainSizeLimits({ ...spec, intakeMount: mount });
+  return l.maxLength >= l.minLength && l.maxWidth >= l.minWidth;
+}
+
 export const CHAIN_STORE_AREA_PER_BALL = 3.6;
 export const CHAIN_STORE_TURRET_MULT = 0.55; // turret loses center volume to the rotor+shooter
 export const CHAIN_STORE_LAUNCHER_MULT = 1.0; // drum + dumper: open hopper (large, equal)
@@ -500,17 +559,34 @@ export interface ChainCatalystGeom {
   /** can this mechanism also FLING a carried ring downfield? (the catapult) */
   fling: boolean;
 }
+/**
+ * LEGAL EXPANSION past the frame (in). G02 bounds a Robot to an 18"×24"×18" CONTROL PRISM
+ * and G03 lets it expand into that from an 18"×18"×18" start — so a mechanism may reach
+ * about 6" beyond the chassis, and no further. Every catalyst reach below is
+ * `CHAIN_EXPANSION + the ring radius` at most (the claw tip sits at the limit; a 6"-OD ring
+ * centred another 3" out is still within its jaws), and the ARM is drawn at the mechanism's
+ * own extent — not its grab radius — so the sprite obeys the same rule the rules do.
+ */
+export const CHAIN_EXPANSION = 6;
+
+/** How far the claw ARM is DRAWN past the frame. Deliberately much shorter than either its
+ * grab radius or the expansion limit: an arm only reaches out while it is actuating, and a
+ * top-down sprite shows the robot as it sits — stowed. Drawing it extended made every robot
+ * look like it was permanently mid-grab and hugely oversized. */
+export const CHAIN_ARM_DRAW = 2.2;
+
 export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
   // ARM raised 14 → 16: it is THE reach mechanism, and it should be unmistakably longer
   // than any intake (the longest intake preset reaches 5" past the frame).
-  arm: { reach: 16, cone: 0.87, cycle: 0.9, massLb: 1.4, fling: false },
+  // the reach specialist: it uses the FULL legal expansion, plus the ring radius
+  arm: { reach: 9, cone: 0.87, cycle: 0.9, massLb: 1.4, fling: false },
   // LAUNCHER raised 8 → 11. The 8" scoop was priced back when the catapult was (wrongly)
   // the long-range PLACER, so the claw was taxed to compensate. Now that the claw does the
   // grabbing and placing like everyone else's, that tax made it needlessly awkward — its
   // real costs are the weight, the slow cycle, and the narrow cone. Still the shortest of
   // the three, just no longer punishing.
-  launcher: { reach: 11, cone: 0.61, cycle: 1.0, massLb: 2.0, fling: true },
-  turret: { reach: 13, cone: Math.PI, cycle: 0.55, massLb: 2.6, fling: false },
+  launcher: { reach: 5, cone: 0.61, cycle: 1.0, massLb: 2.0, fling: true },
+  turret: { reach: 7, cone: Math.PI, cycle: 0.55, massLb: 2.6, fling: false },
 };
 
 /**
@@ -617,12 +693,7 @@ export function chainCatalystGeom(spec: RobotSpec): ChainCatalystGeom {
  * that STARTS on a stand and leaves this radius during auto scores descent (100 pt).
  * Lab squares are 24" at each field corner; an alliance owns the two on its side
  * (red x<0, blue x>0). APPROX — refine with manual. */
-// Lab-Area corner square (in). Raised 24 → 36 (both this and the Ring-Stand assembly were
-// APPROX): the corner assembly occupies the outer 12" of every corner, and at 24" the L that
-// was left over was only 12" wide — narrower than a legal chassis, so NO robot could start
-// fully inside its own Lab Area without spawning inside a collider. 36" leaves a usable band
-// beside the assembly, which is what makes G04 satisfiable at all. Refine with the manual.
-export const CHAIN_LAB = 36;
+export const CHAIN_LAB = 24; // corner square size (in). APPROX — refine with manual.
 // Ascend/descent proximity, measured to the CORNER ASSEMBLY (the solid square), not to the
 // post inside it. Measuring to the box is what makes this stable: the robot can never be
 // centred on the post, so post-distance would have to be a big fudge factor that also
@@ -664,12 +735,10 @@ export interface ChainStartAnchor {
 // arm both robots' auto-descent by default). Indices 2/3 stay the ring-stand pair, matching
 // the long-standing convention the descent tests and the role split rely on.
 export const CHAIN_START_POSES: readonly ChainStartAnchor[] = [
-  { name: 'LAB · TOP', pos: { x: 47, y: 47 }, heading: Math.PI },
-  { name: 'LAB · BOTTOM', pos: { x: 47, y: -47 }, heading: Math.PI },
-  { name: 'STAND · TOP', pos: { x: 51, y: 58 }, heading: Math.PI },
-  { name: 'STAND · BOTTOM', pos: { x: 51, y: -58 }, heading: Math.PI },
-  { name: 'WALL · TOP', pos: { x: 61, y: 46 }, heading: Math.PI },
-  { name: 'WALL · BOTTOM', pos: { x: 61, y: -46 }, heading: Math.PI },
+  { name: 'LAB · TOP', pos: { x: 57, y: 57 }, heading: Math.PI },
+  { name: 'LAB · BOTTOM', pos: { x: 57, y: -57 }, heading: Math.PI },
+  { name: 'STAND · TOP', pos: { x: 57, y: 62 }, heading: Math.PI },
+  { name: 'STAND · BOTTOM', pos: { x: 57, y: -62 }, heading: Math.PI },
 ];
 
 /**
@@ -731,7 +800,8 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     // to face the goal — which is exactly the build that can afford a FRONT+BACK sweeper
     // and collect while driving in either direction. It pays ~25% of the hopper for that.
     name: 'Sniper', teamName: 'Turret · shoots and collects any direction', teamNumber: 0,
-    length: 14.5, width: 17, intake: 'sloped', massLb: 24, drivetrain: 'swerve',
+    // front+back sweepers eat the START CUBE twice over, so this build is necessarily short
+    length: 12, width: 17, intake: 'sloped', massLb: 24, drivetrain: 'swerve',
     driveRpm: 500, flywheelInertia: 0.2, canSort: false,
     ballStorage: 12, groundClearance: 1.3, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'front',
@@ -754,7 +824,8 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     // sideways along a line of particles and hoover it up with the flank rollers, then
     // face the goal and stream. The open flanks are the harshest storage cost (0.6).
     name: 'Drummer', teamName: 'Drum · strafe-collect, stream from anywhere', teamNumber: 0,
-    length: 14.5, width: 17, intake: 'sloped', massLb: 25, drivetrain: 'mecanum',
+    // side-mounted sweepers eat the cube across the WIDTH, so this one is narrow
+    length: 14.5, width: 12, intake: 'sloped', massLb: 25, drivetrain: 'mecanum',
     driveRpm: 470, flywheelInertia: 0.3, canSort: false,
     ballStorage: 24, groundClearance: 1.4, scoreMode: 'drum', chainIntake: 'sweeper',
     intakeMount: 'side', shooterMount: 'front',

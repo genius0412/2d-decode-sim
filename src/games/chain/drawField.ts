@@ -8,9 +8,9 @@ import {
   CHAIN_DIAMOND_R,
   CHAIN_HALF_X,
   CHAIN_HALF_Y,
-  CHAIN_RINGSTAND_XY,
+  CHAIN_RINGSTAND_BOX,
 } from './config';
-import { labAreas } from './state';
+import { labAreas, ringStandBoxes, ringStands } from './state';
 import { CHAIN_BEAMS, BEAM_HALF_W } from './beams';
 
 /**
@@ -163,29 +163,27 @@ export function drawChainField(ctx: CanvasRenderingContext2D, _world: World, scr
     }
   }
 
-  // RING STANDS — a vertical square POST rising from a triangular corner base plate
-  // (rings hang around the post — the catalysts are drawn encircling it in draw.ts).
+  // RING STANDS — the corner ASSEMBLY: a solid square filling the field corner (post plus
+  // its mounting plate), with the post drawn on top. Drawn from the SAME `ringStandBoxes`
+  // the colliders are built from, so the shape you see is exactly the shape you collide
+  // with — it used to be drawn as a big triangular plate with a thin post, which matched
+  // neither the hitbox nor the real part.
   const POST = 1.4; // post half-size (top-down square cross-section)
-  const BASE = 12; // triangular base plate leg length
-  for (const sx of [-1, 1] as const) {
-    for (const sy of [-1, 1] as const) {
-      const cx = sx * CHAIN_RINGSTAND_XY;
-      const cy = sy * CHAIN_RINGSTAND_XY;
-      // triangular base plate tucked into the corner
-      ctx.fillStyle = '#33383e';
-      ctx.beginPath();
-      ctx.moveTo(sx * hx, sy * hy - sy * BASE);
-      ctx.lineTo(sx * hx - sx * BASE, sy * hy);
-      ctx.lineTo(cx, cy);
-      ctx.closePath();
-      ctx.fill();
-      // black square post
-      ctx.fillStyle = '#0a0c0f';
-      ctx.fillRect(cx - POST, cy - POST, 2 * POST, 2 * POST);
-      ctx.strokeStyle = 'rgba(120,130,140,0.7)';
-      ctx.lineWidth = 0.4;
-      ctx.strokeRect(cx - POST, cy - POST, 2 * POST, 2 * POST);
-    }
+  const H = CHAIN_RINGSTAND_BOX / 2;
+  for (const b of ringStandBoxes()) {
+    // the solid corner block
+    ctx.fillStyle = '#33383e';
+    ctx.fillRect(b.x - H, b.y - H, 2 * H, 2 * H);
+    ctx.strokeStyle = 'rgba(120,130,140,0.7)';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(b.x - H, b.y - H, 2 * H, 2 * H);
+  }
+  // the POSTS — at each block's INNER corner (opposite the field corner), not centred on it.
+  // `ringStands()` is the single source, shared with the ascend/descent logic.
+  ctx.fillStyle = '#0a0c0f';
+  for (const p of ringStands()) {
+    ctx.fillRect(p.x - POST, p.y - POST, 2 * POST, 2 * POST);
+    ctx.strokeRect(p.x - POST, p.y - POST, 2 * POST, 2 * POST);
   }
 
   // perimeter outline (drawn last so the accelerators read as attached to the wall)

@@ -6,6 +6,7 @@ import {
   CHAIN_LAUNCH_LINE_FRAC,
   CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_DEFAULT_CATALYST,
+  CHAIN_ARM_DRAW,
 } from '../games/chain/config';
 import { chainIntakeMouths } from '../games/chain/state';
 import { EDGE_ANGLE, catalystMountOf, edgeGeom, isEndEdge, shooterMountOf } from '../games/chain/mounts';
@@ -69,7 +70,7 @@ export function RobotPreview({
   const catType = spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
   // how far the CATALYST mechanism protrudes past its mounted edge (the arm is the longest);
   // folded into the viewBox below so a claw tip is never clipped off the drawing
-  const catOut = chain ? (catType === 'arm' ? 6.2 : catType === 'turret' ? 3.0 : 2.0) : 0;
+  const catOut = chain ? (catType === 'arm' ? CHAIN_ARM_DRAW + 1.5 : catType === 'turret' ? 3.0 : 2.0) : 0;
   const catTop = chain && catEdge === 'front' ? -(catDist + catOut) : 0;
   const catBottom = chain && catEdge === 'back' ? catDist + catOut : 0;
   const catSide = chain && (catEdge === 'left' || catEdge === 'right') ? catDist + catOut : 0;
@@ -197,9 +198,23 @@ export function RobotPreview({
     <g transform={`${ROBOT_FRAME} rotate(${deg(EDGE_ANGLE[catEdge])})`} opacity={0.9}>
       {catType === 'arm' ? (
         <>
-          <line x1={catDist - 1} y1={0} x2={catDist + 4.6} y2={0} stroke={stroke} strokeWidth={0.5} />
-          <line x1={catDist + 4.6} y1={-1.3} x2={catDist + 6} y2={-0.5} stroke={stroke} strokeWidth={0.5} />
-          <line x1={catDist + 4.6} y1={1.3} x2={catDist + 6} y2={0.5} stroke={stroke} strokeWidth={0.5} />
+          {/* pivot block, tapered boom, and two curved claw jaws — a mechanism, not an arrow */}
+          <rect x={catDist - 2} y={-1.5} width={1.9} height={3} rx={0.4} fill="var(--ds-bg)" stroke={stroke} strokeWidth={0.35} />
+          <polygon
+            points={`${catDist - 1.1},-0.85 ${catDist + CHAIN_ARM_DRAW - 0.4},-0.55 ${catDist + CHAIN_ARM_DRAW - 0.4},0.55 ${catDist - 1.1},0.85`}
+            fill="var(--ds-bg)"
+            stroke={stroke}
+            strokeWidth={0.35}
+          />
+          {[1, -1].map((sg) => (
+            <path
+              key={sg}
+              d={`M ${catDist + CHAIN_ARM_DRAW - 0.5} ${sg * 0.5} Q ${catDist + CHAIN_ARM_DRAW + 0.7} ${sg * 1.5} ${catDist + CHAIN_ARM_DRAW + 1.5} ${sg * 0.85}`}
+              fill="none"
+              stroke={stroke}
+              strokeWidth={0.45}
+            />
+          ))}
         </>
       ) : catType === 'launcher' ? (
         <>

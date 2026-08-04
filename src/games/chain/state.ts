@@ -6,7 +6,8 @@ import {
   CHAIN_HALF_Y,
   CHAIN_HOOK_Y,
   CHAIN_LAB,
-  CHAIN_RINGSTAND_XY,
+  CHAIN_RINGSTAND_POST,
+  CHAIN_RINGSTAND_GAP,
   CHAIN_ASCEND_R,
   CHAIN_RINGSTAND_BOX,
   CHAIN_INTAKES,
@@ -173,12 +174,16 @@ export function hookSlotPos(a: Alliance, index: number): Vec2 {
 
 /** all four Ring-Stand corner positions */
 export function ringStands(): Vec2[] {
-  return [
-    { x: -CHAIN_RINGSTAND_XY, y: CHAIN_RINGSTAND_XY },
-    { x: CHAIN_RINGSTAND_XY, y: CHAIN_RINGSTAND_XY },
-    { x: -CHAIN_RINGSTAND_XY, y: -CHAIN_RINGSTAND_XY },
-    { x: CHAIN_RINGSTAND_XY, y: -CHAIN_RINGSTAND_XY },
-  ];
+  // The POST does not sit in the middle of its assembly block — it stands at the block's
+  // INNER corner, the one diagonally opposite the field corner (that is where the plate
+  // carries it, so the rings hang out over the field rather than into the wall). Derived
+  // from `ringStandBoxes` so the post can never drift away from the block it stands on.
+  const h = CHAIN_RINGSTAND_BOX / 2;
+  const inset = h - CHAIN_RINGSTAND_POST - CHAIN_RINGSTAND_GAP; // leaves GAP at the inner faces
+  return ringStandBoxes().map((b) => ({
+    x: b.x - Math.sign(b.x) * inset,
+    y: b.y - Math.sign(b.y) * inset,
+  }));
 }
 
 /** is `pos` on (within the ascend radius of) any Ring Stand? Shared by the endgame
@@ -310,4 +315,13 @@ export function chainSnapStart(spec: RobotSpec, pos: Vec2): Vec2 {
     out.y = sy * clamp1(Math.abs(out.y), lo, hi);
   }
   return out;
+}
+
+
+/** Is a CANONICAL (blue-frame) start position legal? G04 wants the robot COMPLETELY inside
+ * a Lab-Area corner square, and the solid corner assembly must not be overlapped. This is
+ * the predicate the editor colours its footprint with; `chainSnapStart` is the repair. */
+export function chainStartLegal(spec: RobotSpec, pos: Vec2): boolean {
+  const snapped = chainSnapStart(spec, pos);
+  return Math.abs(snapped.x - pos.x) < 0.01 && Math.abs(snapped.y - pos.y) < 0.01;
 }

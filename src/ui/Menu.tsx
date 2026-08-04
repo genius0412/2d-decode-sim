@@ -12,10 +12,9 @@ import {
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_DEFAULT_INTAKE,
   CHAIN_PRESETS,
-  CHAIN_MIN_LENGTH,
-  CHAIN_MAX_LENGTH,
   chainStorageMax,
   chainMassFloorBump,
+  chainSizeLimits,
   CHAIN_CATALYST_TYPES,
   CHAIN_DEFAULT_CATALYST,
   CHAIN_CATAPULT_RANGE_MIN,
@@ -231,12 +230,18 @@ export function Menu({ settings, onChange }: Props) {
   // slider envelopes come from the SAME limit functions coerceSpec clamps with,
   // in the same dependency order (intake → size, drivetrain → rpm, drivetrain ×
   // inertia → mass), so the UI and the validator can never disagree
-  // CR runs its own length range (its sweeper doesn't eat into an 18" cube, unlike DECODE's
-  // reach-limited intakes) — mirror coerceSpec's game-aware clamp.
+  // SIZE envelopes, mirroring coerceSpec's game-aware clamp exactly so the slider can never
+  // offer a value the coercer would immediately rewrite. CR's depends on the INTAKE MOUNT:
+  // the sweeper is structure inside the 18" start cube, so it eats the length on an end
+  // mount (twice, on front+back) or the width on a side mount.
+  const crSize = chainSizeLimits(spec);
   const { min: minLength, max: maxLength } = isDecode
     ? lengthLimits(spec.intake)
-    : { min: CHAIN_MIN_LENGTH, max: CHAIN_MAX_LENGTH };
-  const { min: minWidth, max: maxWidth } = widthLimits(spec.intake, spec.drivetrain);
+    : { min: crSize.minLength, max: crSize.maxLength };
+  const dtWidth = widthLimits(spec.intake, spec.drivetrain);
+  const { min: minWidth, max: maxWidth } = isDecode
+    ? dtWidth
+    : { min: crSize.minWidth, max: crSize.maxWidth };
   const { min: minRpm, max: maxRpm } = rpmLimits(spec.drivetrain);
   // BUTTERFLY carries two independently geared wheel sets, so it gets a SECOND rpm slider.
   // The traction set runs the torque-biased tank envelope, which tops out lower.

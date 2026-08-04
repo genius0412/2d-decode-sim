@@ -14,7 +14,7 @@ import {
   chainCatalystGeom,
   chainCatapultRange,
   chainCatapultYaw,
-  CHAIN_CATALYSTS,
+  CHAIN_ARM_DRAW,
 } from './config';
 import { CHAIN_HOOKS_PER_GOAL, catalystMouth, chainIntakeMouths, hookPos } from './state';
 import { EDGE_ANGLE, catalystMountOf, edgeGeom, isEndEdge, shooterMountOf } from './mounts';
@@ -293,21 +293,37 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
   ctx.lineWidth = 0.55;
 
   if (type === 'arm') {
-    // The arm is drawn at its ACTUAL working reach, not a token stub — same contract the
-    // intake mouths follow (what you see is what it grabs). It was drawn at a hardcoded
-    // 4.6" while functionally reaching 14", so it looked no longer than the intake it is
-    // supposed to out-reach by a mile.
-    const reach = CHAIN_CATALYSTS[type].reach - 1.4; // less the claw jaws drawn past the tip
+    // STOWED length — see CHAIN_ARM_DRAW. The grab radius is bigger (it counts the ring's
+    // own radius) and the legal expansion bigger still, but neither is what the robot looks
+    // like sitting on the tiles, which is what a top-down sprite should show.
+    //
+    // Built as a real mechanism rather than a line-with-a-vee: a pivot block at the frame,
+    // a boom with actual width, and a two-finger claw whose jaws are curved and open.
+    const reach = CHAIN_ARM_DRAW;
+    const x0 = dist - 1.1;
+    const tip = dist + reach;
+    // pivot block at the frame edge
+    ctx.fillStyle = STEEL_DK;
+    ctx.fillRect(x0 - 0.9, -1.5, 1.9, 3);
+    ctx.strokeRect(x0 - 0.9, -1.5, 1.9, 3);
+    // boom — a tapered bar, not a hairline
     ctx.beginPath();
-    ctx.moveTo(dist - 1.2, 0);
-    ctx.lineTo(dist + reach, 0);
+    ctx.moveTo(x0, -0.85);
+    ctx.lineTo(tip - 0.4, -0.55);
+    ctx.lineTo(tip - 0.4, 0.55);
+    ctx.lineTo(x0, 0.85);
+    ctx.closePath();
+    ctx.fill();
     ctx.stroke();
-    ctx.beginPath(); // the claw: two short jaws
-    ctx.moveTo(dist + reach, -1.3);
-    ctx.lineTo(dist + reach + 1.4, -0.5);
-    ctx.moveTo(dist + reach, 1.3);
-    ctx.lineTo(dist + reach + 1.4, 0.5);
-    ctx.stroke();
+    // claw: two curved jaws opening off the tip
+    ctx.lineWidth = 0.62;
+    for (const sgn of [1, -1] as const) {
+      ctx.beginPath();
+      ctx.moveTo(tip - 0.5, sgn * 0.5);
+      ctx.quadraticCurveTo(tip + 0.7, sgn * 1.5, tip + 1.5, sgn * 0.85);
+      ctx.stroke();
+    }
+    ctx.lineWidth = 0.55;
   } else if (type === 'launcher') {
     // the CLAW: a low scoop at the mounted edge (this is what grabs and places)
     ctx.beginPath();
