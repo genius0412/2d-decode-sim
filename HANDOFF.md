@@ -1,3 +1,87 @@
+# HANDOFF — 2026-08-05 (butterfly drivetrain · twin turret · configurable catalysts) — alpha only
+
+Branch **alpha** (worktree `../2d-decode-sim-alpha`). 4 commits, NOT merged to main.
+`npm test` ALL PASS · `npm run build` · `npm run contrast` 197 · `server:check` ·
+`test:mm` 58. Every feature GUI-verified in Electron (builder + a live match).
+
+## 0. Merged origin/main (25 commits) — first commit of the batch
+Ranked background queue, admin/ops console + maintenance lockdown, cross-region
+spectating, replay-from-your-seat, matchmaking speedups, duo rematch voting, mobile UI
+sweep, badges everywhere. Only 3 conflicts, all mechanical (an import line each in
+field.ts and smoke.ts, and the usual HANDOFF prepend). **CLAUDE.md auto-merged** — the
+previous session's reconciliation of the multi-game restructure paid off.
+Note main CURATED OUT its own 07-27b handoff section; the merge respects that.
+
+## 1. BUTTERFLY drivetrain (`d4dbbf6`)
+Two wheel sets on a lift, one down at a time, swapped mid-match.
+- **`BUTTERFLY_MODES`** holds both halves; **`activeDrive(spec, tankMode)`** is the ONE
+  resolver `driveParams` AND the Rapier shove mass call. The swap therefore changes
+  handling, the saturation model (holonomic ⇄ tank side-drive), which rpm slider applies,
+  and pushing power — together.
+- Mode is RUNTIME state (`RobotState.butterflyTank`), toggled by the new `driveMode`
+  command, **edge-triggered in the sim** (like `catalyst`) so prediction/reconcile/replay
+  can't double-toggle. Key **B** / pad **RB**. Spawns on the mecanum set.
+- **Numbers**: each half = the dedicated drivetrain × an efficiency tax weighted by what a
+  compliant lift linkage actually costs — push −7%, accel −6%, speed −5%, turn −4%.
+  Mass floor **24 lb**, the highest in the game (it always hauls the airborne set).
+  Two rpm sliders: mecanum set 200-600, traction set 200-560 (`BUTTERFLY_TANK_RPM`).
+- GOTCHA: tank-mode robots read ONLY leftDrive/rightDrive, so GameController's tank
+  control-style resolution follows the DEPLOYED set — miss that and swapping mid-match
+  silently stops responding to the sticks.
+- **Mecanum rollers were never drawn at all.** Added 45° roller hatching shared by mecanum
+  and butterfly's mecanum set, ALTERNATING by diagonal (FL/BR vs FR/BL). That alternation
+  is what makes strafing physically possible; all-four-the-same depicts a robot that
+  couldn't strafe. Verified by running the real `drawWheels` against a recording stub —
+  do that rather than eyeballing a zoomed screenshot, which is genuinely ambiguous here.
+
+## 2. TWIN TURRET (`6a732e6`)
+Fourth CR archetype, between the single turret and the drum.
+- **Rate ×1.65 → ~21.5 bps** (vs 13). NOT 2.0: two barrels share one indexer and one aim
+  solution, so ~17% goes to indexer contention + alternation. Sits clearly below the
+  drum's 24, so it doesn't erase that niche.
+- **Storage 0.42** (single turret 0.55) · **+2.5 lb** mass floor · two muzzles at ±1.5"
+  firing alternately (a muzzle POSITION, not an aim change — accuracy is unchanged).
+- `massLimits` gained an optional `extraFloor` so a game can price a heavy mechanism
+  without leaking its enums into the shared drivetrain model.
+- New **`isTurreted()`** in mounts.ts — "is this top-mounted?" now has two answers and was
+  asked in three places (hides the shooter-mount picker, keeps fire from steering).
+
+## 3. CATALYST MECHANISMS (`795009e`)
+Was ONE unconfigurable grabber (fixed radii from the robot centre, no facing, no cooldown,
+no weight). Now type + mount are build choices, measured from a MOUTH on the mounted edge
+through a reach CONE with a per-archetype cycle.
+- **arm** 14/14, ±50°, 0.9 s, +1.4 lb — reach specialist, must face it.
+- **launcher** 8/26, ±35°, 1.3 s, +2.0 lb — shortest grab, but THROWS a ring onto a hook
+  from most of a tile: hook points without committing to the wall.
+- **turret** 11/15, OMNI, 0.55 s, +2.6 lb — never reorient, fastest cycle, heaviest.
+- `catalystCanReach` is the ONE reach test shared by the action and the HUD prompt.
+- **`CHAIN_CATALYST_NEAR` 5"**: inside it the cone doesn't apply (the ring is in the claw).
+  Without this a ring you just drove onto became ungrabbable — annoyance, not constraint.
+- Four legacy tests encoded the old centre-radius/no-facing model and were UPDATED (aim at
+  the target; wait out the cycle). That is the deliberate model change.
+
+## Gotchas worth carrying forward
+- **main added an engine-defined-Math guard** over `src/sim` + `src/games` (renderers
+  exempt). It caught `Math.cos/hypot` in my first catalyst pass. Use rot/hyp/dcos/datan2
+  in ANY sim-reachable file.
+- Verifying sprite geometry: probe the real draw function with a stub ctx and read back
+  the segments. Screenshot-zooming 45° hatching at 10x nearest-neighbour is not decidable
+  by eye — I was wrong about the roller directions until I measured them.
+- Measuring launch offsets: sample AT BIRTH. A few ticks later the ball has flown tens of
+  inches and a 1.5" muzzle offset passes by accident.
+- The Electron driver's `capturePage` throws `UnknownVizError` intermittently on a fresh
+  binary — retry a few times. To crop reliably, target a DOM rect (the builder preview),
+  not a guessed field coordinate.
+
+## Next up
+- CR presets still use default mounts/mechanisms; cards showcasing a butterfly, a twin
+  turret, or a launcher-catalyst build would make the new options discoverable.
+- The `APPROX`-flagged CR field constants are still the last real gap in that game.
+- A Fly deploy is needed before any of this behaves in MULTIPLAYER CR (server runs the
+  shared sim); solo/local rides Vercel auto-deploy.
+
+---
+
 # HANDOFF — 2026-07-25b (CR presets showcase the mounts · mounts are chain-only · assists ride the robot) — alpha only
 
 Branch **alpha** (worktree `../2d-decode-sim-alpha` — see the isolation note below). Follows the
