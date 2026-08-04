@@ -15,7 +15,7 @@ import { addClassified, addOverflow } from './scoring';
 import { approach, nextRandom, hyp, rot } from '../math';
 import { robotIntersectsRect } from './physics';
 
-const ZERO_CMD: RobotCommand = {
+export const ZERO_CMD: RobotCommand = {
   driveX: 0,
   driveY: 0,
   rotate: 0,

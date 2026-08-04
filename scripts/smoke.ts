@@ -2942,6 +2942,61 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   );
 }
 
+// ---- G418.B is billed on the DRAIN, not on the touch -------------------------
+// TAPPING an opponent's gate arm without ever lifting it is G417 alone: nothing
+// leaves their ramp, so nothing is billed. (This used to charge a MAJOR for every
+// artifact standing on the ramp at the moment of contact.)
+{
+  const w = foulWorld();
+  const N = 3;
+  for (let i = 0; i < N; i++) {
+    const b = w.balls[i];
+    b.state = { kind: 'rail', goal: 'red', s: GATE_STOP_S + i * RAIL_PITCH, v: 0, overflow: false };
+    b.pos = railPos('red', GATE_STOP_S + i * RAIL_PITCH);
+    b.vel = { x: 0, y: 0 };
+    b.z = RAMP_SURFACE_Z;
+  }
+  const ar = gateArmRect('red');
+  w.robots[0].pos = { x: (ar.x0 + ar.x1) / 2, y: (ar.y0 + ar.y1) / 2 }; // blue ON red's arm
+  w.robots[0].heading = 0;
+  w.robots[0].vel = { x: 0, y: 0 };
+  w.robots[1].pos = { x: 0, y: 30 };
+  // penalties only (no world step): the arm is touched but never pushed, so it
+  // stays shut and the column stays put
+  for (let i = 0; i < 30; i++) updatePenalties(w, 1 / 60, new Map());
+  check(
+    'touching the opponent gate WITHOUT opening it is G417 only — no G418 for the standing column',
+    w.match.fouls.blue.major === 1 && w.match.scores.red.foulPoints === 15,
+    `blueMajor=${w.match.fouls.blue.major} (expected 1) redFoulPts=${w.match.scores.red.foulPoints}`,
+  );
+  check('a tap leaves the ramp column untouched', w.balls.filter((b) => b.state.kind === 'rail').length === N);
+}
+
+// ---- G418.B blames the opponent who OPENED the gate, not one merely leaning ---
+// The owner drains their OWN ramp while an opponent rests against the lever: the
+// opponent owes G417 for the contact, but the artifacts are the owner's own doing.
+{
+  const w = foulWorld();
+  const b = w.balls[0];
+  b.state = { kind: 'rail', goal: 'red', s: GATE_STOP_S, v: 0, overflow: false };
+  b.pos = railPos('red', GATE_STOP_S);
+  b.z = RAMP_SURFACE_Z;
+  const ar = gateArmRect('red');
+  w.robots[0].pos = { x: (ar.x0 + ar.x1) / 2, y: (ar.y0 + ar.y1) / 2 }; // blue touching, not pushing
+  w.robots[0].vel = { x: 0, y: 0 };
+  w.robots[1].pos = { x: 0, y: 30 };
+  w.goals.red.gatePos = 1; // the OWNER has it open
+  w.goals.red.gateOpen = true;
+  updatePenalties(w, 1 / 60, new Map()); // records the ball on the ramp
+  b.state = { kind: 'ground' }; // ...and it drains out
+  updatePenalties(w, 1 / 60, new Map());
+  check(
+    'an artifact off a ramp the OWNER opened is not billed to an opponent touching the lever',
+    w.match.fouls.blue.major === 1 && w.match.scores.red.foulPoints === 15,
+    `blueMajor=${w.match.fouls.blue.major} (expected 1, G417 only)`,
+  );
+}
+
 // ---- G425 secret tunnel (MINOR) --------------------------------------------
 {
   const w = foulWorld();

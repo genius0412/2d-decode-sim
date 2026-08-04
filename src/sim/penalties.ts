@@ -11,6 +11,7 @@ import {
 } from './field';
 import type { Rect } from './field';
 import { closestPointOnRobot, robotCorners, robotIntersectsRect } from './physics';
+import { pushingGate, ZERO_CMD } from './goal';
 import { awardFoul } from './scoring';
 import { hyp } from '../math';
 
@@ -73,10 +74,18 @@ export function updatePenalties(
   commands: Map<number, RobotCommand>,
 ): void {
   const phase = world.match.phase;
-  // fouls are only assessed while robots are competing under match rules
-  if (phase !== 'auto' && phase !== 'teleop') return;
-
   const pen = world.penalties;
+  // fouls are only assessed while robots are competing under match rules. Drop the
+  // gate/ramp tracking on the way out: robots are frozen across the transition, so a
+  // ramp that keeps draining through it is nobody's foul, and a stale rampBallIds
+  // would otherwise bill the whole gap the instant play resumes.
+  if (phase !== 'auto' && phase !== 'teleop') {
+    for (const a of ALLIANCES) {
+      pen.gateCulprit[a] = null;
+      pen.rampBallIds[a] = [];
+    }
+    return;
+  }
   const byId = new Map(world.robots.map((r) => [r.id, r] as const));
 
   /** EPISODE-debounced foul: fires once when `key`'s condition first holds, then
@@ -181,7 +190,7 @@ export function updatePenalties(
   }
 
   // ---- G417 opponent gate + G418 artifacts off the opponent's ramp --------
-  updateGateFouls(world, fire);
+  updateGateFouls(world, commands, fire);
 
   // ---- G408 over-possession / plowing (per robot, own second-accumulator) --
   updatePossession(world, dt, fire);
@@ -234,15 +243,32 @@ type FireFn = (key: string, offender: Alliance, severity: 'minor' | 'major', rul
 
 /** G417 (TOUCHING an OPPOSING GATE — MAJOR) + G418.B (each classified ARTIFACT that
  * leaves an opponent's RAMP because their gate was opened — MAJOR per artifact).
+ *
  * G417 fires when an opponent is TOUCHING the gate arm (`gateArmRect`): merely
  * touching the opponent's gate is a foul even if the robot never opens it (you don't
- * have to succeed in opening it — contact with the arm is the violation). It
- * remembers which opponent touched each gate so the balls that then drain off that
- * ramp are billed to them even after they leave (the flow finishes the drain).
+ * have to succeed in opening it — contact with the arm is the violation).
+ *
+ * G418.B is billed on the DRAIN, not on the touch: `rampBallIds` remembers which
+ * classified artifacts were resting on each ramp last tick, and every one that has
+ * LEFT this tick costs the responsible opponent a MAJOR. So a TAP that never lifts
+ * the arm past the pass fraction drains nothing and costs G417 alone (billing the
+ * whole standing column on contact was the old bug), while a real opening is billed
+ * artifact-by-artifact as the column empties — including after the offender drives
+ * away, since the flow finishes the drain on its own.
+ *
+ * Responsibility (`gateCulprit`) is pinned to an opponent who actually WORKS the arm
+ * (`pushingGate` — the physical push that lifts it), not to anyone merely brushing
+ * it: an owner draining their own ramp while an opponent leans on the lever is the
+ * owner's own doing, and stays unbilled. It clears once the gate shuts.
+ *
  * Touching your OWN gate is legal (that is how an alliance clears its own overflow).
  * Matches the manual's Example 3: work the opponent gate => 1 G417 + one G418 per
  * artifact that leaves. */
-function updateGateFouls(world: World, fire: FireFn): void {
+function updateGateFouls(
+  world: World,
+  commands: Map<number, RobotCommand>,
+  fire: FireFn,
+): void {
   const pen = world.penalties;
   for (const a of ALLIANCES) {
     const goal = world.goals[a];
@@ -250,32 +276,34 @@ function updateGateFouls(world: World, fire: FireFn): void {
     // opponents TOUCHING gate a's arm (contact with the physical gate, not merely
     // loitering in the gate zone). Touching your own gate is legal, so only the
     // owner's opponents are flagged — and no push/opening is required.
-    let workingOpp: Alliance | null = null;
+    let opener: Alliance | null = null; // an opponent actually working it OPEN
     for (const r of world.robots) {
       if (r.alliance === a) continue;
-      if (robotIntersectsRect(r, gateArmRect(a))) {
-        if (fire(`G417:${a}:${r.id}`, r.alliance, 'major', 'G417 opponent gate')) {
-          // G418: penalty per classified ball on the ramp at the moment of opening
-          let ballsOnRamp = 0;
-          for (const b of world.balls) {
-            const st = b.state;
-            if (st.kind === 'rail' && st.goal === a && !st.overflow && !st.pending) {
-              ballsOnRamp++;
-            }
-          }
-          for (let i = 0; i < ballsOnRamp; i++) {
-            awardFoul(world, r.alliance, 'major', 'G418 artifact off opponent ramp');
-          }
-        }
-        workingOpp = r.alliance;
-      }
+      if (!robotIntersectsRect(r, gateArmRect(a))) continue;
+      fire(`G417:${a}:${r.id}`, r.alliance, 'major', 'G417 opponent gate');
+      if (pushingGate(r, commands.get(r.id) ?? ZERO_CMD, a)) opener = r.alliance;
     }
 
-    // update who is responsible for gate a being open: an opponent operating it
-    // takes the blame and keeps it through the drain; it clears only once the gate
-    // is shut and unattended (opened legally by the owner => stays null)
-    if (workingOpp) pen.gateCulprit[a] = workingOpp;
+    // update who is responsible for gate a being open: an opponent who pushes it
+    // takes the blame and keeps it through the drain; it clears once the gate is
+    // shut (opened legally by the owner, or never opened at all => stays null)
+    if (opener) pen.gateCulprit[a] = opener;
     else if (!goal.gateOpen) pen.gateCulprit[a] = null;
+
+    // G418.B — bill the artifacts that actually LEFT the ramp since last tick
+    const onRamp: number[] = [];
+    for (const b of world.balls) {
+      const st = b.state;
+      if (st.kind === 'rail' && st.goal === a && !st.overflow && !st.pending) onRamp.push(b.id);
+    }
+    const culprit = pen.gateCulprit[a];
+    if (culprit) {
+      const still = new Set(onRamp);
+      for (const id of pen.rampBallIds[a]) {
+        if (!still.has(id)) awardFoul(world, culprit, 'major', 'G418 artifact off opponent ramp');
+      }
+    }
+    pen.rampBallIds[a] = onRamp;
   }
 }
 

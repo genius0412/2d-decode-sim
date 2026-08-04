@@ -650,10 +650,16 @@ Free-Drive has a "practice dummies" toggle (3 idle robots as obstacles).
   contact with the gate ARM (`robotIntersectsRect(r, gateArmRect(a))`), **even if it never
   opens**. Deliberately DIFFERENT from `updateGates`' physical `pushingGate` (which also needs
   an active shove). Touching your OWN gate is legal.
-- **G418.B** — each classified artifact INSIDE the opponent's RAMP when the gate is opened is a
-  MAJOR **per artifact**. The engine remembers who opened each gate (`penalties.gateCulprit`)
-  and bills every ball that then drains off that ramp (`penalties.rampBallIds`) to them even
-  after they leave — matching manual Example 3.
+- **G418.B** — each classified artifact that LEAVES an opponent's RAMP because you opened their
+  gate is a MAJOR **per artifact**. Billed **on the DRAIN, not on the touch**:
+  `penalties.rampBallIds` holds last tick's committed non-overflow rail balls per goal and every
+  id that is gone this tick costs the culprit one MAJOR — so the bill keeps running after the
+  offender drives away (the flow finishes the drain), and a TAP that never lifts the arm past
+  the pass fraction costs **G417 alone** (billing the standing column on contact was a bug,
+  fixed Aug 2026). `penalties.gateCulprit` is pinned to an opponent who actually `pushingGate`s
+  the arm, not to one merely brushing it, so an owner draining their own ramp is never billed to
+  a leaning opponent. Both are reset whenever the phase isn't auto/teleop, so a drain across the
+  frozen transition is nobody's foul. Matches manual Example 3.
 - **Protected zones use one uniform model** — each zone is OWNED by an alliance and a
   cross-alliance CONTACT while either robot is in it fouls the NON-owner ("regardless of who
   initiates"): **G424 gate zone** (MINOR — opening the gate is legal for anyone; only in-zone
