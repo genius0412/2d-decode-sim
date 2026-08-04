@@ -1,4 +1,4 @@
-import type { Alliance, RobotSpec, RobotState, Vec2 } from '../../types';
+import type { Alliance, RobotSpec, RobotState, StartPose, Vec2 } from '../../types';
 import type { Rect } from '../../sim/field';
 import { INTAKE_PRESETS } from '../../config';
 import {
@@ -324,4 +324,53 @@ export function chainSnapStart(spec: RobotSpec, pos: Vec2): Vec2 {
 export function chainStartLegal(spec: RobotSpec, pos: Vec2): boolean {
   const snapped = chainSnapStart(spec, pos);
   return Math.abs(snapped.x - pos.x) < 0.01 && Math.abs(snapped.y - pos.y) < 0.01;
+}
+
+/** why a start pose is (il)legal, for the editor's status line and its footprint ring. */
+export interface ChainStartLegality {
+  /** the conservative, rotation-agnostic half-extent the rules are checked against — the
+   * robot may sit at ANY heading, so the tests use its largest dimension */
+  extent: number;
+  /** fully inside one of the Lab-Area corner squares (G04) */
+  inLab: boolean;
+  /** clear of the SOLID Ring-Stand corner assembly */
+  clearOfStand: boolean;
+  /** the authoritative verdict — the snap round-trip the spawn actually applies */
+  legal: boolean;
+}
+
+/** Break `chainStartLegal` down into the two rules it enforces, so the editor can say
+ * WHICH one a pose breaks. `legal` stays the snap round-trip (the spawn's own answer), not
+ * a re-derivation, so the ring can never disagree with where the robot really starts. */
+export function chainEvalStart(spec: RobotSpec, pos: Vec2): ChainStartLegality {
+  const e = Math.max(spec.length, spec.width) / 2 + 0.5; // same extent chainSnapStart uses
+  const lo = CHAIN_HALF_X - CHAIN_LAB + e;
+  const hi = CHAIN_HALF_X - e;
+  const EPS = 0.01;
+  const inLab =
+    lo <= hi &&
+    pos.x >= lo - EPS &&
+    pos.x <= hi + EPS &&
+    Math.abs(pos.y) >= lo - EPS &&
+    Math.abs(pos.y) <= hi + EPS;
+  const h = CHAIN_RINGSTAND_BOX / 2;
+  let clearOfStand = true;
+  for (const b of ringStandBoxes()) {
+    if (Math.abs(pos.x - b.x) < h + e - EPS && Math.abs(pos.y - b.y) < h + e - EPS) {
+      clearOfStand = false;
+    }
+  }
+  return { extent: e, inLab, clearOfStand, legal: chainStartLegal(spec, pos) };
+}
+
+/** CANONICAL (blue, +x) start pose <-> the alliance's ACTUAL one. Mirrors `chainStartPose`
+ * in spawn.ts: red is the x-mirror, heading reflected about the y axis. SELF-INVERSE, so
+ * the editor can display in the actual frame and store canonical with the same call, and a
+ * pose keeps its spot when the alliance changes. */
+export function chainMirrorStart(pose: StartPose, alliance: Alliance): StartPose {
+  if (alliance === 'blue') return { x: pose.x, y: pose.y, headingDeg: pose.headingDeg };
+  let deg = (180 - pose.headingDeg) % 360;
+  if (deg > 180) deg -= 360;
+  if (deg <= -180) deg += 360;
+  return { x: -pose.x, y: pose.y, headingDeg: deg };
 }

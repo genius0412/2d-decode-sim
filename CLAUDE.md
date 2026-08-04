@@ -853,8 +853,33 @@ stays the flat 1".
 **G04**: a robot must begin completely in the Lab Area (tile floor OR already ascended on a
 corner Ring Stand). `CHAIN_START_POSES` are four named anchors — LAB·TOP, LAB·BOTTOM, RING
 STAND·TOP, RING STAND·BOTTOM — CANONICAL for BLUE and x-MIRRORED for RED (`chainStartPose`).
-**All are legal by construction**, so the selector can only produce legal poses and there is no
-G304-style validator. Starting on a stand ARMS the auto-descent award (`descentArmed`).
+The anchors are all legal by construction. Starting on a stand ARMS the auto-descent award
+(`descentArmed`).
+
+**FREE PLACEMENT — `src/ui/ChainStartEditor.tsx`** (the CR twin of DECODE's
+`StartPositionEditor`, replacing the old slider-and-buttons `ChainStartSelector`): a canvas
+stage running the REAL `drawChainField` / `drawChainRobot`, drag to place, a heading handle,
+numeric X/Y/heading, live legality, and the four anchors as quick-picks. It reuses every
+`ds-startpos-*` style, so there is no new CSS for the contrast/shift audits. Rules of the
+seam:
+- `chainEvalStart(spec,pos)` is the verdict + its REASON (`inLab` / `clearOfStand`), and its
+  `legal` is the `chainSnapStart` round-trip the SPAWN runs — never a re-derivation, so the
+  ring can't disagree with where the robot actually starts. `extent` is the conservative,
+  rotation-agnostic half-extent the rules test, and the editor draws THAT box (not a rotated
+  footprint) so a red ring always explains itself. Heading is therefore always free.
+- `chainMirrorStart(pose,a)` is canonical↔actual, SELF-INVERSE, mirroring `chainStartPose`.
+  Poses are stored CANONICAL, so a placement survives an alliance switch.
+- **Snap defaults ON and snaps LIVE during the drag** (DECODE's defaults OFF). G04 plus the
+  solid corner assembly leave a narrow legal band — at the widest chassis
+  `CHAIN_RINGSTAND_BOX <= CHAIN_LAB - 2*half-extent` is nearly tight — so free-dragging would
+  paint almost every drop red. Live snapping makes the robot glide along the legal band.
+- **No saved-pose library** (unlike DECODE). `GameSettings.savedStartPoses` is ONE canonical
+  list shared across games; a CR pose saved into it would show up unreachable in DECODE's
+  Close/Far library. Adding one means namespacing that setting first.
+- `startSelectionLegal(game, spec, alliance, pose)` in `src/ui/startPositions.ts` is the
+  ready-up / start gate for BOTH games (DECODE G304 via `activeStartLegal`, CR G04 via
+  `chainStartLegal`). CR used to be waved through as "legal by construction" — free placement
+  ended that.
 
 **CR roles are TOP / BOTTOM** (which Lab corner), NOT DECODE's CLOSE / FAR. The shared
 `StartCat` slots carry them (close = TOP y≥0, far = BOTTOM y<0) via `chainAnchorCat` /

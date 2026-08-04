@@ -49,12 +49,12 @@ import type { NetSession } from '../net/session';
 import { ServerSession } from '../net/serverSession';
 import { WebSocketTransport } from '../net/transport';
 import { encodeMsg } from '../net/protocol';
-import { activeStartLegal } from '../sim/field';
 import { loadActiveGame, saveActiveGame, clearActiveGame, type ActiveGameRef } from '../net/activeGame';
 import type { Replay } from '../sim/replay';
 import { applyRouteMeta } from '../seo';
 import type { GameId } from '../games/types';
 import { chainDisclaimerSeen, markChainDisclaimerSeen } from '../chainDisclaimer';
+import { startSelectionLegal } from './startPositions';
 
 type Screen =
   | 'home'
@@ -746,8 +746,8 @@ export function App() {
   // spawn, the player configured it for a DIFFERENT chassis, so we refuse to start
   // anywhere and send them to fix it rather than relocating their robot silently.
   const guardStart = (go: () => void): void => {
-    // start-pose legality is a DECODE (G304) check; other games have no legality yet
-    const startOk = settings.game !== 'decode' || activeStartLegal(settings.spec, settings.alliance, settings.startPose);
+    // start-pose legality, per game: DECODE's G304 setup rules / CR's G04 Lab Area
+    const startOk = startSelectionLegal(settings.game, settings.spec, settings.alliance, settings.startPose);
     if (loadActiveGame()) setBlockedByActive(true);
     else if (lockedOut) setStartBlocked(true);
     else if (restartPending) setStartBlocked(true);

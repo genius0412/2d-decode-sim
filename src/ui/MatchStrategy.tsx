@@ -2,10 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GameSettings, RobotSpec } from '../types';
 import { START_POSES } from '../config';
 import { CHAIN_START_POSES } from '../games/chain/config';
-import { activeStartLegal } from '../sim/field';
 import { StartPositionEditor } from './StartPositionEditor';
-import { ChainStartSelector } from './ChainStartSelector';
-import { selectStart, switchCategory, saveStart, deleteSavedStart, indexCategory } from './startPositions';
+import { ChainStartEditor } from './ChainStartEditor';
+import { selectStart, switchCategory, saveStart, deleteSavedStart, indexCategory, startSelectionLegal } from './startPositions';
 import { useRoleSwap, useDismissable } from './useRoleSwap';
 import { RoleSwapBar } from './RoleSwapBar';
 import type { LobbyClient } from '../net/lobbyClient';
@@ -148,10 +147,15 @@ export function MatchStrategy({
   };
 
   const mySpec = me?.spec ?? settings.spec;
-  // my start pose must be legal for my (possibly just-swapped) chassis to ready up.
-  // CR start anchors are legal by construction (G04) — only DECODE gates on G304.
-  const startLegal =
-    settings.game === 'chain' || activeStartLegal(mySpec, myAlliance ?? settings.alliance, me?.startPose);
+  // my start pose must be legal for my (possibly just-swapped) chassis to ready up —
+  // DECODE gates on G304, CR on G04 Lab-Area containment (both games now offer free
+  // placement, so neither is legal-by-construction any more).
+  const startLegal = startSelectionLegal(
+    settings.game,
+    mySpec,
+    myAlliance ?? settings.alliance,
+    me?.startPose,
+  );
 
   // full-builder takeover: reuse the My Robot menu, with a Done button back
   if (building) {
@@ -300,10 +304,14 @@ export function MatchStrategy({
               />
             )}
             {settings.game === 'chain' ? (
-              <ChainStartSelector
+              <ChainStartEditor
+                spec={me.spec}
+                alliance={me.alliance}
+                value={me.startPose}
                 startIndex={me.startIndex ?? 0}
-                onPick={(i) => applyStart(selectStart(sCat, { index: i, pose: null }))}
-                role={startRole}
+                lockedCategory={startRole}
+                onChange={(startPose) => applyStart({ startPose })}
+                onPickPreset={(i) => applyStart(selectStart(sCat, { index: i, pose: null }))}
               />
             ) : (
               <StartPositionEditor

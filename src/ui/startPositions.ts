@@ -1,7 +1,9 @@
-import type { GameId, GameSettings, StartCat, StartPose, StartSel } from '../types';
+import type { Alliance, GameId, GameSettings, RobotSpec, StartCat, StartPose, StartSel } from '../types';
 import type { LobbyPlayer } from '../net/protocol';
 import { START_POSES, MAX_SAVED_STARTS, MAX_SAVED_STARTS_SUPPORTER } from '../config';
 import { chainAnchorCat, chainDefaultIndex } from '../games/chain/config';
+import { chainStartLegal } from '../games/chain/state';
+import { activeStartLegal } from '../sim/field';
 
 export const otherCat = (c: StartCat): StartCat => (c === 'close' ? 'far' : 'close');
 
@@ -123,4 +125,27 @@ export function deleteSavedStart(s: GameSettings, cat: StartCat, i: number): Par
 export function samePose(a: StartPose | null | undefined, b: StartPose | null | undefined): boolean {
   if (!a || !b) return false;
   return Math.abs(a.x - b.x) < 0.05 && Math.abs(a.y - b.y) < 0.05 && Math.abs(a.headingDeg - b.headingDeg) < 0.5;
+}
+
+/**
+ * Is the ACTIVE start selection legal, for EITHER game? A null pose means "use the
+ * named anchor", which both games resolve legal for any chassis. A custom pose is
+ * checked against that game's own rule — DECODE's G304 setup constraints, CR's G04
+ * Lab-Area containment (plus the solid Ring-Stand assembly). Both take the pose in
+ * the CANONICAL frame and are alliance-symmetric.
+ *
+ * Callers use this to REFUSE ready-up / game-start rather than let the spawn quietly
+ * relocate a robot: CR gained free placement with `ChainStartEditor`, so "chain is
+ * always legal" (true when it only offered anchors) no longer holds.
+ */
+export function startSelectionLegal(
+  game: GameId | undefined,
+  spec: RobotSpec,
+  alliance: Alliance,
+  startPose: StartPose | null | undefined,
+): boolean {
+  if (!startPose) return true;
+  return game === 'chain'
+    ? chainStartLegal(spec, { x: startPose.x, y: startPose.y })
+    : activeStartLegal(spec, alliance, startPose);
 }

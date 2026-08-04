@@ -144,7 +144,7 @@ import {
   CHAIN_MIN_LENGTH,
   CHAIN_MAX_LENGTH,
 } from '../src/games/chain/config';
-import { accelMultiplier, chainIntakeMouths, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
+import { accelMultiplier, chainEvalStart, chainIntakeMouths, chainMirrorStart, chainSnapStart, chainStartLegal, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
 import {
   CHAIN_CATALYSTS,
   CHAIN_CATALYST_TYPES,
@@ -4779,6 +4779,87 @@ const mkMM = () => {
       'chain starts: only the STAND anchors count as at-the-ring-stand',
       armed.length === 2 && armed.every((n) => n.startsWith('STAND')),
       armed.join(', ') || 'none',
+    );
+  }
+
+  // THE START EDITOR's contract (ChainStartEditor). It colours the field from
+  // `chainEvalStart` and stores CANONICAL poses via `chainMirrorStart`, so both have to
+  // agree with what the spawn actually does — a green ring that relocates the robot, or a
+  // pose that jumps corners when the alliance flips, is the whole bug class here.
+  {
+    const spec = DEFAULT_SPEC;
+    const badAnchor = CHAIN_START_POSES.filter((a) => !chainEvalStart(spec, a.pos).legal).map((a) => a.name);
+    check('chain start editor: every named anchor evaluates LEGAL', badAnchor.length === 0, badAnchor.join(', '));
+
+    // the verdict never contradicts the reasons it shows — a legal pose must satisfy BOTH
+    // sub-rules, so a green ring can never be paired with a broken one
+    let contradiction = '';
+    for (let x = -CHAIN_HALF_X; x <= CHAIN_HALF_X && !contradiction; x += 3) {
+      for (let y = -CHAIN_HALF_Y; y <= CHAIN_HALF_Y && !contradiction; y += 3) {
+        const ev = chainEvalStart(spec, { x, y });
+        if (ev.legal !== chainStartLegal(spec, { x, y })) contradiction = `verdict split at ${x},${y}`;
+        else if (ev.legal && !(ev.inLab && ev.clearOfStand)) contradiction = `legal but unexplained at ${x},${y}`;
+      }
+    }
+    check('chain start editor: legality and its stated reason never disagree', !contradiction, contradiction);
+
+    // the two failure modes are distinguishable (so the status line can name one)
+    const mid = chainEvalStart(spec, { x: 0, y: 0 });
+    // a spot INSIDE the Lab band that still overlaps the assembly — the case where the
+    // status line must blame the Ring Stand rather than containment
+    const onStand = chainEvalStart(spec, { x: 62, y: 62 });
+    check('chain start editor: mid-field fails as OUT OF LAB', !mid.legal && !mid.inLab);
+    check(
+      'chain start editor: in-Lab but on the corner assembly fails as BLOCKED, not out-of-lab',
+      !onStand.legal && onStand.inLab && !onStand.clearOfStand,
+      `inLab=${onStand.inLab} clear=${onStand.clearOfStand}`,
+    );
+
+    // canonical <-> actual mirroring is SELF-INVERSE for both alliances (the editor uses the
+    // one call in both directions), and blue is the identity
+    // a LEGAL custom pose (off-anchor, odd heading) — the spawn only honours a custom pose
+    // verbatim when it is legal, so an illegal probe would test the snap instead of the mirror
+    const probe = { x: 57, y: -58, headingDeg: 150 };
+    check('chain start editor: the custom-pose probe is itself legal', chainStartLegal(spec, probe));
+    let mirrorOk = true;
+    for (const a of ['blue', 'red'] as const) {
+      const round = chainMirrorStart(chainMirrorStart(probe, a), a);
+      if (
+        Math.abs(round.x - probe.x) > 1e-9 ||
+        Math.abs(round.y - probe.y) > 1e-9 ||
+        Math.abs(round.headingDeg - probe.headingDeg) > 1e-9
+      ) {
+        mirrorOk = false;
+      }
+    }
+    check('chain start editor: canonical<->actual mirror is self-inverse', mirrorOk);
+    check(
+      'chain start editor: blue IS the canonical frame (mirror is identity)',
+      chainMirrorStart(probe, 'blue').x === probe.x &&
+        chainMirrorStart(probe, 'blue').headingDeg === probe.headingDeg,
+    );
+
+    // and the mirror agrees with the SPAWN: a canonical custom pose lands where the editor
+    // drew it, for either alliance
+    for (const a of ['blue', 'red'] as const) {
+      const w = createChainWorld('match', 1, [
+        { id: 0, alliance: a, spec, assists: DEFAULT_ASSISTS, startIndex: 0, startPose: probe },
+      ]);
+      const shown = chainMirrorStart(probe, a);
+      const r = w.robots[0];
+      check(
+        `chain start editor: a custom ${a} pose spawns where the editor showed it`,
+        Math.abs(r.pos.x - shown.x) < 0.01 && Math.abs(r.pos.y - shown.y) < 0.01,
+        `spawn ${r.pos.x.toFixed(2)},${r.pos.y.toFixed(2)} vs shown ${shown.x.toFixed(2)},${shown.y.toFixed(2)}`,
+      );
+    }
+
+    // free placement still cannot beat G04: an out-of-bounds pose SNAPS back into the Lab
+    const snapped = chainSnapStart(spec, { x: 0, y: 0 });
+    check(
+      'chain start editor: snapping a mid-field pose returns a legal Lab spot',
+      chainStartLegal(spec, snapped),
+      `${snapped.x.toFixed(1)},${snapped.y.toFixed(1)}`,
     );
   }
 

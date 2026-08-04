@@ -3,10 +3,9 @@ import type { GameSettings } from '../game';
 import type { Alliance, GameSettings as GS } from '../types';
 import { START_POSES } from '../config';
 import { CHAIN_START_POSES } from '../games/chain/config';
-import { activeStartLegal } from '../sim/field';
 import { StartPositionEditor } from './StartPositionEditor';
-import { ChainStartSelector } from './ChainStartSelector';
-import { selectStart, switchCategory, saveStart, deleteSavedStart, indexCategory } from './startPositions';
+import { ChainStartEditor } from './ChainStartEditor';
+import { selectStart, switchCategory, saveStart, deleteSavedStart, indexCategory, startSelectionLegal } from './startPositions';
 import { useRoleSwap, useDismissable } from './useRoleSwap';
 import { RoleSwapBar } from './RoleSwapBar';
 import { SupporterBadge } from './SupporterBadge';
@@ -106,8 +105,8 @@ export function Lobby({
   const allReady = players.length > 0 && players.every((p) => p.ready);
   // my active start pose must be legal for my chassis to ready up (a pose authored
   // for a different-sized robot would otherwise be silently relocated at spawn)
-  // CR start anchors are legal by construction (G04); DECODE gates on G304 legality.
-  const startLegal = settings.game === 'chain' || !me || activeStartLegal(me.spec, me.alliance, me.startPose);
+  // DECODE gates on G304, CR on G04 Lab-Area containment.
+  const startLegal = !me || startSelectionLegal(settings.game, me.spec, me.alliance, me.startPose);
   // a duo record run needs BOTH drivers present before it can start (it's 2v0);
   // versus custom rooms can start with fewer (1v1, etc.)
   const enoughPlayers = !isRecord || players.length >= capacity;
@@ -460,10 +459,14 @@ export function Lobby({
               />
             )}
             {settings.game === 'chain' ? (
-              <ChainStartSelector
+              <ChainStartEditor
+                spec={me.spec}
+                alliance={me.alliance}
+                value={me.startPose}
                 startIndex={me.startIndex ?? 0}
-                onPick={(i) => applyStart(selectStart(sCat, { index: i, pose: null }))}
-                role={startRole}
+                lockedCategory={startRole}
+                onChange={(startPose) => applyStart({ startPose })}
+                onPickPreset={(i) => applyStart(selectStart(sCat, { index: i, pose: null }))}
               />
             ) : (
               <StartPositionEditor

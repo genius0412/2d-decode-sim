@@ -10,7 +10,7 @@ import type {
 import { MAX_SAVED_AUTOS } from '../config';
 import { StartPositionEditor } from './StartPositionEditor';
 import { selectStart, switchCategory, saveStart, deleteSavedStart } from './startPositions';
-import { ChainStartSelector } from './ChainStartSelector';
+import { ChainStartEditor } from './ChainStartEditor';
 
 /**
  * Match configuration — the pre-game options that belong to the MATCH, not the
@@ -194,12 +194,13 @@ export function MatchSetup({
               onDeleteSaved={(c, i) => set(deleteSavedStart(settings, c, i))}
             />
           ) : (
-            <ChainStartSelector
-              startIndex={settings.startIndex ?? 0}
-              onPick={(i) => set({ startIndex: i, startPose: null })}
+            <ChainStartEditor
               spec={settings.spec}
-              pose={settings.startPose}
-              onPose={(p) => set({ startPose: p })}
+              alliance={settings.alliance}
+              value={settings.startPose}
+              startIndex={settings.startIndex ?? 0}
+              onChange={(startPose) => set({ startPose })}
+              onPickPreset={(i) => set({ startIndex: i, startPose: null })}
             />
           )}
           <div className="ds-opts" style={{ marginTop: 12 }}>
