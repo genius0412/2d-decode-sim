@@ -197,6 +197,9 @@ export function MatchSetup({
             <ChainStartSelector
               startIndex={settings.startIndex ?? 0}
               onPick={(i) => set({ startIndex: i, startPose: null })}
+              spec={settings.spec}
+              pose={settings.startPose}
+              onPose={(p) => set({ startPose: p })}
             />
           )}
           <div className="ds-opts" style={{ marginTop: 12 }}>

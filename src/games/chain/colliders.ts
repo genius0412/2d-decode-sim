@@ -1,5 +1,6 @@
 import type { FieldColliders, StaticSpec } from '../types';
-import { CHAIN_HALF_X, CHAIN_HALF_Y, CHAIN_WALL_T } from './config';
+import { CHAIN_HALF_X, CHAIN_HALF_Y, CHAIN_RINGSTAND_BOX, CHAIN_WALL_T } from './config';
+import { ringStandBoxes } from './state';
 
 /**
  * Chain Reaction static field geometry: just the four perimeter walls (inner
@@ -17,4 +18,17 @@ const walls: StaticSpec[] = [
   { hx: WALL_LX, hy: CHAIN_WALL_T, tx: 0, ty: -CHAIN_HALF_Y - CHAIN_WALL_T, rot: 0 },
 ];
 
-export const chainColliders: FieldColliders = { statics: walls };
+// RING STANDS are solid posts, not decoration — you cannot drive through one. Squared
+// colliders (the spec is cuboids) sized to the post radius; a robot ASCENDS by parking its
+// bumper against one, which `onRingStand`'s radius is tuned to accept.
+// one solid SQUARE per corner, flush with both walls (post + its mounting plate).
+// `ringStandBoxes` is the single source shared with the ascend test.
+const stands: StaticSpec[] = ringStandBoxes().map((c) => ({
+  hx: CHAIN_RINGSTAND_BOX / 2,
+  hy: CHAIN_RINGSTAND_BOX / 2,
+  tx: c.x,
+  ty: c.y,
+  rot: 0,
+}));
+
+export const chainColliders: FieldColliders = { statics: [...walls, ...stands] };

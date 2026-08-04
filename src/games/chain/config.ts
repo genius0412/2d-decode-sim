@@ -98,6 +98,14 @@ export const CHAIN_HOOK_Y = mm(688.09375); // ±27.0903" along the wall
 export const CHAIN_PARTICLE_R = 3 / 2; // 3" OD ball → 1.5" radius (300 on field)
 export const CHAIN_CATALYST_OD = 6; // 6" OD ring, 1" thick (4 total)
 export const CHAIN_RINGSTAND_H = 22.5; // vertical climb pole height (context only)
+/**
+ * RING STAND ASSEMBLY footprint. The stand is not a bare pole: the post is carried by a
+ * plate that fills the field corner (see the CAD top-down), so the whole corner is SOLID and
+ * a robot cannot drive into any of it. Modelled as a SQUARE flush with both walls — the
+ * simplest shape that matches what is actually there, and it makes the corner a real
+ * obstacle to path around rather than a pixel-thin post to clip.
+ */
+export const CHAIN_RINGSTAND_BOX = 12; // in — side of the corner square, flush to both walls
 export const CHAIN_PARTICLE_COUNT = 300;
 export const CHAIN_CATALYST_COUNT = 4;
 
@@ -493,8 +501,15 @@ export interface ChainCatalystGeom {
   fling: boolean;
 }
 export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
-  arm: { reach: 14, cone: 0.87, cycle: 0.9, massLb: 1.4, fling: false },
-  launcher: { reach: 8, cone: 0.61, cycle: 1.0, massLb: 2.0, fling: true },
+  // ARM raised 14 → 16: it is THE reach mechanism, and it should be unmistakably longer
+  // than any intake (the longest intake preset reaches 5" past the frame).
+  arm: { reach: 16, cone: 0.87, cycle: 0.9, massLb: 1.4, fling: false },
+  // LAUNCHER raised 8 → 11. The 8" scoop was priced back when the catapult was (wrongly)
+  // the long-range PLACER, so the claw was taxed to compensate. Now that the claw does the
+  // grabbing and placing like everyone else's, that tax made it needlessly awkward — its
+  // real costs are the weight, the slow cycle, and the narrow cone. Still the shortest of
+  // the three, just no longer punishing.
+  launcher: { reach: 11, cone: 0.61, cycle: 1.0, massLb: 2.0, fling: true },
   turret: { reach: 13, cone: Math.PI, cycle: 0.55, massLb: 2.6, fling: false },
 };
 
@@ -602,8 +617,18 @@ export function chainCatalystGeom(spec: RobotSpec): ChainCatalystGeom {
  * that STARTS on a stand and leaves this radius during auto scores descent (100 pt).
  * Lab squares are 24" at each field corner; an alliance owns the two on its side
  * (red x<0, blue x>0). APPROX — refine with manual. */
-export const CHAIN_LAB = 24; // corner square size (in)
-export const CHAIN_ASCEND_R = 9; // ascend proximity to a ring stand (in)
+// Lab-Area corner square (in). Raised 24 → 36 (both this and the Ring-Stand assembly were
+// APPROX): the corner assembly occupies the outer 12" of every corner, and at 24" the L that
+// was left over was only 12" wide — narrower than a legal chassis, so NO robot could start
+// fully inside its own Lab Area without spawning inside a collider. 36" leaves a usable band
+// beside the assembly, which is what makes G04 satisfiable at all. Refine with the manual.
+export const CHAIN_LAB = 36;
+// Ascend/descent proximity, measured to the CORNER ASSEMBLY (the solid square), not to the
+// post inside it. Measuring to the box is what makes this stable: the robot can never be
+// centred on the post, so post-distance would have to be a big fudge factor that also
+// swallowed half the Lab Area. Box-distance means "your bumper is at the structure" — a
+// robot pressed against it sits ~a half-extent away, comfortably inside 10".
+export const CHAIN_ASCEND_R = 10;
 
 /**
  * START POSITIONS (manual G04 — "Robots must begin the match completely in the Lab Area",
@@ -619,12 +644,32 @@ export interface ChainStartAnchor {
   pos: { x: number; y: number };
   heading: number;
 }
-const LAB_C = CHAIN_HALF_X - CHAIN_LAB / 2; // 60" — a Lab square's centre coordinate
+// The RING STAND anchors sit BESIDE the post, not on it — the post is solid now, so a robot
+// centred on it would spawn inside a collider and be violently ejected. Offsetting inward
+// along the diagonal by CHAIN_STAND_STANDOFF puts the bumper against the post, which is what
+// "at the stand" physically means and what `onRingStand`'s radius accepts.
+// Anchors are placed CLEAR of the solid corner assemblies (which occupy the outer
+// CHAIN_RINGSTAND_BOX of every corner) and inside the walls. The RING STAND ones park
+// alongside an assembly — close enough that `onRingStand` counts them (so a stand start
+// still arms the auto-descent), without spawning inside a collider, which would eject the
+// robot violently on tick one. Smoke asserts every anchor is collider-clear.
+// Anchors are all FULLY inside a Lab-Area corner square (G04) AND clear of the solid corner
+// assembly, which occupies the outer CHAIN_RINGSTAND_BOX of that same corner — the two
+// constraints together leave an L-shaped band, and these are spread across it. The RING
+// STAND pair parks alongside an assembly, close enough that `onRingStand` counts them (so a
+// stand start still arms the auto-descent) without spawning inside the collider. Smoke
+// asserts every anchor is in-zone, collider-clear, and armed/unarmed as intended.
+// ORDER IS LOAD-BEARING: a 2-robot alliance defaults to anchors 0 and 1, so those must be
+// the two plain FLOOR starts in opposite corners (not two ring-stand starts, which would
+// arm both robots' auto-descent by default). Indices 2/3 stay the ring-stand pair, matching
+// the long-standing convention the descent tests and the role split rely on.
 export const CHAIN_START_POSES: readonly ChainStartAnchor[] = [
-  { name: 'LAB · TOP', pos: { x: LAB_C, y: LAB_C }, heading: Math.PI },
-  { name: 'LAB · BOTTOM', pos: { x: LAB_C, y: -LAB_C }, heading: Math.PI },
-  { name: 'RING STAND · TOP', pos: { x: CHAIN_RINGSTAND_XY, y: CHAIN_RINGSTAND_XY }, heading: Math.PI },
-  { name: 'RING STAND · BOTTOM', pos: { x: CHAIN_RINGSTAND_XY, y: -CHAIN_RINGSTAND_XY }, heading: Math.PI },
+  { name: 'LAB · TOP', pos: { x: 47, y: 47 }, heading: Math.PI },
+  { name: 'LAB · BOTTOM', pos: { x: 47, y: -47 }, heading: Math.PI },
+  { name: 'STAND · TOP', pos: { x: 51, y: 58 }, heading: Math.PI },
+  { name: 'STAND · BOTTOM', pos: { x: 51, y: -58 }, heading: Math.PI },
+  { name: 'WALL · TOP', pos: { x: 61, y: 46 }, heading: Math.PI },
+  { name: 'WALL · BOTTOM', pos: { x: 61, y: -46 }, heading: Math.PI },
 ];
 
 /**

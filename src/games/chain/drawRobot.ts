@@ -248,28 +248,6 @@ function drawTurret(
   }
   ctx.restore();
 
-  // THE CATAPULT — its own fixed mounting yaw, independent of the claw's edge, and NOT
-  // turreted: it throws wherever the chassis points plus this offset. Drawn as a throwing
-  // arm whose LENGTH grows with the range it is built for, so a long-throw build reads as
-  // a bigger machine.
-  if (chainCatalystGeom(r.spec).fling) {
-    const yaw = chainCatapultYaw(r.spec);
-    const rng = chainCatapultRange(r.spec);
-    const f = (rng - CHAIN_CATAPULT_RANGE_MIN) / (CHAIN_CATAPULT_RANGE_MAX - CHAIN_CATAPULT_RANGE_MIN);
-    const arm = 3.4 + 3.2 * f;
-    ctx.save();
-    ctx.rotate(yaw);
-    ctx.strokeStyle = '#c9a227'; // brass — reads as the throwing mechanism, not the claw
-    ctx.lineWidth = 0.9;
-    ctx.beginPath();
-    ctx.moveTo(-1.5, 0);
-    ctx.lineTo(arm, 0);
-    ctx.stroke();
-    ctx.beginPath(); // the cup at the tip
-    ctx.arc(arm, 0, 1.5, -Math.PI / 2, Math.PI / 2);
-    ctx.stroke();
-    ctx.restore();
-  }
 }
 
 /** a slim hopper-fill bar (stored particles ÷ capacity) near the rear of the chassis. */
@@ -377,4 +355,27 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
     ctx.restore();
   }
   ctx.restore();
+
+  // THE CATAPULT — its own fixed mounting yaw, independent of the claw's edge, and NOT
+  // turreted: it throws wherever the chassis points plus this offset. Drawn as a throwing
+  // arm whose LENGTH grows with the range it is built for, so a long-throw build reads as
+  // a bigger machine.
+  if (chainCatalystGeom(r.spec).fling) {
+    const yaw = chainCatapultYaw(r.spec);
+    const rng = chainCatapultRange(r.spec);
+    const f = (rng - CHAIN_CATAPULT_RANGE_MIN) / (CHAIN_CATAPULT_RANGE_MAX - CHAIN_CATAPULT_RANGE_MIN);
+    const arm = 3.4 + 3.2 * f;
+    ctx.save();
+    ctx.rotate(yaw);
+    ctx.strokeStyle = '#c9a227'; // brass — reads as the throwing mechanism, not the claw
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-1.5, 0);
+    ctx.lineTo(arm, 0);
+    ctx.stroke();
+    ctx.beginPath(); // the cup at the tip
+    ctx.arc(arm, 0, 1.5, -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 }

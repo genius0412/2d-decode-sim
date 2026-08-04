@@ -8,6 +8,7 @@ import {
   CHAIN_LAB,
   CHAIN_RINGSTAND_XY,
   CHAIN_ASCEND_R,
+  CHAIN_RINGSTAND_BOX,
   CHAIN_INTAKES,
   CHAIN_DEFAULT_INTAKE,
 } from './config';
@@ -184,12 +185,26 @@ export function ringStands(): Vec2[] {
  * ascend check and the auto-descent "came down off the stand" check. Position-only
  * (no speed gate) — leaving the radius is what counts as descending. */
 export function onRingStand(pos: Vec2): boolean {
-  for (const rs of ringStands()) {
-    const dx = rs.x - pos.x;
-    const dy = rs.y - pos.y;
+  const h = CHAIN_RINGSTAND_BOX / 2;
+  for (const rs of ringStandBoxes()) {
+    // distance from `pos` to the corner SQUARE (0 inside it), not to the post
+    const dx = Math.max(0, Math.abs(pos.x - rs.x) - h);
+    const dy = Math.max(0, Math.abs(pos.y - rs.y) - h);
     if (dx * dx + dy * dy < CHAIN_ASCEND_R * CHAIN_ASCEND_R) return true;
   }
   return false;
+}
+
+/** centres of the four solid CORNER ASSEMBLIES (post + mounting plate), flush with the
+ * walls. The single source both the colliders and the ascend test read. */
+export function ringStandBoxes(): Vec2[] {
+  const c = CHAIN_HALF_X - CHAIN_RINGSTAND_BOX / 2;
+  return [
+    { x: c, y: c },
+    { x: c, y: -c },
+    { x: -c, y: c },
+    { x: -c, y: -c },
+  ];
 }
 
 /** the Lab-Area corner squares OWNED by an alliance (its two side corners). APPROX. */
@@ -258,4 +273,41 @@ export function catalystCanReach(rob: RobotState, target: Vec2, radius: number):
 export function catalystDist(rob: RobotState, target: Vec2): number {
   const m = catalystMouth(rob);
   return hyp(target.x - m.x, target.y - m.y);
+}
+
+
+/**
+ * Snap a CUSTOM Chain Reaction start pose to something legal and spawnable.
+ *
+ * Two hard constraints fight each other in every corner: G04 wants the robot COMPLETELY
+ * inside its Lab-Area square, and the Ring-Stand assembly occupies that square's outer
+ * corner as a SOLID collider. A pose that violates either would spawn the robot inside a
+ * wall or outside its zone, so this clamps into the Lab (allowing for the chassis extent)
+ * and then, if the result still overlaps a corner assembly, pushes it out along whichever
+ * axis needs the least movement.
+ *
+ * `pos` is in the CANONICAL (blue, +x) frame, matching `CHAIN_START_POSES`.
+ */
+export function chainSnapStart(spec: RobotSpec, pos: Vec2): Vec2 {
+  const e = Math.max(spec.length, spec.width) / 2 + 0.5; // generous, rotation-agnostic
+  const lo = CHAIN_HALF_X - CHAIN_LAB + e;
+  const hi = CHAIN_HALF_X - e;
+  const clamp1 = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+  // into the Lab square: x always positive-side, y into whichever corner it is nearer
+  const x = clamp1(pos.x, lo, hi);
+  const sy = pos.y >= 0 ? 1 : -1;
+  const y = sy * clamp1(Math.abs(pos.y), lo, hi);
+  // out of the corner assembly, along the cheaper axis
+  const h = CHAIN_RINGSTAND_BOX / 2;
+  let out = { x, y };
+  for (const b of ringStandBoxes()) {
+    const dx = h + e - Math.abs(out.x - b.x);
+    const dy = h + e - Math.abs(out.y - b.y);
+    if (dx <= 0 || dy <= 0) continue; // clear of this one
+    if (dx < dy) out = { x: b.x - Math.sign(b.x || 1) * (h + e), y: out.y };
+    else out = { x: out.x, y: b.y - Math.sign(b.y || 1) * (h + e) };
+    out.x = clamp1(out.x, lo, hi);
+    out.y = sy * clamp1(Math.abs(out.y), lo, hi);
+  }
+  return out;
 }

@@ -144,7 +144,7 @@ import {
   CHAIN_MIN_LENGTH,
   CHAIN_MAX_LENGTH,
 } from '../src/games/chain/config';
-import { accelMultiplier, chainIntakeMouths, hookPos, labAreas, ringStands } from '../src/games/chain/state';
+import { accelMultiplier, chainIntakeMouths, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
 import {
   CHAIN_CATALYSTS,
   CHAIN_CATALYST_TYPES,
@@ -158,6 +158,10 @@ import {
   CHAIN_NET_RESTITUTION,
   CHAIN_WALL_RESTITUTION,
   CHAIN_NET_VZ_KEEP,
+  CHAIN_START_POSES,
+  CHAIN_LAB,
+  CHAIN_RINGSTAND_BOX,
+  CHAIN_HALF_Y,
 } from '../src/games/chain/config';
 import { intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
 
@@ -4665,7 +4669,106 @@ const mkMM = () => {
     decodeColliders.statics.length === 8,
     `${decodeColliders.statics.length}`,
   );
-  check('chain colliders: 4 perimeter walls, no dynamic', chainColliders.statics.length === 4 && !chainColliders.dynamic);
+  // 4 perimeter walls + the 4 SOLID corner assemblies (post + mounting plate). No dynamic.
+  check(
+    'chain colliders: 4 walls + 4 corner ring-stand assemblies, no dynamic',
+    chainColliders.statics.length === 8 && !chainColliders.dynamic,
+    `${chainColliders.statics.length}`,
+  );
+  // EVERY start anchor must be spawnable: fully inside its Lab Area (G04) and clear of the
+  // corner assembly that eats that same corner — a robot spawned inside a collider is
+  // ejected violently on tick one. The two constraints fight, so this is worth pinning.
+  {
+    const e = 8.5; // a generous chassis half-extent
+    const bad: string[] = [];
+    for (const a of CHAIN_START_POSES) {
+      const inLab =
+        a.pos.x >= CHAIN_HALF_X - CHAIN_LAB + e &&
+        a.pos.x <= CHAIN_HALF_X - e &&
+        Math.abs(a.pos.y) >= CHAIN_HALF_Y - CHAIN_LAB + e &&
+        Math.abs(a.pos.y) <= CHAIN_HALF_Y - e;
+      const clear = ringStandBoxes().every(
+        (b) =>
+          !(Math.abs(a.pos.x - b.x) < CHAIN_RINGSTAND_BOX / 2 + e &&
+            Math.abs(a.pos.y - b.y) < CHAIN_RINGSTAND_BOX / 2 + e),
+      );
+      if (!inLab || !clear) bad.push(`${a.name}(lab=${inLab} clear=${clear})`);
+    }
+    check('chain starts: every anchor is inside its Lab Area AND clear of the corner assembly', bad.length === 0, bad.join(' '));
+    // exactly the STAND anchors arm the auto-descent
+    const armed = CHAIN_START_POSES.filter((a) => onRingStand(a.pos)).map((a) => a.name);
+    check(
+      'chain starts: only the STAND anchors count as at-the-ring-stand',
+      armed.length === 2 && armed.every((n) => n.startsWith('STAND')),
+      armed.join(', ') || 'none',
+    );
+  }
+
+  // CUSTOM start poses: whatever a player (or a spoofed client) asks for, the spawned robot
+  // must end up inside its Lab Area and clear of the corner assembly — otherwise it spawns
+  // inside a collider and gets flung across the field on tick one.
+  {
+    const e = 8.5;
+    const tries: StartPose[] = [
+      { x: 0, y: 0, headingDeg: 180 },        // middle of the field
+      { x: 71, y: 71, headingDeg: 0 },         // deep inside the corner assembly
+      { x: 66, y: 66, headingDeg: 90 },        // dead centre of the assembly
+      { x: 200, y: -500, headingDeg: 45 },     // far outside the field
+      { x: 47, y: -47, headingDeg: 180 },      // already legal — must be left alone
+    ];
+    const bad: string[] = [];
+    for (const sp of tries) {
+      const w = createChainWorld('match', 21, [
+        { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0, startPose: sp },
+      ]);
+      const p = w.robots[0].pos;
+      const inLab =
+        p.x >= CHAIN_HALF_X - CHAIN_LAB + e - 0.01 &&
+        p.x <= CHAIN_HALF_X - e + 0.01 &&
+        Math.abs(p.y) >= CHAIN_HALF_Y - CHAIN_LAB + e - 0.01 &&
+        Math.abs(p.y) <= CHAIN_HALF_Y - e + 0.01;
+      const clear = ringStandBoxes().every(
+        (b) =>
+          !(Math.abs(p.x - b.x) < CHAIN_RINGSTAND_BOX / 2 + e - 0.01 &&
+            Math.abs(p.y - b.y) < CHAIN_RINGSTAND_BOX / 2 + e - 0.01),
+      );
+      if (!inLab || !clear) bad.push(`(${sp.x},${sp.y})→(${p.x.toFixed(0)},${p.y.toFixed(0)}) lab=${inLab} clear=${clear}`);
+    }
+    check('chain starts: ANY custom pose is snapped into the Lab and out of the assembly', bad.length === 0, bad.join(' '));
+    // a pose that is already legal is respected, not shoved somewhere else
+    const wOk = createChainWorld('match', 22, [
+      { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0, startPose: { x: 47, y: 47, headingDeg: 180 } },
+    ]);
+    check(
+      'chain starts: an already-legal custom pose is used as given',
+      Math.abs(wOk.robots[0].pos.x - 47) < 0.01 && Math.abs(wOk.robots[0].pos.y - 47) < 0.01,
+      `(${wOk.robots[0].pos.x.toFixed(1)},${wOk.robots[0].pos.y.toFixed(1)})`,
+    );
+  }
+
+  // you cannot drive THROUGH a ring stand — the corner assembly is solid
+  {
+    const w = createChainWorld('free', 11, [
+      { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+    ]);
+    const rob = w.robots[0];
+    const box = ringStandBoxes()[0]; // +x/+y corner
+    // approach the box's OPEN −x face. It is flush with both walls, so the only lanes to it
+    // are its two inward faces; y is pulled in so the chassis clears the +y wall.
+    rob.pos = { x: box.x - 20, y: 63 };
+    rob.heading = 0;
+    rob.fieldCentric = false; // driveY = straight ahead (+x)
+    rob.vel = { x: 0, y: 0 };
+    for (let i = 0; i < 90; i++) chainStep(w, SIM_DT, new Map([[rob.id, cmd({ driveY: 1 })]]));
+    const e = robotExtents(rob);
+    const stopped = rob.pos.x + e.front <= box.x - CHAIN_RINGSTAND_BOX / 2 + 1.5;
+    check(
+      'chain: a robot cannot drive into a ring-stand assembly',
+      stopped,
+      `front edge ${(rob.pos.x + e.front).toFixed(1)} vs box face ${(box.x - CHAIN_RINGSTAND_BOX / 2).toFixed(1)}`,
+    );
+  }
+
 
   // manual geometry (mm → in ÷25.4): accelerator 697.49752×1393.65mm, hooks ±688.09375mm
   const near = (a: number, b: number) => Math.abs(a - b) < 1e-3;
@@ -5884,8 +5987,9 @@ const mkMM = () => {
     gw.match.phase = 'teleop';
     gw.match.phaseTimeLeft = 8; // inside the last-20s end game
     const rob = gw.robots[0];
-    const lab = labAreas('blue')[0];
-    rob.pos = { x: (lab.x0 + lab.x1) / 2, y: (lab.y0 + lab.y1) / 2 };
+    // park at a real START ANCHOR rather than the lab's geometric centre — the corner
+    // assembly is solid and occupies the lab's outer corner, so the centre is inside it now
+    rob.pos = { ...CHAIN_START_POSES[0].pos };
     rob.vel = { x: 0, y: 0 };
     runChain(gw, cmd({}), 0.1);
     check('chain endgame: parked in a lab area = 5 pts', gw.chain!.endgame[0] === 'parked' && gw.match.scores.blue.total >= 5);
