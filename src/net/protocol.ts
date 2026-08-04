@@ -47,13 +47,24 @@ export interface QCommand {
 const BTN_INTAKE = 1;
 const BTN_FIRE = 2;
 const BTN_CATALYST = 4;
+// Adding a bit is backward-compatible: an older peer masks only the bits it knows and
+// ignores the rest. EVERY new held button MUST be added here — the quantizer is the wire
+// format, so a field that is not in the mask does not exist as far as the server (or a
+// predicted/replayed step) is concerned.
+const BTN_FLING = 8;
+const BTN_DRIVEMODE = 16;
 
 export function quantizeCommand(c: RobotCommand): QCommand {
   return {
     dx: Math.round(clamp(c.driveX, -1, 1) * 127),
     dy: Math.round(clamp(c.driveY, -1, 1) * 127),
     rot: Math.round(clamp(c.rotate, -1, 1) * 127),
-    buttons: (c.intake ? BTN_INTAKE : 0) | (c.fire ? BTN_FIRE : 0) | (c.catalyst ? BTN_CATALYST : 0),
+    buttons:
+      (c.intake ? BTN_INTAKE : 0) |
+      (c.fire ? BTN_FIRE : 0) |
+      (c.catalyst ? BTN_CATALYST : 0) |
+      (c.fling ? BTN_FLING : 0) |
+      (c.driveMode ? BTN_DRIVEMODE : 0),
     ld: Math.round(clamp(c.leftDrive ?? 0, -1, 1) * 127),
     rd: Math.round(clamp(c.rightDrive ?? 0, -1, 1) * 127),
   };
@@ -69,6 +80,8 @@ export function dequantizeCommand(q: QCommand): RobotCommand {
     intake: (q.buttons & BTN_INTAKE) !== 0,
     fire: (q.buttons & BTN_FIRE) !== 0,
     catalyst: (q.buttons & BTN_CATALYST) !== 0,
+    fling: (q.buttons & BTN_FLING) !== 0,
+    driveMode: (q.buttons & BTN_DRIVEMODE) !== 0,
   };
 }
 

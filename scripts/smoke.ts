@@ -3172,6 +3172,25 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     JSON.stringify(once) === JSON.stringify(twice),
     JSON.stringify(once),
   );
+  // EVERY held button must survive the wire. The quantizer enumerates bits, so a newly
+  // added button silently becomes a no-op in multiplayer (and in any predicted/replayed
+  // step) unless it is added to the mask — which is exactly what happened to `fling` and
+  // `driveMode`. This asserts each one round-trips, so the next one can't regress quietly.
+  {
+    const btns: (keyof RobotCommand)[] = ['intake', 'fire', 'catalyst', 'fling', 'driveMode'];
+    const lost = btns.filter((b) => {
+      const rt = dequantizeCommand(quantizeCommand(cmd({ [b]: true } as Partial<RobotCommand>)));
+      return rt[b] !== true;
+    });
+    check('wire: every held button survives quantization', lost.length === 0, `dropped: ${lost.join(', ') || 'none'}`);
+    // and they are INDEPENDENT bits — one pressed must not set another
+    const only = dequantizeCommand(quantizeCommand(cmd({ fling: true })));
+    check(
+      'wire: button bits are independent (fling does not imply catalyst/fire)',
+      only.fling === true && !only.catalyst && !only.fire && !only.intake && !only.driveMode,
+    );
+  }
+
   // TANK drive lives in leftDrive/rightDrive — these MUST survive quantization or a
   // networked tank robot gets zero drive and sits frozen at spawn (regression guard).
   const tank = dequantizeCommand(quantizeCommand(cmd({ leftDrive: 1, rightDrive: -0.5 })));
@@ -6162,6 +6181,14 @@ const mkMM = () => {
     check('catalyst: each claw grabs inside its reach and refuses outside it', reachOk, detail.join(' '));
     // ...and the reaches are ordered arm > turret > launcher (the arm is the reach pick,
     // the launcher's ground-intake claw is the shortest)
+    // THE ARM MUST OUT-REACH THE INTAKE. It is the long-reach mechanism; if a robot could
+    // grab a ring by simply driving at it with the intake, the arm would be pointless.
+    check(
+      'catalyst: the claw arm reaches further than ANY intake preset',
+      CHAIN_CATALYSTS.arm.reach >
+        Math.max(...Object.values(INTAKE_PRESETS).map((p) => p.reach)) * 2,
+      `arm ${CHAIN_CATALYSTS.arm.reach}" vs intakes ${Object.values(INTAKE_PRESETS).map((p) => p.reach).join('/')}"`,
+    );
     check(
       'catalyst: reach order arm > turret > launcher',
       CHAIN_CATALYSTS.arm.reach > CHAIN_CATALYSTS.turret.reach &&
@@ -6263,6 +6290,10 @@ const mkMM = () => {
     };
     const shortR = meanRange(CHAIN_CATAPULT_RANGE_MIN);
     const longR = meanRange(CHAIN_CATAPULT_RANGE_MAX);
+    // calibration is checked at ranges the FIELD can actually contain — a max-range throw
+    // is stopped by the perimeter net long before it would land, so it under-reads by design
+    const midRange = 110;
+    const midR = meanRange(midRange);
     check(
       'catapult: the RANGE slider really changes how far it throws',
       longR > shortR * 1.6,
@@ -6276,8 +6307,14 @@ const mkMM = () => {
     check(
       'catapult: the range slider is a real distance, not a raw speed',
       Math.abs(shortR - mouthOff - CHAIN_CATAPULT_RANGE_MIN) < CHAIN_CATAPULT_RANGE_MIN * 0.3 &&
-        Math.abs(longR - mouthOff - CHAIN_CATAPULT_RANGE_MAX) < CHAIN_CATAPULT_RANGE_MAX * 0.3,
-      `${CHAIN_CATAPULT_RANGE_MIN}"→${(shortR - mouthOff).toFixed(0)}"  ${CHAIN_CATAPULT_RANGE_MAX}"→${(longR - mouthOff).toFixed(0)}" (mean of 9)`,
+        Math.abs(midR - mouthOff - midRange) < midRange * 0.3,
+      `${CHAIN_CATAPULT_RANGE_MIN}"→${(shortR - mouthOff).toFixed(0)}"  ${midRange}"→${(midR - mouthOff).toFixed(0)}" (mean of 9)`,
+    );
+    // a maxed catapult genuinely crosses most of the field — that is the point of it
+    check(
+      'catapult: a max-range build throws most of the way across the field',
+      longR > 100,
+      `${(longR).toFixed(0)}" on a ${CHAIN_HALF_X * 2}" field`,
     );
     // buying range COSTS: heavier, and slower to re-cock
     check(
@@ -6429,10 +6466,18 @@ const mkMM = () => {
       const e = robotExtents(rob);
       const rel = rot({ x: ring.pos.x - rob.pos.x, y: ring.pos.y - rob.pos.y }, -rob.heading);
       const clear = Math.abs(rel.x) > e.front || Math.abs(rel.y) > e.half;
+      const e0 = robotExtents(rob);
+      const outBy = Math.max(Math.abs(rel.x) - e0.front, Math.abs(rel.y) - e0.half);
       check(
         'catalyst: a ring under a robot SLIDES off the chassis instead of riding on it',
         moved && clear && hyp(ring.vel.x, ring.vel.y) < 0.02,
         `slid=${moved} clear=${clear} restPos=(${ring.pos.x.toFixed(1)},${ring.pos.y.toFixed(1)})`,
+      );
+      // ...and it is a NUDGE, not a launch: it settles just clear of the frame, not metres away
+      check(
+        'catalyst: the eviction is a gentle nudge, not a bounce across the field',
+        outBy < 10,
+        `settled ${outBy.toFixed(1)}" past the frame`,
       );
     }
 
@@ -6501,12 +6546,30 @@ const mkMM = () => {
       `${CHAIN_CATALYSTS.arm.massLb} / ${CHAIN_CATALYSTS.launcher.massLb} / ${CHAIN_CATALYSTS.turret.massLb} lb`,
     );
     // and it reaches the actual mass floor, differentially (arm is the baseline)
+    // Compared at the catapult's MINIMUM range, so this measures the MECHANISMS themselves;
+    // the catapult's range build then stacks on top (checked separately below).
     const floorFor = (t: RobotSpec['catalystType']) =>
-      coerceSpec({ ...DEFAULT_SPEC, catalystType: t, massLb: 1 }, undefined, 'chain').massLb;
+      coerceSpec(
+        { ...DEFAULT_SPEC, catalystType: t, catapultRange: CHAIN_CATAPULT_RANGE_MIN, massLb: 1 },
+        undefined,
+        'chain',
+      ).massLb;
     check(
       'catalyst: the heavier mechanisms really raise the chassis mass floor',
       floorFor('turret') > floorFor('launcher') && floorFor('launcher') > floorFor('arm'),
       `arm ${floorFor('arm')} launcher ${floorFor('launcher')} turret ${floorFor('turret')} lb`,
+    );
+    // a long-range catapult build is a big machine — heavy enough to pass the rail turret,
+    // which is the right relationship (you are buying a bigger throwing mechanism)
+    const heavyCata = coerceSpec(
+      { ...DEFAULT_SPEC, catalystType: 'launcher', catapultRange: CHAIN_CATAPULT_RANGE_MAX, massLb: 1 },
+      undefined,
+      'chain',
+    ).massLb;
+    check(
+      'catalyst: a max-range catapult outweighs even the rail turret',
+      heavyCata > floorFor('turret'),
+      `max-range launcher ${heavyCata} lb vs turret ${floorFor('turret')} lb`,
     );
 
     // the HUD prompt must agree with the action — a prompt that offers something the

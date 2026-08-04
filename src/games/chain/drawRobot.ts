@@ -14,6 +14,7 @@ import {
   chainCatalystGeom,
   chainCatapultRange,
   chainCatapultYaw,
+  CHAIN_CATALYSTS,
 } from './config';
 import { CHAIN_HOOKS_PER_GOAL, catalystMouth, chainIntakeMouths, hookPos } from './state';
 import { EDGE_ANGLE, catalystMountOf, edgeGeom, isEndEdge, shooterMountOf } from './mounts';
@@ -314,8 +315,11 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
   ctx.lineWidth = 0.55;
 
   if (type === 'arm') {
-    // a long arm out the edge, claw at the tip
-    const reach = 4.6;
+    // The arm is drawn at its ACTUAL working reach, not a token stub — same contract the
+    // intake mouths follow (what you see is what it grabs). It was drawn at a hardcoded
+    // 4.6" while functionally reaching 14", so it looked no longer than the intake it is
+    // supposed to out-reach by a mile.
+    const reach = CHAIN_CATALYSTS[type].reach - 1.4; // less the claw jaws drawn past the tip
     ctx.beginPath();
     ctx.moveTo(dist - 1.2, 0);
     ctx.lineTo(dist + reach, 0);

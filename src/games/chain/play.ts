@@ -170,7 +170,7 @@ export function updateChain(
       c.pos.y += push.y * 0.9;
       // give it a nudge so it slides clear and settles under CHAIN_FLING_FRICTION rather
       // than teleporting out — the ring visibly rolls off the side of the robot
-      const shove = Math.max(CHAIN_RING_SLIDE_MIN, hyp(rob.vel.x, rob.vel.y) * 0.6);
+      const shove = Math.max(CHAIN_RING_SLIDE_MIN, hyp(rob.vel.x, rob.vel.y) * 0.25);
       c.vel = { x: push.x * shove, y: push.y * shove };
       break;
     }
@@ -912,7 +912,7 @@ function catalystAction(chain: ChainState, rob: RobotState): void {
 export function chainCatalystPrompt(
   chain: ChainState,
   rob: RobotState,
-): { action: 'pickup' | 'place'; target: { x: number; y: number } } | null {
+): { action: 'pickup' | 'place' | 'fling'; target: { x: number; y: number } } | null {
   // the SAME reach rules the action uses (`catalystCanReach`), so the prompt can never
   // promise something the button then refuses to do
   const g = chainCatalystGeom(rob.spec);
@@ -928,7 +928,11 @@ export function chainCatalystPrompt(
         best = h.pos;
       }
     }
-    return best ? { action: 'place', target: best } : null;
+    if (best) return { action: 'place', target: best };
+    // carrying, nothing seatable in reach — a CATAPULT build can still throw it downfield,
+    // and the driver has no way to know that without being told which button does it
+    if (chainCatalystGeom(rob.spec).fling) return { action: 'fling', target: { ...rob.pos } };
+    return null;
   }
   let best: { action: 'pickup'; target: { x: number; y: number } } | null = null;
   let bestD = Infinity;

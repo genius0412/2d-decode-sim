@@ -213,10 +213,20 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   const preCatalyst = (CHAIN_CATALYST_TYPES as readonly string[]).includes(sp.catalystType as string)
     ? (sp.catalystType as RobotSpec['catalystType'])
     : (base.catalystType ?? CHAIN_DEFAULT_CATALYST);
+  // the catapult's RANGE feeds its weight, so it has to be resolved before the mass clamp
+  // (it is written to `out` further down, in the catalyst block)
+  const preRange = clampFinite(
+    sp.catapultRange !== undefined ? sp.catapultRange : base.catapultRange,
+    CHAIN_CATAPULT_RANGE_MIN,
+    CHAIN_CATAPULT_RANGE_MAX,
+    CHAIN_CATAPULT_RANGE_DEFAULT,
+  );
   const mass = massLimits(
     out.drivetrain,
     out.flywheelInertia,
-    game === 'chain' ? chainMassFloorBump({ ...out, scoreMode: preMode, catalystType: preCatalyst }) : 0,
+    game === 'chain'
+      ? chainMassFloorBump({ ...out, scoreMode: preMode, catalystType: preCatalyst, catapultRange: preRange })
+      : 0,
   );
   out.massLb = clampFinite(sp.massLb, mass.min, mass.max, base.massLb);
 

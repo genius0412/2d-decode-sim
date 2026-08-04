@@ -608,6 +608,9 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
                 {hud.chain.carrying && <span className="chip on">◍ CARRYING RING</span>}
                 {hud.chain.ringAction === 'pickup' && <span className="chip prompt">◎ PICK UP RING ▸</span>}
                 {hud.chain.ringAction === 'place' && <span className="chip prompt">◎ PLACE RING ▸</span>}
+                {/* the catapult's throw is on its OWN key, so name it — otherwise the only
+                    discoverable action is the claw button, which just puts the ring down */}
+                {hud.chain.ringAction === 'fling' && <span className="chip prompt">◎ THROW RING ▸</span>}
                 {hud.chain.endgame === 'ascended' && <span className="chip on">▲ ASCENDED</span>}
                 {hud.chain.endgame === 'parked' && <span className="chip on">■ PARKED</span>}
               </>

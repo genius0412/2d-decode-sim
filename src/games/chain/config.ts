@@ -510,22 +510,29 @@ export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
  * of a 144" field — with no promise about where exactly.
  */
 /** the catapult's BUILD RANGE slider (inches) — the nominal distance it is built to throw.
- * A short-range build is light and re-cocks fast; a long one is heavier and slower. */
-export const CHAIN_CATAPULT_RANGE_MIN = 40;
-export const CHAIN_CATAPULT_RANGE_MAX = 120;
-export const CHAIN_CATAPULT_RANGE_DEFAULT = 70;
+ * A short-range build is light and re-cocks fast; a long one is heavier and slower. The
+ * envelope reaches 170" so a maxed catapult can genuinely cross the 144" field — the point
+ * of the mechanism is sending a ring somewhere far, not nudging it a tile away. */
+export const CHAIN_CATAPULT_RANGE_MIN = 50;
+export const CHAIN_CATAPULT_RANGE_MAX = 170;
+export const CHAIN_CATAPULT_RANGE_DEFAULT = 110;
 /** the catapult's fixed mounting YAW (degrees from chassis forward), in 15° steps. It is
  * NOT turreted, so this is a build-time choice and the chassis must be pointed to aim. */
 export const CHAIN_CATAPULT_YAW_STEP = 15;
 export const CHAIN_CATAPULT_YAW_DEFAULT = 0;
 
-export const CHAIN_FLING_VZ = 110; // in/s upward (≈0.57 s hang time at GRAVITY 386)
+// Raised 110 → 150 so a throw is mostly FLIGHT rather than a long ground slide: at 110 a
+// max-range throw was ~half air / half slide, which read as a shove rather than a launch.
+// At 150 the hang time is ~0.78 s and roughly two thirds of the distance is airborne.
+export const CHAIN_FLING_VZ = 150; // in/s upward (≈0.78 s hang time at GRAVITY 386)
 export const CHAIN_FLING_SPEED_VAR = 0.4; // ± fraction — the dominant source of scatter
 export const CHAIN_FLING_SPREAD = 20; // in/s random lateral kick
 /** the minimum speed a ring is nudged with when it is evicted from under/on a robot, so it
  * always visibly SLIDES clear (and then decays under CHAIN_FLING_FRICTION) instead of being
- * snapped to the chassis edge. A moving robot pushes it out faster than this floor. */
-export const CHAIN_RING_SLIDE_MIN = 26;
+ * snapped to the chassis edge. Deliberately SMALL: it only has to roll the ring out from
+ * under the frame, not fire it away — at the old 26 in/s rings pinged off robots like
+ * pinballs. A moving robot adds a little on top (see the eviction in play.ts). */
+export const CHAIN_RING_SLIDE_MIN = 9;
 export const CHAIN_FLING_FRICTION = 90; // in/s² ground decay once it lands
 
 /**

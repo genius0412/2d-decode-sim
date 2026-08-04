@@ -117,7 +117,7 @@ export interface HudSnapshot {
     /** your robot is carrying a catalyst */
     carrying: boolean;
     /** a catalyst action is available RIGHT NOW at your position (in range) */
-    ringAction: 'pickup' | 'place' | null;
+    ringAction: 'pickup' | 'place' | 'fling' | null;
     /** your robot's ball-storage capacity (the builder slider) */
     storage: number;
     /** your robot's scoring archetype (turret shooter / dumper) */
