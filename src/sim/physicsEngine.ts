@@ -3,6 +3,7 @@ import type { Alliance, Artifact, RobotState, Vec2, World } from '../types';
 import * as C from '../config';
 import { robotExtents } from './physics';
 import { clamp } from '../math';
+import { activeDrive } from './drivetrain';
 import type { FieldColliders } from '../games/types';
 
 /**
@@ -147,8 +148,11 @@ export function solveRobots(
       // current (1 − power draw). driveParams.accel uses the REAL massLb, so
       // inflating the shove mass here never touches linear accel. At the DEFAULT
       // reference (mecanum, 435 rpm, at rest) all factors = 1 ⇒ shove unchanged.
-      const p = C.DRIVETRAIN_PRESETS[r.spec.drivetrain];
-      const rpmPush = clamp(C.REF_DRIVE_RPM / r.spec.driveRpm, 0.6, 1.8);
+      // BUTTERFLY: the set that is DOWN decides both the traction factor and the
+      // gearing, so dropping the traction wheels really does turn it into a pusher
+      // mid-match (and back). `activeDrive` is the same resolver driveParams uses.
+      const { p, rpm } = activeDrive(r.spec, r.butterflyTank);
+      const rpmPush = clamp(C.REF_DRIVE_RPM / rpm, 0.6, 1.8);
       const shoveMass = r.spec.massLb * p.pushMult * rpmPush * (1 - r.powerDraw);
       rw.createCollider(
         RAPIER.ColliderDesc.cuboid(hx, e.half)

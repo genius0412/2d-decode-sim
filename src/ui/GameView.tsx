@@ -131,6 +131,7 @@ const DT_LABEL: Record<DrivetrainType, string> = {
   tank: 'Tank',
   swerve: 'Swerve',
   xdrive: 'X-Drive',
+  butterfly: 'Butterfly',
 };
 
 /** count an integer from `from` to `target` over `duration` ms once `active` flips
@@ -617,6 +618,11 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
                 </span>
               )}
             {hud.frontFlipped && <span className="chip warn">REVERSED</span>}
+            {/* BUTTERFLY: name the set that is DOWN. It changes handling AND whether strafe
+                exists at all, so it can't be invisible state. */}
+            {hud.butterflyMode && (
+              <span className="chip">{hud.butterflyMode === 'tank' ? 'TRACTION' : 'MECANUM'}</span>
+            )}
             <span className={`chip ${hud.gamepadConnected ? 'on' : 'off'}`}>🎮</span>
             {hud.net && (
               <span className={`chip ${hud.net.peers > 0 ? 'on' : 'warn'}`}>
@@ -1052,6 +1058,7 @@ function Results({
 const DRIVETRAIN_LABEL: Record<string, string> = {
   mecanum: 'Mecanum',
   xdrive: 'X-Drive',
+  butterfly: 'Butterfly',
   tank: 'Tank',
   swerve: 'Swerve',
   // sentinel for a mixed-drivetrain duo run (overall board only, no dt-specific)

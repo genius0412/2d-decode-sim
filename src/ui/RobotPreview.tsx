@@ -286,7 +286,34 @@ export function RobotPreview({
           const long = Math.min(Math.hypot(wx, wy) * 1.1, 7.2);
           return corners.map(([x, y]) => wheelRect(x, y, x * y >= 0 ? 45 : -45, 2.0, long, '#2b333e'));
         }
-        return corners.map(([x, y]) => wheelRect(x, y, 0, wheelW, wheelH, '#0c151d'));
+        // MECANUM (and BUTTERFLY, which shows its mecanum set — the half it spawns on):
+        // rollers at 45°, ALTERNATING by diagonal so they read as an X. Same rule as the
+        // in-game renderer: the alternation is what makes the lateral components add
+        // instead of cancel, i.e. what makes strafing possible. The preview maps robot
+        // (x,y) → screen (−y,−x), which preserves the sign of the product, so the very
+        // same `x * y >= 0` test picks the two diagonals here too.
+        const rollered = spec.drivetrain === 'mecanum' || spec.drivetrain === 'butterfly';
+        return corners.flatMap(([x, y]) => {
+          const base = wheelRect(x, y, 0, wheelW, wheelH, '#0c151d');
+          if (!rollered) return [base];
+          const s = x * y >= 0 ? 1 : -1;
+          const h = wheelW / 2;
+          return [
+            base,
+            ...[-0.8, 0, 0.8].map((o) => (
+              <line
+                key={`r${x}_${y}_${o}`}
+                x1={x - h}
+                y1={y + o - s * h}
+                x2={x + h}
+                y2={y + o + s * h}
+                stroke={stroke}
+                strokeWidth={0.22}
+                opacity={0.75}
+              />
+            )),
+          ];
+        });
       })()}
 
       {/* front indicator (a chevron at the front edge) */}

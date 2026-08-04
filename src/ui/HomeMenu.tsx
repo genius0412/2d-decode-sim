@@ -13,6 +13,7 @@ const DRIVETRAIN_LABELS: Record<DrivetrainType, string> = {
   tank: 'Tank',
   swerve: 'Swerve',
   xdrive: 'X-Drive',
+  butterfly: 'Butterfly',
 };
 
 /**

@@ -43,7 +43,7 @@ import {
   shooterMountOf,
 } from '../games/chain/mounts';
 import { nextRandom, wrapAngle, rot, clamp } from '../math'; // Import wrapAngle
-import { lengthLimits, massLimits, rpmLimits, widthLimits } from './drivetrain';
+import { butterflyTankRpmLimits, lengthLimits, massLimits, rpmLimits, widthLimits } from './drivetrain';
 import { heldSlotPos } from './physics';
 import { flywheelSpinTarget, loadPreStage, mirrorStartPose, snapStartToLegal, spikeMarkBalls, startPose } from './field';
 import { emptyScore } from './scoring';
@@ -155,7 +155,8 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
     sp.drivetrain === 'mecanum' ||
     sp.drivetrain === 'tank' ||
     sp.drivetrain === 'swerve' ||
-    sp.drivetrain === 'xdrive'
+    sp.drivetrain === 'xdrive' ||
+    sp.drivetrain === 'butterfly'
   ) {
     out.drivetrain = sp.drivetrain;
   }
@@ -170,9 +171,20 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   out.length = clampFinite(sp.length, len.min, len.max, base.length);
   out.width = clampFinite(sp.width, wid.min, wid.max, base.width);
 
-  // 2) DRIVETRAIN → rpm range
+  // 2) DRIVETRAIN → rpm range. BUTTERFLY has TWO geared wheel sets, so it has two
+  // sliders: `driveRpm` is its mecanum set (the shared field) and `tankRpm` its traction
+  // set, clamped to the torque-biased tank envelope. `tankRpm` is written for butterfly
+  // only and STRIPPED otherwise, so a spec that switches away can't smuggle a stale value
+  // back if it switches return — the same normalize-at-the-chokepoint rule the CR mounts use.
   const rpm = rpmLimits(out.drivetrain);
   out.driveRpm = clampFinite(sp.driveRpm, rpm.min, rpm.max, base.driveRpm);
+  if (out.drivetrain === 'butterfly') {
+    const tl = butterflyTankRpmLimits();
+    const rawTank = sp.tankRpm !== undefined ? sp.tankRpm : base.tankRpm;
+    out.tankRpm = clampFinite(rawTank, tl.min, tl.max, clamp(out.driveRpm, tl.min, tl.max));
+  } else {
+    delete out.tankRpm;
+  }
 
   // 3) INERTIA in 0..1
   out.flywheelInertia = clampFinite(sp.flywheelInertia, 0, 1, base.flywheelInertia);
@@ -531,6 +543,10 @@ export function createWorld(mode: GameMode, seed: number, setups: RobotSetup[], 
       turretHeading: pose.heading,
       moduleAngles: [0, 0, 0, 0], // swerve pods (FL,FR,BL,BR) start pointing forward
       moduleTargets: [0, 0, 0, 0], // and their commanded targets
+      // BUTTERFLY starts on its MECANUM set — a robot that begins holonomic can always
+      // drop traction, and it matches DRIVETRAIN_PRESETS.butterfly (the mecanum half).
+      butterflyTank: false,
+      driveModeHeld: false,
       hopper: nth === 0 ? [...C.PRELOAD] : [...C.HP_INITIAL_STOCK],
       fieldCentric: s.assists.fieldCentric,
       aimAssist: s.assists.aimAssist,

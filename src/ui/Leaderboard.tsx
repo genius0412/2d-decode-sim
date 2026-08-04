@@ -49,6 +49,7 @@ const DT_LABEL: Record<DrivetrainType, string> = {
   tank: 'Tank',
   swerve: 'Swerve',
   xdrive: 'X-drive',
+  butterfly: 'Butterfly',
 };
 const INTAKE_LABEL: Record<IntakeStyle, string> = {
   sloped: 'Sloped',

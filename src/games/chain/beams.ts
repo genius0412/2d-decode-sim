@@ -65,6 +65,10 @@ const TRACTION: Record<DrivetrainType, number> = {
   mecanum: 0.91,
   tank: 0.9,
   xdrive: 0.89,
+  // BUTTERFLY: whichever set is down rides on the LIFT LINKAGE rather than a hard-mounted
+  // axle, and the STOWED set sits high in the chassis — so it soaks up a 1" ridge worse than
+  // either dedicated drivetrain, but its CG is still nowhere near swerve's tall pods.
+  butterfly: 0.88,
   swerve: 0.87,
 };
 
@@ -213,10 +217,19 @@ export function beamForwardness(r: RobotState, axis: 'x' | 'y'): number {
   return Math.abs(axis === 'y' ? dsin(r.heading) : dcos(r.heading));
 }
 
-/** a MECANUM whose crossing of this axis is strafe-dominant (points along the beam more than
- * across it) — it can't climb the ridge sideways, so it's curb-blocked, not dragged. */
+/** does this robot have MECANUM WHEELS on the floor right now? True for a mecanum chassis, and
+ * for a BUTTERFLY that currently has its mecanum set down — the curb rule is about the physical
+ * wheel (tiny 45° rollers can't climb a tube sideways), so it follows the deployed set, not the
+ * build. A butterfly that drops its traction wheels stops being curbed, and also loses strafe
+ * entirely (tank strafeMult 0), which is the honest tradeoff of the swap. */
+function onMecanumWheels(r: RobotState): boolean {
+  return r.spec.drivetrain === 'mecanum' || (r.spec.drivetrain === 'butterfly' && !r.butterflyTank);
+}
+
+/** a robot on MECANUM wheels whose crossing of this axis is strafe-dominant (points along the
+ * beam more than across it) — it can't climb the ridge sideways, so it's curb-blocked, not dragged. */
 function strafeBlocked(r: RobotState, axis: 'x' | 'y'): boolean {
-  return r.spec.drivetrain === 'mecanum' && beamForwardness(r, axis) < CHAIN_BEAM_STRAFE_BLOCK_FWD;
+  return onMecanumWheels(r) && beamForwardness(r, axis) < CHAIN_BEAM_STRAFE_BLOCK_FWD;
 }
 
 /**

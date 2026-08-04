@@ -22,12 +22,42 @@ const REF_TURN = 8.5; // rad/s of the reference (DEFAULT 15×18) chassis
 // default robot still turns at 8.5 rad/s; smaller footprints turn quicker
 const REF_HALF_DIAG = Math.sqrt(15 * 15 + 18 * 18) / 2;
 
-export function driveParams(spec: RobotSpec): DriveParams {
-  const p = C.DRIVETRAIN_PRESETS[spec.drivetrain];
-  const maxSpeed = C.SPEED_PER_RPM * spec.driveRpm * p.speedMult;
+/**
+ * The multipliers + wheel RPM actually in force for a robot right now.
+ *
+ * Every drivetrain but BUTTERFLY has exactly one answer. A butterfly carries two wheel
+ * sets with their own gearing and their own handling, so the ACTIVE half is chosen by
+ * `tankMode` (the runtime `RobotState.butterflyTank`) — that one flag swaps the
+ * multipliers, the saturation model (holonomic ⇄ tank side-drive), AND which of the two
+ * rpm sliders applies. Split out so the sim, the builder preview, and the balance table
+ * all resolve a butterfly identically.
+ */
+export function activeDrive(
+  spec: RobotSpec,
+  tankMode = false,
+): { p: (typeof C.DRIVETRAIN_PRESETS)[DrivetrainType]; rpm: number } {
+  if (spec.drivetrain === 'butterfly') {
+    const half = tankMode ? C.BUTTERFLY_MODES.tank : C.BUTTERFLY_MODES.mecanum;
+    const rpm = tankMode ? butterflyTankRpm(spec) : spec.driveRpm;
+    return { p: half as (typeof C.DRIVETRAIN_PRESETS)[DrivetrainType], rpm };
+  }
+  return { p: C.DRIVETRAIN_PRESETS[spec.drivetrain], rpm: spec.driveRpm };
+}
+
+/** a butterfly's TANK-set rpm, clamped to the traction envelope. Defaults to the
+ * mecanum slider's value (clamped) when a spec predates the second slider. */
+export function butterflyTankRpm(spec: RobotSpec): number {
+  const L = C.BUTTERFLY_TANK_RPM;
+  const raw = typeof spec.tankRpm === 'number' && Number.isFinite(spec.tankRpm) ? spec.tankRpm : spec.driveRpm;
+  return clamp(raw, L.min, L.max);
+}
+
+export function driveParams(spec: RobotSpec, tankMode = false): DriveParams {
+  const { p, rpm } = activeDrive(spec, tankMode);
+  const maxSpeed = C.SPEED_PER_RPM * rpm * p.speedMult;
   const accel =
     C.BASE_DRIVE_ACCEL *
-    (C.REF_DRIVE_RPM / spec.driveRpm) *
+    (C.REF_DRIVE_RPM / rpm) *
     (C.REF_MASS_LB / spec.massLb) *
     p.accelMult;
   // rotation tops out at wheel speed / half track diagonal, like a real
@@ -105,12 +135,18 @@ export function motorStepVec(
 /** dev/tuning table: the resulting free speed / strafe / stall accel / push for
  * each drivetrain at the reference RPM+mass. Printed by the smoke suite so a
  * balance edit's effect is visible at a glance. */
-export function driveSummary(): { dt: DrivetrainType; fwd: number; strafe: number; accel: number; push: number }[] {
-  return (Object.keys(C.DRIVETRAIN_PRESETS) as DrivetrainType[]).map((dt) => {
-    const p = C.DRIVETRAIN_PRESETS[dt];
+export function driveSummary(): { dt: string; fwd: number; strafe: number; accel: number; push: number }[] {
+  const row = (dt: string, p: { speedMult: number; strafeMult: number; accelMult: number; pushMult: number }) => {
     const fwd = C.SPEED_PER_RPM * C.REF_DRIVE_RPM * p.speedMult;
     return { dt, fwd, strafe: fwd * p.strafeMult, accel: C.BASE_DRIVE_ACCEL * p.accelMult, push: p.pushMult };
-  });
+  };
+  const out = (Object.keys(C.DRIVETRAIN_PRESETS) as DrivetrainType[])
+    // butterfly is listed as its two HALVES instead — a single row would imply one
+    // set of numbers, which is exactly the thing this drivetrain doesn't have
+    .filter((dt) => dt !== 'butterfly')
+    .map((dt) => row(dt, C.DRIVETRAIN_PRESETS[dt]));
+  out.push(row('butterfly·mec', C.BUTTERFLY_MODES.mecanum), row('butterfly·tank', C.BUTTERFLY_MODES.tank));
+  return out;
 }
 
 /** the wheel-RPM range this drivetrain allows (torque-biased drivetrains cap
@@ -145,6 +181,13 @@ export function widthLimits(
 export function rpmLimits(dt: DrivetrainType): { min: number; max: number } {
   const L = C.DRIVETRAIN_LIMITS[dt];
   return { min: L.minRpm, max: L.maxRpm };
+}
+
+/** BUTTERFLY's SECOND rpm range — the traction set. `rpmLimits` covers its mecanum
+ * set; this is the torque-biased envelope the tank half runs in. Same single-source
+ * contract: the builder's second slider and `coerceSpec` both read it. */
+export function butterflyTankRpmLimits(): { min: number; max: number } {
+  return { min: C.BUTTERFLY_TANK_RPM.min, max: C.BUTTERFLY_TANK_RPM.max };
 }
 
 /** the mass range this drivetrain allows, with the floor RAISED by flywheel

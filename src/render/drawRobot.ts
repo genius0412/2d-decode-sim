@@ -167,6 +167,34 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
     ctx.strokeRect(-len / 2, -wid / 2, len, wid);
     ctx.restore();
   };
+  /**
+   * MECANUM ROLLERS. A mecanum wheel's rollers sit at 45° to the wheel axis, and the four
+   * wheels ALTERNATE by diagonal — FL and BR one way, FR and BL the other — so from above
+   * the roller lines form an X. That alternation is not decoration: it is what lets the
+   * four wheels' lateral force components add up instead of cancelling, i.e. what makes
+   * the drive able to strafe at all. Drawing all four the same way is the classic mecanum
+   * render mistake, and it depicts a robot that physically could not strafe.
+   * `corners` is [FL, FR, BL, BR] with +x forward and +y left, so the sign of px·py
+   * separates the two diagonals exactly (the same test the X-drive branch uses).
+   */
+  const drawMecanumRollers = (px: number, py: number, len = 4.4, wid = 2.2): void => {
+    const s = px * py >= 0 ? 1 : -1; // FL/BR → "/", FR/BL → "\\"
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.beginPath();
+    ctx.rect(-len / 2, -wid / 2, len, wid);
+    ctx.clip(); // the hatch is the wheel's tread — never let it bleed past the rim
+    ctx.strokeStyle = 'rgba(200,214,230,0.55)';
+    ctx.lineWidth = 0.34;
+    const span = len + wid;
+    for (let o = -span / 2; o <= span / 2; o += 1.15) {
+      ctx.beginPath();
+      ctx.moveTo(o - wid / 2, (-s * wid) / 2);
+      ctx.lineTo(o + wid / 2, (s * wid) / 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
   if (r.spec.drivetrain === 'swerve') {
     // each of the four pods renders at its OWN angle — they visibly swivel + wobble
     corners.forEach(([px, py], i) => {
@@ -198,8 +226,30 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
     // lighter so the X clearly reads; the diagonals nearly meet at the center.
     const reach = Math.hypot(wx, wy);
     for (const [px, py] of corners) drawWheel(px, py, px * py >= 0 ? Math.PI / 4 : -Math.PI / 4, Math.min(reach * 1.15, 7.5), 2.0, '#2b333e');
+  } else if (r.spec.drivetrain === 'butterfly') {
+    // BUTTERFLY: draw the set that is actually DOWN, and show the other one STOWED. The
+    // deployed wheels are full-size and lit; the stowed set is a thin dim bar tucked just
+    // inboard of them — so a glance tells you whether you have strafe or push right now.
+    const tank = r.butterflyTank;
+    for (const [px, py] of corners) {
+      // stowed set: a slim inboard bar (lifted off the floor, so it reads as inert)
+      ctx.save();
+      ctx.translate(px - Math.sign(px) * 1.5, py);
+      ctx.fillStyle = 'rgba(120,134,150,0.32)';
+      ctx.fillRect(-1.7, -0.7, 3.4, 1.4);
+      ctx.restore();
+      // deployed set: traction wheels read SOLID, the mecanum set gets the real
+      // alternating 45° roller hatch (same helper the mecanum drivetrain uses)
+      drawWheel(px, py, 0, undefined, undefined, tank ? '#39424f' : '#12171e');
+      if (!tank) drawMecanumRollers(px, py);
+    }
   } else {
-    for (const [px, py] of corners) drawWheel(px, py, 0);
+    for (const [px, py] of corners) {
+      drawWheel(px, py, 0);
+      // MECANUM is the only remaining drivetrain with rollers; tank's traction wheels
+      // stay plain, which is now a meaningful visual difference rather than an accident.
+      if (r.spec.drivetrain === 'mecanum') drawMecanumRollers(px, py);
+    }
   }
 }
 

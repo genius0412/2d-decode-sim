@@ -7,6 +7,7 @@ export const DRIVETRAIN_LABELS: Record<DrivetrainType, string> = {
   tank: 'Tank',
   swerve: 'Swerve',
   xdrive: 'X-drive',
+  butterfly: 'Butterfly',
 };
 
 export const INTAKE_SHORT: Record<IntakeStyle, string> = {

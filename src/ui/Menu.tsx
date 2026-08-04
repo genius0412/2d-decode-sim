@@ -30,7 +30,15 @@ import {
   intakeMountOf,
   shooterMountOf,
 } from '../games/chain/mounts';
-import { driveParams, lengthLimits, massLimits, rpmLimits, widthLimits } from '../sim/drivetrain';
+import {
+  butterflyTankRpm,
+  butterflyTankRpmLimits,
+  driveParams,
+  lengthLimits,
+  massLimits,
+  rpmLimits,
+  widthLimits,
+} from '../sim/drivetrain';
 import { coerceSpec, coerceAssists, PLAYER_ASSISTS } from '../sim/spawn';
 import { RobotPreview } from './RobotPreview';
 import { DRIVETRAIN_LABELS, INTAKE_SHORT } from './robotLabels';
@@ -71,6 +79,7 @@ function specMatches(a: RobotSpec, b: RobotSpec): boolean {
     a.massLb === b.massLb &&
     a.drivetrain === b.drivetrain &&
     a.driveRpm === b.driveRpm &&
+    (a.tankRpm ?? 0) === (b.tankRpm ?? 0) &&
     a.flywheelInertia === b.flywheelInertia &&
     a.canSort === b.canSort
   );
@@ -86,6 +95,7 @@ function chainSpecMatches(a: RobotSpec, b: RobotSpec): boolean {
     a.massLb === b.massLb &&
     a.drivetrain === b.drivetrain &&
     a.driveRpm === b.driveRpm &&
+    (a.tankRpm ?? 0) === (b.tankRpm ?? 0) &&
     (a.scoreMode ?? 'turret') === (b.scoreMode ?? 'turret') &&
     (a.chainIntake ?? 'sweeper') === (b.chainIntake ?? 'sweeper') &&
     intakeMountOf(a) === intakeMountOf(b) &&
@@ -214,6 +224,11 @@ export function Menu({ settings, onChange }: Props) {
     : { min: CHAIN_MIN_LENGTH, max: CHAIN_MAX_LENGTH };
   const { min: minWidth, max: maxWidth } = widthLimits(spec.intake, spec.drivetrain);
   const { min: minRpm, max: maxRpm } = rpmLimits(spec.drivetrain);
+  // BUTTERFLY carries two independently geared wheel sets, so it gets a SECOND rpm slider.
+  // The traction set runs the torque-biased tank envelope, which tops out lower.
+  const isButterfly = spec.drivetrain === 'butterfly';
+  const { min: minTankRpm, max: maxTankRpm } = butterflyTankRpmLimits();
+  const tankRpmValue = butterflyTankRpm(spec);
   const { min: minMass, max: maxMass } = massLimits(spec.drivetrain, spec.flywheelInertia);
   const dp = driveParams(spec);
   // the builder shows DECODE robot presets or CR archetype presets per the active game
@@ -591,7 +606,7 @@ export function Menu({ settings, onChange }: Props) {
             <div className="ds-fields">
               <label className="ds-field">
                 <span className="cap">
-                  Drive RPM <span className="val">{spec.driveRpm}</span>
+                  {isButterfly ? 'Mecanum RPM' : 'Drive RPM'} <span className="val">{spec.driveRpm}</span>
                 </span>
                 <input
                   className="ds-range"
@@ -604,6 +619,23 @@ export function Menu({ settings, onChange }: Props) {
                   onChange={(e) => setSpec({ driveRpm: Number(e.target.value) })}
                 />
               </label>
+              {isButterfly && (
+                <label className="ds-field">
+                  <span className="cap">
+                    Traction RPM <span className="val">{tankRpmValue}</span>
+                  </span>
+                  <input
+                    className="ds-range"
+                    type="range"
+                    min={minTankRpm}
+                    max={maxTankRpm}
+                    step={5}
+                    value={tankRpmValue}
+                    style={rangeFill(tankRpmValue, minTankRpm, maxTankRpm)}
+                    onChange={(e) => setSpec({ tankRpm: Number(e.target.value) })}
+                  />
+                </label>
+              )}
               {isDecode && (
                 <label className="ds-field">
                   <span className="cap">

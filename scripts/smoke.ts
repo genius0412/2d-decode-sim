@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceAssists, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
+import { drawWheels } from '../src/render/drawRobot';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
 import { queuedModes, queuedGames, queuesFor, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';
@@ -72,6 +73,7 @@ import {
   SWERVE_MIN_WIDTH,
   intakeMouth,
   DRIVETRAIN_PRESETS,
+  BUTTERFLY_MODES,
   START_POSES,
   SPEED_PER_RPM,
   REF_DRIVE_RPM,
@@ -89,7 +91,7 @@ import {
 } from '../src/config';
 import { robotCorners, robotExtents, robotIntersectsRect, wheelContacts } from '../src/sim/physics';
 import { beamBlock, beamDrag, beamDragFactor, beamStrafeBlock, beamForwardness, beamRide, canCrossBeams, cogFactor, wheelsOnBeam, CHAIN_BEAMS } from '../src/games/chain/beams';
-import { driveParams, massLimits, rpmLimits, motorStep, driveSummary, widthLimits } from '../src/sim/drivetrain';
+import { butterflyTankRpmLimits, driveParams, massLimits, rpmLimits, motorStep, driveSummary, widthLimits } from '../src/sim/drivetrain';
 import { coerceSettings, defaultSettings, switchGame, syncAudioMirrors } from '../src/settings';
 import type { RobotSetup } from '../src/sim/spawn';
 import { DEFAULT_BINDINGS, mergeBindings } from '../src/input/bindings';
@@ -1609,6 +1611,173 @@ const setup = (
     t > s && s > me && me > x,
     `${t.toFixed(0)}/${s.toFixed(0)}/${me.toFixed(0)}/${x.toFixed(0)}`,
   );
+}
+
+// ---- MECANUM ROLLER DIRECTIONS (a render-geometry check, not a cosmetic one) ----
+// A mecanum wheel's rollers sit at 45°, and the four wheels must ALTERNATE by diagonal
+// (FL/BR one way, FR/BL the other) so their lateral force components ADD instead of
+// cancelling — that alternation is literally what makes strafing possible, so a sprite
+// with all four the same depicts a robot that could not strafe. Verified by running the
+// real `drawWheels` against a recording stub and reading back the stroked segments.
+{
+  const probeRollers = (drivetrain: RobotSpec['drivetrain'], butterflyTank = false) => {
+    let tx = 0;
+    let ty = 0;
+    const stack: [number, number][] = [];
+    const segs: { cx: number; cy: number; dx: number; dy: number }[] = [];
+    let cur: [number, number] | null = null;
+    const ctx = {
+      save() { stack.push([tx, ty]); },
+      restore() { const p = stack.pop()!; tx = p[0]; ty = p[1]; },
+      translate(x: number, y: number) { tx += x; ty += y; },
+      rotate() {}, fillRect() {}, strokeRect() {}, fill() {}, clip() {}, rect() {}, arc() {},
+      beginPath() { cur = null; },
+      moveTo(x: number, y: number) { cur = [x, y]; },
+      lineTo(x: number, y: number) { if (cur) segs.push({ cx: tx, cy: ty, dx: x - cur[0], dy: y - cur[1] }); },
+      stroke() {},
+      set fillStyle(_v: unknown) {}, set strokeStyle(_v: unknown) {}, set lineWidth(_v: unknown) {},
+    } as unknown as CanvasRenderingContext2D;
+    const r = {
+      spec: { ...DEFAULT_SPEC, drivetrain, length: 16, width: 17 },
+      moduleAngles: [0, 0, 0, 0],
+      butterflyTank,
+    } as unknown as World['robots'][number];
+    drawWheels(ctx, r, '#fff');
+    const byWheel = new Map<string, number>();
+    for (const g of segs) {
+      if (Math.abs(Math.abs(g.dx) - Math.abs(g.dy)) > 1e-9 || g.dx === 0) continue; // 45° only
+      byWheel.set(`${g.cx.toFixed(2)},${g.cy.toFixed(2)}`, Math.sign(g.dy / g.dx));
+    }
+    return byWheel;
+  };
+
+  const mec = probeRollers('mecanum');
+  const slope = (x: number, y: number) => mec.get(`${x.toFixed(2)},${y.toFixed(2)}`);
+  // wheel centres are (±(len/2−inset), ±(wid/2−inset)) = (±5.40, ±5.90) for 16×17
+  const FL = slope(5.4, 5.9);
+  const FR = slope(5.4, -5.9);
+  const BL = slope(-5.4, 5.9);
+  const BR = slope(-5.4, -5.9);
+  check('mecanum: all four wheels carry 45° roller hatching', mec.size === 4, `${mec.size} wheels`);
+  check(
+    'mecanum: rollers form an X — FL/BR share one diagonal, FR/BL the other',
+    FL !== undefined && FL === BR && FR !== undefined && FR === BL && FL === -FR,
+    `FL ${FL} FR ${FR} BL ${BL} BR ${BR}`,
+  );
+  // the deployed set decides: a butterfly on mecanum shows the same X, on traction none
+  const bMec = probeRollers('butterfly', false);
+  const bTank = probeRollers('butterfly', true);
+  check(
+    'butterfly: rollers follow the DEPLOYED set (mecanum X down, none on traction)',
+    bMec.size === 4 &&
+      bMec.get('5.40,5.90') === FL &&
+      bMec.get('5.40,-5.90') === FR &&
+      bTank.size === 0,
+    `mecMode ${bMec.size} tankMode ${bTank.size}`,
+  );
+  // traction drivetrains must never draw rollers — they don't have any
+  check('tank: traction wheels draw no rollers', probeRollers('tank').size === 0);
+}
+
+// ---- BUTTERFLY: two wheel sets, one chassis --------------------------------
+{
+  const bfly = (tankRpm?: number): RobotSpec =>
+    coerceSpec({ ...DEFAULT_SPEC, drivetrain: 'butterfly', driveRpm: 500, tankRpm, massLb: 30 });
+  const spec = bfly(500);
+  const mec = driveParams(spec, false);
+  const tnk = driveParams(spec, true);
+
+  // the swap is REAL: it changes the saturation model, so strafe exists in one half and
+  // is structurally dead in the other (that IS the tradeoff, not a stat tweak)
+  check(
+    'butterfly: mecanum half strafes holonomically, tank half has no strafe at all',
+    mec.saturation === 'sum' && mec.strafeMult > 0 && tnk.saturation === 'tank' && tnk.strafeMult === 0,
+    `mec ${mec.saturation}/${mec.strafeMult} tank ${tnk.saturation}/${tnk.strafeMult}`,
+  );
+  // tank half out-accels and out-pushes; mecanum half is the manoeuvrable one
+  check(
+    'butterfly: dropping traction buys accel + push over its own mecanum half',
+    tnk.accel > mec.accel && BUTTERFLY_MODES.tank.pushMult > BUTTERFLY_MODES.mecanum.pushMult * 1.5,
+    `accel ${mec.accel.toFixed(0)}→${tnk.accel.toFixed(0)} push ${BUTTERFLY_MODES.mecanum.pushMult}→${BUTTERFLY_MODES.tank.pushMult}`,
+  );
+  // THE EFFICIENCY TAX: each half is strictly worse than the dedicated drivetrain it
+  // imitates — you pay a few percent everywhere for the right to change your mind
+  const M = DRIVETRAIN_PRESETS.mecanum;
+  const T = DRIVETRAIN_PRESETS.tank;
+  check(
+    'butterfly: each half is strictly worse than the dedicated drivetrain (speed/accel/push)',
+    BUTTERFLY_MODES.mecanum.speedMult < M.speedMult &&
+      BUTTERFLY_MODES.mecanum.accelMult < M.accelMult &&
+      BUTTERFLY_MODES.mecanum.pushMult < M.pushMult &&
+      BUTTERFLY_MODES.tank.speedMult < T.speedMult &&
+      BUTTERFLY_MODES.tank.accelMult < T.accelMult &&
+      BUTTERFLY_MODES.tank.pushMult < T.pushMult,
+  );
+  // ...but the tax is SMALL — within 10% — or the drivetrain would be a trap pick
+  const tax = (a: number, b: number) => 1 - a / b;
+  check(
+    'butterfly: the tax stays inside 10% on every axis (a real option, not a trap)',
+    [
+      tax(BUTTERFLY_MODES.mecanum.speedMult, M.speedMult),
+      tax(BUTTERFLY_MODES.mecanum.accelMult, M.accelMult),
+      tax(BUTTERFLY_MODES.mecanum.pushMult, M.pushMult),
+      tax(BUTTERFLY_MODES.tank.speedMult, T.speedMult),
+      tax(BUTTERFLY_MODES.tank.accelMult, T.accelMult),
+      tax(BUTTERFLY_MODES.tank.pushMult, T.pushMult),
+    ].every((t) => t > 0 && t < 0.1),
+  );
+  // WEIGHT is the headline cost: it hauls both sets, so it starts heavier than anything
+  check(
+    'butterfly: the heaviest mass floor of any drivetrain (it carries both sets)',
+    massLimits('butterfly', 0).min > massLimits('tank', 0).min &&
+      massLimits('butterfly', 0).min > massLimits('swerve', 0).min &&
+      massLimits('butterfly', 0).min > massLimits('mecanum', 0).min,
+    `bfly ${massLimits('butterfly', 0).min} tank ${massLimits('tank', 0).min} swerve ${massLimits('swerve', 0).min}`,
+  );
+  // TWO GEARINGS: the traction slider is its own value on its own (lower) ceiling
+  check(
+    'butterfly: the traction set has its own rpm slider + a lower ceiling than the mecanum set',
+    butterflyTankRpmLimits().max < rpmLimits('butterfly').max &&
+      driveParams(bfly(300), true).maxSpeed < driveParams(bfly(560), true).maxSpeed,
+  );
+  // each half reads ITS OWN slider — changing traction rpm must not move mecanum-mode speed
+  const slow = bfly(200);
+  const fast = bfly(560);
+  check(
+    'butterfly: each half reads its own rpm (traction gearing never moves mecanum-mode speed)',
+    Math.abs(driveParams(slow, false).maxSpeed - driveParams(fast, false).maxSpeed) < 1e-9 &&
+      driveParams(fast, true).maxSpeed > driveParams(slow, true).maxSpeed + 5,
+  );
+  // coerceSpec owns the second slider: clamped for butterfly, STRIPPED otherwise
+  const over = coerceSpec({ ...DEFAULT_SPEC, drivetrain: 'butterfly', tankRpm: 9999 });
+  const away = coerceSpec({ ...over, drivetrain: 'mecanum' });
+  check(
+    'butterfly: coerceSpec clamps tankRpm, and strips it when the drivetrain changes',
+    over.tankRpm === butterflyTankRpmLimits().max && away.tankRpm === undefined,
+    `clamped ${over.tankRpm} stripped ${String(away.tankRpm)}`,
+  );
+
+  // ---- the SWAP itself, driven through a real world ----
+  const w = createWorld('free', 42, [
+    { id: 0, alliance: 'blue', spec: coerceSpec({ ...DEFAULT_SPEC, drivetrain: 'butterfly' }), assists: DEFAULT_ASSISTS, startIndex: 0 },
+  ]);
+  const rb = w.robots[0];
+  check('butterfly: spawns on the mecanum set', rb.butterflyTank === false);
+  const press = (down: boolean) => step(w, SIM_DT, new Map([[0, { ...cmd({}), driveMode: down }]]));
+  press(true);
+  check('butterfly: a press drops the traction set', rb.butterflyTank === true);
+  press(true);
+  press(true);
+  check('butterfly: HOLDING does not keep swapping (edge-triggered)', rb.butterflyTank === true);
+  press(false);
+  press(true);
+  check('butterfly: releasing and pressing again swaps back', rb.butterflyTank === false);
+  // a non-butterfly must ignore the command entirely
+  const w2 = createWorld('free', 42, [
+    { id: 0, alliance: 'blue', spec: coerceSpec({ ...DEFAULT_SPEC, drivetrain: 'mecanum' }), assists: DEFAULT_ASSISTS, startIndex: 0 },
+  ]);
+  step(w2, SIM_DT, new Map([[0, { ...cmd({}), driveMode: true }]]));
+  check('butterfly: every other drivetrain ignores the swap command', w2.robots[0].butterflyTank === false);
 }
 
 // ---- 2026-07 real-motor retune: mecanum has losses, tank tops speed ----------

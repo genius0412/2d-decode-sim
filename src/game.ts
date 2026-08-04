@@ -150,6 +150,10 @@ export interface HudSnapshot {
   gamepadConnected: boolean;
   /** drive controls reversed so the shooter side leads (robot-centric only) */
   frontFlipped: boolean;
+  /** BUTTERFLY: which wheel set is on the floor ('tank' | 'mecanum'), or null for every
+   * other drivetrain (no chip). Drives the HUD readout — the swap changes how the robot
+   * handles AND whether strafe exists, so the driver has to be able to see it. */
+  butterflyMode: 'tank' | 'mecanum' | null;
   /** park mode active (speed capped to parkSpeedPct); only activatable in
    * endgame / free drive, per canPark() */
   parked: boolean;
@@ -587,7 +591,14 @@ export class GameController {
     // The sim's tank branch then always reads leftDrive/rightDrive, so the choice
     // works identically in solo and multiplayer (the server never sees these
     // settings). Runs after flip/park so both still apply in Normal tank.
-    if (this.localRobot().spec.drivetrain === 'tank' && this.settings.tankControlMode === 'normal') {
+    // A BUTTERFLY that currently has its traction set down drives as a tank, so it takes
+    // the same control-style resolution — otherwise swapping wheel sets mid-match would
+    // silently stop responding (the sim's tank branch reads ONLY leftDrive/rightDrive,
+    // which nothing would have been filling).
+    const lr = this.localRobot();
+    const drivingTank =
+      lr.spec.drivetrain === 'tank' || (lr.spec.drivetrain === 'butterfly' && lr.butterflyTank);
+    if (drivingTank && this.settings.tankControlMode === 'normal') {
       cmd.leftDrive = clamp(cmd.driveY - cmd.rotate, -1, 1);
       cmd.rightDrive = clamp(cmd.driveY + cmd.rotate, -1, 1);
     }
@@ -1099,6 +1110,8 @@ export class GameController {
       inLaunchZone: w.mode === 'free' || robotInLaunchZone(r),
       gamepadConnected: this.input.gamepadConnected,
       frontFlipped: this.frontFlipped,
+      butterflyMode:
+        r.spec.drivetrain === 'butterfly' ? (r.butterflyTank ? 'tank' : 'mecanum') : null,
       parked: this.parked,
       canPark: this.canPark(),
       gateOpen: goal.gateOpen,

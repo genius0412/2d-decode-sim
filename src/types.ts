@@ -28,6 +28,10 @@ export interface RobotCommand {
   /** Chain Reaction: pick up a nearby ring / place a carried ring on a hook. Edge-
    * triggered in the sim (acts once per press). Optional (DECODE omits it). */
   catalyst?: boolean;
+  /** BUTTERFLY drivetrain: drop the other wheel set (tank ⇄ mecanum). Edge-triggered
+   * in the sim like `catalyst`, so a held button flips once. Ignored by every other
+   * drivetrain. Optional (old clients/replays omit it). */
+  driveMode?: boolean;
 }
 
 /** menu-configured driver assists */
@@ -39,7 +43,7 @@ export interface AssistConfig {
 }
 
 export type IntakeStyle = 'sloped' | 'vector' | 'triangle';
-export type DrivetrainType = 'mecanum' | 'tank' | 'swerve' | 'xdrive';
+export type DrivetrainType = 'mecanum' | 'tank' | 'swerve' | 'xdrive' | 'butterfly';
 
 export interface RobotSpec {
   /** robot display name, team name, team number (0 = unset) */
@@ -53,8 +57,16 @@ export interface RobotSpec {
   /** mass in lb (20–42): heavier shoves harder, accelerates slower */
   massLb: number;
   drivetrain: DrivetrainType;
-  /** wheel RPM abstraction (200–600): top speed up, acceleration down */
+  /** wheel RPM abstraction (200–600): top speed up, acceleration down.
+   * For BUTTERFLY this is the MECANUM-mode gearing; `tankRpm` is the other set. */
   driveRpm: number;
+  /** BUTTERFLY only: the TANK-mode wheel RPM. A butterfly carries two independently
+   * geared wheel sets, so it gets its own slider — teams routinely gear the traction
+   * set for torque and the mecanum set for speed. Range is the TANK envelope
+   * (`butterflyTankRpmLimits`), which is torque-biased and tops out lower than the
+   * mecanum one. Optional so every non-butterfly spec omits it (defaulted in
+   * `coerceSpec`, which also clamps it). */
+  tankRpm?: number;
   /** 0–1: high inertia keeps rapid fire fast on long (high-speed) shots;
    * low inertia is quick up close but recovers slowly after far shots */
   flywheelInertia: number;
@@ -194,6 +206,16 @@ export interface RobotState {
    * even after a brief tap, instead of freezing partway. `moduleAngles` chases these
    * (plus the wobble). */
   moduleTargets: number[];
+  /** BUTTERFLY drivetrain: is the TRACTION (tank) set the one on the ground right now?
+   * false ⇒ the mecanum set is down (the spawn default). RUNTIME state, not a build
+   * choice — the driver drops the other set mid-match with the `driveMode` command, and
+   * it selects BOTH the mode's handling multipliers and which RPM slider applies (see
+   * `driveParams`). Always present so snapshots/replays carry it; every other drivetrain
+   * ignores it. */
+  butterflyTank: boolean;
+  /** was the `driveMode` button held last tick? The sim edge-triggers the butterfly swap
+   * off this, so holding the button swaps once (not every tick). Plain bool ⇒ snapshot-safe. */
+  driveModeHeld: boolean;
   hopper: ArtifactColor[]; // FIFO, max 3
   fieldCentric: boolean;
   aimAssist: boolean;

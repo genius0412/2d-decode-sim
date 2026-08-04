@@ -2,7 +2,7 @@ import type { Artifact, ArtifactColor, RobotCommand, RobotState, World } from '.
 import * as C from '../config';
 import { approach, rot, wrapAngle, hyp, dsin, dcos, datan2, clamp } from '../math';
 import { classifierRect, flywheelSpinTarget, goalCenter, launchTriangles, viewAngleOf } from './field';
-import { driveParams, motorStep, motorStepVec } from './drivetrain';
+import { activeDrive, driveParams, motorStep, motorStepVec } from './drivetrain';
 import { robotIntersectsConvex } from './physics';
 import { robotsEnabled } from './match';
 
@@ -70,8 +70,18 @@ export function aimSolution(r: RobotState): { yaw: number; speed: number; angle:
  * This function is for movement only.
  */
 export function updateRobot(world: World, r: RobotState, cmd: RobotCommand, dt: number): void {
+  // ---- BUTTERFLY: drop the other wheel set (edge-triggered, so holding swaps once) ----
+  // Lives here rather than in either game's step because it is a DRIVETRAIN behaviour and
+  // both games route their drive through updateRobot. The swap is instantaneous in the
+  // model: the real lift takes a moment, but at 60 Hz that is a couple of ticks and the
+  // interesting decision is WHEN to swap, not the servo travel.
+  if (r.spec.drivetrain === 'butterfly') {
+    const wants = cmd.driveMode ?? false;
+    if (wants && !r.driveModeHeld) r.butterflyTank = !r.butterflyTank;
+    r.driveModeHeld = wants;
+  }
   // ---- drive: driver frame -> robot frame -------------------------------
-  const dp = driveParams(r.spec);
+  const dp = driveParams(r.spec, r.butterflyTank);
   // ---- power draw: a spun-up flywheel (inertia × spin, set last tick in
   // updateRobotActions) plus a running intake pull current off the drive
   // motors — slow the LOCAL dp copy (driveParams() itself is untouched so the
@@ -94,7 +104,10 @@ export function updateRobot(world: World, r: RobotState, cmd: RobotCommand, dt: 
   const driveDraw =
     C.POWER_DRAW_DRIVE *
     clamp(
-      (r.spec.driveRpm - C.REF_DRIVE_RPM) / (C.POWER_DRAW_DRIVE_TOP_RPM - C.REF_DRIVE_RPM),
+      // the rpm ACTUALLY turning the wheels — a butterfly in tank mode draws on its
+      // traction gearing, not the mecanum slider it isn't using
+      (activeDrive(r.spec, r.butterflyTank).rpm - C.REF_DRIVE_RPM) /
+        (C.POWER_DRAW_DRIVE_TOP_RPM - C.REF_DRIVE_RPM),
       0,
       1,
     );

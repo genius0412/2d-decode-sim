@@ -96,6 +96,10 @@ function makeChainRobot(setup: RobotSetup, nth: number): RobotState {
     turretHeading,
     moduleAngles: [0, 0, 0, 0],
     moduleTargets: [0, 0, 0, 0],
+    // BUTTERFLY starts on its MECANUM set — a robot that begins holonomic can always
+    // drop traction, and it matches DRIVETRAIN_PRESETS.butterfly (the mecanum half).
+    butterflyTank: false,
+    driveModeHeld: false,
     hopper: [],
     fieldCentric: assists.fieldCentric,
     aimAssist: assists.aimAssist,

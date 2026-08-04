@@ -319,7 +319,17 @@ export const DRIVETRAIN_LIMITS = {
   xdrive: { minMass: 18, maxMass: 42, minRpm: 200, maxRpm: 600 },
   tank: { minMass: 22, maxMass: 42, minRpm: 200, maxRpm: 560 },
   swerve: { minMass: 21.5, maxMass: 40, minRpm: 200, maxRpm: 500 }, // a touch heavier base (8 motors + modules)
+  // BUTTERFLY carries BOTH wheel sets plus the lift, so its floor sits ABOVE tank's 22 —
+  // the heaviest starting point in the game, and the literal cost of the archetype. The
+  // rpm fields here are the MECANUM-set slider (the full 200-600 mecanum envelope); the
+  // traction set has its own, torque-biased range in BUTTERFLY_TANK_RPM.
+  butterfly: { minMass: 24, maxMass: 42, minRpm: 200, maxRpm: 600 },
 } as const;
+
+/** BUTTERFLY's TANK-set rpm envelope — the same torque-biased ceiling tank runs (560),
+ * because it is the same kind of geared traction set. The mecanum set keeps the wider
+ * range in `DRIVETRAIN_LIMITS.butterfly`. Two sets, two gearings, two sliders. */
+export const BUTTERFLY_TANK_RPM = { min: 200, max: 560 } as const;
 /** lb added to a drivetrain's mass floor at flywheelInertia 1 (a big flywheel
  * weighs more): effective floor = base + INERTIA_MASS_FLOOR·inertia. Kept small
  * so inertia only nudges the mass range. */
@@ -388,6 +398,36 @@ export const DRIVETRAIN_PRESETS = {
   // fastest TURNER, its signature. Tradeoffs: WOBBLE (imprecise line), heavy mass, steering draw.
   // turnMult 1.18: kept above tank's raised speed so swerve stays the fastest turner.
   swerve: { strafeMult: 1.0, speedMult: 0.92, accelMult: 1.32, pushMult: 1.35, turnMult: 1.18, saturation: 'vec' },
+  /** BUTTERFLY — traction wheels AND mecanum wheels on the same chassis, one set lifted
+   * off the floor at a time (the driver drops the other mid-match). This entry is the
+   * MECANUM-mode half so every generic `DRIVETRAIN_PRESETS[dt]` reader gets a sane
+   * default; `BUTTERFLY_MODES` below holds both halves and `driveParams` picks. */
+  butterfly: { strafeMult: 0.76, speedMult: 0.87, accelMult: 1.05, pushMult: 0.74, turnMult: 0.96, saturation: 'sum' },
+} as const;
+
+/**
+ * BUTTERFLY DRIVE — the two halves.
+ *
+ * A real butterfly carries BOTH wheel sets plus the lift that swaps them, so it is never
+ * quite either dedicated drivetrain:
+ *  • it is ALWAYS hauling the set that is currently in the air (dead weight, and high in
+ *    the chassis), which is why its mass FLOOR is the highest of any drivetrain, and
+ *  • the deployed set rides on a LIFT LINKAGE rather than a hard-mounted axle, so some
+ *    traction and shove is lost to compliance in that linkage.
+ *
+ * Both halves are therefore the dedicated drivetrain's multipliers times a small
+ * EFFICIENCY TAX, weighted by how much each quantity actually suffers from a compliant
+ * mount: push −7% (shove force loads the linkage worst), accel −6% (traction transfer
+ * runs through it), speed −5% (mostly just gearing + a little scrub), turn −4% (least
+ * affected — rotation is a light load). The result is a drivetrain that is never the
+ * best at anything but is never far off either, which IS the archetype: you pay a few
+ * percent everywhere and a weight penalty for the right to change your mind mid-match.
+ */
+export const BUTTERFLY_MODES = {
+  /** mecanum set down: strafe + holonomic, mecanum's multipliers × the tax */
+  mecanum: { strafeMult: 0.76, speedMult: 0.87, accelMult: 1.05, pushMult: 0.74, turnMult: 0.96, saturation: 'sum' },
+  /** traction set down: no strafe, tank's push/accel/speed × the tax, tank's control model */
+  tank: { strafeMult: 0, speedMult: 1.01, accelMult: 1.36, pushMult: 1.58, turnMult: 0.96, saturation: 'tank' },
 } as const;
 
 /** flywheel recovery: after an energetic (long-range) shot, a LOW-inertia
