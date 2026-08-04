@@ -508,6 +508,18 @@ export function Menu({ settings, onChange }: Props) {
               </label>
             </div>
 
+            {/* ONE SUBSYSTEM PER BLOCK. Each mechanism's picker sits with the sliders that
+                tune THAT mechanism (catapult range/yaw under Catalyst, RPM under Drivetrain,
+                storage under Scoring) instead of the old layout, where every picker came
+                first and every slider was pooled at the bottom — so the catapult sliders sat
+                under the chassis dimensions and read as frame settings.
+
+                ORDER IS LOAD-BEARING: FRAME (length/width/mass) comes LAST because every
+                block above clamps it — the intake mount eats the start cube on its axis, the
+                catalyst and flywheel raise the mass floor, the drivetrain sets both. Picking
+                a mechanism and watching a slider below re-clamp reads as cause and effect;
+                the reverse reads as the builder fighting you. */}
+            <h3 className="ds-subh">Drivetrain</h3>
             <div className="ds-opts four">
               {(Object.keys(DRIVETRAIN_LABELS) as DrivetrainType[]).map((d) => (
                 <button
@@ -519,12 +531,72 @@ export function Menu({ settings, onChange }: Props) {
                 </button>
               ))}
             </div>
+            <div className="ds-fields">
+              <label className="ds-field">
+                <span className="cap">
+                  {isButterfly ? 'Mecanum RPM' : 'Drive RPM'} <span className="val">{spec.driveRpm}</span>
+                </span>
+                <input
+                  className="ds-range"
+                  type="range"
+                  min={minRpm}
+                  max={maxRpm}
+                  step={5}
+                  value={spec.driveRpm}
+                  style={rangeFill(spec.driveRpm, minRpm, maxRpm)}
+                  onChange={(e) => setSpec({ driveRpm: Number(e.target.value) })}
+                />
+              </label>
+              {isButterfly && (
+                <label className="ds-field">
+                  <span className="cap">
+                    Traction RPM <span className="val">{tankRpmValue}</span>
+                  </span>
+                  <input
+                    className="ds-range"
+                    type="range"
+                    min={minTankRpm}
+                    max={maxTankRpm}
+                    step={5}
+                    value={tankRpmValue}
+                    style={rangeFill(tankRpmValue, minTankRpm, maxTankRpm)}
+                    onChange={(e) => setSpec({ tankRpm: Number(e.target.value) })}
+                  />
+                </label>
+              )}
+            </div>
 
-            {/* Chain Reaction — SCORING ARCHETYPE + shooter mount + intake come FIRST: they
-                set the numeric limits (storage cap, etc.) the sliders below are clamped to. */}
-            {!isDecode && (
+            {/* ---- SCORING ---- */}
+            <h3 className="ds-subh">Scoring</h3>
+            {isDecode ? (
+              <div className="ds-fields">
+                <label className="ds-field">
+                  <span className="cap">
+                    Flywheel inertia <span className="val">{spec.flywheelInertia.toFixed(2)}</span>
+                  </span>
+                  <input
+                    className="ds-range"
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={spec.flywheelInertia}
+                    style={rangeFill(spec.flywheelInertia, 0, 1)}
+                    // a bigger flywheel weighs more: setSpec raises the mass floor
+                    // and pulls mass up with it so the loadout stays legal
+                    onChange={(e) => setSpec({ flywheelInertia: Number(e.target.value) })}
+                  />
+                </label>
+                <button
+                  className={`ds-opt mini ${spec.canSort ? 'on' : ''}`}
+                  style={{ flex: '1 1 150px' }}
+                  onClick={() => setSpec({ canSort: !spec.canSort })}
+                >
+                  <span className="ot">Sorter {spec.canSort ? 'ON' : 'OFF'}</span>
+                </button>
+              </div>
+            ) : (
               <>
-                <h3 className="ds-subh">Scoring archetype</h3>
                 <div className="ds-opts">
                   {CHAIN_SCORE_MODES.map((m) => (
                     <button
@@ -538,32 +610,69 @@ export function Menu({ settings, onChange }: Props) {
                   ))}
                 </div>
                 {!isTurreted(spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) && (
-                  <>
-                    <h3 className="ds-subh">Shooter mount</h3>
-                    <div className="ds-opts four">
-                      {CHAIN_SHOOTER_MOUNTS.map((m) => (
-                        <button
-                          key={m}
-                          className={`ds-opt mini ${shooterMountOf(spec) === m ? 'on' : ''}`}
-                          onClick={() => setSpec({ shooterMount: m })}
-                        >
-                          <span className="ot">{CHAIN_SHOOTER_MOUNT_LABELS[m]}</span>
-                          {CHAIN_SHOOTER_MOUNT_BLURBS[m] ? (
-                            <span className="od">{CHAIN_SHOOTER_MOUNT_BLURBS[m]}</span>
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  </>
+                  <div className="ds-opts four" style={{ marginTop: 8 }}>
+                    {CHAIN_SHOOTER_MOUNTS.map((m) => (
+                      <button
+                        key={m}
+                        className={`ds-opt mini ${shooterMountOf(spec) === m ? 'on' : ''}`}
+                        onClick={() => setSpec({ shooterMount: m })}
+                      >
+                        <span className="ot">{CHAIN_SHOOTER_MOUNT_LABELS[m]}</span>
+                        {CHAIN_SHOOTER_MOUNT_BLURBS[m] ? (
+                          <span className="od">{CHAIN_SHOOTER_MOUNT_BLURBS[m]}</span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
                 )}
-                <h3 className="ds-subh">Intake design</h3>
+                {(() => {
+                  const storeMax = chainStorageMax(spec);
+                  const store = Math.min(spec.ballStorage ?? CHAIN_STORAGE_DEFAULT, storeMax);
+                  return (
+                    <div className="ds-fields">
+                      <label className="ds-field">
+                        <span className="cap">
+                          Ball storage <span className="val">{store} / {storeMax} particles</span>
+                        </span>
+                        <input
+                          className="ds-range"
+                          type="range"
+                          min={CHAIN_STORAGE_MIN}
+                          max={storeMax}
+                          step={1}
+                          value={store}
+                          style={rangeFill(store, CHAIN_STORAGE_MIN, storeMax)}
+                          onChange={(e) => setSpec({ ballStorage: Number(e.target.value) })}
+                        />
+                      </label>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+
+            {/* ---- INTAKE ---- */}
+            <h3 className="ds-subh">Intake</h3>
+            {isDecode ? (
+              <div className="ds-opts">
+                {(Object.keys(INTAKE_LABELS) as IntakeStyle[]).map((i) => (
+                  <button
+                    key={i}
+                    className={`ds-opt ${spec.intake === i ? 'on' : ''}`}
+                    onClick={() => selectIntake(i)}
+                  >
+                    <span className="ot">{INTAKE_LABELS[i]}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <>
                 <div className="ds-opts">
                   <div className="ds-opt on" aria-disabled>
                     <span className="ot">{CHAIN_INTAKE_LABELS.sweeper}</span>
                   </div>
                 </div>
-                <h3 className="ds-subh">Intake mount</h3>
-                <div className="ds-opts four">
+                <div className="ds-opts four" style={{ marginTop: 8 }}>
                   {CHAIN_INTAKE_MOUNTS.map((m) => (
                     <button
                       key={m}
@@ -577,7 +686,13 @@ export function Menu({ settings, onChange }: Props) {
                     </button>
                   ))}
                 </div>
-                <h3 className="ds-subh">Catalyst mechanism</h3>
+              </>
+            )}
+
+            {/* ---- CATALYST (CR only) ---- */}
+            {!isDecode && (
+              <>
+                <h3 className="ds-subh">Catalyst</h3>
                 <div className="ds-opts">
                   {CHAIN_CATALYST_TYPES.map((t) => (
                     <button
@@ -590,8 +705,7 @@ export function Menu({ settings, onChange }: Props) {
                     </button>
                   ))}
                 </div>
-                <h3 className="ds-subh">Catalyst mount</h3>
-                <div className="ds-opts four">
+                <div className="ds-opts four" style={{ marginTop: 8 }}>
                   {CHAIN_CATALYST_MOUNTS.map((m) => (
                     <button
                       key={m}
@@ -602,9 +716,45 @@ export function Menu({ settings, onChange }: Props) {
                     </button>
                   ))}
                 </div>
+                {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'launcher' && (
+                  <div className="ds-fields">
+                    <label className="ds-field">
+                      <span className="cap">
+                        Catapult range <span className="val">{chainCatapultRange(spec)}"</span>
+                      </span>
+                      <input
+                        className="ds-range"
+                        type="range"
+                        min={CHAIN_CATAPULT_RANGE_MIN}
+                        max={CHAIN_CATAPULT_RANGE_MAX}
+                        step={5}
+                        value={chainCatapultRange(spec)}
+                        style={rangeFill(chainCatapultRange(spec), CHAIN_CATAPULT_RANGE_MIN, CHAIN_CATAPULT_RANGE_MAX)}
+                        onChange={(e) => setSpec({ catapultRange: Number(e.target.value) })}
+                      />
+                    </label>
+                    <label className="ds-field">
+                      <span className="cap">
+                        Catapult yaw <span className="val">{spec.catapultYaw ?? 0}°</span>
+                      </span>
+                      <input
+                        className="ds-range"
+                        type="range"
+                        min={-180}
+                        max={180}
+                        step={CHAIN_CATAPULT_YAW_STEP}
+                        value={spec.catapultYaw ?? 0}
+                        style={rangeFill(spec.catapultYaw ?? 0, -180, 180)}
+                        onChange={(e) => setSpec({ catapultYaw: Number(e.target.value) })}
+                      />
+                    </label>
+                  </div>
+                )}
               </>
             )}
 
+            {/* ---- FRAME: clamped by every block above, so it comes last ---- */}
+            <h3 className="ds-subh">Frame</h3>
             <div className="ds-fields">
               <label className="ds-field">
                 <span className="cap">
@@ -651,125 +801,6 @@ export function Menu({ settings, onChange }: Props) {
                   onChange={(e) => setSpec({ massLb: Number(e.target.value) })}
                 />
               </label>
-            </div>
-                {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'launcher' && (
-                  <div className="ds-fields">
-                    <label className="ds-field">
-                      <span className="cap">
-                        Catapult range <span className="val">{chainCatapultRange(spec)}"</span>
-                      </span>
-                      <input
-                        className="ds-range"
-                        type="range"
-                        min={CHAIN_CATAPULT_RANGE_MIN}
-                        max={CHAIN_CATAPULT_RANGE_MAX}
-                        step={5}
-                        value={chainCatapultRange(spec)}
-                        style={rangeFill(chainCatapultRange(spec), CHAIN_CATAPULT_RANGE_MIN, CHAIN_CATAPULT_RANGE_MAX)}
-                        onChange={(e) => setSpec({ catapultRange: Number(e.target.value) })}
-                      />
-                    </label>
-                    <label className="ds-field">
-                      <span className="cap">
-                        Catapult yaw <span className="val">{spec.catapultYaw ?? 0}°</span>
-                      </span>
-                      <input
-                        className="ds-range"
-                        type="range"
-                        min={-180}
-                        max={180}
-                        step={CHAIN_CATAPULT_YAW_STEP}
-                        value={spec.catapultYaw ?? 0}
-                        style={rangeFill(spec.catapultYaw ?? 0, -180, 180)}
-                        onChange={(e) => setSpec({ catapultYaw: Number(e.target.value) })}
-                      />
-                    </label>
-                  </div>
-                )}
-
-            <div className="ds-fields">
-              <label className="ds-field">
-                <span className="cap">
-                  {isButterfly ? 'Mecanum RPM' : 'Drive RPM'} <span className="val">{spec.driveRpm}</span>
-                </span>
-                <input
-                  className="ds-range"
-                  type="range"
-                  min={minRpm}
-                  max={maxRpm}
-                  step={5}
-                  value={spec.driveRpm}
-                  style={rangeFill(spec.driveRpm, minRpm, maxRpm)}
-                  onChange={(e) => setSpec({ driveRpm: Number(e.target.value) })}
-                />
-              </label>
-              {isButterfly && (
-                <label className="ds-field">
-                  <span className="cap">
-                    Traction RPM <span className="val">{tankRpmValue}</span>
-                  </span>
-                  <input
-                    className="ds-range"
-                    type="range"
-                    min={minTankRpm}
-                    max={maxTankRpm}
-                    step={5}
-                    value={tankRpmValue}
-                    style={rangeFill(tankRpmValue, minTankRpm, maxTankRpm)}
-                    onChange={(e) => setSpec({ tankRpm: Number(e.target.value) })}
-                  />
-                </label>
-              )}
-              {isDecode && (
-                <label className="ds-field">
-                  <span className="cap">
-                    Flywheel inertia <span className="val">{spec.flywheelInertia.toFixed(2)}</span>
-                  </span>
-                  <input
-                    className="ds-range"
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={spec.flywheelInertia}
-                    style={rangeFill(spec.flywheelInertia, 0, 1)}
-                    // a bigger flywheel weighs more: setSpec raises the mass floor
-                    // and pulls mass up with it so the loadout stays legal
-                    onChange={(e) => setSpec({ flywheelInertia: Number(e.target.value) })}
-                  />
-                </label>
-              )}
-              {isDecode && (
-                <button
-                  className={`ds-opt mini ${spec.canSort ? 'on' : ''}`}
-                  style={{ flex: '1 1 150px' }}
-                  onClick={() => setSpec({ canSort: !spec.canSort })}
-                >
-                  <span className="ot">Sorter {spec.canSort ? 'ON' : 'OFF'}</span>
-                </button>
-              )}
-              <ChassisColorRow spec={spec} onPick={(chassisColor) => setSpec({ chassisColor })} />
-              {!isDecode && (() => {
-                const storeMax = chainStorageMax(spec);
-                const store = Math.min(spec.ballStorage ?? CHAIN_STORAGE_DEFAULT, storeMax);
-                return (
-                  <label className="ds-field">
-                    <span className="cap">
-                      Ball storage <span className="val">{store} / {storeMax} particles</span>
-                    </span>
-                    <input
-                      className="ds-range"
-                      type="range"
-                      min={CHAIN_STORAGE_MIN}
-                      max={storeMax}
-                      step={1}
-                      value={store}
-                      style={rangeFill(store, CHAIN_STORAGE_MIN, storeMax)}
-                      onChange={(e) => setSpec({ ballStorage: Number(e.target.value) })}
-                    />
-                  </label>
-                );
-              })()}
               {!isDecode && (
                 <label className="ds-field">
                   <span className="cap">
@@ -792,23 +823,9 @@ export function Menu({ settings, onChange }: Props) {
                   />
                 </label>
               )}
+              <ChassisColorRow spec={spec} onPick={(chassisColor) => setSpec({ chassisColor })} />
             </div>
           </div>
-
-          {isDecode && (
-          <div className="ds-opts">
-            {(Object.keys(INTAKE_LABELS) as IntakeStyle[]).map((i) => (
-              <button
-                key={i}
-                className={`ds-opt ${spec.intake === i ? 'on' : ''}`}
-                onClick={() => selectIntake(i)}
-              >
-                <span className="ot">{INTAKE_LABELS[i]}</span>
-              </button>
-            ))}
-          </div>
-          )}
-
         </section>
 
         {/* ---------- driver preferences (remembered per drivetrain) ---------- */}

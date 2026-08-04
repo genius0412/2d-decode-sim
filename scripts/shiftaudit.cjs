@@ -53,6 +53,15 @@ const TOGGLE_CLASSES = [
   ['.ds-subnav-btn', 'on'], ['.ds-key', 'on'], ['.ds-key', 'selected'],
   ['.ds-tile', 'primary'], ['.ds-btn', 'primary'], ['.ds-menu-btn', 'primary'],
 ];
+// Regions whose CONTENT arrives from the server while the audit runs — the top bar's live
+// queue/player counts. Their text width changes on its own schedule, and because the bar is
+// right-aligned that nudges its siblings; the blame then lands on whichever element happened
+// to be probed at that instant, which is why the reported culprit was different every run.
+// It IS a reflow, but not a state-driven one, and this audit exists to police the latter:
+// "does hovering/activating a control move anything outside itself".
+// `.ds-qcount` is listed on its own as well as via the bar: the same counter also rides the
+// left rail (`.ds-qcount.rail`), where its own width changes as the number ticks.
+const LIVE = ['.ds-bar-right', '.ds-qcount'];
 const FREEZE = `(() => { if (!document.getElementById('__freeze')) {
   const s = document.createElement('style'); s.id='__freeze';
   s.textContent = '*,*::before,*::after{transition:none !important;animation:none !important}';
@@ -75,7 +84,14 @@ const SUBTREES = (sel) => `(() => { const all=[...document.querySelectorAll('*')
 
 function diff(base, cur, skip, tags) {
   const out = [];
-  const n = Math.min(base.length, cur.length) - 1;
+  // The DOM CHANGED SHAPE between the two reads — a live re-render (version poll, stats
+  // fetch, a flyout) added or removed nodes while we measured. Every index past that point
+  // now names a DIFFERENT element in the two arrays, so rect-vs-rect comparison is garbage:
+  // it used to read the LAST SHARED INDEX as the scrollHeight sentinel and report phantom
+  // "document height 0 -> 815" lines on pages the change never touched. Nothing about a
+  // pseudo-state can add nodes, so this is never a real shift — skip the sample.
+  if (base.length !== cur.length) return out;
+  const n = base.length - 1; // the scrollHeight sentinel RECTS appends
   if (Math.abs(base[n] - cur[n]) > EPS) out.push(`document height ${base[n]} -> ${cur[n]}`);
   for (let i = 0; i * 4 < n && out.length < 5; i++) {
     if (skip.has(i)) continue;
@@ -114,10 +130,13 @@ app.whenReady().then(async () => {
   const js = (s) => win.webContents.executeJavaScript(s);
 
   let checked = 0, problems = 0;
+  // document-order indices of the live-data regions on the CURRENT page (see LIVE), refreshed
+  // per page load and unioned into every probe's skip set
+  let liveSkip = new Set();
 
   const probePseudo = async (sel, nodeIds, subs, tags) => {
     for (let i = 0; i < Math.min(nodeIds.length, MAX_PER); i++) {
-      const skip = new Set(subs[i] || []);
+      const skip = new Set([...(subs[i] || []), ...liveSkip]);
       for (const pseudo of [['hover'], ['hover', 'active']]) {
         const base = await js(RECTS);
         await cmd('CSS.forcePseudoState', { nodeId: nodeIds[i], forcedPseudoClasses: pseudo });
@@ -153,6 +172,7 @@ app.whenReady().then(async () => {
       await js(FREEZE);          // transitions would bleed into the next probe
       await sleep(120);
       log(`\n##### [${theme}] ${page}`);
+      liveSkip = new Set((await js(SUBTREES(LIVE.join(',')))).flat());
       const tags = await js(TAGS);
       const { root } = await cmd('DOM.getDocument', { depth: -1 });
 
@@ -171,7 +191,7 @@ app.whenReady().then(async () => {
         if (!n) continue;
         const subs = await js(SUBTREES(sel));
         for (let i = 0; i < Math.min(n, MAX_PER); i++) {
-          const skip = new Set(subs[i] || []);
+          const skip = new Set([...(subs[i] || []), ...liveSkip]);
           const base = await js(RECTS);
           const had = await js(`(()=>{const e=document.querySelectorAll(${JSON.stringify(sel)})[${i}];
             const h=e.classList.contains(${JSON.stringify(cls)});e.classList.toggle(${JSON.stringify(cls)});return h;})()`);
