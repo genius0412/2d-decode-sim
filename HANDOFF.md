@@ -1,3 +1,94 @@
+# HANDOFF — 2026-08-05b (G418.B drain fix · CR start editor · builder regroup) — alpha only
+
+Branch **alpha** (worktree `../2d-decode-sim-alpha`). 7 commits ahead of main, NOT merged.
+`npm test` ALL PASS · `npm run build` · `npm run contrast` 197 · `server:check` ·
+`npm run shiftaudit` **0 shifts across 3 consecutive runs** (it used to be flaky — fixed,
+see §3). Everything below was GUI-verified in the browser on the dev server.
+
+## 1. DECODE G418.B billed on the DRAIN, not the touch (`bcff7f9`)
+**The reported bug**: tap an opponent's gate without opening it and you were charged a
+MAJOR for every artifact standing on their ramp. Nothing leaves a gate that never opens,
+so the whole bill was phantom.
+
+`updateGateFouls` used to count the rail column on the G417 edge and award that many
+majors immediately. It now uses `penalties.rampBallIds`, which the types had described all
+along but nothing ever populated: each tick records the committed, non-overflow rail balls
+per goal, and every id that has LEFT since costs the responsible opponent one MAJOR. So a
+tap is G417 alone, and a real opening is billed artifact-by-artifact as the column empties
+— including after the offender drives away, since the flow finishes the drain.
+
+Two supporting changes:
+- `gateCulprit` is pinned to an opponent who actually `pushingGate()`s the arm, not to
+  anyone brushing it. An owner draining their OWN ramp while an opponent leans on the
+  lever is the owner's doing; the opponent still owes G417 for the contact.
+  `updateGateFouls` now takes the command map so it can ask.
+- Both are cleared whenever the phase isn't auto/teleop. Robots are frozen across the
+  transition, so a ramp draining through it is nobody's foul — and a stale `rampBallIds`
+  would otherwise bill the entire gap the instant teleop began.
+
+`goal.ts` exports `ZERO_CMD` for the no-command case. Smoke: the tap-without-opening case
+and the owner-opened case, alongside the existing "open it → 1 G417 + N G418".
+
+## 2. CR start-position editor (`24868c8`)
+`ChainStartEditor` replaces `ChainStartSelector` (deleted) at all three call sites —
+MatchSetup, Lobby, MatchStrategy. Canvas stage running the REAL `drawChainField` /
+`drawChainRobot`, drag to place, heading handle, numeric X/Y/heading, live legality, the
+four anchors as quick-picks. Reuses every `ds-startpos-*` style, so no new CSS.
+
+- `chainEvalStart(spec,pos)` → `{extent, inLab, clearOfStand, legal}`. `legal` is the
+  `chainSnapStart` round-trip the SPAWN runs, never a re-derivation, so the ring can't
+  disagree with where the robot really starts; the two booleans only pick the message.
+- It draws the **clearance box** the rule tests (axis-aligned, largest dimension), not a
+  rotated footprint — which is also why heading is always free under G04.
+- `chainMirrorStart` is the self-inverse canonical↔actual mirror. Poses store CANONICAL.
+- **Snap defaults ON and snaps LIVE during the drag**, unlike DECODE. G04 plus the solid
+  corner assembly leave a band roughly an inch wide for a near-max chassis
+  (`CHAIN_RINGSTAND_BOX <= CHAIN_LAB - 2*half-extent` is nearly tight at 6 <= 6.5), so free
+  dragging would sit red for the whole gesture. Live snapping makes it glide along the band.
+- **No saved-pose library**, deliberately: `GameSettings.savedStartPoses` is ONE canonical
+  list shared across games, so a CR pose saved into it turns up unreachable in DECODE's
+  Close/Far library. Adding one means namespacing that setting first.
+- `startSelectionLegal(game, spec, alliance, pose)` in `ui/startPositions.ts` is now the
+  ready-up / start gate for BOTH games. CR used to be waved through as "legal by
+  construction"; free placement ended that (App.tsx, Lobby, MatchStrategy).
+
+## 3. Robot builder regrouped + shiftaudit de-flaked (`7fae15e`)
+**Builder.** Customize had become every picker first, then every slider pooled at the
+bottom: the catapult sliders sat under the chassis dimensions and read as frame settings,
+the RPM sliders sat nowhere near the drivetrain that clamps them, and DECODE's intake
+presets floated outside the panel entirely. Now one block per subsystem — Drivetrain
+(buttons + RPMs), Scoring (archetype/shooter mount + storage, or flywheel + sorter),
+Intake (design + mount, or the three DECODE presets), Catalyst (mechanism + mount +
+catapult sliders), **Frame last** because every block above clamps its length/width/mass.
+That ordering is load-bearing: picking a mechanism and watching a slider below re-clamp
+reads as cause and effect; the reverse reads as the builder fighting you.
+
+**shiftaudit.** It had been reporting a different phantom failure every run, on routes the
+change never touched. Two independent causes:
+- `diff()` computed the scrollHeight sentinel as the LAST SHARED INDEX of the two rect
+  arrays. When a live re-render changed the node count between the two reads, every index
+  named a different element and it printed `document height 0 -> 815`. It now bails when
+  the DOM changes shape — a pseudo-state can't add nodes, so that sample is never a real
+  shift.
+- The top bar's live queue counter reflows on the server's schedule, and the blame landed
+  on whichever control happened to be probed at that instant. `LIVE` regions
+  (`.ds-bar-right`, `.ds-qcount`) are now skipped like the probed element's own subtree.
+
+A green shiftaudit means something again. Run it after UI work.
+
+## Still open
+- **Penalty hitbox audit** (roadmap #1) — the DECODE zone geometry each rule tests against
+  the manual figures. Untouched.
+- CR `CHAIN_LAB` is still marked APPROX in config. The Lab/assembly geometry is now
+  self-consistent and test-pinned, but the 24" itself has never been checked against a
+  manual figure. If it is ever refined, the start editor's legal band moves with it.
+- Alpha has not been merged to main, and the Fly server has not been redeployed. The
+  penalty change is SIM code, so a deploy is needed before it takes effect in multiplayer
+  (see the deploy protocol in CLAUDE.md — `./scripts/fly-deploy.sh`, never a bare
+  `flyctl deploy`).
+
+---
+
 # HANDOFF — 2026-08-05 (butterfly drivetrain · twin turret · configurable catalysts) — alpha only
 
 Branch **alpha** (worktree `../2d-decode-sim-alpha`). 4 commits, NOT merged to main.
