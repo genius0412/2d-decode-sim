@@ -143,6 +143,8 @@ import {
   CHAIN_DRUM_SPEED,
   CHAIN_MIN_LENGTH,
   CHAIN_MAX_LENGTH,
+  CHAIN_PRISM,
+  chainArmReach,
 } from '../src/games/chain/config';
 import { accelMultiplier, chainEvalStart, chainIntakeMouths, chainMirrorStart, chainSnapStart, chainStartLegal, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
 import {
@@ -168,7 +170,7 @@ import {
   CHAIN_RINGSTAND_BOX,
   CHAIN_HALF_Y,
 } from '../src/games/chain/config';
-import { intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
+import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -6516,16 +6518,76 @@ const mkMM = () => {
     // grab a ring by simply driving at it with the intake, the arm would be pointless.
     // and NO mechanism may out-reach the legal expansion plus the ring's own radius —
     // a robot that grabs from further than that could not physically exist
-    check(
-      'catalyst: no reach exceeds the legal expansion + ring radius',
-      Object.values(CHAIN_CATALYSTS).every((c) => c.reach <= CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2),
-      Object.entries(CHAIN_CATALYSTS).map(([k, v]) => `${k} ${v.reach}`).join(' '),
-    );
+    // NO MECHANISM MAY OUT-REACH THE CONTROL PRISM. The bound is per-chassis, not a flat
+    // number: G02/G03 give a 24" prism, so what's legally left is 24 − whatever the robot
+    // already spends along that axis, plus the ring's own radius (the claw tip sits at the
+    // limit and still closes on a ring centred 3" further out). Swept over the whole legal
+    // build space rather than spot-checked, because the ARM's reach now VARIES with the
+    // build and a bad formula would only break at one end of it.
+    {
+      let illegal = '';
+      let minArm = Infinity;
+      let maxArm = 0;
+      for (const intake of Object.keys(INTAKE_PRESETS) as RobotSpec['intake'][]) {
+        for (const im of CHAIN_INTAKE_MOUNTS) {
+          for (const cm of CHAIN_CATALYST_MOUNTS) {
+            const base = coerceSpec(
+              { ...DEFAULT_SPEC, intake, intakeMount: im, catalystMount: cm, catalystType: 'arm' },
+              DEFAULT_SPEC,
+              'chain',
+            );
+            const lim = chainSizeLimits(base);
+            for (const length of [lim.minLength, lim.maxLength]) {
+              for (const width of [lim.minWidth, lim.maxWidth]) {
+                const s = coerceSpec({ ...base, length, width }, DEFAULT_SPEC, 'chain');
+                const reach = chainArmReach(s);
+                const axis = cm === 'front' || cm === 'back' ? s.length : s.width;
+                const ends =
+                  cm === 'front' || cm === 'back'
+                    ? intakeMountOf(s) === 'frontback'
+                      ? 2
+                      : intakeMountOf(s) === 'side'
+                        ? 0
+                        : 1
+                    : intakeMountOf(s) === 'side'
+                      ? 2
+                      : 0;
+                const spent = axis + ends * INTAKE_PRESETS[s.intake].reach;
+                const cap = CHAIN_PRISM - spent + CHAIN_CATALYST_OD / 2;
+                if (reach > cap + 1e-9) illegal = `${intake}/${im}/${cm} reach ${reach} > ${cap}`;
+                minArm = Math.min(minArm, reach);
+                maxArm = Math.max(maxArm, reach);
+              }
+            }
+          }
+        }
+      }
+      check(
+        'catalyst: no arm reach exceeds what the control prism leaves for that chassis',
+        !illegal,
+        illegal || `arm reach spans ${minArm.toFixed(1)}"-${maxArm.toFixed(1)}" across the legal build space`,
+      );
+      // a MAXED-OUT chassis gets exactly the old flat allowance; a compact one gets much more.
+      // That spread is the point — the arm is the mechanism you build small to exploit.
+      check(
+        'catalyst: a compact chassis genuinely out-reaches a maxed one',
+        maxArm >= minArm + 6,
+        `${minArm.toFixed(1)}" (maxed) -> ${maxArm.toFixed(1)}" (compact)`,
+      );
+      check(
+        'catalyst: even the WORST-case arm equals the maxed-robot expansion + ring radius',
+        Math.abs(minArm - (CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2)) < 1e-9,
+        `${minArm} vs ${CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2}`,
+      );
+    }
+    // THE ARM MUST OUT-REACH THE INTAKE, at ANY legal size. It is the long-reach mechanism;
+    // if a robot could grab a ring by simply driving at it with the intake, the arm would be
+    // pointless. Checked against the worst-case arm, not the default one.
     check(
       'catalyst: the claw arm reaches further than ANY intake preset',
-      CHAIN_CATALYSTS.arm.reach >
+      CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2 >
         Math.max(...Object.values(INTAKE_PRESETS).map((p) => p.reach)) + 3,
-      `arm ${CHAIN_CATALYSTS.arm.reach}" vs intakes ${Object.values(INTAKE_PRESETS).map((p) => p.reach).join('/')}"`,
+      `worst-case arm ${CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2}" vs intakes ${Object.values(INTAKE_PRESETS).map((p) => p.reach).join('/')}"`,
     );
     check(
       'catalyst: reach order arm > turret > launcher',

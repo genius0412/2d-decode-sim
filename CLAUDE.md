@@ -708,6 +708,21 @@ construction, so the server's DECODE-only G304 gate stays off.
   Conserved: ground + flight + in-hoppers === 300, always.
 - **CATALYST** — a 6"-OD purple ring (4 total). Seated on a **HOOK** (on the accelerator wall
   at y = ±`CHAIN_HOOK_Y`, four total) it raises that accelerator's multiplier.
+  **Three MECHANISMS handle it** (`CHAIN_CATALYSTS`, resolved by `chainCatalystGeom(spec)` —
+  the ONE resolver, so the action, the HUD prompt and the mass floor can't disagree). One claw
+  does both grabbing and placing, so each has a single `reach`, measured from the mounted
+  chassis EDGE (`catalystMouth`), plus a `cone` half-angle: **arm** (reach specialist, ±50°,
+  slow) · **launcher** (shortest claw, ±35°, plus the inaccurate `fling` catapult) ·
+  **turret** (rail + turret, cone = π so facing never matters, fastest, heaviest).
+  **The ARM's reach is PER-CHASSIS, not a constant** — see `chainArmReach`. G02/G03 give a
+  24" control prism (`CHAIN_PRISM`), so what's legally left to extend is
+  `24 − (chassis + any sweeper on that same axis) + the ring radius`. That spans **9" on a
+  maxed-out 18" chassis to 17" on a compact one**, making the arm the mechanism you build
+  small to exploit; `CHAIN_EXPANSION` is now just the maxed-robot worst case, derived rather
+  than assumed. **This never changes the SPRITE**: both `drawCatalystMech` and `RobotPreview`
+  draw the arm at the fixed stowed `CHAIN_ARM_DRAW` (2.2"), because an arm is only extended
+  while it actuates — top-down it just says which way it points. Do NOT wire the sprite to
+  `reach`; drawing it extended made every robot look permanently mid-grab.
 - **RING STAND** — a 22.5" vertical pole very close to each field corner (inset APPROX).
   Robots ASCEND (endgame) / DESCEND (auto).
 - **LAB AREA** — each alliance's two 24" corner squares on its side: start / leave / park.

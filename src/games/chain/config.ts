@@ -48,7 +48,7 @@ import type {
   RobotSpec,
   StartCat,
 } from '../../types';
-import { intakeMountOf } from './mounts';
+import { catalystMountOf, intakeMountOf } from './mounts';
 import { INTAKE_PRESETS, ROBOT_MAX_SIZE, ROBOT_MIN_WIDTH } from '../../config';
 
 /** millimetres → inches (the sim's world unit) */
@@ -560,14 +560,19 @@ export interface ChainCatalystGeom {
   fling: boolean;
 }
 /**
- * LEGAL EXPANSION past the frame (in). G02 bounds a Robot to an 18"×24"×18" CONTROL PRISM
- * and G03 lets it expand into that from an 18"×18"×18" start — so a mechanism may reach
- * about 6" beyond the chassis, and no further. Every catalyst reach below is
- * `CHAIN_EXPANSION + the ring radius` at most (the claw tip sits at the limit; a 6"-OD ring
- * centred another 3" out is still within its jaws), and the ARM is drawn at the mechanism's
- * own extent — not its grab radius — so the sprite obeys the same rule the rules do.
+ * The CONTROL PRISM's long dimension (in). G02 bounds a Robot to 18"×24"×18" and G03 lets it
+ * expand into that from an 18" start cube.
+ *
+ * The allowance is therefore NOT a fixed 6" — it is whatever is LEFT of the 24" once the
+ * robot's own extent along that axis is spent. A maxed-out 18" robot gets 6"; a compact one
+ * legally reaches much further. Treating it as a constant 6 (which this file used to do)
+ * quietly charged every small robot for size it never used, and made the ARM — the mechanism
+ * whose entire identity is extension — no better than a long intake.
  */
-export const CHAIN_EXPANSION = 6;
+export const CHAIN_PRISM = 24;
+
+/** what's left of the prism for a MAXED-OUT (18") robot: the worst case, not the rule. */
+export const CHAIN_EXPANSION = CHAIN_PRISM - ROBOT_MAX_SIZE; // 6
 
 /** How far the claw ARM is DRAWN past the frame. Deliberately much shorter than either its
  * grab radius or the expansion limit: an arm only reaches out while it is actuating, and a
@@ -576,10 +581,11 @@ export const CHAIN_EXPANSION = 6;
 export const CHAIN_ARM_DRAW = 2.2;
 
 export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
-  // ARM raised 14 → 16: it is THE reach mechanism, and it should be unmistakably longer
-  // than any intake (the longest intake preset reaches 5" past the frame).
-  // the reach specialist: it uses the FULL legal expansion, plus the ring radius
-  arm: { reach: 9, cone: 0.87, cycle: 0.9, massLb: 1.4, fling: false },
+  // ARM: `reach` here is only the FLOOR (what a maxed-out 18" chassis gets). The real value
+  // is per-chassis — see `chainArmReach`, which `chainCatalystGeom` substitutes in. The arm
+  // is the one mechanism that EXTENDS, so it is the one that gets to spend the leftover
+  // prism; the launcher's scoop and the turret's rail don't telescope and stay fixed.
+  arm: { reach: CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2, cone: 0.87, cycle: 0.9, massLb: 1.4, fling: false },
   // LAUNCHER raised 8 → 11. The 8" scoop was priced back when the catapult was (wrongly)
   // the long-range PLACER, so the claw was taxed to compensate. Now that the claw does the
   // grabbing and placing like everyone else's, that tax made it needlessly awkward — its
@@ -684,8 +690,46 @@ export function chainCatapultYaw(spec: RobotSpec): number {
 }
 
 /** the catalyst mechanism's geometry for a spec (defaulted). */
+/** The robot's total footprint along the axis a catalyst edge points down, INCLUDING a
+ * sweeper mounted on that same axis — the sweeper is structure, and `chainSizeLimits`
+ * already charges it against the start cube exactly this way. */
+function chainAxisExtent(spec: RobotSpec, edge: ChainCatalystMount): number {
+  const reach = INTAKE_PRESETS[spec.intake].reach;
+  const mount = intakeMountOf(spec);
+  if (edge === 'front' || edge === 'back') {
+    const ends = mount === 'front' || mount === 'back' ? 1 : mount === 'frontback' ? 2 : 0;
+    return spec.length + ends * reach;
+  }
+  const flanks = mount === 'side' ? 2 : 0;
+  return spec.width + flanks * reach;
+}
+
+/**
+ * How far the ARM can work past its mounted edge, for THIS chassis (in).
+ *
+ * G02/G03 give the robot a 24" prism to expand into, so the legal extension is the prism
+ * minus whatever the robot already spends along that axis — and the claw tip sitting at the
+ * limit can still close on a 6"-OD ring CENTRED another 3" out, which is the grab radius the
+ * sim tests. So:  reach = (24 − axis extent) + ring radius.
+ *
+ * The payoff is a real build decision rather than a flat number: a maxed 18" chassis gets 9",
+ * while a compact one with its sweeper on the other axis gets up to ~17" — genuinely the
+ * reach specialist. It costs nothing visually, because the ARM SPRITE is drawn at the fixed
+ * stowed `CHAIN_ARM_DRAW`, not at this radius: an arm is only extended while it actuates, so
+ * the top-down sprite just says which way it points.
+ */
+export function chainArmReach(spec: RobotSpec): number {
+  const left = CHAIN_PRISM - chainAxisExtent(spec, catalystMountOf(spec));
+  return Math.max(0, left) + CHAIN_CATALYST_OD / 2;
+}
+
+/** The mechanism geometry IN EFFECT for this robot. One resolver so the action, the HUD
+ * prompt and the mass floor can never disagree — the ARM's reach is per-chassis, so it is
+ * substituted here rather than at each call site. */
 export function chainCatalystGeom(spec: RobotSpec): ChainCatalystGeom {
-  return CHAIN_CATALYSTS[spec.catalystType ?? CHAIN_DEFAULT_CATALYST];
+  const type = spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
+  const base = CHAIN_CATALYSTS[type];
+  return type === 'arm' ? { ...base, reach: chainArmReach(spec) } : base;
 }
 
 /** endgame: park fully inside a Lab-Area corner square (5 pt) / ascend within this
