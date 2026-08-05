@@ -40,14 +40,21 @@ setTimeout(() => { log('WATCHDOG'); process.exit(2); }, 600000);
 process.on('unhandledRejection', (e) => { log('UNHANDLED REJECTION:', (e && e.stack) || e); process.exit(3); });
 process.on('uncaughtException', (e) => { log('UNCAUGHT:', (e && e.stack) || e); process.exit(3); });
 
-const PAGES = ['/', '/modes', '/configure/robot', '/configure/match', '/configure/controls',
+const ALL_PAGES = ['/', '/modes', '/configure/robot', '/configure/match', '/configure/controls',
                '/configure/audio', '/records', '/records/career', '/account', '/download'];
+// DSIM_PAGES=/configure/robot,/records narrows a run to the routes you actually touched.
+const PAGES = process.env.DSIM_PAGES
+  ? process.env.DSIM_PAGES.split(',').map((p) => p.trim()).filter(Boolean)
+  : ALL_PAGES;
+// PAGE selectors — the controls that differ from route to route.
 const SELECTORS = [
   '.ds-btn', '.ds-cta', '.ds-tile', '.ds-opt', '.ds-opt-add', '.ds-opt-del',
-  '.ds-key', '.ds-seg', '.ds-tab', '.ds-menu-btn', '.ds-rail-btn', '.ds-rail-home',
+  '.ds-key', '.ds-seg', '.ds-tab', '.ds-menu-btn',
   '.ds-subnav-btn', '.ds-chip', '.ds-select', '.ds-input', 'input[type=range]',
-  '.ds-mark', '.ds-foot-link',
 ];
+// SHELL chrome — the rail, wordmark and footer are the SAME markup on all ten routes, so
+// probing them per page was nine redundant passes. Probed once per theme instead.
+const CHROME = ['.ds-rail-btn', '.ds-rail-home', '.ds-mark', '.ds-foot-link'];
 const TOGGLE_CLASSES = [
   ['.ds-seg', 'on'], ['.ds-tab', 'on'], ['.ds-opt', 'on'], ['.ds-rail-btn', 'on'],
   ['.ds-subnav-btn', 'on'], ['.ds-key', 'on'], ['.ds-key', 'selected'],
@@ -66,21 +73,40 @@ const FREEZE = `(() => { if (!document.getElementById('__freeze')) {
   const s = document.createElement('style'); s.id='__freeze';
   s.textContent = '*,*::before,*::after{transition:none !important;animation:none !important}';
   document.head.appendChild(s);} return true; })()`;
-const MAX_PER = 6;
+const MAX_PER = 3;
 const EPS = 0.5;
+// settle after applying/clearing a forced state. Transitions are already frozen (FREEZE), so
+// this only needs to outlast a paint — it was 60ms per read, i.e. ~2 min of pure sleeping
+// across a full run.
+const SETTLE = 25;
 
-// flat [x,y,w,h, ...] for every element, in document order
-const RECTS = `(() => { const a=[...document.querySelectorAll('*')]; const o=new Array(a.length*4);
-  for (let i=0;i<a.length;i++){const r=a[i].getBoundingClientRect();
-    o[i*4]=r.x;o[i*4+1]=r.y;o[i*4+2]=r.width;o[i*4+3]=r.height;}
-  o.push(document.documentElement.scrollHeight); return o; })()`;
+/**
+ * ONE eval returns the rects AND the skip set, measured at the same instant.
+ *
+ * They used to be separate: subtree indices were computed ONCE per page and reused across
+ * every probe. When the app re-rendered mid-run (version poll, stats, presence) the node
+ * count changed, every index shifted, and the probed element fell out of its own skip set —
+ * so it reported its own 1px hover `translate()` as a shift somewhere else. That is why the
+ * same build audited 88, then 43, then 0. Resolving the skip against the very array being
+ * diffed makes that impossible; a re-render between BASE and CUR is still caught by the
+ * length guard in `diff`.
+ *
+ * `sel`/`i` name the element being probed; LIVE regions are folded in here too.
+ */
+const MEASURE = (sel, i) => `(() => {
+  const all=[...document.querySelectorAll('*')];
+  const o=new Array(all.length*4);
+  for (let k=0;k<all.length;k++){const r=all[k].getBoundingClientRect();
+    o[k*4]=r.x;o[k*4+1]=r.y;o[k*4+2]=r.width;o[k*4+3]=r.height;}
+  o.push(document.documentElement.scrollHeight);
+  const idx=new Map(all.map((e,n)=>[e,n]));
+  const sub=(t)=> t ? [idx.get(t), ...[...t.querySelectorAll('*')].map(d=>idx.get(d))] : [];
+  const skip=sub(document.querySelectorAll(${JSON.stringify(sel)})[${i}]);
+  for (const el of document.querySelectorAll(${JSON.stringify(LIVE.join(','))})) skip.push(...sub(el));
+  return {rects:o, skip};
+})()`;
 const TAGS = `[...document.querySelectorAll('*')].map(e=>e.tagName.toLowerCase()+
   (typeof e.className==='string'&&e.className.trim()?'.'+e.className.trim().split(/\\s+/).slice(0,2).join('.'):''))`;
-// for each match of `sel`, the set of document-order indices in its subtree
-const SUBTREES = (sel) => `(() => { const all=[...document.querySelectorAll('*')];
-  const idx=new Map(all.map((e,i)=>[e,i]));
-  return [...document.querySelectorAll(${JSON.stringify(sel)})].map(t =>
-    [idx.get(t), ...[...t.querySelectorAll('*')].map(d=>idx.get(d))]); })()`;
 
 function diff(base, cur, skip, tags) {
   const out = [];
@@ -130,27 +156,24 @@ app.whenReady().then(async () => {
   const js = (s) => win.webContents.executeJavaScript(s);
 
   let checked = 0, problems = 0;
-  // document-order indices of the live-data regions on the CURRENT page (see LIVE), refreshed
-  // per page load and unioned into every probe's skip set
-  let liveSkip = new Set();
 
-  const probePseudo = async (sel, nodeIds, subs, tags) => {
+  const probePseudo = async (sel, nodeIds, tags) => {
     for (let i = 0; i < Math.min(nodeIds.length, MAX_PER); i++) {
-      const skip = new Set([...(subs[i] || []), ...liveSkip]);
+      const M = MEASURE(sel, i);
       for (const pseudo of [['hover'], ['hover', 'active']]) {
-        const base = await js(RECTS);
+        const base = await js(M);
         await cmd('CSS.forcePseudoState', { nodeId: nodeIds[i], forcedPseudoClasses: pseudo });
-        await sleep(60);
-        const cur = await js(RECTS);
+        await sleep(SETTLE);
+        const cur = await js(M);
         await cmd('CSS.forcePseudoState', { nodeId: nodeIds[i], forcedPseudoClasses: [] });
         // SETTLE AFTER CLEARING. Pressable surfaces hover via `transform: translate(-1px,-1px)`
         // — correct, since transforms don't reflow — but getBoundingClientRect() REPORTS the
         // transform. Without this wait, the cleared transform is still applied when the NEXT
         // element's baseline is read, and its 1px snap-back gets blamed on that element.
         // (Cost me a false positive on `.ds-subnav-btn` that was really `.ds-opt`.)
-        await sleep(60);
+        await sleep(SETTLE);
         checked++;
-        const d = diff(base, cur, skip, tags);
+        const d = diff(base.rects, cur.rects, new Set(cur.skip), tags);
         if (d.length) {
           problems++;
           log(`  SHIFT ${sel}[${i}] :${pseudo.join(':')}`);
@@ -165,6 +188,7 @@ app.whenReady().then(async () => {
     await js(`localStorage.setItem('decodesim.theme', ${JSON.stringify(theme)}); 'ok'`);
     log(`\n############################ THEME: ${theme.toUpperCase()}`);
 
+    let chromeDone = false;
     for (const page of PAGES) {
       await win.loadURL(BASE + page);
       await sleep(1400);
@@ -172,35 +196,34 @@ app.whenReady().then(async () => {
       await js(FREEZE);          // transitions would bleed into the next probe
       await sleep(120);
       log(`\n##### [${theme}] ${page}`);
-      liveSkip = new Set((await js(SUBTREES(LIVE.join(',')))).flat());
       const tags = await js(TAGS);
       const { root } = await cmd('DOM.getDocument', { depth: -1 });
 
-      for (const sel of SELECTORS) {
+      for (const sel of chromeDone ? SELECTORS : [...SELECTORS, ...CHROME]) {
         let nodeIds = [];
         try {
           nodeIds = (await cmd('DOM.querySelectorAll',
             { nodeId: root.nodeId, selector: sel })).nodeIds || [];
         } catch { continue; }
         if (!nodeIds.length) continue;
-        await probePseudo(sel, nodeIds, await js(SUBTREES(sel)), tags);
+        await probePseudo(sel, nodeIds, tags);
       }
+      chromeDone = true;
 
       for (const [sel, cls] of TOGGLE_CLASSES) {
         const n = await js(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
         if (!n) continue;
-        const subs = await js(SUBTREES(sel));
         for (let i = 0; i < Math.min(n, MAX_PER); i++) {
-          const skip = new Set([...(subs[i] || []), ...liveSkip]);
-          const base = await js(RECTS);
+          const M = MEASURE(sel, i);
+          const base = await js(M);
           const had = await js(`(()=>{const e=document.querySelectorAll(${JSON.stringify(sel)})[${i}];
             const h=e.classList.contains(${JSON.stringify(cls)});e.classList.toggle(${JSON.stringify(cls)});return h;})()`);
-          await sleep(60);
-          const cur = await js(RECTS);
+          await sleep(SETTLE);
+          const cur = await js(M);
           await js(`document.querySelectorAll(${JSON.stringify(sel)})[${i}].classList.toggle(${JSON.stringify(cls)})`);
-          await sleep(60); // settle before the next baseline — see probePseudo
+          await sleep(SETTLE); // settle before the next baseline — see probePseudo
           checked++;
-          const d = diff(base, cur, skip, tags);
+          const d = diff(base.rects, cur.rects, new Set(cur.skip), tags);
           if (d.length) {
             problems++;
             log(`  SHIFT ${sel}[${i}] .${cls} ${had ? 'removed' : 'added'}`);
@@ -237,7 +260,7 @@ app.whenReady().then(async () => {
         try { nodeIds = (await cmd('DOM.querySelectorAll', { nodeId: root.nodeId, selector: sel })).nodeIds || []; }
         catch { continue; }
         if (!nodeIds.length) { log(`  (no ${sel})`); continue; }
-        await probePseudo(sel, nodeIds, await js(SUBTREES(sel)), tags);
+        await probePseudo(sel, nodeIds, tags);
       }
     }
   }

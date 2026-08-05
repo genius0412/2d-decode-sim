@@ -625,29 +625,6 @@ export function Menu({ settings, onChange }: Props) {
                     ))}
                   </div>
                 )}
-                {(() => {
-                  const storeMax = chainStorageMax(spec);
-                  const store = Math.min(spec.ballStorage ?? CHAIN_STORAGE_DEFAULT, storeMax);
-                  return (
-                    <div className="ds-fields">
-                      <label className="ds-field">
-                        <span className="cap">
-                          Ball storage <span className="val">{store} / {storeMax} particles</span>
-                        </span>
-                        <input
-                          className="ds-range"
-                          type="range"
-                          min={CHAIN_STORAGE_MIN}
-                          max={storeMax}
-                          step={1}
-                          value={store}
-                          style={rangeFill(store, CHAIN_STORAGE_MIN, storeMax)}
-                          onChange={(e) => setSpec({ ballStorage: Number(e.target.value) })}
-                        />
-                      </label>
-                    </div>
-                  );
-                })()}
               </>
             )}
 
@@ -823,6 +800,32 @@ export function Menu({ settings, onChange }: Props) {
                   />
                 </label>
               )}
+              {/* BALL STORAGE sits with the FRAME, under the dimensions, because that is what
+                  sets it: the cap is footprint x archetype x intake mount (chainStorageMax),
+                  so it re-clamps as you drag Length/Width right above it. Full-width on its
+                  own row deliberately — a fifth 140px column would orphan-wrap, and the
+                  "12 / 24 particles" value needs the room. */}
+              {!isDecode && (() => {
+                const storeMax = chainStorageMax(spec);
+                const store = Math.min(spec.ballStorage ?? CHAIN_STORAGE_DEFAULT, storeMax);
+                return (
+                  <label className="ds-field" style={{ flex: '1 1 100%' }}>
+                    <span className="cap">
+                      Ball storage <span className="val">{store} / {storeMax} particles</span>
+                    </span>
+                    <input
+                      className="ds-range"
+                      type="range"
+                      min={CHAIN_STORAGE_MIN}
+                      max={storeMax}
+                      step={1}
+                      value={store}
+                      style={rangeFill(store, CHAIN_STORAGE_MIN, storeMax)}
+                      onChange={(e) => setSpec({ ballStorage: Number(e.target.value) })}
+                    />
+                  </label>
+                );
+              })()}
               <ChassisColorRow spec={spec} onPick={(chassisColor) => setSpec({ chassisColor })} />
             </div>
           </div>
