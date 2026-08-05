@@ -1,4 +1,4 @@
-import type { Alliance, ChainMountPos, RobotSpec, RobotState, StartPose, Vec2 } from '../../types';
+import type { Alliance, ChainMountPos, RobotSpec, RobotState, StartPose, Vec2, World } from '../../types';
 import type { Rect } from '../../sim/field';
 import { INTAKE_PRESETS } from '../../config';
 import {
@@ -304,6 +304,38 @@ export function catalystCanReach(rob: RobotState, target: Vec2, radius: number):
     if (Math.abs(wrapAngle(datan2(dy, dx) - facing)) <= cone) return true;
   }
   return false;
+}
+
+/**
+ * What a RAIL-TURRET claw is tracking: the nearest thing it could actually work on, measured
+ * from its mouth. Candidates are the four hooks per goal AND every LOOSE ring — a claw that
+ * stared past a ring at its feet to track a hook across the field read as broken.
+ *
+ * Carried rings are excluded: one may already be in this claw (distance ~0, which would lock
+ * the arm pointing at itself), and another robot's ring is not something this one can take.
+ *
+ * Pure and world-reading, so the renderer can draw the tracking without owning the decision —
+ * and so the decision is testable, which a `ctx`-only helper would not be.
+ */
+export function catalystTrackTarget(rob: RobotState, world?: World): Vec2 | null {
+  const mouth = catalystMouth(rob);
+  let best: Vec2 | null = null;
+  let bestD = Infinity;
+  const consider = (p: Vec2) => {
+    const d = hyp(p.x - mouth.x, p.y - mouth.y);
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  };
+  for (const a of ['red', 'blue'] as Alliance[]) {
+    for (let i = 0; i < CHAIN_HOOKS_PER_GOAL; i++) consider(hookPos(a, i));
+  }
+  for (const c of world?.chain?.catalysts ?? []) {
+    if (c.carriedBy !== null || c.hook) continue; // carried, or already seated
+    consider(c.pos);
+  }
+  return best;
 }
 
 /** distance from the NEAREST usable mouth to `target` (for nearest-target selection). */

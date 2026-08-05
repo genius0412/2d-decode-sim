@@ -147,7 +147,7 @@ import {
   CHAIN_PRISM,
   chainArmReach,
 } from '../src/games/chain/config';
-import { accelMultiplier, chainEvalStart, chainIntakeMouths, chainMirrorStart, chainSnapStart, chainStartLegal, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
+import { CHAIN_HOOKS_PER_GOAL, accelMultiplier, catalystTrackTarget, chainEvalStart, chainIntakeMouths, chainMirrorStart, chainSnapStart, chainStartLegal, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
 import {
   CHAIN_CATALYSTS,
   CHAIN_CATALYST_TYPES,
@@ -171,7 +171,7 @@ import {
   CHAIN_RINGSTAND_BOX,
   CHAIN_HALF_Y,
 } from '../src/games/chain/config';
-import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, intakeMountOf, shooterMountOf, turretLocal } from '../src/games/chain/mounts';
+import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, intakeMountOf, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -7053,6 +7053,60 @@ const mkMM = () => {
     }
   }
 
+  // ---- RAIL-TURRET CLAW tracks the NEAREST target, ring or hook ---------------------
+  // It used to track hooks only, so a claw would stare across the field at a hook while a
+  // ring sat at its feet. A loose ring is now a candidate and wins when it is closer.
+  {
+    const w = createChainWorld('match', 9, [chainSetup(0, 'blue')]);
+    w.match.phase = 'teleop';
+    w.match.phaseTimeLeft = 120;
+    const rob = w.robots[0];
+    rob.pos = { x: 0, y: 0 };
+    rob.heading = 0;
+    for (const c of w.chain!.catalysts) {
+      c.carriedBy = null;
+      c.hook = null;
+      c.pos = { x: 500, y: 500 }; // park them all far away
+    }
+    const near = (t: { x: number; y: number } | null, p: { x: number; y: number }) =>
+      !!t && Math.abs(t.x - p.x) < 0.01 && Math.abs(t.y - p.y) < 0.01;
+
+    // no loose ring in play -> a hook, exactly as before
+    const hookOnly = catalystTrackTarget(rob, w);
+    const isHook = (['red', 'blue'] as const).some((a) =>
+      Array.from({ length: CHAIN_HOOKS_PER_GOAL }, (_, i) => hookPos(a, i)).some((h) => near(hookOnly, h)),
+    );
+    check('catalyst track: with no loose ring nearby it still tracks a hook', isHook,
+      `${hookOnly?.x.toFixed(1)},${hookOnly?.y.toFixed(1)}`);
+
+    // a ring at its feet beats every hook
+    const ring = w.chain!.catalysts[0];
+    ring.pos = { x: 12, y: 3 };
+    check(
+      'catalyst track: a LOOSE ring closer than any hook wins',
+      near(catalystTrackTarget(rob, w), ring.pos),
+      JSON.stringify(catalystTrackTarget(rob, w)),
+    );
+
+    // ...but a CARRIED ring is not a target: it is already in the claw (distance ~0), so
+    // tracking it would lock the arm pointing at itself
+    ring.carriedBy = rob.id;
+    check(
+      'catalyst track: a CARRIED ring is never the target',
+      !near(catalystTrackTarget(rob, w), ring.pos),
+      JSON.stringify(catalystTrackTarget(rob, w)),
+    );
+    // ...and neither is one already seated on a hook
+    ring.carriedBy = null;
+    ring.hook = { alliance: 'blue', index: 0 };
+    const seated = catalystTrackTarget(rob, w);
+    check(
+      'catalyst track: a ring already SEATED on a hook is not a loose target',
+      !near(seated, { x: 12, y: 3 }),
+      JSON.stringify(seated),
+    );
+  }
+
   // ---- TURRET POSITION: shooterMount is where it is BOLTED, so it moves the shot -----
   // A turret aims itself, so its mount is not a facing — it is the point the Particle is
   // born at. Fire the same robot from the same pose with the turret at three positions and
@@ -7107,6 +7161,31 @@ const mkMM = () => {
         fold('center', 'drum') === 'front',
       `drum backleft=${fold('backleft', 'drum')} dumper frontright=${fold('frontright', 'dumper')} drum center=${fold('center', 'drum')}`,
     );
+    // NOTHING MAY HANG OFF THE CHASSIS. A mounted turret's ring has to sit fully on the frame
+    // — swept over every position AND both size bounds, because the failure was position- and
+    // size-dependent: pulling inboard by r along a CORNER's diagonal clears each rail by only
+    // r/sqrt2, so the ring overhung both by ~0.29r (caught on a real preset, KITSUNE).
+    {
+      let worst = 0;
+      let worstAt = '';
+      for (const pos of CHAIN_TURRET_POSITIONS) {
+        for (const [length, width] of [[CHAIN_MIN_LENGTH, 10], [CHAIN_MAX_LENGTH, 18], [12, 17], [15, 11]]) {
+          const spec = { ...DEFAULT_SPEC, length, width, shooterMount: pos } as RobotSpec;
+          const t = turretLocal(spec);
+          const r = turretRadius(spec);
+          const over = Math.max(
+            Math.abs(t.x) + r - length / 2,
+            Math.abs(t.y) + r - width / 2,
+          );
+          if (over > worst) { worst = over; worstAt = `${pos} @${length}x${width}`; }
+        }
+      }
+      check(
+        'chain turret: the ring sits fully ON the chassis at every position and size',
+        worst <= 0.01,
+        worst > 0.01 ? `overhangs ${worst.toFixed(2)}" at ${worstAt}` : 'no overhang',
+      );
+    }
     check(
       'chain shooter: a TURRET keeps any of the nine positions',
       fold('backleft', 'turret') === 'backleft' &&

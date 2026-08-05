@@ -213,9 +213,13 @@ export const MOUNT_DIR: Record<ChainMountPos, { x: number; y: number }> = {
   center: { x: 1, y: 0 },
 };
 
-/** the drawn/modelled radius of the turret ring, scaled to the chassis */
+/** The turret ring's radius, scaled to the chassis. Shared by the sim's inboard pull
+ * (`turretLocal`) and BOTH renderers, which used to disagree — the in-game sprite drew ~4.4"
+ * while the builder preview drew `min(w,len) * 0.2`. 0.24 capped at 3.8 lands between the two,
+ * because at 0.28 the ring covered more than half the width of a mid-size chassis and swamped
+ * the drawing it is supposed to annotate. */
 export function turretRadius(spec: RobotSpec): number {
-  return Math.min(4.4, Math.min(spec.length, spec.width) * 0.28);
+  return Math.min(3.8, Math.min(spec.length, spec.width) * 0.24);
 }
 
 /**
@@ -234,7 +238,11 @@ export function turretLocal(spec: RobotSpec): { x: number; y: number } {
   const o = mountOrigin(spec, pos);
   const d = MOUNT_DIR[pos];
   const r = turretRadius(spec);
-  return { x: o.x - d.x * r, y: o.y - d.y * r };
+  // Pull inboard by the ring radius on EACH AXIS the mount touches, NOT by r along the mount
+  // direction. At a CORNER the direction is diagonal, so moving r along it clears each rail by
+  // only r/sqrt2 and leaves the ring hanging ~0.29r past both — visibly off the chassis.
+  // `sign` makes an edge mount degenerate to the same single-axis pull it always had.
+  return { x: o.x - Math.sign(d.x) * r, y: o.y - Math.sign(d.y) * r };
 }
 
 /** is this archetype TURRETED (top-mounted, aims itself)? Turreted launchers ignore

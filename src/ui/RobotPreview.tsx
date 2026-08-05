@@ -7,9 +7,10 @@ import {
   CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_DEFAULT_CATALYST,
   CHAIN_ARM_DRAW,
+  CHAIN_CORNER_BODY_INSET,
 } from '../games/chain/config';
 import { chainIntakeMouths } from '../games/chain/state';
-import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal } from '../games/chain/mounts';
+import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from '../games/chain/mounts';
 import { footprintExtents } from '../sim/field';
 
 /** dimension-label type size, in the viewBox's inch units */
@@ -86,9 +87,11 @@ export function RobotPreview({
   const labelHalf = (dimLabel.length * DIM_FONT * 0.56) / 2; // ~0.56em avg advance
   const halfSpan = Math.max(w / 2, chain ? cHalf : mouthHalf, labelHalf, catSide) + 2.5;
   const top = Math.min(tipY, catTop) - 2;
-  // room for the width dimension label — plus a rear-mounted CR intake, which grows the
-  // footprint BACKWARD (a viewBox off the chassis alone would clip it off).
-  const bottom = Math.max(chain ? cRearY : len / 2, catBottom) + 3.5;
+  // The label clears everything that hangs off the BACK — a rear sweeper or a rear-mounted
+  // claw. It used to sit at the chassis half-length, so a rear/frontback intake printed the
+  // dimensions straight over its own rollers.
+  const labelY = Math.max(chain ? cRearY : len / 2, catBottom) + 2.6;
+  const bottom = labelY + DIM_FONT + 0.9;
   const vbW = halfSpan * 2;
   const vbH = bottom - top;
 
@@ -204,7 +207,7 @@ export function RobotPreview({
   // and launcher, so the schematic shows where the claw actually reaches from.
   const cCatalystEl = chain ? (
     <g
-      transform={`${ROBOT_FRAME} translate(${catOrigin.x},${catOrigin.y}) rotate(${deg(MOUNT_ANGLE[catPos])})`}
+      transform={`${ROBOT_FRAME} translate(${catOrigin.x},${catOrigin.y}) rotate(${deg(MOUNT_ANGLE[catPos])}) translate(${isEdgePos(catPos) ? 0 : -CHAIN_CORNER_BODY_INSET},0)`}
       opacity={0.9}
     >
       {catType === 'arm' ? (
@@ -254,6 +257,7 @@ export function RobotPreview({
   const sGeom = edgeGeom(spec, sEdge);
   // where a TURRET is bolted (it aims itself, so the mount is a position, not a facing)
   const tOrigin = turretLocal(spec); // the SAME point the sim launches from
+  const cTurretR = turretRadius(spec); // ...and the same ring size
   const drumHalf = sGeom.span * 0.96; // spans (nearly) the whole mounted edge
   const drumN = Math.max(5, Math.round((drumHalf * 2) / 2.6));
   const lineHalf = sGeom.span * CHAIN_LAUNCH_LINE_FRAC; // catapult bucket width
@@ -279,19 +283,23 @@ export function RobotPreview({
         <line x1={sGeom.dist - 1} y1={-lineHalf} x2={sGeom.dist - 1} y2={lineHalf} stroke={accent} strokeWidth={1} />
       </g>
     ) : (
-      // the turret sits where it is BOLTED. This group is authored in SCREEN space (unlike
-      // the chassis-frame ones), so the robot-frame offset is mapped by hand: ROBOT_FRAME
-      // sends robot (x,y) -> screen (-y,-x).
+      // The turret sits where it is BOLTED. Authored in SCREEN space (unlike the chassis-frame
+      // groups), so the robot-frame offset is mapped by hand: ROBOT_FRAME sends robot (x,y) ->
+      // screen (-y,-x).
+      // `cy` is 0 and the radius is the SIM's `turretRadius`, deliberately: this used to draw at
+      // DECODE's rear-of-centre `turretY` with its own `turretR`, which once the mount became a
+      // real position meant a DOUBLE offset and a mismatched size — a corner turret hung off the
+      // chassis in the preview while the sim had it comfortably inboard.
       <g transform={`translate(${-tOrigin.y},${-tOrigin.x})`}>
-        <circle cx={0} cy={turretY} r={turretR} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
+        <circle cx={0} cy={0} r={cTurretR} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
         {/* a TWIN draws both barrels at the offset the sim actually launches from */}
         {(cMode === 'twinturret' ? [CHAIN_TWIN_BARREL_OFFSET, -CHAIN_TWIN_BARREL_OFFSET] : [0]).map((o) => (
           <line
             key={o}
             x1={o}
-            y1={turretY}
+            y1={0}
             x2={o}
-            y2={turretY - turretR - 1.2}
+            y2={-cTurretR - 1.2}
             stroke={accent}
             strokeWidth={0.7}
             strokeLinecap="round"
@@ -436,7 +444,7 @@ export function RobotPreview({
       {/* width dimension label */}
       <text
         x={0}
-        y={len / 2 + 2.6}
+        y={labelY}
         textAnchor="middle"
         fill="var(--ds-mut)"
         fontSize={DIM_FONT}

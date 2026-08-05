@@ -1,4 +1,4 @@
-import type { Alliance, Artifact, RobotState, Vec2 } from '../../types';
+import type { Artifact, RobotState, Vec2, World } from '../../types';
 import * as C from '../../config';
 import { drawWheels, roundRect } from '../../render/drawRobot';
 import {
@@ -15,9 +15,10 @@ import {
   chainCatapultRange,
   chainCatapultYaw,
   CHAIN_ARM_DRAW,
+  CHAIN_CORNER_BODY_INSET,
 } from './config';
-import { CHAIN_HOOKS_PER_GOAL, catalystMouth, chainIntakeMouths, hookPos } from './state';
-import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from './mounts';
+import { catalystMouth, catalystTrackTarget, chainIntakeMouths } from './state';
+import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from './mounts';
 import { beamRide } from './beams';
 
 /** cosmetic clock for the crossing shudder (render-only, so a wall clock is fine + deterministic-safe) */
@@ -43,6 +44,7 @@ export function drawChainRobot(
   intakeOn: boolean,
   _held: Artifact[] = [],
   screenUp: Vec2 = { x: 0, y: 1 },
+  world?: World,
 ): void {
   const hl = r.spec.length / 2;
   const hw = r.spec.width / 2;
@@ -104,7 +106,7 @@ export function drawChainRobot(
     ctx.restore();
   }
 
-  drawCatalystMech(ctx, r);
+  drawCatalystMech(ctx, r, world);
 
   drawHopperFill(ctx, r, hw);
 
@@ -281,7 +283,7 @@ function drawHopperFill(ctx: CanvasRenderingContext2D, r: RobotState, hw: number
  *  • turret   — a pivot ring whose claw TRACKS the nearest hook, so it visibly swivels
  *    independently of the chassis (its whole perk is not needing to point the robot)
  */
-function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
+function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: World): void {
   const type = r.spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
   // A FRONTBACK swing is ONE arm on a pivot that rotates between the ends, so it is drawn at
   // the front — where it stows. Drawing it at both ends would read as two arms, which is
@@ -294,6 +296,9 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
   // so every shape below is drawn from the frame outward regardless of mount
   ctx.translate(o.x, o.y);
   ctx.rotate(MOUNT_ANGLE[pos]);
+  // a CORNER has only the diagonal behind it, so the body is drawn back along it (see
+  // CHAIN_CORNER_BODY_INSET) — the reach origin above is unchanged
+  if (!isEdgePos(pos)) ctx.translate(-CHAIN_CORNER_BODY_INSET, 0);
   const dist = 0; // the frame edge is the local origin now
   const ink = carrying ? GREEN : '#8a94a4';
   ctx.strokeStyle = ink;
@@ -343,22 +348,16 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
     ctx.fill();
     ctx.stroke();
   } else {
-    // TURRET: a pivot at the edge with a claw arm swivelled toward the NEAREST hook, so
-    // the sprite shows the tracking the archetype is sold on. `hookPos` is pure, so this
-    // needs no world state and stays deterministic.
+    // TURRET: a pivot at the edge with a claw arm swivelled toward its NEAREST TARGET, so the
+    // sprite shows the tracking this archetype is sold on.
+    //
+    // A target is a LOOSE RING or a HOOK, whichever is closer — a claw that stared past a ring
+    // at its feet to track a hook across the field read as broken. Carried rings are excluded:
+    // one is already in this claw (distance ~0, so it would lock the arm pointing at itself),
+    // and another robot's ring is not something this one can take.
     const mouth = catalystMouth(r);
-    let bestA = 0;
-    let bestD = Infinity;
-    for (const a of ['red', 'blue'] as Alliance[]) {
-      for (let i = 0; i < CHAIN_HOOKS_PER_GOAL; i++) {
-        const h = hookPos(a, i);
-        const d = Math.hypot(h.x - mouth.x, h.y - mouth.y);
-        if (d < bestD) {
-          bestD = d;
-          bestA = Math.atan2(h.y - mouth.y, h.x - mouth.x);
-        }
-      }
-    }
+    const tgt = catalystTrackTarget(r, world);
+    const bestA = tgt ? Math.atan2(tgt.y - mouth.y, tgt.x - mouth.x) : 0;
     ctx.beginPath();
     ctx.arc(dist - 0.8, 0, 2.1, 0, Math.PI * 2);
     ctx.fill();

@@ -13,8 +13,16 @@ export interface GameModule extends GameSimModule {
   drawOverlays?(ctx: CanvasRenderingContext2D, world: World): void;
   /** per-robot sprite. DECODE omits it (the shared `drawRobot` is used); CR provides its
    * own so the archetype launcher + intake design read correctly. `screenUp` lets CR bob the
-   * chassis up onto a beam it's crossing. */
-  drawRobot?(ctx: CanvasRenderingContext2D, r: RobotState, intakeOn: boolean, held: Artifact[], screenUp?: Vec2): void;
+   * chassis up onto a beam it's crossing. `world` is optional and read-only — CR's rail-turret
+   * claw TRACKS a live target, so its sprite needs to see where the loose rings are. */
+  drawRobot?(
+    ctx: CanvasRenderingContext2D,
+    r: RobotState,
+    intakeOn: boolean,
+    held: Artifact[],
+    screenUp?: Vec2,
+    world?: World,
+  ): void;
   /** scoring-elements renderer, drawn after the robots (DECODE: balls; CR: particles
    * + catalysts + endgame badges). `screenUp` is world-space "up" for z-lift. */
   drawBalls(ctx: CanvasRenderingContext2D, world: World, screenUp: Vec2): void;

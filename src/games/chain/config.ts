@@ -591,6 +591,14 @@ export const CHAIN_EXPANSION = CHAIN_PRISM - ROBOT_MAX_SIZE; // 6
  * look like it was permanently mid-grab and hugely oversized. */
 export const CHAIN_ARM_DRAW = 2.2;
 
+/** RENDER-ONLY. How far a CORNER-mounted catalyst's BODY is drawn back along its diagonal so
+ * it sits on the frame instead of straddling the corner. An edge mount already has the whole
+ * chassis behind it; a corner has only the diagonal, so the pivot block / scoop / turret ring
+ * hung visibly off both rails. The mechanism's REACH ORIGIN is untouched — that stays exactly
+ * on the frame point (see `catalystMouth`), because it is what reach is measured from; only
+ * the sprite moves, exactly as a real claw's pivot is bolted inside the frame. */
+export const CHAIN_CORNER_BODY_INSET = 1.5;
+
 export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
   // ARM: `reach` here is only the FLOOR (what a maxed-out 18" chassis gets). The real value
   // is per-chassis — see `chainArmReach`, which `chainCatalystGeom` substitutes in. The arm
