@@ -37,6 +37,7 @@ import {
   CHAIN_CATALYST_MOUNTS,
   CHAIN_INTAKE_MOUNTS,
   CHAIN_SHOOTER_MOUNTS,
+  CHAIN_TURRET_POSITIONS,
   catalystMountOf,
   intakeMountOf,
   isTurreted,
@@ -609,7 +610,27 @@ export function Menu({ settings, onChange }: Props) {
                     </button>
                   ))}
                 </div>
-                {!isTurreted(spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) && (
+                {/* The mount means two different things, so it is TWO different pickers.
+                    TURRETLESS: which chassis EDGE the launcher fires over — four sides, and a
+                    corner is not buildable because the launch line spans a side.
+                    TURRETED: where the turret is BOLTED. It aims itself, so this is a position,
+                    not a facing — and it is where the Particle is actually born. Nine positions
+                    laid out as a 3x3 map of the chassis (front row on top), so the picker reads
+                    as a top-down diagram rather than a list of words. */}
+                {isTurreted(spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) ? (
+                  <div className="ds-opts three" style={{ marginTop: 8 }}>
+                    {CHAIN_TURRET_POSITIONS.map((m) => (
+                      <button
+                        key={m}
+                        className={`ds-opt mini ${shooterMountOf(spec) === m ? 'on' : ''}`}
+                        onClick={() => setSpec({ shooterMount: m })}
+                        title={`Turret bolted at the ${CHAIN_SHOOTER_MOUNT_LABELS[m]} of the chassis`}
+                      >
+                        <span className="ot">{CHAIN_SHOOTER_MOUNT_LABELS[m]}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
                   <div className="ds-opts four" style={{ marginTop: 8 }}>
                     {CHAIN_SHOOTER_MOUNTS.map((m) => (
                       <button
@@ -682,12 +703,21 @@ export function Menu({ settings, onChange }: Props) {
                     </button>
                   ))}
                 </div>
-                <div className="ds-opts four" style={{ marginTop: 8 }}>
+                {/* Same 3x3 chassis map as the turret picker. The CENTRE cell is the SWING
+                    rather than a centre mount: a claw cannot reach from the middle of the
+                    chassis, and a pivot that serves both ends is exactly what belongs between
+                    the front and back cells. */}
+                <div className="ds-opts three" style={{ marginTop: 8 }}>
                   {CHAIN_CATALYST_MOUNTS.map((m) => (
                     <button
                       key={m}
                       className={`ds-opt mini ${catalystMountOf(spec) === m ? 'on' : ''}`}
                       onClick={() => setSpec({ catalystMount: m })}
+                      title={
+                        m === 'frontback'
+                          ? 'One arm on a pivot that swings between the front and rear edges — it works whichever end is nearer'
+                          : `Claw mounted at the ${CHAIN_CATALYST_MOUNT_LABELS[m]} of the chassis`
+                      }
                     >
                       <span className="ot">{CHAIN_CATALYST_MOUNT_LABELS[m]}</span>
                     </button>

@@ -48,8 +48,11 @@ import {
 import {
   CHAIN_DEFAULT_INTAKE_MOUNT,
   CHAIN_DEFAULT_SHOOTER_MOUNT,
+  CHAIN_DEFAULT_TURRET_POS,
   CHAIN_CATALYST_MOUNTS,
   intakeMountOf,
+  isTurreted,
+  shooterEdgeOf,
   shooterMountOf,
 } from '../games/chain/mounts';
 import { nextRandom, wrapAngle, rot, clamp } from '../math'; // Import wrapAngle
@@ -83,7 +86,7 @@ export const DEFAULT_SPEC: RobotSpec = {
   scoreMode: CHAIN_DEFAULT_SCORE_MODE,
   chainIntake: CHAIN_DEFAULT_INTAKE,
   intakeMount: CHAIN_DEFAULT_INTAKE_MOUNT,
-  shooterMount: CHAIN_DEFAULT_SHOOTER_MOUNT,
+  shooterMount: CHAIN_DEFAULT_TURRET_POS, // DEFAULT_SPEC is a TURRET, so this is a position
   catalystType: CHAIN_DEFAULT_CATALYST,
   catalystMount: CHAIN_DEFAULT_CATALYST_MOUNT,
   catapultRange: CHAIN_CATAPULT_RANGE_DEFAULT,
@@ -289,6 +292,12 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   }
   out.intakeMount = game === 'chain' ? preMount : hasIntakeMount ? intakeMountOf(rawMounts) : intakeMountOf(base);
   out.shooterMount = hasShooterMount ? shooterMountOf(rawMounts) : shooterMountOf(base);
+  // A TURRETLESS launcher fires along a LINE spanning a chassis SIDE, so a corner or centre
+  // mount is not something it can be built as — fold it to the nearest edge. A TURRET keeps any
+  // of the nine positions: it aims itself, so its mount is where it is BOLTED (and therefore
+  // where the Particle is born), not a facing. Resolved HERE, the one chokepoint, so a spec
+  // that changes archetype later can never keep a mount that archetype cannot have.
+  if (!isTurreted(out.scoreMode)) out.shooterMount = shooterEdgeOf({ shooterMount: out.shooterMount });
   // MOUNTS ARE CHAIN-ONLY. They are the one CR field with a SHARED physics effect — the intake
   // mount moves the collision footprint (`footprintExtents`), so a CR build's side sweeper
   // leaking into DECODE would widen its flanks and delete its front intake reach. The builder

@@ -9,7 +9,7 @@ import {
   CHAIN_ARM_DRAW,
 } from '../games/chain/config';
 import { chainIntakeMouths } from '../games/chain/state';
-import { EDGE_ANGLE, catalystMountOf, edgeGeom, isEndEdge, shooterMountOf } from '../games/chain/mounts';
+import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal } from '../games/chain/mounts';
 import { footprintExtents } from '../sim/field';
 
 /** dimension-label type size, in the viewBox's inch units */
@@ -65,15 +65,23 @@ export function RobotPreview({
   // The dimension label is centered and can be WIDER than a narrow chassis, so it
   // has to be measured in too — an <svg> clips to its viewport, and a 10"-wide
   // robot would otherwise lop the ends off "16.5" wide · 14.5" long".
-  const catEdge = catalystMountOf(spec);
-  const catDist = edgeGeom(spec, catEdge).dist;
+  // A FRONTBACK swing is one arm drawn where it stows (the front) — see drawCatalystMech.
+  const catPos = catalystMountPositions(catalystMountOf(spec))[0];
+  const catOrigin = mountOrigin(spec, catPos);
+  const catDist = 0; // shapes are drawn from the frame outward once translated to the mount
   const catType = spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
   // how far the CATALYST mechanism protrudes past its mounted edge (the arm is the longest);
   // folded into the viewBox below so a claw tip is never clipped off the drawing
   const catOut = chain ? (catType === 'arm' ? CHAIN_ARM_DRAW + 1.5 : catType === 'turret' ? 3.0 : 2.0) : 0;
-  const catTop = chain && catEdge === 'front' ? -(catDist + catOut) : 0;
-  const catBottom = chain && catEdge === 'back' ? catDist + catOut : 0;
-  const catSide = chain && (catEdge === 'left' || catEdge === 'right') ? catDist + catOut : 0;
+  // How far past the chassis the mechanism sticks out, per axis, so the viewBox never clips a
+  // claw tip. A CORNER mount protrudes on BOTH axes, which is why this tests the position's
+  // components rather than switching on a single edge.
+  const onFront = chain && catPos.startsWith('front');
+  const onBack = chain && catPos.startsWith('back');
+  const onSide = chain && (catPos.endsWith('left') || catPos.endsWith('right'));
+  const catTop = onFront ? -(spec.length / 2 + catOut) : 0;
+  const catBottom = onBack ? spec.length / 2 + catOut : 0;
+  const catSide = onSide ? spec.width / 2 + catOut : 0;
   const dimLabel = `${w}" wide · ${len}" long`;
   const labelHalf = (dimLabel.length * DIM_FONT * 0.56) / 2; // ~0.56em avg advance
   const halfSpan = Math.max(w / 2, chain ? cHalf : mouthHalf, labelHalf, catSide) + 2.5;
@@ -195,7 +203,10 @@ export function RobotPreview({
   // CATALYST mechanism, on ITS mounted edge — authored in the robot frame like the intake
   // and launcher, so the schematic shows where the claw actually reaches from.
   const cCatalystEl = chain ? (
-    <g transform={`${ROBOT_FRAME} rotate(${deg(EDGE_ANGLE[catEdge])})`} opacity={0.9}>
+    <g
+      transform={`${ROBOT_FRAME} translate(${catOrigin.x},${catOrigin.y}) rotate(${deg(MOUNT_ANGLE[catPos])})`}
+      opacity={0.9}
+    >
       {catType === 'arm' ? (
         <>
           {/* pivot block, tapered boom, and two curved claw jaws — a mechanism, not an arrow */}
@@ -239,8 +250,10 @@ export function RobotPreview({
   // catapult bucket; turret = ring + barrel (top-mounted, so it ignores the mount).
   // Drum/dumper are authored along robot +x and rotated onto their mounted edge, so a
   // left/right mount spans the chassis LENGTH — matching how `launchAt` spreads the shot.
-  const sEdge = shooterMountOf(spec);
+  const sEdge = shooterEdgeOf(spec); // drum/dumper fire over a SIDE, never a corner
   const sGeom = edgeGeom(spec, sEdge);
+  // where a TURRET is bolted (it aims itself, so the mount is a position, not a facing)
+  const tOrigin = turretLocal(spec); // the SAME point the sim launches from
   const drumHalf = sGeom.span * 0.96; // spans (nearly) the whole mounted edge
   const drumN = Math.max(5, Math.round((drumHalf * 2) / 2.6));
   const lineHalf = sGeom.span * CHAIN_LAUNCH_LINE_FRAC; // catapult bucket width
@@ -266,7 +279,10 @@ export function RobotPreview({
         <line x1={sGeom.dist - 1} y1={-lineHalf} x2={sGeom.dist - 1} y2={lineHalf} stroke={accent} strokeWidth={1} />
       </g>
     ) : (
-      <g>
+      // the turret sits where it is BOLTED. This group is authored in SCREEN space (unlike
+      // the chassis-frame ones), so the robot-frame offset is mapped by hand: ROBOT_FRAME
+      // sends robot (x,y) -> screen (-y,-x).
+      <g transform={`translate(${-tOrigin.y},${-tOrigin.x})`}>
         <circle cx={0} cy={turretY} r={turretR} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
         {/* a TWIN draws both barrels at the offset the sim actually launches from */}
         {(cMode === 'twinturret' ? [CHAIN_TWIN_BARREL_OFFSET, -CHAIN_TWIN_BARREL_OFFSET] : [0]).map((o) => (

@@ -166,11 +166,24 @@ export type ChainIntakeStyle = 'sweeper';
  *    milder storage cost than `side`. */
 export type ChainIntakeMount = 'front' | 'back' | 'side' | 'frontback';
 
-/** Chain Reaction turretless-launcher MOUNT (see `RobotSpec.shooterMount`) — which chassis edge
- * the drum/catapult fires over, i.e. the edge the robot turns to the goal. Robot frame: +x is
- * forward, +y is the robot's LEFT, so 'left'/'right' fire along ±y and span the chassis LENGTH
- * (not its width). No effect on a turret. */
-export type ChainShooterMount = 'front' | 'back' | 'left' | 'right';
+/** Where a Chain Reaction mechanism sits on the chassis, in the robot frame (+x forward,
+ * +y the robot's LEFT). The four EDGE positions are the mid-points of each side; the four
+ * CORNERS are the actual corner points; `center` is the chassis middle — a turret only,
+ * since anything that has to reach outward cannot live there. */
+export type ChainMountPos =
+  | 'front' | 'back' | 'left' | 'right'
+  | 'frontleft' | 'frontright' | 'backleft' | 'backright'
+  | 'center';
+
+/** Chain Reaction shooter MOUNT (see `RobotSpec.shooterMount`). It means two related but
+ * distinct things, resolved by `isTurreted`:
+ *  • TURRETLESS (drum / dumper) — the chassis EDGE the launcher fires over, i.e. the edge the
+ *    robot turns to the goal. Only the four edges are legal; `coerceSpec` folds a corner or
+ *    centre to the nearest edge, because a launch LINE has to span a side.
+ *  • TURRETED (turret / twin turret) — where the turret is BOLTED. A turret aims itself, so
+ *    this is not a facing; it is the point the Particle is actually born at, which is why a
+ *    back-mounted turret visibly shoots from the back of the robot. Any `ChainMountPos`. */
+export type ChainShooterMount = ChainMountPos;
 
 /** Chain Reaction CATALYST mechanism (see `RobotSpec.catalystType`) — how the robot handles
  * the 6" rings. Three real archetypes, each with a genuinely different reach envelope:
@@ -185,11 +198,14 @@ export type ChainShooterMount = 'front' | 'back' | 'left' | 'right';
  *    and its reach is middling. */
 export type ChainCatalystType = 'arm' | 'launcher' | 'turret';
 
-/** Which chassis edge the catalyst mechanism is mounted on — the same four-edge model the
- * intake and shooter mounts use. Sets where the mechanism REACHES FROM, and which way its
- * reach cone points (the `turret` type is omnidirectional, so the mount only moves the
- * pivot). */
-export type ChainCatalystMount = 'front' | 'back' | 'left' | 'right';
+/** Where the catalyst mechanism is mounted. Sets where it REACHES FROM and which way its
+ * reach cone points (the `turret` type is omnidirectional, so the mount only moves the pivot).
+ * Every `ChainMountPos` except `center` — a claw has to reach out from somewhere — PLUS:
+ *  • frontback — a SWING arm on a pivot that rotates between the front and rear edges, so it
+ *    works either end without turning the chassis. It reaches from whichever end is nearer the
+ *    target, so it covers two cones instead of one; the cost is that it is one arm, so it can
+ *    only ever be at one end at a time. */
+export type ChainCatalystMount = Exclude<ChainMountPos, 'center'> | 'frontback';
 
 export type BallState =
   | { kind: 'ground' }

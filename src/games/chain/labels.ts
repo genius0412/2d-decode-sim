@@ -40,11 +40,18 @@ export const CHAIN_INTAKE_MOUNT_BLURBS: Partial<Record<ChainIntakeMount, string>
   frontback: 'Less storage',
 };
 
+/** Position labels, short enough to sit in a 3x3 chassis-map cell. Shared by the turretless
+ * firing-edge picker and the turret POSITION picker — the same nine points either way. */
 export const CHAIN_SHOOTER_MOUNT_LABELS: Record<ChainShooterMount, string> = {
+  frontleft: 'F·LEFT',
   front: 'FRONT',
-  back: 'BACK',
+  frontright: 'F·RIGHT',
   left: 'LEFT',
+  center: 'CENTER',
   right: 'RIGHT',
+  backleft: 'B·LEFT',
+  back: 'BACK',
+  backright: 'B·RIGHT',
 };
 
 /** The shooter mounts cost nothing and the label already names the edge, so none of them
@@ -66,8 +73,13 @@ export const CHAIN_CATALYST_BLURBS: Record<ChainCatalystType, string> = {
 };
 
 export const CHAIN_CATALYST_MOUNT_LABELS: Record<ChainCatalystMount, string> = {
+  frontleft: 'F·LEFT',
   front: 'FRONT',
-  back: 'BACK',
+  frontright: 'F·RIGHT',
   left: 'LEFT',
+  frontback: 'SWING',
   right: 'RIGHT',
+  backleft: 'B·LEFT',
+  back: 'BACK',
+  backright: 'B·RIGHT',
 };

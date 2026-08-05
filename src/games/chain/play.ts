@@ -76,7 +76,7 @@ import {
   CHAIN_HOOKS_PER_GOAL,
   type ChainState,
 } from './state';
-import { EDGE_ANGLE, EDGE_DIR, EDGE_PERP, edgeGeom, shooterMountOf } from './mounts';
+import { EDGE_ANGLE, EDGE_DIR, EDGE_PERP, edgeGeom, shooterEdgeOf, turretLocal } from './mounts';
 
 /**
  * Chain Reaction gameplay step (called from `chainStep` after the robots move).
@@ -203,7 +203,8 @@ export function updateChain(
       // Driving steadily, it tracks perfectly; a SUDDEN velocity change (a robot shoves it) makes
       // the lead solution jump faster than the turret can follow, so shots fired mid-correction
       // fly along the STALE heading and miss. The launch reads r.turretHeading (physical).
-      const desiredTurret = leadDir(r.pos, mouth, CHAIN_SHOT_SPEED, r.vel);
+      // solved FROM the turret's own position (see turretOrigin), not the chassis centre
+      const desiredTurret = leadDir(turretOrigin(r), mouth, CHAIN_SHOT_SPEED, r.vel);
       r.turretHeading = slewAngle(r.turretHeading, desiredTurret, CHAIN_TURRET_SLEW * dt);
       if (wantsFire && r.hopper.length > 0 && world.time >= r.fireReadyAt) {
         const twin = mode === 'twinturret';
@@ -473,6 +474,22 @@ export function updateChain(
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * WHERE THE TURRET IS BOLTED, in world space. For a turreted archetype `shooterMount` is a
+ * POSITION, not a facing (the turret aims itself), so this is the point the Particle is
+ * actually born at — a back-mounted turret visibly shoots off the back of the robot, a
+ * corner-mounted one off that corner. The pivot rotates with the chassis, so the local offset
+ * is rotated into the world frame.
+ *
+ * The AIM solution and the LAUNCH both read this. Solving the lead from the chassis centre
+ * while firing from an offset muzzle would leave a systematic miss that grows with how far
+ * off-centre the turret is — the shot would be aimed from somewhere the ball never leaves.
+ */
+export function turretOrigin(r: RobotState): Vec2 {
+  const off = rot(turretLocal(r.spec), r.heading);
+  return { x: r.pos.x + off.x, y: r.pos.y + off.y };
+}
+
 /** launch one particle from robot `r` toward its accelerator `mouth` at a fixed
  * horizontal speed, with an optional lateral velocity (a dump fans several out). Aims
  * at the mouth center and solves the vertical velocity so the ballistic arc lands
@@ -489,7 +506,10 @@ function launchToAccel(
    * share the one aim solution, exactly as they share the one turret. */
   muzzleLat = 0,
 ): void {
-  const distMouth = Math.max(1, hyp(mouth.x - r.pos.x, mouth.y - r.pos.y));
+  const o = turretOrigin(r);
+  const px0 = o.x;
+  const py0 = o.y;
+  const distMouth = Math.max(1, hyp(mouth.x - px0, mouth.y - py0));
   // PHYSICAL launch: the ball leaves along the turret's ACTUAL heading (`r.turretHeading`, which
   // SLEWS toward the lead solution and lags a sudden velocity change — see the turret branch) plus
   // the inherited chassis velocity. It is NOT re-solved to guarantee a hit — if the turret is
@@ -508,10 +528,11 @@ function launchToAccel(
     id: chain.nextBallId++,
     color: 'green',
     state: { kind: 'flight', target: r.alliance },
-    // leaves from the barrel tip, offset across the turret for a twin's two muzzles
+    // leaves from the barrel tip of the turret AT ITS MOUNT, offset across for a twin's
+    // two muzzles
     pos: {
-      x: r.pos.x + dir.x * 4 + perp.x * muzzleLat,
-      y: r.pos.y + dir.y * 4 + perp.y * muzzleLat,
+      x: px0 + dir.x * 4 + perp.x * muzzleLat,
+      y: py0 + dir.y * 4 + perp.y * muzzleLat,
     },
     vel: { x: netx, y: nety },
     z: z0,
@@ -564,7 +585,7 @@ export function chainGoalAimHeading(r: RobotState): number {
   const lead = leadDir(r.pos, mouth, speed, r.vel);
   // heading = the direction the MUZZLE must point, minus where the muzzle sits relative to
   // forward — so muzzle world angle (heading + EDGE_ANGLE) lands exactly on the lead solution.
-  return wrapAngle(lead - EDGE_ANGLE[shooterMountOf(r.spec)]);
+  return wrapAngle(lead - EDGE_ANGLE[shooterEdgeOf(r.spec)]);
 }
 
 /**
@@ -630,7 +651,7 @@ function launchAt(
   sideVar: number,
 ): void {
   const side = accelSide(r.alliance);
-  const edge = shooterMountOf(r.spec);
+  const edge = shooterEdgeOf(r.spec); // turretless: a launch LINE spans a side
   const { dist, span } = edgeGeom(r.spec, edge);
   // the muzzle points along the mounted edge's outward normal, in the WORLD frame
   const muzzle = wrapAngle(r.heading + EDGE_ANGLE[edge]);

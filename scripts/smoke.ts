@@ -171,7 +171,7 @@ import {
   CHAIN_RINGSTAND_BOX,
   CHAIN_HALF_Y,
 } from '../src/games/chain/config';
-import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, intakeMountOf, shooterMountOf } from '../src/games/chain/mounts';
+import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, intakeMountOf, shooterMountOf, turretLocal } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -7006,6 +7006,113 @@ const mkMM = () => {
       'catalyst: a bogus type/mount coerces to the default',
       junk.catalystType === CHAIN_DEFAULT_CATALYST && junk.catalystMount === 'front',
       `${junk.catalystType}/${junk.catalystMount}`,
+    );
+
+    // ---- CORNER mounts: the claw reaches along its own DIAGONAL, not down a side ----
+    // A back-right claw must work behind-and-right and refuse ahead-and-left. Both probes
+    // sit the SAME distance from the robot centre, so this can only pass on direction.
+    {
+      const dx = DEFAULT_SPEC.length / 2 + 2;
+      const dy = DEFAULT_SPEC.width / 2 + 2;
+      const cornerGrab = (x: number, y: number) => {
+        const { w, rob, ring } = mk('arm', 'backright');
+        ring.pos = { x, y };
+        press(w, rob);
+        return ring.carriedBy === rob.id;
+      };
+      const behindRight = cornerGrab(-dx, -dy);
+      const aheadLeft = cornerGrab(dx, dy);
+      check(
+        'catalyst: a CORNER mount reaches off its own diagonal and not the opposite one',
+        behindRight && !aheadLeft,
+        `back-right=${behindRight} front-left=${aheadLeft}`,
+      );
+    }
+
+    // ---- FRONTBACK swing: one arm on a pivot, so BOTH ends work ---------------------
+    // The whole point of the swing is a second cone. A plain FRONT mount is the control:
+    // same robot, same ring positions, and it must refuse the one behind it.
+    {
+      const behind = { x: -DEFAULT_SPEC.length / 2 - 3, y: 0 };
+      const ahead = { x: DEFAULT_SPEC.length / 2 + 3, y: 0 };
+      const grab = (mount: RobotSpec['catalystMount'], at: { x: number; y: number }) => {
+        const { w, rob, ring } = mk('arm', mount);
+        ring.pos = { ...at };
+        press(w, rob);
+        return ring.carriedBy === rob.id;
+      };
+      const swingAhead = grab('frontback', ahead);
+      const swingBehind = grab('frontback', behind);
+      const frontAhead = grab('front', ahead);
+      const frontBehind = grab('front', behind);
+      check(
+        'catalyst: the FRONTBACK swing works BOTH ends where a fixed front mount works one',
+        swingAhead && swingBehind && frontAhead && !frontBehind,
+        `swing f=${swingAhead} b=${swingBehind} | fixed-front f=${frontAhead} b=${frontBehind}`,
+      );
+    }
+  }
+
+  // ---- TURRET POSITION: shooterMount is where it is BOLTED, so it moves the shot -----
+  // A turret aims itself, so its mount is not a facing — it is the point the Particle is
+  // born at. Fire the same robot from the same pose with the turret at three positions and
+  // the birth point must follow the mount.
+  {
+    const born = (pos: RobotSpec['shooterMount']) => {
+      const setup = chainSetup(0, 'blue');
+      setup.spec = { ...DEFAULT_SPEC, scoreMode: 'turret', shooterMount: pos, massLb: 34 };
+      const w = createChainWorld('match', 3, [setup]);
+      w.match.phase = 'teleop';
+      w.match.phaseTimeLeft = 120;
+      const rob = w.robots[0];
+      rob.pos = { x: 0, y: 0 };
+      rob.heading = 0; // +x forward, so a BACK mount sits at negative local x
+      rob.hopper = ['green'];
+      rob.fireReadyAt = 0;
+      const before = new Set(w.balls.map((b) => b.id));
+      chainStep(w, SIM_DT, new Map([[rob.id, cmd({ fire: true })]]));
+      const shot = w.balls.find((b) => !before.has(b.id));
+      return shot ? { x: shot.pos.x, y: shot.pos.y } : null;
+    };
+    const mid = born('center');
+    const back = born('back');
+    const bl = born('backleft');
+    // The birth point must move by EXACTLY the mount's own offset, so this asserts against
+    // `turretLocal` — the shared helper the sprite also draws at — rather than a hand-picked
+    // fraction. The residual tolerance is the barrel-tip term, which points at the goal and so
+    // differs slightly between origins.
+    const at = (pos: RobotSpec['shooterMount']) => turretLocal({ ...DEFAULT_SPEC, shooterMount: pos });
+    const near = (a: number, b: number) => Math.abs(a - b) < 2;
+    const dBack = at('back');
+    const dBL = at('backleft');
+    check(
+      'chain turret: a BACK mount launches from behind the chassis centre, by its mount offset',
+      !!mid && !!back && near(back.x - mid.x, dBack.x) && back.x < mid.x - 2,
+      `delta ${(back!.x - mid!.x).toFixed(2)} vs turretLocal ${dBack.x.toFixed(2)}`,
+    );
+    check(
+      'chain turret: a CORNER mount launches from that corner (offset on BOTH axes)',
+      !!mid && !!bl && near(bl.x - mid.x, dBL.x) && near(bl.y - mid.y, dBL.y) && bl.y > mid.y + 2,
+      `delta ${(bl!.x - mid!.x).toFixed(2)},${(bl!.y - mid!.y).toFixed(2)} vs turretLocal ${dBL.x.toFixed(2)},${dBL.y.toFixed(2)}`,
+    );
+
+    // A TURRETLESS launcher fires along a LINE spanning a side, so a corner/centre is not a
+    // build it can have — coerceSpec folds it to the nearest edge at the one chokepoint.
+    const fold = (pos: string, mode: RobotSpec['scoreMode']) =>
+      coerceSpec({ ...DEFAULT_SPEC, scoreMode: mode, shooterMount: pos }, undefined, 'chain').shooterMount;
+    check(
+      'chain shooter: a turretless launcher folds a corner/centre mount to an edge',
+      fold('backleft', 'drum') === 'back' &&
+        fold('frontright', 'dumper') === 'front' &&
+        fold('center', 'drum') === 'front',
+      `drum backleft=${fold('backleft', 'drum')} dumper frontright=${fold('frontright', 'dumper')} drum center=${fold('center', 'drum')}`,
+    );
+    check(
+      'chain shooter: a TURRET keeps any of the nine positions',
+      fold('backleft', 'turret') === 'backleft' &&
+        fold('center', 'twinturret') === 'center' &&
+        fold('frontright', 'turret') === 'frontright',
+      `${fold('backleft', 'turret')} / ${fold('center', 'twinturret')} / ${fold('frontright', 'turret')}`,
     );
   }
 

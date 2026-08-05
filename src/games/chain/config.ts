@@ -849,6 +849,60 @@ export const CHAIN_FOUL_SLOP = 1; // in of bumper slack for the robot-robot cont
  * it and the card stops highlighting as selected — smoke asserts this.
  */
 export const CHAIN_PRESETS: readonly RobotSpec[] = [
+  // ── REAL TEAM BUILDS ──────────────────────────────────────────────────────────────────
+  // Five entries supplied by the user, each a specific team's CAD-competition robot. They
+  // lead the list because they are the ones people are actually looking for; the four
+  // archetype demos below them still exist to show off the mount/archetype space.
+  // Unlike the demos, these are NAMED ROBOTS — `name` is the robot, `teamName` is the team,
+  // and `teamNumber` is real.
+  {
+    // Ender: a rear turret pointed off the left flank, claw on the opposite (right) side so
+    // the two mechanisms never fight for the same space.
+    name: 'Ender', teamName: 'Loomy Squad', teamNumber: 788,
+    length: 15, width: 16.5, intake: 'sloped', massLb: 26, drivetrain: 'mecanum',
+    driveRpm: 435, flywheelInertia: 0.3, canSort: false,
+    ballStorage: 40, groundClearance: 1.2, scoreMode: 'turret', chainIntake: 'sweeper',
+    intakeMount: 'front', shooterMount: 'back', catalystType: 'arm', catalystMount: 'right',
+  },
+  {
+    // KITSUNE: both mechanisms live on the REAR CORNERS — turret back-left, rail-turret claw
+    // back-right — leaving the whole front for the sweeper. The corner mounts are exactly
+    // what `ChainMountPos` corners were added for.
+    name: 'KITSUNE', teamName: 'KITSUNE', teamNumber: 186033,
+    length: 15, width: 17, intake: 'sloped', massLb: 27, drivetrain: 'mecanum',
+    driveRpm: 435, flywheelInertia: 0.3, canSort: false,
+    ballStorage: 42, groundClearance: 1.2, scoreMode: 'turret', chainIntake: 'sweeper',
+    intakeMount: 'front', shooterMount: 'backleft', catalystType: 'turret', catalystMount: 'backright',
+  },
+  {
+    // P. J. Soumik: centre turret over a tank base, with the rail-turret claw at the back so
+    // it can work hooks without the chassis giving up its heading.
+    name: 'P. J. Soumik', teamName: 'Soumik Squadron', teamNumber: 14164,
+    length: 15, width: 17, intake: 'sloped', massLb: 32, drivetrain: 'tank',
+    driveRpm: 340, flywheelInertia: 0.3, canSort: false,
+    ballStorage: 42, groundClearance: 1.2, scoreMode: 'turret', chainIntake: 'sweeper',
+    intakeMount: 'front', shooterMount: 'center', catalystType: 'turret', catalystMount: 'back',
+  },
+  {
+    // Rocky: everything omnidirectional. Butterfly base, front+back sweepers, twin turret in
+    // the middle, rail-turret claw — nothing on this robot needs the chassis pointed anywhere.
+    // The front+back sweeper eats the start cube twice, so it is necessarily short.
+    name: 'Rocky', teamName: 'Estimate', teamNumber: 5050,
+    length: 12, width: 17, intake: 'sloped', massLb: 30, drivetrain: 'butterfly',
+    driveRpm: 435, tankRpm: 340, flywheelInertia: 0.3, canSort: false,
+    ballStorage: 24, groundClearance: 1.2, scoreMode: 'twinturret', chainIntake: 'sweeper',
+    intakeMount: 'frontback', shooterMount: 'center', catalystType: 'turret', catalystMount: 'frontback',
+  },
+  {
+    // String Theory: front+back sweepers and a centre turret, with a SWING claw on a pivot
+    // that serves either end — the build the `frontback` catalyst mount was added for.
+    name: 'String Theory', teamName: 'Circuitrunners Surge', teamNumber: 1002,
+    length: 12, width: 17, intake: 'sloped', massLb: 31, drivetrain: 'tank',
+    driveRpm: 340, flywheelInertia: 0.3, canSort: false,
+    ballStorage: 24, groundClearance: 1.2, scoreMode: 'turret', chainIntake: 'sweeper',
+    intakeMount: 'frontback', shooterMount: 'center', catalystType: 'arm', catalystMount: 'frontback',
+  },
+  // ── ARCHETYPE DEMOS ───────────────────────────────────────────────────────────────────
   {
     // long-range precision: turret shoots from anywhere, swerve + clearance to roam over
     // the beams. MOUNT: a turret is top-mounted and aims itself, so the chassis never has

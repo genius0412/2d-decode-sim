@@ -17,7 +17,7 @@ import {
   CHAIN_ARM_DRAW,
 } from './config';
 import { CHAIN_HOOKS_PER_GOAL, catalystMouth, chainIntakeMouths, hookPos } from './state';
-import { EDGE_ANGLE, catalystMountOf, edgeGeom, isEndEdge, shooterMountOf } from './mounts';
+import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from './mounts';
 import { beamRide } from './beams';
 
 /** cosmetic clock for the crossing shudder (render-only, so a wall clock is fine + deterministic-safe) */
@@ -95,7 +95,7 @@ export function drawChainRobot(
   // left/right mount spans the chassis LENGTH exactly as the sim launches it (`launchAt`).
   // The turret is drawn last, in the world frame, so it rotates independently.
   if (mode === 'drum' || mode === 'dumper') {
-    const edge = shooterMountOf(r.spec);
+    const edge = shooterEdgeOf(r.spec); // turretless: always a side, never a corner/centre
     const g = edgeGeom(r.spec, edge);
     ctx.save();
     ctx.rotate(EDGE_ANGLE[edge]);
@@ -217,13 +217,14 @@ function drawTurret(
 ): void {
   const hl = r.spec.length / 2;
   const hw = r.spec.width / 2;
-  const off = Math.abs(r.spec.length * C.TURRET_OFFSET_FRAC);
-  const reach = Math.min(hl - off, hw) - 0.5;
-  const ring = Math.min(4.4, reach);
-  // turret sits at the chassis center offset (rear of center), in the robot frame
-  const localX = -off;
-  const cx = r.pos.x + Math.cos(r.heading) * localX + ox;
-  const cy = r.pos.y + Math.sin(r.heading) * localX + oy;
+  const ring = turretRadius(r.spec);
+  const reach = Math.min(Math.min(hl, hw) - 0.5, ring + 2.4);
+  // WHERE IT IS BOLTED — the same `turretLocal` the sim launches from, so the ring is drawn
+  // exactly where the Particle is born (see mounts.ts). A back/corner mount really does sit
+  // back there rather than at a fixed rear-of-centre nudge.
+  const local = turretLocal(r.spec);
+  const cx = r.pos.x + Math.cos(r.heading) * local.x - Math.sin(r.heading) * local.y + ox;
+  const cy = r.pos.y + Math.sin(r.heading) * local.x + Math.cos(r.heading) * local.y + oy;
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(r.turretHeading);
@@ -282,11 +283,18 @@ function drawHopperFill(ctx: CanvasRenderingContext2D, r: RobotState, hw: number
  */
 function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
   const type = r.spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
-  const edge = catalystMountOf(r.spec);
-  const { dist } = edgeGeom(r.spec, edge);
+  // A FRONTBACK swing is ONE arm on a pivot that rotates between the ends, so it is drawn at
+  // the front — where it stows. Drawing it at both ends would read as two arms, which is
+  // exactly what it isn't.
+  const pos = catalystMountPositions(catalystMountOf(r.spec))[0];
+  const o = mountOrigin(r.spec, pos);
   const carrying = false; // colour cue is driven by the ring sprite itself, drawn in draw.ts
   ctx.save();
-  ctx.rotate(EDGE_ANGLE[edge]); // +x now points OUT of the mounted edge
+  // move to where it is BOLTED (edge mid-point, or the actual corner) and point +x outward,
+  // so every shape below is drawn from the frame outward regardless of mount
+  ctx.translate(o.x, o.y);
+  ctx.rotate(MOUNT_ANGLE[pos]);
+  const dist = 0; // the frame edge is the local origin now
   const ink = carrying ? GREEN : '#8a94a4';
   ctx.strokeStyle = ink;
   ctx.fillStyle = STEEL_DK;
@@ -358,7 +366,7 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState): void {
     ctx.save();
     ctx.translate(dist - 0.8, 0);
     // world aim → this local frame (chassis heading + the mount rotation already applied)
-    ctx.rotate(bestA - r.heading - EDGE_ANGLE[edge]);
+    ctx.rotate(bestA - r.heading - MOUNT_ANGLE[pos]);
     ctx.strokeStyle = GREEN;
     ctx.beginPath();
     ctx.moveTo(0, 0);
