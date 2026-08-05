@@ -379,14 +379,15 @@ export const CHAIN_THROWBACK_SPREAD = 45; // in/s lateral spread on the throw-in
  * shooter, so it's smallest; the DRUM and DUMPER are open-hopper launchers — equal, large),
  * clamped to that ceiling. The `ballStorage` slider picks any capacity up to `chainStorageMax`.
  */
-export const CHAIN_STORAGE_MIN = 1;
-// CEILING. The old 60 assumed roughly ONE layer of Particles across the control footprint.
-// That was too pessimistic: the G02 control prism is 18" TALL and a Particle is 3" OD, so
-// the height is not the binding constraint — hopper design is, and real hoppers stack. 90
-// corresponds to about a layer and a half across the 18"×24" prism, which is what a
-// well-packed open hopper actually manages.
-export const CHAIN_STORAGE_MAX = 90;
-export const CHAIN_STORAGE_DEFAULT = 12;
+export const CHAIN_STORAGE_MIN = 1; // a floor of one ball; NOT scaled with the rest
+// CEILING. 60 assumed roughly ONE layer of Particles across the control footprint, which was
+// too pessimistic: the G02 control prism is 18" TALL and a Particle is 3" OD, so height is
+// not the binding constraint — hopper design is, and real hoppers stack. Raised 90 → 122 with
+// the +35% storage pass, which is about TWO layers across the 18"×24" prism. Still short of
+// the ~6 layers the prism height would geometrically allow, because a real hopper spends
+// volume on walls, the feed path and the shooter.
+export const CHAIN_STORAGE_MAX = 122;
+export const CHAIN_STORAGE_DEFAULT = 16;
 
 /** Chain Reaction chassis LENGTH range (in). Unlike DECODE, CR's intake doesn't eat into an
  * 18" cube (the sweeper deploys), so a CR chassis can run the full 18" long. */
@@ -445,7 +446,12 @@ export function chainMountFits(spec: RobotSpec, mount: ChainIntakeMount): boolea
   return l.maxLength >= l.minLength && l.maxWidth >= l.minWidth;
 }
 
-export const CHAIN_STORE_AREA_PER_BALL = 3.6;
+// Square inches of footprint per stored Particle — the DERIVED cap's only size term, so it
+// is the single dial for storage across every archetype, mount and chassis. Cut 3.6 → 2.67
+// for the +35% storage pass (less area per ball ⇒ more balls; 3.6/1.35 ≈ 2.67), which lifts
+// every build by the same proportion rather than picking winners. The archetype and mount
+// multipliers below are untouched, so all the relative trade-offs still hold.
+export const CHAIN_STORE_AREA_PER_BALL = 2.67;
 export const CHAIN_STORE_TURRET_MULT = 0.55; // turret loses center volume to the rotor+shooter
 export const CHAIN_STORE_LAUNCHER_MULT = 1.0; // drum + dumper: open hopper (large, equal)
 // INTAKE MOUNT storage cost — every mounted edge is an OPENING the hopper can't use.
@@ -852,7 +858,7 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     // front+back sweepers eat the START CUBE twice over, so this build is necessarily short
     length: 12, width: 17, intake: 'sloped', massLb: 24, drivetrain: 'swerve',
     driveRpm: 500, flywheelInertia: 0.2, canSort: false,
-    ballStorage: 12, groundClearance: 1.3, scoreMode: 'turret', chainIntake: 'sweeper',
+    ballStorage: 16, groundClearance: 1.3, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'front',
   },
   {
@@ -864,7 +870,7 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'Hauler', teamName: 'Dumper · fill forward, reverse and unload', teamNumber: 0,
     length: 15, width: 18, intake: 'sloped', massLb: 38, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.2, canSort: false,
-    ballStorage: 40, groundClearance: 1.5, scoreMode: 'dumper', chainIntake: 'sweeper',
+    ballStorage: 54, groundClearance: 1.5, scoreMode: 'dumper', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'back',
   },
   {
@@ -876,7 +882,7 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     // side-mounted sweepers eat the cube across the WIDTH, so this one is narrow
     length: 14.5, width: 12, intake: 'sloped', massLb: 25, drivetrain: 'mecanum',
     driveRpm: 470, flywheelInertia: 0.3, canSort: false,
-    ballStorage: 24, groundClearance: 1.4, scoreMode: 'drum', chainIntake: 'sweeper',
+    ballStorage: 32, groundClearance: 1.4, scoreMode: 'drum', chainIntake: 'sweeper',
     intakeMount: 'side', shooterMount: 'front',
   },
   {
@@ -887,7 +893,7 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'Skimmer', teamName: 'Dumper · run the wall, fire broadside', teamNumber: 0,
     length: 14.5, width: 16, intake: 'sloped', massLb: 22, drivetrain: 'xdrive',
     driveRpm: 520, flywheelInertia: 0.1, canSort: false,
-    ballStorage: 26, groundClearance: 1.0, scoreMode: 'dumper', chainIntake: 'sweeper',
+    ballStorage: 35, groundClearance: 1.0, scoreMode: 'dumper', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'right',
   },
 ] as const;

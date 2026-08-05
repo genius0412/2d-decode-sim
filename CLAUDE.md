@@ -830,11 +830,20 @@ The drawn intake bars ARE the grab area (renderer and `interact` share
 The manual sets no fixed particle limit (G01 unlimited control; G02 bounds them to an
 18"×24"×18" CONTROL PRISM, G03 permits expanding into it), so the practical max is
 VOLUME-limited. `chainStorageMax` derives it from footprint area ÷ `CHAIN_STORE_AREA_PER_BALL`
-× an archetype factor × a mount factor, clamped to [1, `CHAIN_STORAGE_MAX` 60]:
+× an archetype factor × a mount factor, clamped to [1, `CHAIN_STORAGE_MAX` 122]:
 
-- archetype — turret `0.55` (loses centre volume to the rotor+shooter), drum/dumper `1.0`.
+- archetype — turret `0.55` (loses centre volume to the rotor+shooter), twin turret `0.42` (a
+  second shooter assembly eats more), drum/dumper `1.0`.
 - mount (`chainMountStoreMult`) — front == back `1.0` (mirror images; a rear sweeper is a free
   stylistic choice), frontback `0.75` (two open ends), side `0.6` (two full-length flanks).
+
+**`CHAIN_STORE_AREA_PER_BALL` is the ONE dial for storage across the whole game** — it is the
+cap's only size term, so changing it moves every archetype, mount and chassis by the same
+proportion and leaves the relative trade-offs above intact. It was cut 3.6 → **2.67** for a
++35% pass (Aug 2026), with `CHAIN_STORAGE_MAX` 90 → 122, `CHAIN_STORAGE_DEFAULT` 12 → 16 and
+each `CHAIN_PRESETS` `ballStorage` scaled to match; `CHAIN_STORAGE_MIN` stays 1 (a floor of one
+ball is a floor, not a quantity to scale). Do NOT hand-tune the per-archetype multipliers to
+change overall capacity — that silently re-balances the archetypes against each other.
 
 The `ballStorage` slider picks any capacity up to that max; `chainHopperCap` is the ACTIVE cap
 read by the sim, renderer, and HUD.
