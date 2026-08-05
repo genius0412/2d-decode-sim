@@ -76,6 +76,26 @@ change never touched. Two independent causes:
 
 A green shiftaudit means something again. Run it after UI work.
 
+## 4. SEASONS AT MERGE TIME — read before merging alpha to main
+**User's call: Chain Reaction STARTS A NEW SEASON, DECODE DOES NOT.** That is right on the
+merits — this batch rewrote CR's balance (butterfly, twin turret, catalysts, corner
+geometry, size limits, start legality), so CR records set on the old build aren't
+comparable; DECODE only got a penalty bug fix, and a solo record run has no opponent, so
+G417/G418 can't fire in one at all. DECODE's boards stay valid.
+
+**Do it from the ADMIN menu, per game — do NOT bump `BALANCE_VERSION`.** That constant is
+GLOBAL (one number for both games) while seasons are per-game DB rows, and
+`currentSeasonNumber(fallback, game)` returns `max(DB max for that game, BALANCE_VERSION)`.
+So bumping 3 → 4 would drag DECODE into a new season too — exactly what we don't want.
+`startNewSeason` is DB-controlled precisely so one game can roll without a redeploy.
+
+**`SIM_VERSION` 1 → 2 is bumped (in this batch).** That is the OTHER axis and the correct
+one here: it gates replay PLAYBACK only, and leaderboards / ELO / seasons never read it.
+The batch moves `step()` output for both games (CR wholesale; DECODE's G418.B changes the
+foul total in any match with gate contact), so pre-merge replays would otherwise silently
+re-sim into a different game than the one played. ReplayView now says "recorded on an
+older version" instead, which is the honest answer.
+
 ## Still open
 - **Penalty hitbox audit** (roadmap #1) — the DECODE zone geometry each rule tests against
   the manual figures. Untouched.

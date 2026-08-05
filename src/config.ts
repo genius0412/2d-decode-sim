@@ -67,8 +67,12 @@ export const BALANCE_VERSION = 3; // 2: real-motor drivetrain retune (torque–s
  * replay playback does (`ReplayView` refuses a mismatch and says so).
  *
  * 1: sim-reachable Math.hypot -> hyp (engine-independent; see src/math.ts)
+ * 2: the alpha batch — CR butterfly drivetrain / twin turret / catalyst mechanisms /
+ *    corner geometry / start legality, and DECODE's G418.B fix (a gate tap no longer
+ *    bills the standing ramp column, so a match with gate contact re-sims to a
+ *    different foul total). All of it moves `step()` output.
  */
-export const SIM_VERSION = 1;
+export const SIM_VERSION = 2;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).
