@@ -34,13 +34,37 @@ export function drawRobot(
   const wedgeTip = hl + preset.reach - 0.5; // wedge/plate front — just behind the roller
   const rollerTip = hl + preset.reach + 0.5; // shaft + wheels ride out just past the wedges
   const mouthOn = intakeOn ? 'rgba(34,197,94,0.85)' : '#2a303c';
+  /**
+   * The INTAKE ASSEMBLY as it is actually built: a shaft spanning the mouth, a row of
+   * COMPLIANT WHEELS threaded onto it, and a side plate at each end carrying the bearings.
+   * The wheels are what grab a ball, so they are drawn as discrete wheels you can count
+   * rather than one painted bar — and they green individually when the intake is running.
+   */
   const drawRoller = () => {
-    ctx.fillStyle = intakeOn ? '#166534' : '#333a45';
-    ctx.fillRect(wedgeTip, -rw, rollerTip - wedgeTip, rw * 2);
-    for (let i = -3; i <= 3; i++) {
-      const center = Math.abs(i) <= 1;
-      ctx.fillStyle = center ? (intakeOn ? '#22c55e' : '#6b7280') : intakeOn ? '#15803d' : '#4b5563';
-      ctx.fillRect(rollerTip - 1.5, (i * rw) / 3.4 - 0.8, 1.3, 1.6);
+    const on = intakeOn;
+    const shaftY = (rollerTip + wedgeTip) / 2;
+    // side plates (the bearing blocks the shaft runs in)
+    ctx.fillStyle = on ? '#14532d' : '#39424f';
+    for (const sgn of [1, -1] as const) {
+      ctx.fillRect(wedgeTip - 0.6, sgn * rw - 0.55, rollerTip - wedgeTip + 1.2, 1.1);
+    }
+    // shaft
+    ctx.strokeStyle = on ? '#166534' : '#4b5563';
+    ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(shaftY, -rw);
+    ctx.lineTo(shaftY, rw);
+    ctx.stroke();
+    // compliant wheels along it — spaced by size, so a wide mouth carries more of them
+    const n = Math.max(3, Math.round((rw * 2) / 1.9));
+    for (let i = 0; i < n; i++) {
+      const y = -rw + ((i + 0.5) * (rw * 2)) / n;
+      ctx.fillStyle = on ? '#22c55e' : '#6b7280';
+      roundRect(ctx, wedgeTip - 0.35, y - 0.62, rollerTip - wedgeTip + 0.7, 1.24, 0.34);
+      ctx.fill();
+      // the hub each wheel is clamped to
+      ctx.fillStyle = on ? '#166534' : '#39424f';
+      ctx.fillRect(shaftY - 0.22, y - 0.28, 0.44, 0.56);
     }
   };
   if (m.wedge) {
@@ -116,40 +140,68 @@ export function drawRobot(
   ctx.save();
   ctx.translate(tp.x, tp.y);
   ctx.rotate(r.turretHeading);
-  ctx.strokeStyle = r.hopper.length > 0 ? '#22c55e' : '#6b7280';
+  /* THE TURRET, as a shooter rather than a circle with a stick: a toothed slew RING it
+     rotates on, the body plate, a FLYWHEEL across the breech, and a HOOD that narrows to the
+     muzzle. The ring teeth are what say "this rotates"; the hood is what says "this is where
+     the ball leaves". */
+  const live = r.hopper.length > 0;
+  const ink = live ? '#22c55e' : '#6b7280';
+  // slew ring + teeth
+  ctx.strokeStyle = ink;
   ctx.lineWidth = 0.9;
   ctx.beginPath();
   ctx.arc(0, 0, ring, 0, Math.PI * 2);
   ctx.stroke();
-  // turret body + barrel
+  ctx.lineWidth = 0.42;
+  const teeth = Math.max(10, Math.round(ring * 4));
+  for (let i = 0; i < teeth; i++) {
+    const a = (i / teeth) * Math.PI * 2;
+    const c = Math.cos(a);
+    const sn = Math.sin(a);
+    ctx.beginPath();
+    ctx.moveTo(c * ring, sn * ring);
+    ctx.lineTo(c * (ring + 0.5), sn * (ring + 0.5));
+    ctx.stroke();
+  }
+  // body plate
   ctx.fillStyle = '#3a4150';
   ctx.beginPath();
   ctx.arc(0, 0, Math.max(ring - 1, 1.5), 0, Math.PI * 2);
   ctx.fill();
+  // flywheel across the breech (perpendicular to the barrel — that is the axis it spins on)
+  ctx.strokeStyle = live ? '#4ade80' : '#8b95a5';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0.4, -ring * 0.62);
+  ctx.lineTo(0.4, ring * 0.62);
+  ctx.stroke();
+  // hood: tapers from the breech to the muzzle, so the barrel has a direction
   ctx.fillStyle = '#525b6b';
-  ctx.fillRect(0, -1.2, reach, 2.4);
+  ctx.beginPath();
+  ctx.moveTo(0, -1.35);
+  ctx.lineTo(reach, -0.85);
+  ctx.lineTo(reach, 0.85);
+  ctx.lineTo(0, 1.35);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(190,205,220,0.35)';
+  ctx.lineWidth = 0.3;
+  ctx.stroke();
+  // muzzle
+  ctx.fillStyle = ink;
+  ctx.fillRect(reach - 0.5, -0.85, 0.5, 1.7);
   ctx.restore();
 }
 
 /**
- * The CHASSIS BODY — shared by both games so a robot is the same object in DECODE and Chain
- * Reaction. Drawn in the chassis-local frame (caller has already translated + rotated).
+ * The CHASSIS — an FTC frame seen from above. Deliberately PLAIN: extruded aluminium rails
+ * around a base plate, and nothing else. There are no bumpers in FTC (that is FRC), and a
+ * painted-on control hub is set dressing that competes with the parts you actually configure.
+ * Everything that should draw the eye here is a real subsystem — intake, drivetrain, turret,
+ * launcher — so the frame's job is to stay out of their way and give them something to be
+ * bolted to.
  *
- * It was a flat rounded rect with a 1px alliance outline. This builds it the way the real
- * thing is built, from the outside in:
- *
- *  • a CONTACT SHADOW, so the robot sits ON the mat instead of being printed on it;
- *  • ALLIANCE BUMPERS around the frame perimeter — the one feature that makes an FTC robot
- *    instantly readable as one, and it carries the alliance in a band you can see at a glance
- *    rather than in a hairline stroke;
- *  • the DECK PLATE inside them, with a light top edge and a dark bottom edge so the plate
- *    reads as recessed below the bumper rather than floating on it;
- *  • structural RAILS and a CONTROL HUB, which are what fills the middle of a real chassis.
- *
- * Everything is a fraction of the chassis, so a 10" robot and an 18" one both look built
- * rather than one looking like a scaled sticker of the other. Nothing is drawn OUTSIDE the
- * `length x width` box — that box is the collision footprint, and a sprite that spilled past
- * it would be telling you the robot is bigger than the sim thinks it is.
+ * The alliance stays in the OUTLINE, which is where it has always been.
  */
 export function drawChassisBody(
   ctx: CanvasRenderingContext2D,
@@ -165,84 +217,29 @@ export function drawChassisBody(
   const W = r.spec.width;
   const hl = L / 2;
   const hw = W / 2;
-  const small = Math.min(L, W);
-  // bumper thickness: real FTC bumpers are a fixed ~2", but a fixed value on a 10" chassis
-  // eats the whole deck, so it is clamped to a band that still reads at either extreme
-  // ...and kept just under the wheel inset, so the wheels read as sitting INSIDE the frame
-  // rather than perched on top of the bumper pads
-  const bump = Math.min(C.WHEEL_INSET - 0.5, Math.max(0.95, small * 0.085));
-  const rOut = Math.min(2.2, small * 0.14);
 
-  // ---- contact shadow -------------------------------------------------------------
   if (shadow) {
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.32)';
-    roundRect(ctx, -hl + 0.6, -hw + 1.0, L, W, rOut);
+    ctx.fillStyle = 'rgba(0,0,0,0.30)';
+    roundRect(ctx, -hl + 0.6, -hw + 0.9, L, W, 1.6);
     ctx.fill();
     ctx.restore();
   }
 
-  // ---- alliance bumpers (the full footprint) ---------------------------------------
-  ctx.fillStyle = color;
-  roundRect(ctx, -hl, -hw, L, W, rOut);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-  ctx.lineWidth = 0.32;
-  ctx.stroke();
-  // NO corner seams. Bumpers really are four separate pads, and a diagonal join line is the
-  // honest way to show it — but on a rounded corner the band is at its widest there, so the
-  // diagonal read as a notch chopped out of the robot rather than a seam. Not worth the
-  // confusion at the size a robot actually occupies on screen.
-
-  // ---- deck plate ------------------------------------------------------------------
-  const dl = hl - bump;
-  const dw = hw - bump;
+  // base plate
   ctx.fillStyle = fill;
-  roundRect(ctx, -dl, -dw, dl * 2, dw * 2, Math.max(0.6, rOut - bump * 0.6));
+  roundRect(ctx, -hl, -hw, L, W, 1.6);
   ctx.fill();
-  // top edge catches the light, bottom edge falls into shadow — the plate sits DOWN inside
-  // the bumpers, and two one-sided strokes say that far more cheaply than a gradient
-  ctx.strokeStyle = 'rgba(255,255,255,0.13)';
-  ctx.lineWidth = 0.34;
-  ctx.beginPath();
-  ctx.moveTo(-dl, -dw);
-  ctx.lineTo(dl, -dw);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.beginPath();
-  ctx.moveTo(-dl, dw);
-  ctx.lineTo(dl, dw);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
   ctx.stroke();
 
-  // ---- structure: two longitudinal rails + a cross member ---------------------------
-  ctx.strokeStyle = 'rgba(190,205,220,0.13)';
-  ctx.lineWidth = 0.3;
-  const railY = dw * 0.55;
-  for (const s of [1, -1] as const) {
-    ctx.beginPath();
-    ctx.moveTo(-dl * 0.86, s * railY);
-    ctx.lineTo(dl * 0.86, s * railY);
-    ctx.stroke();
-  }
-  ctx.beginPath();
-  ctx.moveTo(-dl * 0.12, -dw * 0.88);
-  ctx.lineTo(-dl * 0.12, dw * 0.88);
+  // the FRAME: an inset rail line, which is what a top-down extrusion perimeter actually
+  // looks like. One thin stroke — enough to say "this is a built frame, not a tile".
+  ctx.strokeStyle = 'rgba(190,205,220,0.16)';
+  ctx.lineWidth = 0.32;
+  roundRect(ctx, -hl + 1.15, -hw + 1.15, L - 2.3, W - 2.3, 1.0);
   ctx.stroke();
-
-  // ---- control hub: the one box every FTC robot has, rear-of-centre ------------------
-  const hubW = Math.min(4.6, dl * 0.62);
-  const hubH = Math.min(3.0, dw * 0.52);
-  ctx.fillStyle = 'rgba(12,16,22,0.85)';
-  roundRect(ctx, -dl * 0.62 - hubW / 2, -hubH / 2, hubW, hubH, 0.45);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(190,205,220,0.22)';
-  ctx.lineWidth = 0.26;
-  ctx.stroke();
-  // status LED — green once it is holding something, so the hub is also a readout
-  ctx.fillStyle = r.hopper.length > 0 ? 'rgba(34,197,94,0.9)' : 'rgba(150,163,178,0.55)';
-  ctx.beginPath();
-  ctx.arc(-dl * 0.62 - hubW / 2 + 0.75, 0, 0.34, 0, Math.PI * 2);
-  ctx.fill();
 }
 
 /**
@@ -262,38 +259,77 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
     [-wx, wy],
     [-wx, -wy],
   ] as const;
-  const drawWheel = (px: number, py: number, ang: number, len = 4.4, wid = 2.2, fill = '#12171e'): void => {
+  /**
+   * ONE WHEEL, drawn as the wheel it actually is. `kind` picks the tread, which is the only
+   * thing that distinguishes these from above and is exactly what the drivetrain choice buys:
+   *  • traction — a rubber tyre with tread bars ACROSS the roll direction (grip, no strafe)
+   *  • mecanum  — barrel rollers at 45 degrees (see drawMecanumRollers)
+   *  • omni     — barrel rollers ACROSS the tyre, in a row: rolls freely sideways
+   */
+  const drawWheel = (
+    px: number,
+    py: number,
+    ang: number,
+    kind: 'traction' | 'omni' | 'plain' = 'plain',
+    len = 4.4,
+    wid = 2.2,
+    fill = '#12171e',
+  ): void => {
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(ang);
     // tyre
     ctx.fillStyle = fill;
-    roundRect(ctx, -len / 2, -wid / 2, len, wid, wid * 0.28);
+    roundRect(ctx, -len / 2, -wid / 2, len, wid, wid * 0.26);
     ctx.fill();
-    // a light edge so the wheel's ORIENTATION reads (X-drive X, swerve steer)
-    ctx.strokeStyle = 'rgba(190,205,220,0.4)';
+    ctx.strokeStyle = 'rgba(190,205,220,0.40)';
     ctx.lineWidth = 0.35;
     ctx.stroke();
-    // HUB + axle: a wheel seen from above is a rectangle, so without these it reads as a
-    // block. The hub also gives the eye something to track when the robot spins.
-    ctx.fillStyle = 'rgba(190,205,220,0.30)';
+
+    ctx.save();
+    roundRect(ctx, -len / 2, -wid / 2, len, wid, wid * 0.26);
+    ctx.clip(); // tread never bleeds past the rim
+    if (kind === 'traction') {
+      // tread bars across the roll direction — what gives a traction wheel its grip
+      ctx.strokeStyle = 'rgba(205,218,232,0.30)';
+      ctx.lineWidth = 0.3;
+      for (let o = -len / 2 + 0.55; o < len / 2; o += 0.9) {
+        ctx.beginPath();
+        ctx.moveTo(o, -wid / 2);
+        ctx.lineTo(o, wid / 2);
+        ctx.stroke();
+      }
+    } else if (kind === 'omni') {
+      // the barrels: short rollers set across the tyre, which is what lets an omni slide
+      // sideways at all. Drawn as discrete capsules, not a hatch — you can count them.
+      ctx.fillStyle = 'rgba(205,218,232,0.34)';
+      for (let o = -len / 2 + 0.62; o < len / 2; o += 1.05) {
+        roundRect(ctx, o - 0.26, -wid / 2 + 0.22, 0.52, wid - 0.44, 0.26);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+
+    // hub + axle — a wheel from above is a rectangle, so without this it reads as a block,
+    // and the hub gives the eye something to track when the robot spins
+    ctx.fillStyle = 'rgba(190,205,220,0.34)';
     ctx.beginPath();
-    ctx.arc(0, 0, Math.min(wid * 0.3, 0.72), 0, Math.PI * 2);
+    ctx.arc(0, 0, Math.min(wid * 0.26, 0.62), 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   };
   /**
-   * MECANUM ROLLERS. A mecanum wheel's rollers sit at 45° to the wheel axis, and the four
-   * wheels ALTERNATE by diagonal — FL and BR one way, FR and BL the other — so from above
-   * the roller lines form an X. That alternation is not decoration: it is what lets the
-   * four wheels' lateral force components add up instead of cancelling, i.e. what makes
-   * the drive able to strafe at all. Drawing all four the same way is the classic mecanum
-   * render mistake, and it depicts a robot that physically could not strafe.
-   * `corners` is [FL, FR, BL, BR] with +x forward and +y left, so the sign of px·py
-   * separates the two diagonals exactly (the same test the X-drive branch uses).
+   * MECANUM ROLLERS. A mecanum wheel's rollers sit at 45 degrees to the wheel axis, and the
+   * four wheels ALTERNATE by diagonal — FL and BR one way, FR and BL the other — so from above
+   * the roller lines form an X. That alternation is not decoration: it is what lets the four
+   * wheels' lateral force components add up instead of cancelling, i.e. what makes the drive
+   * able to strafe at all. Drawing all four the same way is the classic mecanum render
+   * mistake, and it depicts a robot that physically could not strafe.
+   * `corners` is [FL, FR, BL, BR] with +x forward and +y left, so the sign of px*py separates
+   * the two diagonals exactly (the same test the X-drive branch uses).
    */
   const drawMecanumRollers = (px: number, py: number, len = 4.4, wid = 2.2): void => {
-    const s = px * py >= 0 ? 1 : -1; // FL/BR → "/", FR/BL → "\\"
+    const s = px * py >= 0 ? 1 : -1; // FL/BR -> "/", FR/BL -> "\\"
     ctx.save();
     ctx.translate(px, py);
     ctx.beginPath();
@@ -310,6 +346,7 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
     }
     ctx.restore();
   };
+
   if (r.spec.drivetrain === 'swerve') {
     // each of the four pods renders at its OWN angle — they visibly swivel + wobble
     corners.forEach(([px, py], i) => {
@@ -323,7 +360,7 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
       ctx.lineWidth = 0.4;
       ctx.strokeRect(-2.6, -2.6, 5.2, 5.2);
       ctx.restore();
-      drawWheel(px, py, ang, 4.2, 1.8, '#1b212b');
+      drawWheel(px, py, ang, 'traction', 4.2, 1.8, '#1b212b');
       // a tick showing which way this pod points
       ctx.save();
       ctx.translate(px, py);
@@ -340,7 +377,8 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
     // omni wheels canted 45°, opposite corners on the same diagonal → an X. Long +
     // lighter so the X clearly reads; the diagonals nearly meet at the center.
     const reach = Math.hypot(wx, wy);
-    for (const [px, py] of corners) drawWheel(px, py, px * py >= 0 ? Math.PI / 4 : -Math.PI / 4, Math.min(reach * 1.15, 7.5), 2.0, '#2b333e');
+    for (const [px, py] of corners)
+      drawWheel(px, py, px * py >= 0 ? Math.PI / 4 : -Math.PI / 4, 'omni', Math.min(reach * 1.15, 7.5), 2.0, '#2b333e');
   } else if (r.spec.drivetrain === 'butterfly') {
     // BUTTERFLY: draw the set that is actually DOWN, and show the other one STOWED. The
     // deployed wheels are full-size and lit; the stowed set is a thin dim bar tucked just
@@ -355,12 +393,13 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
       ctx.restore();
       // deployed set: traction wheels read SOLID, the mecanum set gets the real
       // alternating 45° roller hatch (same helper the mecanum drivetrain uses)
-      drawWheel(px, py, 0, undefined, undefined, tank ? '#39424f' : '#12171e');
+      drawWheel(px, py, 0, tank ? 'traction' : 'plain', undefined, undefined, tank ? '#39424f' : '#12171e');
       if (!tank) drawMecanumRollers(px, py);
     }
   } else {
     for (const [px, py] of corners) {
-      drawWheel(px, py, 0);
+      // TANK runs traction wheels (tread, no strafe); mecanum's tread is its 45 degree rollers
+      drawWheel(px, py, 0, r.spec.drivetrain === 'tank' ? 'traction' : 'plain');
       // MECANUM is the only remaining drivetrain with rollers; tank's traction wheels
       // stay plain, which is now a meaningful visual difference rather than an accident.
       if (r.spec.drivetrain === 'mecanum') drawMecanumRollers(px, py);

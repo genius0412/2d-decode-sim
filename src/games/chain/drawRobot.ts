@@ -287,7 +287,10 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
   // exactly what it isn't.
   const pos = catalystMountPositions(catalystMountOf(r.spec))[0];
   const o = mountOrigin(r.spec, pos);
-  const carrying = false; // colour cue is driven by the ring sprite itself, drawn in draw.ts
+  // Is this robot actually holding a ring? The ring SPRITE is drawn in draw.ts, but the
+  // mechanism needs to know too — an arm's jaws close on what they are carrying, and a claw
+  // drawn permanently open is the one state that never happens in a match.
+  const carrying = (world?.chain?.catalysts ?? []).some((c) => c.carriedBy === r.id);
   ctx.save();
   // move to where it is BOLTED (edge mid-point, or the actual corner) and point +x outward,
   // so every shape below is drawn from the frame outward regardless of mount
@@ -307,31 +310,66 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
     // own radius) and the legal expansion bigger still, but neither is what the robot looks
     // like sitting on the tiles, which is what a top-down sprite should show.
     //
-    // Built as a real mechanism rather than a line-with-a-vee: a pivot block at the frame,
-    // a boom with actual width, and a two-finger claw whose jaws are curved and open.
+    // Built as a real mechanism: a SHOULDER the arm pivots on, a boom made of two
+    // extrusions with a visible elbow joint, and a two-finger CLAW with grip pads. The jaws
+    // CLOSE when it is carrying, so the sprite tells you whether it is holding a ring.
     const reach = CHAIN_ARM_DRAW;
     const x0 = dist - 1.1;
     const tip = dist + reach;
-    // pivot block at the frame edge
+
+    // shoulder: a pivot boss on a mounting plate
     ctx.fillStyle = STEEL_DK;
-    ctx.fillRect(x0 - 0.9, -1.5, 1.9, 3);
-    ctx.strokeRect(x0 - 0.9, -1.5, 1.9, 3);
-    // boom — a tapered bar, not a hairline
+    ctx.fillRect(x0 - 1.15, -1.7, 1.5, 3.4);
+    ctx.strokeRect(x0 - 1.15, -1.7, 1.5, 3.4);
     ctx.beginPath();
-    ctx.moveTo(x0, -0.85);
-    ctx.lineTo(tip - 0.4, -0.55);
-    ctx.lineTo(tip - 0.4, 0.55);
-    ctx.lineTo(x0, 0.85);
+    ctx.arc(x0 - 0.4, 0, 0.82, 0, Math.PI * 2);
+    ctx.fillStyle = STEEL;
+    ctx.fill();
+    ctx.stroke();
+
+    // boom: upper extrusion to the elbow, then the forearm — two segments read as a linkage
+    const elbow = x0 + (tip - x0) * 0.52;
+    ctx.fillStyle = STEEL_DK;
+    ctx.beginPath();
+    ctx.moveTo(x0 - 0.2, -0.82);
+    ctx.lineTo(elbow, -0.66);
+    ctx.lineTo(elbow, 0.66);
+    ctx.lineTo(x0 - 0.2, 0.82);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    // claw: two curved jaws opening off the tip
+    ctx.beginPath();
+    ctx.moveTo(elbow, -0.62);
+    ctx.lineTo(tip - 0.45, -0.5);
+    ctx.lineTo(tip - 0.45, 0.5);
+    ctx.lineTo(elbow, 0.62);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // elbow joint
+    ctx.beginPath();
+    ctx.arc(elbow, 0, 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = STEEL;
+    ctx.fill();
+    ctx.stroke();
+
+    // CLAW: two fingers off the wrist. Open when empty, closed on the ring when carrying —
+    // a claw drawn permanently open is the one thing that never happens in a match.
+    const spread = carrying ? 0.55 : 1.0;
     ctx.lineWidth = 0.62;
+    ctx.strokeStyle = ink;
     for (const sgn of [1, -1] as const) {
       ctx.beginPath();
-      ctx.moveTo(tip - 0.5, sgn * 0.5);
-      ctx.quadraticCurveTo(tip + 0.7, sgn * 1.5, tip + 1.5, sgn * 0.85);
+      ctx.moveTo(tip - 0.5, sgn * 0.45);
+      ctx.quadraticCurveTo(tip + 0.7, sgn * 1.5 * spread, tip + 1.5, sgn * 0.85 * spread);
       ctx.stroke();
+      // grip pad on the inside of each finger
+      ctx.beginPath();
+      ctx.moveTo(tip + 0.75, sgn * 1.0 * spread);
+      ctx.lineTo(tip + 1.4, sgn * 0.78 * spread);
+      ctx.lineWidth = 0.34;
+      ctx.stroke();
+      ctx.lineWidth = 0.62;
     }
     ctx.lineWidth = 0.55;
   } else if (type === 'launcher') {
@@ -355,23 +393,83 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
     const mouth = catalystMouth(r);
     const tgt = catalystTrackTarget(r, world);
     const bestA = tgt ? Math.atan2(tgt.y - mouth.y, tgt.x - mouth.x) : 0;
-    ctx.beginPath();
-    ctx.arc(dist - 0.8, 0, 2.1, 0, Math.PI * 2);
+
+    // THE RAIL: a linear track ACROSS the mounted edge with a carriage riding it. This is
+    // the half of the mechanism the name promises and it was missing entirely — without it
+    // the archetype was just a pivot, indistinguishable from the arm's shoulder.
+    const railHalf = Math.min(3.6, (isEndEdge(pos as never) ? r.spec.width : r.spec.length) / 2 - 1.2);
+    ctx.strokeStyle = '#6b7480';
+    ctx.lineWidth = 0.42;
+    for (const sgn of [1, -1] as const) {
+      ctx.beginPath();
+      ctx.moveTo(dist - 2.3, sgn * 0.95);
+      ctx.lineTo(dist - 2.3, sgn * railHalf);
+      ctx.stroke();
+    }
+    ctx.beginPath(); // the rail itself, spanning the edge
+    ctx.moveTo(dist - 2.3, -railHalf);
+    ctx.lineTo(dist - 2.3, railHalf);
+    ctx.stroke();
+    // end stops
+    ctx.lineWidth = 0.7;
+    for (const sgn of [1, -1] as const) {
+      ctx.beginPath();
+      ctx.moveTo(dist - 3.0, sgn * railHalf);
+      ctx.lineTo(dist - 1.6, sgn * railHalf);
+      ctx.stroke();
+    }
+
+    // CARRIAGE on the rail, carrying the turret
+    ctx.fillStyle = STEEL_DK;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 0.55;
+    roundRect(ctx, dist - 3.1, -1.5, 1.7, 3.0, 0.35);
     ctx.fill();
     ctx.stroke();
+
+    // TURRET ring on the carriage — toothed, like the shooter's slew ring, so it reads as
+    // something that rotates rather than a dot
+    const ring = 2.0;
+    ctx.beginPath();
+    ctx.arc(dist - 0.8, 0, ring, 0, Math.PI * 2);
+    ctx.fillStyle = STEEL;
+    ctx.fill();
+    ctx.stroke();
+    ctx.lineWidth = 0.34;
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(dist - 0.8 + Math.cos(a) * ring, Math.sin(a) * ring);
+      ctx.lineTo(dist - 0.8 + Math.cos(a) * (ring + 0.42), Math.sin(a) * (ring + 0.42));
+      ctx.stroke();
+    }
+
+    // the CLAW on its short arm, swivelled to the tracked target
     ctx.save();
     ctx.translate(dist - 0.8, 0);
     // world aim → this local frame (chassis heading + the mount rotation already applied)
     ctx.rotate(bestA - r.heading - MOUNT_ANGLE[pos]);
-    ctx.strokeStyle = GREEN;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(3.6, 0);
-    ctx.moveTo(3.6, -0.9);
-    ctx.lineTo(4.6, -0.3);
-    ctx.moveTo(3.6, 0.9);
-    ctx.lineTo(4.6, 0.3);
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 0.5;
+    ctx.fillStyle = STEEL_DK;
+    ctx.beginPath(); // forearm
+    ctx.moveTo(0, -0.6);
+    ctx.lineTo(3.5, -0.45);
+    ctx.lineTo(3.5, 0.45);
+    ctx.lineTo(0, 0.6);
+    ctx.closePath();
+    ctx.fill();
     ctx.stroke();
+    // two fingers, closed when it is carrying
+    const spread = carrying ? 0.5 : 1.0;
+    ctx.strokeStyle = GREEN;
+    ctx.lineWidth = 0.58;
+    for (const sgn of [1, -1] as const) {
+      ctx.beginPath();
+      ctx.moveTo(3.4, sgn * 0.42);
+      ctx.quadraticCurveTo(4.4, sgn * 1.25 * spread, 5.1, sgn * 0.6 * spread);
+      ctx.stroke();
+    }
     ctx.restore();
   }
   ctx.restore();
