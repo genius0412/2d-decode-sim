@@ -27,7 +27,17 @@ const THEMES = process.env.DSIM_THEME ? [process.env.DSIM_THEME] : ['light', 'da
 const OUT = process.env.DSIM_OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'shiftaudit-'));
 const LOG = path.join(OUT, 'shiftaudit.log');
 fs.writeFileSync(LOG, '');
+// QUIET BY DEFAULT. The full page-by-page trace always goes to the LOG FILE; the console
+// only gets the things you actually need to see — shifts and the final summary. DSIM_VERBOSE=1
+// puts the trace back on stdout.
+const VERBOSE = process.env.DSIM_VERBOSE === '1';
 const log = (...a) => {
+  const line = a.join(' ');
+  fs.appendFileSync(LOG, line + '\n');
+  if (VERBOSE) console.log(line);
+};
+/** always reaches the console, verbose or not (findings + the summary) */
+const say = (...a) => {
   const line = a.join(' ');
   fs.appendFileSync(LOG, line + '\n');
   console.log(line);
@@ -134,13 +144,25 @@ function diff(base, cur, skip, tags) {
 
 app.whenReady().then(async () => {
   log('boot · themes: ' + THEMES.join(', ') + ' · log: ' + LOG);
-  const win = new BrowserWindow({ width: 1400, height: 900, show: true,
+  // NEVER STEAL FOCUS. The audit ran with a visible, focused window, so every run yanked
+  // the desktop away for a minute-plus. It is hidden now: layout and getBoundingClientRect
+  // work fine offscreen, and the two switches this file already sets are exactly what keeps
+  // an unfocused/hidden window painting normally — `backgroundThrottling: false` and the
+  // CalculateNativeWinOcclusion disable at the top. `showInactive()` (not `show()`) is the
+  // fallback when debugging: it maps the window WITHOUT raising or focusing it.
+  // DSIM_SHOW=1 to watch a run.
+  const visible = process.env.DSIM_SHOW === '1';
+  const win = new BrowserWindow({ width: 1400, height: 900, show: false,
     webPreferences: { backgroundThrottling: false } });
+  const surface = () => { if (visible) win.showInactive(); };
+  // MUTE. The run clicks into Free Drive to reach the in-game HUD, which starts the match
+  // audio — countdown, announcer, the lot. Nothing about layout needs sound.
+  win.webContents.setAudioMuted(true);
   // Load a real document BEFORE attaching: on a blank target, DOM.enable never
   // resolves and the whole run silently hangs until the watchdog.
   await win.loadURL(BASE + '/');
   await sleep(1200);
-  win.show();
+  surface();
   const dbg = win.webContents.debugger;
   try { dbg.attach('1.3'); log('debugger attached'); }
   catch (e) { log('ATTACH FAILED:', e.message); process.exit(3); }
@@ -176,8 +198,8 @@ app.whenReady().then(async () => {
         const d = diff(base.rects, cur.rects, new Set(cur.skip), tags);
         if (d.length) {
           problems++;
-          log(`  SHIFT ${sel}[${i}] :${pseudo.join(':')}`);
-          d.forEach((x) => log(`          ${x}`));
+          say(`  SHIFT ${sel}[${i}] :${pseudo.join(':')}`);
+          d.forEach((x) => say(`          ${x}`));
         }
       }
     }
@@ -192,7 +214,7 @@ app.whenReady().then(async () => {
     for (const page of PAGES) {
       await win.loadURL(BASE + page);
       await sleep(1400);
-      win.show();
+      surface();
       await js(FREEZE);          // transitions would bleed into the next probe
       await sleep(120);
       log(`\n##### [${theme}] ${page}`);
@@ -226,8 +248,8 @@ app.whenReady().then(async () => {
           const d = diff(base.rects, cur.rects, new Set(cur.skip), tags);
           if (d.length) {
             problems++;
-            log(`  SHIFT ${sel}[${i}] .${cls} ${had ? 'removed' : 'added'}`);
-            d.forEach((x) => log(`          ${x}`));
+            say(`  SHIFT ${sel}[${i}] .${cls} ${had ? 'removed' : 'added'}`);
+            d.forEach((x) => say(`          ${x}`));
           }
         }
       }
@@ -266,7 +288,7 @@ app.whenReady().then(async () => {
   }
 
   await js(`localStorage.removeItem('decodesim.theme'); 'ok'`);
-  log(`\n===== ${checked} state changes checked · ${problems} caused layout shift =====`);
+  say(`===== ${checked} state changes checked · ${problems} caused layout shift =====`);
   dbg.detach();
   process.exit(problems === 0 ? 0 : 1);
 });
