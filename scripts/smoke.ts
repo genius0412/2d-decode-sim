@@ -1663,6 +1663,9 @@ const setup = (
       restore() { const p = stack.pop()!; tx = p[0]; ty = p[1]; },
       translate(x: number, y: number) { tx += x; ty += y; },
       rotate() {}, fillRect() {}, strokeRect() {}, fill() {}, clip() {}, rect() {}, arc() {},
+      // `arcTo` is the rounded-rect corner (roundRect); it never emits a 45 degree segment,
+      // so recording it as a no-op keeps the probe reading only the roller hatch it is after
+      arcTo() {}, closePath() {},
       beginPath() { cur = null; },
       moveTo(x: number, y: number) { cur = [x, y]; },
       lineTo(x: number, y: number) { if (cur) segs.push({ cx: tx, cy: ty, dx: x - cur[0], dy: y - cur[1] }); },

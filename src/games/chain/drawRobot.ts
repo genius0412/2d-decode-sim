@@ -1,6 +1,6 @@
 import type { Artifact, RobotState, Vec2, World } from '../../types';
 import * as C from '../../config';
-import { drawWheels, roundRect } from '../../render/drawRobot';
+import { drawChassisBody, drawWheels, roundRect } from '../../render/drawRobot';
 import {
   CHAIN_DEFAULT_SCORE_MODE,
   chainHopperCap,
@@ -80,14 +80,11 @@ export function drawChainRobot(
   ctx.translate(r.pos.x + ox, r.pos.y + oy);
   ctx.rotate(r.heading);
 
-  // chassis
-  ctx.fillStyle = C.chassisFill(r.spec.chassisColor);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, 1.6);
-  ctx.fill();
-  ctx.stroke();
-
+  // chassis — the SHARED body (bumpers, deck, structure), so a robot is the same object in
+  // both games. Its own contact shadow is suppressed while the robot is lifted onto a beam:
+  // the terrain shadow above is already drawn at the true footprint, and two would read as
+  // two robots.
+  drawChassisBody(ctx, r, color, C.chassisFill(r.spec.chassisColor), lift <= 0.15);
   drawWheels(ctx, r, color);
 
   drawChainIntake(ctx, r, intaking);

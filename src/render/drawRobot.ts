@@ -21,14 +21,7 @@ export function drawRobot(
   ctx.translate(r.pos.x, r.pos.y);
   ctx.rotate(r.heading);
 
-  // chassis
-  ctx.fillStyle = fill;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, 1.6);
-  ctx.fill();
-  ctx.stroke();
-
+  drawChassisBody(ctx, r, color, fill);
   drawWheels(ctx, r, color);
 
   // intake at the front (RobotPreview.tsx draws the same). FUNNEL presets
@@ -139,6 +132,120 @@ export function drawRobot(
 }
 
 /**
+ * The CHASSIS BODY — shared by both games so a robot is the same object in DECODE and Chain
+ * Reaction. Drawn in the chassis-local frame (caller has already translated + rotated).
+ *
+ * It was a flat rounded rect with a 1px alliance outline. This builds it the way the real
+ * thing is built, from the outside in:
+ *
+ *  • a CONTACT SHADOW, so the robot sits ON the mat instead of being printed on it;
+ *  • ALLIANCE BUMPERS around the frame perimeter — the one feature that makes an FTC robot
+ *    instantly readable as one, and it carries the alliance in a band you can see at a glance
+ *    rather than in a hairline stroke;
+ *  • the DECK PLATE inside them, with a light top edge and a dark bottom edge so the plate
+ *    reads as recessed below the bumper rather than floating on it;
+ *  • structural RAILS and a CONTROL HUB, which are what fills the middle of a real chassis.
+ *
+ * Everything is a fraction of the chassis, so a 10" robot and an 18" one both look built
+ * rather than one looking like a scaled sticker of the other. Nothing is drawn OUTSIDE the
+ * `length x width` box — that box is the collision footprint, and a sprite that spilled past
+ * it would be telling you the robot is bigger than the sim thinks it is.
+ */
+export function drawChassisBody(
+  ctx: CanvasRenderingContext2D,
+  r: RobotState,
+  color: string,
+  fill: string,
+  /** draw the contact shadow? CR turns it OFF while a robot is lifted onto a beam — it
+   * already draws a shadow at the true footprint down on the mat, and two would read as
+   * two robots. */
+  shadow = true,
+): void {
+  const L = r.spec.length;
+  const W = r.spec.width;
+  const hl = L / 2;
+  const hw = W / 2;
+  const small = Math.min(L, W);
+  // bumper thickness: real FTC bumpers are a fixed ~2", but a fixed value on a 10" chassis
+  // eats the whole deck, so it is clamped to a band that still reads at either extreme
+  // ...and kept just under the wheel inset, so the wheels read as sitting INSIDE the frame
+  // rather than perched on top of the bumper pads
+  const bump = Math.min(C.WHEEL_INSET - 0.5, Math.max(0.95, small * 0.085));
+  const rOut = Math.min(2.2, small * 0.14);
+
+  // ---- contact shadow -------------------------------------------------------------
+  if (shadow) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    roundRect(ctx, -hl + 0.6, -hw + 1.0, L, W, rOut);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ---- alliance bumpers (the full footprint) ---------------------------------------
+  ctx.fillStyle = color;
+  roundRect(ctx, -hl, -hw, L, W, rOut);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = 0.32;
+  ctx.stroke();
+  // NO corner seams. Bumpers really are four separate pads, and a diagonal join line is the
+  // honest way to show it — but on a rounded corner the band is at its widest there, so the
+  // diagonal read as a notch chopped out of the robot rather than a seam. Not worth the
+  // confusion at the size a robot actually occupies on screen.
+
+  // ---- deck plate ------------------------------------------------------------------
+  const dl = hl - bump;
+  const dw = hw - bump;
+  ctx.fillStyle = fill;
+  roundRect(ctx, -dl, -dw, dl * 2, dw * 2, Math.max(0.6, rOut - bump * 0.6));
+  ctx.fill();
+  // top edge catches the light, bottom edge falls into shadow — the plate sits DOWN inside
+  // the bumpers, and two one-sided strokes say that far more cheaply than a gradient
+  ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+  ctx.lineWidth = 0.34;
+  ctx.beginPath();
+  ctx.moveTo(-dl, -dw);
+  ctx.lineTo(dl, -dw);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath();
+  ctx.moveTo(-dl, dw);
+  ctx.lineTo(dl, dw);
+  ctx.stroke();
+
+  // ---- structure: two longitudinal rails + a cross member ---------------------------
+  ctx.strokeStyle = 'rgba(190,205,220,0.13)';
+  ctx.lineWidth = 0.3;
+  const railY = dw * 0.55;
+  for (const s of [1, -1] as const) {
+    ctx.beginPath();
+    ctx.moveTo(-dl * 0.86, s * railY);
+    ctx.lineTo(dl * 0.86, s * railY);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(-dl * 0.12, -dw * 0.88);
+  ctx.lineTo(-dl * 0.12, dw * 0.88);
+  ctx.stroke();
+
+  // ---- control hub: the one box every FTC robot has, rear-of-centre ------------------
+  const hubW = Math.min(4.6, dl * 0.62);
+  const hubH = Math.min(3.0, dw * 0.52);
+  ctx.fillStyle = 'rgba(12,16,22,0.85)';
+  roundRect(ctx, -dl * 0.62 - hubW / 2, -hubH / 2, hubW, hubH, 0.45);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(190,205,220,0.22)';
+  ctx.lineWidth = 0.26;
+  ctx.stroke();
+  // status LED — green once it is holding something, so the hub is also a readout
+  ctx.fillStyle = r.hopper.length > 0 ? 'rgba(34,197,94,0.9)' : 'rgba(150,163,178,0.55)';
+  ctx.beginPath();
+  ctx.arc(-dl * 0.62 - hubW / 2 + 0.75, 0, 0.34, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/**
  * Draw a robot's DRIVETRAIN wheels in the chassis-local frame (already translated +
  * rotated to the robot). Shared by DECODE's drawRobot and Chain Reaction's drawChainRobot
  * so every drivetrain reads identically across games: mecanum/tank point forward, SWERVE
@@ -159,12 +266,20 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(ang);
+    // tyre
     ctx.fillStyle = fill;
-    ctx.fillRect(-len / 2, -wid / 2, len, wid);
+    roundRect(ctx, -len / 2, -wid / 2, len, wid, wid * 0.28);
+    ctx.fill();
     // a light edge so the wheel's ORIENTATION reads (X-drive X, swerve steer)
     ctx.strokeStyle = 'rgba(190,205,220,0.4)';
     ctx.lineWidth = 0.35;
-    ctx.strokeRect(-len / 2, -wid / 2, len, wid);
+    ctx.stroke();
+    // HUB + axle: a wheel seen from above is a rectangle, so without these it reads as a
+    // block. The hub also gives the eye something to track when the robot spins.
+    ctx.fillStyle = 'rgba(190,205,220,0.30)';
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.min(wid * 0.3, 0.72), 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   };
   /**

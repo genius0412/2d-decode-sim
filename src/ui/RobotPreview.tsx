@@ -95,6 +95,9 @@ export function RobotPreview({
   const vbW = halfSpan * 2;
   const vbH = bottom - top;
 
+  // bumper thickness — the SAME rule the in-game body uses (drawChassisBody), kept just
+  // under the wheel inset so the wheels read as inside the frame
+  const bumpW = Math.min(WHEEL_INSET - 0.5, Math.max(0.95, Math.min(w, len) * 0.085));
   const wheelInset = WHEEL_INSET;
   const wx = w / 2 - wheelInset;
   const wy = len / 2 - wheelInset;
@@ -332,16 +335,51 @@ export function RobotPreview({
           (a DARK green in light theme) on a dark chassis fill, which is the exact
           fill-vs-text collision shell.css warns about. The colour is previewed by
           its swatch in the builder instead. */}
+      {/* BUMPER BAND + DECK, mirroring the in-game `drawChassisBody` so the builder previews
+          the same OBJECT rather than a plain outline. Neutral, not alliance-coloured: a
+          preview has no alliance to show, and the fill note above rules out a strong fill
+          here anyway. */}
       <rect
         x={-w / 2}
         y={-len / 2}
         width={w}
         height={len}
-        rx={1.4}
-        fill="var(--ds-panel)"
+        rx={1.8}
+        fill="var(--ds-line)"
         stroke={stroke}
         strokeWidth={0.5}
       />
+      <rect
+        x={-w / 2 + bumpW}
+        y={-len / 2 + bumpW}
+        width={w - bumpW * 2}
+        height={len - bumpW * 2}
+        rx={1}
+        fill="var(--ds-panel)"
+        stroke={stroke}
+        strokeWidth={0.32}
+      />
+      {/* control hub — the box every FTC robot has. Pushed WELL back (0.62 of the deck,
+          matching drawChassisBody): rear-of-centre is exactly where both games park a turret,
+          so a hub any further forward is just something for the turret to sit on top of. */}
+      {(() => {
+        const dl = len / 2 - bumpW;
+        const dw = w / 2 - bumpW;
+        const hubW = Math.min(4.6, dw * 1.24);
+        const hubH = Math.min(3, dl * 0.52);
+        return (
+          <rect
+            x={-hubW / 2}
+            y={dl * 0.62 - hubH / 2}
+            width={hubW}
+            height={hubH}
+            rx={0.45}
+            fill="var(--ds-bg)"
+            stroke={stroke}
+            strokeWidth={0.28}
+          />
+        );
+      })()}
 
       {/* wheels ON TOP of the chassis (like the in-game drawRobot) — per
           drivetrain: mecanum/tank forward, SWERVE steering pods, X-drive omnis
