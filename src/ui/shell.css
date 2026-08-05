@@ -247,6 +247,9 @@
 /* Recessed-input inner shadow. Light mode's 7%-black is the historical value; dark
    needs far more to carve a well into an already-dark tile. */
 :root {
+  /* height of the sticky app bar. A CONTRACT, not a measurement: `.ds-hero` pins directly
+     below it, so both read this one number (see `.ds-bar`). */
+  --ds-bar-h: 63px;
   --ds-inset: rgba(25, 28, 27, 0.07);
 }
 
@@ -311,11 +314,17 @@
   box-sizing: border-box;
 }
 
+/* The app bar is STICKY, and `.ds-hero` pins directly beneath it, so its height is a contract
+   between the two rather than an accident of its contents. `--ds-bar-h` states it in one place
+   and `min-height` holds the bar to it — border-box, so it exactly matches what the bar already
+   measured. That also kills a real shift on load: the bar was 57px until the webfont swapped and
+   then grew to 63, dragging the whole page down with it. */
 .ds-bar {
   display: flex;
   align-items: center;
   gap: 20px;
   padding: 14px 22px;
+  min-height: var(--ds-bar-h);
   border-bottom: 1px solid var(--ds-line);
   background: var(--ds-bar);
   position: sticky;
@@ -3065,7 +3074,17 @@ input[type='range']:focus-visible {
 }
 
 /* ---- robot hero ------------------------------------------------------ */
+/* THE HERO PINS. Every control below it changes the robot, and the robot + its stats ARE the
+   feedback for that change — having to scroll back to the top to see what a slider did made
+   the builder feel like guesswork. Sticky to the scroll container (`.ds-app`).
+   It also SHRINKS once you scroll past it (`.stuck`, driven by a sentinel + IntersectionObserver
+   in Menu.tsx): a 230px card pinned to the top of an 800px viewport costs more than it returns,
+   while a ~110px strip keeps the preview and the numbers without eating the page. */
 .ds-hero {
+  position: sticky;
+  /* BELOW the app bar, which is sticky in this same scroller (see `--ds-bar-h`). */
+  top: var(--ds-bar-h);
+  z-index: 3;
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: 18px;
@@ -3074,6 +3093,40 @@ input[type='range']:focus-visible {
   background: linear-gradient(160deg, var(--ds-tile), var(--ds-panel));
   padding: 18px;
   box-shadow: var(--ds-block);
+  transition: padding 0.16s ease, gap 0.16s ease;
+}
+.ds-hero.stuck {
+  grid-template-columns: 116px 1fr;
+  gap: 14px;
+  padding: 10px 14px;
+  /* square off the top edge — it sits against the header now, not floating in the page */
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.ds-hero.stuck .ds-hero-view {
+  min-height: 0;
+  padding: 5px;
+}
+.ds-hero.stuck .ds-hero-view svg {
+  max-height: 92px;
+}
+.ds-hero.stuck .ds-hero-info {
+  gap: 7px;
+  justify-content: center;
+}
+.ds-hero.stuck .ds-hero-name {
+  font-size: 17px;
+}
+/* the team line is identity, not feedback — first thing to go when space is tight */
+.ds-hero.stuck .ds-hero-team {
+  display: none;
+}
+.ds-hero.stuck .ds-stats {
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 6px;
+}
+.ds-hero.stuck .ds-stat {
+  padding: 4px 7px;
 }
 .ds-hero-view {
   display: grid;

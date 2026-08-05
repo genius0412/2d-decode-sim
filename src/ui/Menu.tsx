@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '../types';
 import type { ChainScoreMode, DrivetrainType, IntakeStyle, RobotSpec } from '../types';
 import { MAX_SAVED_ROBOTS, ROBOT_PRESETS, CHASSIS_COLORS, CHASSIS_COLOR_KEYS } from '../config';
@@ -81,6 +82,48 @@ const CHAIN_MODE_BLURBS: Record<ChainScoreMode, string> = {
   drum: 'Face the goal and fire a fast stream',
   dumper: 'Face the goal and dump the whole load up close',
 };
+
+/**
+ * Is the pinned hero scrolled past? Drives the compact `.stuck` strip (see `.ds-hero`).
+ *
+ * A passive SCROLL listener rather than an IntersectionObserver: the offset it compares
+ * against is measured ONCE at mount, so each scroll event is a single number comparison — no
+ * `getBoundingClientRect`, no forced reflow, and `setStuck` with an unchanged value is a React
+ * no-op, so a long drag re-renders only on the two transitions. (IntersectionObserver would be
+ * the textbook pick, but it does not fire at all in a backgrounded/hidden view, which makes
+ * this impossible to verify — and a feature you cannot check is a feature you do not know
+ * works.)
+ */
+function useStuck(): [React.RefObject<HTMLDivElement>, boolean] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    const root = el?.closest('.ds-app');
+    if (!el || !root) return;
+    // How far the hero pins BELOW the sticky app bar is a CSS contract (`--ds-bar-h`), so this
+    // only has to decide WHEN it is pinned: the sentinel's own offset in the scroll content,
+    // less that bar height. Re-measured on resize because the layout reflows.
+    const barH = () =>
+      parseFloat(getComputedStyle(root).getPropertyValue('--ds-bar-h')) || 0;
+    const measure = () =>
+      el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - barH();
+    let base = measure();
+    const onScroll = () => setStuck(root.scrollTop > base);
+    const onResize = () => {
+      base = measure();
+      onScroll();
+    };
+    onScroll();
+    root.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onResize);
+    return () => {
+      root.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+  return [ref, stuck];
+}
 
 /** does the current spec exactly match a preset? (value compare) */
 /** a preset match is about the BUILD only — name/team/number are the player's
@@ -181,6 +224,7 @@ function ChassisColorRow({
  * deliberately no "start match" here.
  */
 export function Menu({ settings, onChange }: Props) {
+  const [sentinelRef, stuck] = useStuck();
   const set = (patch: Partial<GameSettings>) => onChange({ ...settings, ...patch });
   // Apply a fully-formed spec. ASSISTS RIDE THE ROBOT, so the ACTIVE assists always
   // re-mirror from the incoming spec — loading a preset or a saved robot (or switching
@@ -287,10 +331,11 @@ export function Menu({ settings, onChange }: Props) {
     <>
       {/* the page heading is owned by the Configure host */}
       <div className="ds-robot">
-        {/* ---------- robot hero ---------- */}
-        <div className="ds-hero">
+        {/* ---------- robot hero (PINNED — see .ds-hero) ---------- */}
+        <div ref={sentinelRef} aria-hidden style={{ height: 1, marginBottom: -1 }} />
+        <div className={`ds-hero${stuck ? ' stuck' : ''}`}>
           <div className="ds-hero-view">
-            <RobotPreview spec={spec} size={160} chain={!isDecode} />
+            <RobotPreview spec={spec} size={stuck ? 96 : 160} chain={!isDecode} />
           </div>
           <div className="ds-hero-info">
             <div>
