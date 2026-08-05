@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-05T00:00:00.000Z",
+  "title": "Design System: DSIM",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Driver Green", "canonical": "#366758" },
+      "red-chip": { "role": "state", "displayName": "Alliance Red", "canonical": "#d32020" },
+      "blue-chip": { "role": "state", "displayName": "Alliance Blue", "canonical": "#1f6fe0" },
+      "gold": { "role": "state", "displayName": "Signal Gold", "canonical": "#f5a623" },
+      "ok": { "role": "state", "displayName": "Status Green", "canonical": "#2f9e5f" },
+      "on-field": { "role": "neutral", "displayName": "On-Field (canvas-only)", "canonical": "#f9faf7" },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#191c1b" },
+      "mut": { "role": "neutral", "displayName": "Mut (muted text)", "canonical": "#5c645f" }
+    },
+    "typographyMeta": {
+      "ui": { "displayName": "Plus Jakarta Sans", "purpose": "All UI copy: labels, menus, prose, buttons." },
+      "data": { "displayName": "Space Grotesk", "purpose": "Live-updating numbers only: scores, timers, coordinates, ping. Always tabular-nums." }
+    },
+    "shadows": [
+      { "name": "block", "value": "4px 4px 0 var(--ds-line-soft)", "purpose": "Flat resting shadow under panels/cards, no blur." },
+      { "name": "block-sm", "value": "2px 2px 0 var(--ds-line-soft)", "purpose": "Compact version for small panels/tooltips." },
+      { "name": "edge", "value": "0 3px 0 var(--ds-accent-edge)", "purpose": "Primary keycap's own thickness/rim." },
+      { "name": "edge-soft", "value": "0 3px 0 var(--ds-line)", "purpose": "Default keycap's rim." }
+    ],
+    "motion": [
+      { "name": "press", "value": "transform 0.06s ease, box-shadow 0.06s ease", "purpose": "Keycap hover/press response." },
+      { "name": "state-fade", "value": "border-color 0.15s, background 0.15s", "purpose": "Color/border transitions on hover, slower than the press itself." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main action button — accent-filled keycap.",
+      "html": "<button class=\"ds-btn-primary\">START MATCH</button>",
+      "css": ".ds-btn-primary { font-size: 14px; font-weight: 600; padding: 9px 16px; border-radius: 8px; border: none; background: #366758; color: #ffffff; cursor: pointer; box-shadow: 0 3px 0 #24463b; transition: transform 0.06s ease, box-shadow 0.06s ease, background 0.15s; } .ds-btn-primary:hover { background: #3d7565; box-shadow: 0 2px 0 #24463b; transform: translateY(1px); } .ds-btn-primary:active { box-shadow: 0 0 0 #24463b; transform: translateY(3px); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default keycap button — panel-toned.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { font-size: 14px; font-weight: 600; padding: 9px 16px; border-radius: 8px; border: 1px solid #c0c9c4; background: #ffffff; color: #191c1b; cursor: pointer; box-shadow: 0 3px 0 #c0c9c4; transition: transform 0.06s ease, box-shadow 0.06s ease, border-color 0.15s; } .ds-btn-secondary:hover { border-color: #6f8f83; transform: translateY(1px); box-shadow: 0 2px 0 #c0c9c4; } .ds-btn-secondary:active { transform: translateY(3px); box-shadow: 0 0 0 #c0c9c4; }"
+    },
+    {
+      "name": "Alliance Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Alliance identity pill — filled solid, never tinted text.",
+      "html": "<span class=\"ds-chip-red\">RED</span>",
+      "css": ".ds-chip-red { font-family: 'Space Grotesk Variable', ui-monospace, monospace; font-size: 12px; display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 999px; background: #d32020; color: #ffffff; font-weight: 700; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat panel with hard offset shadow, no blur.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Robot Setup</div><div class=\"ds-card-body\">Chassis, drivetrain, and intake configuration.</div></div>",
+      "css": ".ds-card { border: 1px solid #c0c9c4; border-radius: 8px; background: #ffffff; padding: 15px; box-shadow: 4px 4px 0 #d9dad8; } .ds-card-title { font-weight: 700; color: #191c1b; margin-bottom: 8px; } .ds-card-body { color: #5c645f; font-size: 14px; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Recessed text field — inset top shadow, focus ring lives inside the recess.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Team number\" />",
+      "css": ".ds-input { font: inherit; padding: 9px 12px; border-radius: 8px; border: 1px solid #c0c9c4; background: #f3f4f1; color: #191c1b; box-shadow: inset 0 2px 0 rgba(25,28,27,0.07); } .ds-input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px #366758, inset 0 2px 0 rgba(25,28,27,0.07); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Driver Station",
+    "overview": "DSIM's chrome is built to feel like the physical control box a real FTC team stands behind during a match, not a generic web app shell. Every interactive surface reads as a keycap — a flat colored cap sitting on a slightly darker edge, sinking on hover and pressing flush on click via transform, never layout-shifting margin. Data that a driver would glance at mid-match (scores, timers, coordinates, ping) is set in a monospace face with tabular numerals; everything else — labels, menu copy, prose — is set in a rounded-geometric sans. The palette spends most of its area in quiet desaturated neutrals so that the two colors reserved for competition state — alliance red and alliance blue — read as genuinely alarming the instant they appear, the way a real field-control light does.\n\nThe system is explicitly dual-theme (light/dark, user-toggled, WCAG-audited both ways via npm run contrast) and explicitly three-zone: chrome surfaces invert between themes, fixed-hue fills keep one ink regardless of theme (alliance chips, gold), and anything drawn on the game canvas itself uses a third, non-inverting family (on-field*) because the field mat is hardcoded dark in both themes.",
+    "keyCharacteristics": [
+      "Flat \"keycap\" pressables — offset hard shadow, no blur, moves via transform",
+      "Monospace-for-data / sans-for-copy split, enforced per component",
+      "Alliance red/blue are the only saturated, non-inverting accent — spend them like an alarm",
+      "Dual-theme by design token, not by override; a color either inverts, stays fixed, or belongs to the canvas — never guess which"
+    ],
+    "rules": [
+      { "name": "The Three-Zone Rule", "body": "Every color token belongs to exactly one of three zones: inverting, fixed-ink, or canvas-only. Reach for the wrong zone and the color either disappears in dark mode or silently changes what it signals.", "section": "colors" },
+      { "name": "The Fill-Is-Not-Text Rule", "body": "A color that works as a solid fill and a color that works as text on a surface are not the same token. Category collisions are split into a fill token and an -ink sibling.", "section": "colors" },
+      { "name": "The Digits-Are-Mono Rule", "body": "Any number that updates during a match renders in the mono data font with tabular numerals.", "section": "typography" },
+      { "name": "The No-Blur Rule", "body": "Nothing in this system uses a soft/blurred shadow. Depth is communicated by hard offset shadows or insets.", "section": "elevation" },
+      { "name": "The Transform-Only Press Rule", "body": "A pressable element must move via transform, never margin or border-width changes, so nothing in its neighborhood reflows on hover/press.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep every new color token in exactly one zone — inverting, fixed-ink, or canvas-only — and name which zone it's in when you add it.",
+      "Do use --ds-hud-line (not --ds-line) for any border drawn on a floating HUD card over the field.",
+      "Do move pressables with transform/box-shadow only; run npm run shiftaudit after touching any interactive element's hover/active state.",
+      "Do run npm run contrast after any token edit — 175 pairs, light + dark, must stay AA.",
+      "Do set live-updating numbers in --ds-font-mono with tabular numerals."
+    ],
+    "donts": [
+      "Don't reach for --ds-blush, --ds-sage, or --ds-lavender — vestigial tokens from the pre-dark-mode pastel identity.",
+      "Don't add a blurred box-shadow anywhere in the chrome — this system has no soft-shadow vocabulary.",
+      "Don't tint alliance identity with text color alone — red/blue alliance meaning is carried by a filled chip, not a colored label.",
+      "Don't use --ds-ink/--ds-mut/--ds-accent for anything drawn directly on the game canvas — use the on-field* family."
+    ]
+  }
+}
