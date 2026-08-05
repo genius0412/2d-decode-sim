@@ -139,6 +139,7 @@ import {
   CHAIN_PRESETS,
   chainStorageMax,
   CHAIN_TWIN_MASS_FLOOR,
+  CHAIN_TWIN_FIRE_MULT,
   CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_DRUM_SPEED,
   CHAIN_MIN_LENGTH,
@@ -5334,11 +5335,18 @@ const mkMM = () => {
     const single = rateOf('turret');
     const twinBps = rateOf('twinturret');
     const ratio = twinBps / single;
-    // the headline: a lot more than one turret, and clearly NOT two of them
+    // the headline: FASTER than one turret, but only SLIGHTLY — the second barrel isn't the
+    // bottleneck (one indexer, one aim solution), so it buys a small edge, not a second gun.
+    // Pinned to the constant so the two can't drift apart.
     check(
-      'chain twin turret: fires ~1.65x a single turret — well above 1, well below 2',
-      ratio > 1.5 && ratio < 1.8,
+      'chain twin turret: fires slightly faster than a single turret, nowhere near double',
+      ratio > 1.05 && ratio < 1.3,
       `${single.toFixed(1)} → ${twinBps.toFixed(1)} bps (x${ratio.toFixed(2)})`,
+    );
+    check(
+      'chain twin turret: the measured rate matches CHAIN_TWIN_FIRE_MULT',
+      Math.abs(ratio - CHAIN_TWIN_FIRE_MULT) < 0.06,
+      `measured x${ratio.toFixed(2)} vs constant x${CHAIN_TWIN_FIRE_MULT}`,
     );
     // ...and still slower than the drum, which is the dedicated volume archetype
     check(

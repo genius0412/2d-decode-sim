@@ -291,13 +291,18 @@ export const CHAIN_SCORE_MODES = ['turret', 'twinturret', 'drum', 'dumper'] as c
 /**
  * TWIN TURRET — two shooters on one turret.
  *
- * THROUGHPUT (`CHAIN_TWIN_FIRE_MULT` 1.65, i.e. ~21.5 bps vs the single turret's 13):
- * deliberately NOT 2.0. Two barrels on ONE turret still share the parts that actually
- * gate a turret's rate — a single dye-rotor/indexer lifting Particles out of the hopper,
- * and a single aim solution. Doubling the barrels does not double the indexer, and
- * alternating between them costs a small handoff each cycle. 1.65 reads as "both barrels
- * firing, minus ~17% for indexer contention and alternation overhead", which lands it
- * clearly ahead of a single turret and clearly behind the drum's 24 bps stream.
+ * THROUGHPUT (`CHAIN_TWIN_FIRE_MULT` 1.15, i.e. ~15 bps vs the single turret's 13):
+ * a SLIGHT edge, not a near-doubling (user's call, revised down from 1.65). The physical
+ * story holds it up: the barrels are the one part of a turret that ISN'T the bottleneck.
+ * Rate is gated by the single dye-rotor/indexer lifting Particles out of the hopper and by
+ * the single aim solution, and a second barrel doubles neither — it mostly hides the
+ * handoff latency between shots rather than adding a second feed. So the twin sits just
+ * above a single turret and still far behind the drum's 24 bps stream.
+ *
+ * That makes it a NARROW pick: it pays ~24% of its storage and +2.5 lb for a ~15% rate
+ * edge, so it wins only where the turret's omnidirectional aim matters and the extra
+ * cadence closes a cycle. If it wants to be a mainline choice, this multiplier is the
+ * dial — the costs below are what it is buying against.
  *
  * STORAGE (`CHAIN_STORE_TWIN_MULT` 0.42 vs the single turret's 0.55): a second flywheel,
  * its motor, and a second feed path all eat the centre volume the hopper wants — about a
@@ -312,7 +317,7 @@ export const CHAIN_SCORE_MODES = ['turret', 'twinturret', 'drum', 'dumper'] as c
  * fire ALTERNATELY, so shots visibly leave from both — a real muzzle offset rather than
  * two sprites firing from the same point.
  */
-export const CHAIN_TWIN_FIRE_MULT = 1.65;
+export const CHAIN_TWIN_FIRE_MULT = 1.15;
 export const CHAIN_STORE_TWIN_MULT = 0.42;
 export const CHAIN_TWIN_MASS_FLOOR = 2.5; // lb added to the chassis mass floor
 export const CHAIN_TWIN_BARREL_OFFSET = 1.5; // in — lateral spacing of the two muzzles

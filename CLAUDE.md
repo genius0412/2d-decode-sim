@@ -766,6 +766,13 @@ spread). A shot that MISSES the opening is retrieved by a human and thrown back 
   `CHAIN_TURRET_SLEW` — it cannot snap, so a sudden velocity change (a shove) makes the lead
   solution jump faster than the turret can follow and shots fired mid-correction MISS. Aim is a
   physical state, not a promise. (Contrast DECODE, where the shooter never misses.)
+- **twinturret** — two barrels on ONE turret, firing alternately from a real muzzle offset
+  (`CHAIN_TWIN_BARREL_OFFSET`). Only **~15 bps** (`CHAIN_TWIN_FIRE_MULT` **1.15**) — a SLIGHT
+  edge over the single turret, not a near-doubling (user's call, revised down from 1.65). The
+  barrel is not the bottleneck: one indexer and one aim solution gate the rate, so a second
+  barrel mostly hides handoff latency. It pays ~24% of its storage (`CHAIN_STORE_TWIN_MULT`)
+  and +2.5 lb of mass floor for that, which makes it a NARROW pick — this multiplier is the
+  dial if it should become mainline.
 - **drum** — a chassis-wide flywheel drum, no turret: streams SINGLE particles at ~**24 bps**
   (`CHAIN_DRUM_INTERVAL` with ±`CHAIN_DRUM_JITTER`) from a RANDOM lateral position across the
   rollers, uniform launch speed. NEVER a rigid uniform line, never a "6-then-wait" burst.

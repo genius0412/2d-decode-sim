@@ -2613,6 +2613,27 @@ tr.lb-detail td {
 .ds-opts.four {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
+/* FIVE-up, for a row that genuinely has five options (the drivetrain picker). Without it
+   those five land in the four-column `.four` track and leave a lone orphan on a second row
+   while every button still has ~20px of slack — the row wraps when it doesn't need to. */
+.ds-opts.five {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+.ds-opts.five .ds-opt {
+  justify-content: center;
+  text-align: center;
+}
+/* Same fix for a row of four CARDS (title + blurb, left-aligned): the base `.ds-opts`
+   200px track only fits three at panel width, so a four-archetype row broke 3+1. */
+.ds-opts.card4 {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+/* auto-FILL, not auto-fit: keeps the empty tracks, so a row holding FEWER items than
+   columns leaves them one card wide instead of stretching one option across the whole
+   panel. (The intake row has a single design today and will grow.) */
+.ds-opts.fill {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
 /* An UNSELECTED .ds-opt is a control whose only boundary is this border, so it takes
    --ds-line-strong (1.4.11). It lives on a --ds-panel card (`.ds-panelbox`), which is
    the ground --ds-line-strong is tuned for — 3.06:1. Dropped straight onto --ds-bg it

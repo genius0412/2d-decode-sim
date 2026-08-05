@@ -20,7 +20,6 @@ import {
   CHAIN_CATAPULT_RANGE_MIN,
   CHAIN_CATAPULT_RANGE_MAX,
   CHAIN_CATAPULT_YAW_STEP,
-  chainArmReach,
   chainCatapultRange,
 } from '../games/chain/config';
 import {
@@ -521,7 +520,7 @@ export function Menu({ settings, onChange }: Props) {
                 a mechanism and watching a slider below re-clamp reads as cause and effect;
                 the reverse reads as the builder fighting you. */}
             <h3 className="ds-subh">Drivetrain</h3>
-            <div className="ds-opts four">
+            <div className="ds-opts five">
               {(Object.keys(DRIVETRAIN_LABELS) as DrivetrainType[]).map((d) => (
                 <button
                   key={d}
@@ -598,7 +597,7 @@ export function Menu({ settings, onChange }: Props) {
               </div>
             ) : (
               <>
-                <div className="ds-opts">
+                <div className="ds-opts card4">
                   {CHAIN_SCORE_MODES.map((m) => (
                     <button
                       key={m}
@@ -668,7 +667,7 @@ export function Menu({ settings, onChange }: Props) {
               </div>
             ) : (
               <>
-                <div className="ds-opts">
+                <div className="ds-opts fill">
                   <div className="ds-opt on" aria-disabled>
                     <span className="ot">{CHAIN_INTAKE_LABELS.sweeper}</span>
                   </div>
@@ -717,18 +716,6 @@ export function Menu({ settings, onChange }: Props) {
                     </button>
                   ))}
                 </div>
-                {/* The ARM's reach is the one mechanism number that varies with the CHASSIS
-                    (see chainArmReach) — the control prism hands you whatever your frame and
-                    sweeper don't already spend on that axis. Shown live so the trade is
-                    visible while you drag Length/Width, instead of being a hidden rule that
-                    silently rewards small robots. */}
-                {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'arm' && (
-                  <p className="ds-hint" style={{ marginTop: 8 }}>
-                    Arm reach <b>{chainArmReach(spec).toFixed(1)}"</b> past the mount. The
-                    control prism gives you what the chassis doesn't spend on that axis, so a
-                    compact robot — or a sweeper on the other axis — reaches further.
-                  </p>
-                )}
                 {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'launcher' && (
                   <div className="ds-fields">
                     <label className="ds-field">
