@@ -10,11 +10,12 @@ import {
   CHAIN_RINGSTAND_GAP,
   CHAIN_ASCEND_R,
   CHAIN_RINGSTAND_BOX,
+  CHAIN_RAIL_MARGIN,
   CHAIN_INTAKES,
   CHAIN_DEFAULT_INTAKE,
 } from './config';
-import { type ChainEdge, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, intakeMountEdges, intakeMountOf, mountOrigin } from './mounts';
-import { CHAIN_CATALYST_NEAR, chainCatalystGeom } from './config';
+import { type ChainEdge, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, intakeMountEdges, intakeMountOf, isEdgePos, mountOrigin } from './mounts';
+import { CHAIN_CATALYST_NEAR, CHAIN_DEFAULT_CATALYST, chainCatalystGeom } from './config';
 import { datan2, dcos, dsin, hyp, rot, wrapAngle } from '../../math';
 
 /**
@@ -233,13 +234,57 @@ export function accelMultiplier(state: ChainState, a: Alliance): number {
 
 // ─────────────────────────────────────────────────────────── catalyst mechanism ──
 
+/**
+ * Half the travel a RAIL carriage has along its mounted side, in inches.
+ *
+ * The track spans the side it is bolted to, less a margin for the carriage body and the end
+ * stops — so a front/back rail runs across the chassis WIDTH and a flank rail along its
+ * LENGTH. Zero for every other catalyst type, which is what makes the offset below a no-op
+ * for them rather than needing a branch at each call site.
+ */
+export function catalystRailHalf(spec: RobotSpec): number {
+  if ((spec.catalystType ?? CHAIN_DEFAULT_CATALYST) !== 'rail') return 0;
+  const pos = catalystMountOf(spec);
+  if (!isEdgePos(pos)) return 0; // coerceSpec folds a rail onto an edge; belt and braces
+  const span = pos === 'front' || pos === 'back' ? spec.width : spec.length;
+  return Math.max(0, span / 2 - CHAIN_RAIL_MARGIN);
+}
+
 /** the catalyst mechanism's mouth in WORLD space for ONE mount position. */
 function mouthAt(rob: RobotState, pos: Exclude<ChainMountPos, 'center'>): Vec2 {
   const o = mountOrigin(rob.spec, pos);
+  // a RAIL carriage slides ALONG the mounted side, so its mouth is offset from the mount
+  // point by wherever the carriage currently is. This is the whole mechanism: without it
+  // the rail was drawn but the claw still worked from one fixed spot.
+  const half = catalystRailHalf(rob.spec);
+  const local = half > 0 ? railOffset(o, pos, rob.catalystRail * half) : o;
   // deterministic rotate (`rot` → dcos/dsin) — this is SIM code, so an engine-defined
   // cosine here would be a cross-engine desync, not just different pixels
-  const w = rot(o, rob.heading);
+  const w = rot(local, rob.heading);
   return { x: rob.pos.x + w.x, y: rob.pos.y + w.y };
+}
+
+/** slide a mount origin along its own edge by `d` inches (robot frame). A front/back rail
+ *  runs across y, a left/right rail along x. */
+function railOffset(o: Vec2, pos: string, d: number): Vec2 {
+  return pos === 'front' || pos === 'back' ? { x: o.x, y: o.y + d } : { x: o.x + d, y: o.y };
+}
+
+/**
+ * Where the carriage WANTS to be for a given world target: the target projected onto the
+ * track and clamped to its ends, as a −1..1 fraction. Pure, so the sim can rate-limit toward
+ * it and the renderer can draw wherever the carriage actually got to.
+ */
+export function catalystRailTarget(rob: RobotState, target: Vec2 | null): number {
+  const half = catalystRailHalf(rob.spec);
+  if (half <= 0 || !target) return 0;
+  const pos = catalystMountOf(rob.spec);
+  // the target in the ROBOT frame — the rail is a chassis axis, so the projection has to
+  // happen there rather than in world space
+  const d = rot({ x: target.x - rob.pos.x, y: target.y - rob.pos.y }, -rob.heading);
+  const o = mountOrigin(rob.spec, pos as Exclude<ChainMountPos, 'center'>);
+  const along = pos === 'front' || pos === 'back' ? d.y - o.y : d.x - o.x;
+  return Math.max(-1, Math.min(1, along / half));
 }
 
 /**

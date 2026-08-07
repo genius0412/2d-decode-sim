@@ -63,13 +63,15 @@ export const CHAIN_SHOOTER_MOUNT_BLURBS: Partial<Record<ChainShooterMount, strin
 export const CHAIN_CATALYST_LABELS: Record<ChainCatalystType, string> = {
   arm: 'Claw arm',
   launcher: 'Claw + catapult',
-  turret: 'Rail turret claw',
+  turret: 'Turret claw',
+  rail: 'Rail turret claw',
 };
 
 export const CHAIN_CATALYST_BLURBS: Record<ChainCatalystType, string> = {
   arm: 'Longest reach · must face it · slow',
   launcher: 'Short reach · throws rings downfield',
-  turret: 'Tracks hooks · any direction · fastest',
+  turret: 'Tracks any direction · fastest · fixed spot',
+  rail: 'Tracks AND slides along the side · heavy',
 };
 
 export const CHAIN_CATALYST_MOUNT_LABELS: Record<ChainCatalystMount, string> = {

@@ -17,7 +17,7 @@ import {
   CHAIN_ARM_DRAW,
   CHAIN_CORNER_BODY_INSET,
 } from './config';
-import { catalystMouth, catalystTrackTarget, chainIntakeMouths } from './state';
+import { catalystMouth, catalystRailHalf, catalystTrackTarget, chainIntakeMouths } from './state';
 import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from './mounts';
 import { beamRide } from './beams';
 
@@ -394,36 +394,40 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
     const tgt = catalystTrackTarget(r, world);
     const bestA = tgt ? Math.atan2(tgt.y - mouth.y, tgt.x - mouth.x) : 0;
 
-    // THE RAIL: a linear track ACROSS the mounted edge with a carriage riding it. This is
-    // the half of the mechanism the name promises and it was missing entirely — without it
-    // the archetype was just a pivot, indistinguishable from the arm's shoulder.
-    const railHalf = Math.min(3.6, (isEndEdge(pos as never) ? r.spec.width : r.spec.length) / 2 - 1.2);
-    ctx.strokeStyle = '#6b7480';
-    ctx.lineWidth = 0.42;
-    for (const sgn of [1, -1] as const) {
-      ctx.beginPath();
-      ctx.moveTo(dist - 2.3, sgn * 0.95);
-      ctx.lineTo(dist - 2.3, sgn * railHalf);
+    /**
+     * THE RAIL (type `rail` only). A linear track spanning the mounted side with a carriage
+     * riding it. The carriage is drawn where the SIM put it (`r.catalystRail`, traversed at
+     * a finite rate toward whatever the claw is working at) — it used to be pinned at the
+     * centre, so the track was decoration and the claw always worked from one fixed spot.
+     *
+     * A plain `turret` claw has no track: it aims anywhere but stays bolted where it is,
+     * which is the whole difference between the two builds.
+     */
+    const railed = (r.spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'rail';
+    const railHalf = railed ? catalystRailHalf(r.spec) : 0;
+    const slide = railHalf * r.catalystRail; // along the edge, in the mount's local +y
+    if (railed && railHalf > 0) {
+      ctx.strokeStyle = '#6b7480';
+      ctx.lineWidth = 0.42;
+      ctx.beginPath(); // the rail itself, spanning the side
+      ctx.moveTo(dist - 2.3, -railHalf);
+      ctx.lineTo(dist - 2.3, railHalf);
       ctx.stroke();
-    }
-    ctx.beginPath(); // the rail itself, spanning the edge
-    ctx.moveTo(dist - 2.3, -railHalf);
-    ctx.lineTo(dist - 2.3, railHalf);
-    ctx.stroke();
-    // end stops
-    ctx.lineWidth = 0.7;
-    for (const sgn of [1, -1] as const) {
-      ctx.beginPath();
-      ctx.moveTo(dist - 3.0, sgn * railHalf);
-      ctx.lineTo(dist - 1.6, sgn * railHalf);
-      ctx.stroke();
+      // end stops
+      ctx.lineWidth = 0.7;
+      for (const sgn of [1, -1] as const) {
+        ctx.beginPath();
+        ctx.moveTo(dist - 3.0, sgn * railHalf);
+        ctx.lineTo(dist - 1.6, sgn * railHalf);
+        ctx.stroke();
+      }
     }
 
-    // CARRIAGE on the rail, carrying the turret
+    // CARRIAGE on the rail (or the fixed pivot block for a plain turret), carrying the turret
     ctx.fillStyle = STEEL_DK;
     ctx.strokeStyle = ink;
     ctx.lineWidth = 0.55;
-    roundRect(ctx, dist - 3.1, -1.5, 1.7, 3.0, 0.35);
+    roundRect(ctx, dist - 3.1, slide - 1.5, 1.7, 3.0, 0.35);
     ctx.fill();
     ctx.stroke();
 
@@ -431,7 +435,7 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
     // something that rotates rather than a dot
     const ring = 2.0;
     ctx.beginPath();
-    ctx.arc(dist - 0.8, 0, ring, 0, Math.PI * 2);
+    ctx.arc(dist - 0.8, slide, ring, 0, Math.PI * 2);
     ctx.fillStyle = STEEL;
     ctx.fill();
     ctx.stroke();
@@ -439,14 +443,14 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2;
       ctx.beginPath();
-      ctx.moveTo(dist - 0.8 + Math.cos(a) * ring, Math.sin(a) * ring);
-      ctx.lineTo(dist - 0.8 + Math.cos(a) * (ring + 0.42), Math.sin(a) * (ring + 0.42));
+      ctx.moveTo(dist - 0.8 + Math.cos(a) * ring, slide + Math.sin(a) * ring);
+      ctx.lineTo(dist - 0.8 + Math.cos(a) * (ring + 0.42), slide + Math.sin(a) * (ring + 0.42));
       ctx.stroke();
     }
 
     // the CLAW on its short arm, swivelled to the tracked target
     ctx.save();
-    ctx.translate(dist - 0.8, 0);
+    ctx.translate(dist - 0.8, slide);
     // world aim → this local frame (chassis heading + the mount rotation already applied)
     ctx.rotate(bestA - r.heading - MOUNT_ANGLE[pos]);
     ctx.strokeStyle = ink;

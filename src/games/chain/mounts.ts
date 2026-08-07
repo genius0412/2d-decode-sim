@@ -53,6 +53,12 @@ export const CHAIN_DEFAULT_SHOOTER_MOUNT: ChainShooterMount = 'front';
  * shooting from exactly where it always did rather than silently jumping to the front edge. */
 export const CHAIN_DEFAULT_TURRET_POS: ChainShooterMount = 'center';
 
+/** RAIL-turret catalyst mounts. The carriage traverses a track spanning a whole chassis
+ * SIDE, so the mechanism occupies that side end to end — a corner has no span to run along
+ * and the centre has no edge to bolt a track to. `coerceSpec` folds the others away, the
+ * same way it folds a turretless launcher onto an edge. */
+export const CHAIN_RAIL_MOUNTS = ['front', 'back', 'left', 'right'] as const;
+
 /** which chassis edge a mechanism sits on, in the robot frame */
 export type ChainEdge = 'front' | 'back' | 'left' | 'right';
 
@@ -60,6 +66,53 @@ const EDGES: readonly string[] = ['front', 'back', 'left', 'right'];
 /** is this position one of the four EDGES (as opposed to a corner or the centre)? */
 export function isEdgePos(pos: string): pos is ChainEdge {
   return EDGES.includes(pos);
+}
+
+/**
+ * Which cells of the 3×3 chassis map a mechanism physically OCCUPIES.
+ *
+ * Two mechanisms cannot share a cell — there is one piece of frame there and only one of
+ * them can be bolted to it. Occupancy is not always a single cell, which is the whole
+ * reason this exists:
+ *
+ *  - an EDGE-spanning mechanism (a rail track, a drum's launch line, a sweeper) runs the
+ *    full side, so it takes the edge AND both corners of that side — "the whole row";
+ *  - a `frontback` mechanism is one part serving both ends, so it takes both;
+ *  - a corner or centre mount takes just its own cell.
+ *
+ * `center` is deliberately included for a turret bolted mid-chassis: it blocks a catalyst
+ * that wanted the middle, and nothing else.
+ */
+export function occupiedCells(pos: string, spansEdge: boolean): ChainMountPos[] {
+  if (pos === 'frontback') return ['front', 'frontleft', 'frontright', 'back', 'backleft', 'backright'];
+  if (pos === 'side') return ['left', 'frontleft', 'backleft', 'right', 'frontright', 'backright'];
+  if (spansEdge && isEdgePos(pos)) {
+    if (pos === 'front') return ['front', 'frontleft', 'frontright'];
+    if (pos === 'back') return ['back', 'backleft', 'backright'];
+    if (pos === 'left') return ['left', 'frontleft', 'backleft'];
+    return ['right', 'frontright', 'backright'];
+  }
+  return [pos as ChainMountPos];
+}
+
+/** The EDGE a rail track is bolted to, for a mount that is not already one. A corner falls
+ *  to the END it shares (front/back are the sides a claw most wants to work over) and the
+ *  frontback swing — which is a pivot, not a track — falls to the front. Mirrors
+ *  `shooterEdgeOf`, which does the same job for a turretless launcher. */
+export function railEdgeOf(pos: string): ChainEdge {
+  if (isEdgePos(pos)) return pos;
+  if (pos === 'frontleft' || pos === 'frontright') return 'front';
+  if (pos === 'backleft' || pos === 'backright') return 'back';
+  return 'front'; // frontback swing / centre
+}
+
+/** do two mounted mechanisms want the same piece of frame? */
+export function mountsClash(
+  a: { pos: string; spansEdge: boolean },
+  b: { pos: string; spansEdge: boolean },
+): boolean {
+  const cells = new Set(occupiedCells(a.pos, a.spansEdge));
+  return occupiedCells(b.pos, b.spansEdge).some((c) => cells.has(c));
 }
 
 /** the resolved intake mount: the explicit field when legal, else the migrated legacy

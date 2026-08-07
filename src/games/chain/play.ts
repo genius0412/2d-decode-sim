@@ -61,6 +61,8 @@ import {
   CHAIN_PRELAUNCH_PER_TICK,
   CHAIN_PRELAUNCH_SPEED,
   CHAIN_PRELAUNCH_VZ,
+  CHAIN_DEFAULT_CATALYST,
+  CHAIN_RAIL_RATE,
 } from './config';
 import {
   accelMultiplier,
@@ -68,6 +70,8 @@ import {
   catalystCanReach,
   catalystDist,
   catalystMouth,
+  catalystRailTarget,
+  catalystTrackTarget,
   chainIntakeMouths,
   mouthContains,
   hookPos,
@@ -250,6 +254,24 @@ export function updateChain(
         }
         r.lastFireAt = world.time;
       }
+    }
+
+    /**
+     * RAIL CARRIAGE TRAVERSE. A rail catalyst's claw is not bolted in one spot — the
+     * carriage runs along the mounted side to put the claw where the work is, which is the
+     * entire reason to build one instead of a fixed turret. It tracks whatever the claw is
+     * working at (a carried ring stows it centred) and moves at a FINITE rate, so it reads
+     * as a machine repositioning rather than the claw appearing wherever it is needed.
+     *
+     * `catalystRail` is plain state on the robot, so snapshots and replays carry it and the
+     * renderer draws the carriage exactly where the sim put it.
+     */
+    if ((r.spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'rail') {
+      const carrying = chain.catalysts.some((c) => c.carriedBy === r.id);
+      const want = carrying ? 0 : catalystRailTarget(r, catalystTrackTarget(r, world));
+      const step = CHAIN_RAIL_RATE * dt;
+      const d = want - r.catalystRail;
+      r.catalystRail = Math.abs(d) <= step ? want : r.catalystRail + Math.sign(d) * step;
     }
 
     // catalyst pick-up / place-down — EDGE-triggered (acts once per press) AND rate-limited

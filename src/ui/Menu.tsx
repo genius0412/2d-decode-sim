@@ -36,6 +36,8 @@ import {
 } from '../games/chain/labels';
 import {
   CHAIN_CATALYST_MOUNTS,
+  isEdgePos,
+  mountsClash,
   CHAIN_INTAKE_MOUNTS,
   CHAIN_SHOOTER_MOUNTS,
   CHAIN_TURRET_POSITIONS,
@@ -767,20 +769,38 @@ export function Menu({ settings, onChange }: Props) {
                     chassis, and a pivot that serves both ends is exactly what belongs between
                     the front and back cells. */}
                 <div className="ds-opts three" style={{ marginTop: 8 }}>
-                  {CHAIN_CATALYST_MOUNTS.map((m) => (
-                    <button
-                      key={m}
-                      className={`ds-opt mini ${catalystMountOf(spec) === m ? 'on' : ''}`}
-                      onClick={() => setSpec({ catalystMount: m })}
-                      title={
-                        m === 'frontback'
-                          ? 'One arm on a pivot that swings between the front and rear edges — it works whichever end is nearer'
-                          : `Claw mounted at the ${CHAIN_CATALYST_MOUNT_LABELS[m]} of the chassis`
-                      }
-                    >
-                      <span className="ot">{CHAIN_CATALYST_MOUNT_LABELS[m]}</span>
-                    </button>
-                  ))}
+                  {CHAIN_CATALYST_MOUNTS.map((m) => {
+                    // A cell is unavailable for two physical reasons, and the picker says
+                    // WHICH — coerceSpec would quietly relocate the mount otherwise, and a
+                    // button that moves your choice somewhere else without explaining is
+                    // worse than one that refuses.
+                    const railed = (spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'rail';
+                    const noTrack = railed && !isEdgePos(m);
+                    const taken = mountsClash(
+                      { pos: m, spansEdge: railed },
+                      { pos: shooterMountOf(spec), spansEdge: !isTurreted(spec.scoreMode) },
+                    );
+                    const off = noTrack || taken;
+                    return (
+                      <button
+                        key={m}
+                        className={`ds-opt mini ${catalystMountOf(spec) === m ? 'on' : ''}${off ? ' off' : ''}`}
+                        disabled={off}
+                        onClick={() => setSpec({ catalystMount: m })}
+                        title={
+                          noTrack
+                            ? 'A rail needs a whole chassis side to run along — corners and the swing have no span for a track'
+                            : taken
+                              ? 'The shooter is mounted here'
+                              : m === 'frontback'
+                                ? 'One arm on a pivot that swings between the front and rear edges — it works whichever end is nearer'
+                                : `Claw mounted at the ${CHAIN_CATALYST_MOUNT_LABELS[m]} of the chassis`
+                        }
+                      >
+                        <span className="ot">{CHAIN_CATALYST_MOUNT_LABELS[m]}</span>
+                      </button>
+                    );
+                  })}
                 </div>
                 {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'launcher' && (
                   <div className="ds-fields">

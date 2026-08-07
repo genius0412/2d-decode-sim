@@ -50,8 +50,12 @@ import {
   CHAIN_DEFAULT_SHOOTER_MOUNT,
   CHAIN_DEFAULT_TURRET_POS,
   CHAIN_CATALYST_MOUNTS,
+  CHAIN_RAIL_MOUNTS,
   intakeMountOf,
+  isEdgePos,
   isTurreted,
+  mountsClash,
+  railEdgeOf,
   shooterEdgeOf,
   shooterMountOf,
 } from '../games/chain/mounts';
@@ -298,6 +302,7 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   // where the Particle is born), not a facing. Resolved HERE, the one chokepoint, so a spec
   // that changes archetype later can never keep a mount that archetype cannot have.
   if (!isTurreted(out.scoreMode)) out.shooterMount = shooterEdgeOf({ shooterMount: out.shooterMount });
+
   // MOUNTS ARE CHAIN-ONLY. They are the one CR field with a SHARED physics effect — the intake
   // mount moves the collision footprint (`footprintExtents`), so a CR build's side sweeper
   // leaking into DECODE would widen its flanks and delete its front intake reach. The builder
@@ -314,6 +319,54 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   // the fields it doesn't know) round-trips to the nearest legal mount instead of resetting.
   out.intakeSide = out.intakeMount === 'side';
   out.shooterRear = out.shooterMount === 'back';
+
+  /**
+   * CATALYST PLACEMENT — resolved HERE, AFTER the per-game mount reset above.
+   *
+   * It depends on the SHOOTER mount, so it has to run once that is final. Running it any
+   * earlier is not just untidy, it breaks IDEMPOTENCY: a DECODE spec has its shooter mount
+   * reset to the default further down, so a first pass would place the catalyst against the
+   * raw mount and a second pass against the reset one, and coerceSpec runs at several layers.
+   *
+   * Two rules, both physical:
+   *  1. A RAIL's track spans a whole chassis SIDE, so it can only be bolted to one of the
+   *     four EDGES. A corner has no span to run along and the frontback swing is a different
+   *     mechanism. Folded like the turretless launcher's firing edge is folded.
+   *  2. NO TWO MECHANISMS SHARE A CELL. There is one piece of frame in a given spot and only
+   *     one thing can be mounted to it, so a catalyst is pushed off any cell the shooter or
+   *     the intake already occupies (`occupiedCells` handles the edge-spanning and frontback
+   *     cases, which take more than one cell each).
+   *
+   * Done at the chokepoint rather than in the builder so a spec that changes archetype,
+   * mount or intake later can never end up with two mechanisms in the same place — including
+   * one arriving from an older client that never knew the rule.
+   */
+  {
+    const railed = out.catalystType === 'rail';
+    if (railed && !isEdgePos(out.catalystMount as string)) {
+      out.catalystMount = railEdgeOf(out.catalystMount as string);
+    }
+    // What the SHOOTER is sitting on. A turretless launcher fires along a line spanning its
+    // edge, so it takes that whole side; a turret is a single bolted cell.
+    //
+    // The INTAKE is deliberately NOT a blocker. A sweeper is a low roller at floor level and
+    // a claw arm reaches over it — real robots stack those two all the time — whereas the
+    // shooter and the catalyst both want the deck. Counting the sweeper would also make two
+    // of the shipped preset builds illegal (front+back sweepers plus a front/back swing claw),
+    // which is a strong hint the rule is about the deck rather than about the edge.
+    const blockers = [{ pos: out.shooterMount as string, spansEdge: !isTurreted(out.scoreMode) }];
+    const clashes = (m: string): boolean =>
+      blockers.some((b) => mountsClash({ pos: m, spansEdge: railed }, b));
+    if (clashes(out.catalystMount as string)) {
+      const options = railed
+        ? (CHAIN_RAIL_MOUNTS as readonly string[])
+        : (CHAIN_CATALYST_MOUNTS as readonly string[]);
+      const free = options.find((m) => !clashes(m));
+      // if EVERY position clashes the build is over-stuffed; leave the mount alone rather
+      // than inventing one, and let the builder's own warning explain it
+      if (free) out.catalystMount = free as RobotSpec['catalystMount'];
+    }
+  }
   // Chain Reaction ball storage — clamped to the archetype+size max (chainStorageMax). NOTE: the
   // intake-mount storage penalty depends on out.intakeMount, so it's resolved BEFORE this clamp.
   out.ballStorage = Math.round(
@@ -626,6 +679,7 @@ export function createWorld(mode: GameMode, seed: number, setups: RobotSetup[], 
       turretHeading: pose.heading,
       moduleAngles: [0, 0, 0, 0], // swerve pods (FL,FR,BL,BR) start pointing forward
       moduleTargets: [0, 0, 0, 0], // and their commanded targets
+      catalystRail: 0, // CR rail carriage (unused in DECODE)
       // BUTTERFLY starts on its MECANUM set — a robot that begins holonomic can always
       // drop traction, and it matches DRIVETRAIN_PRESETS.butterfly (the mecanum half).
       butterflyTank: false,

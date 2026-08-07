@@ -147,7 +147,7 @@ import {
   CHAIN_PRISM,
   chainArmReach,
 } from '../src/games/chain/config';
-import { CHAIN_HOOKS_PER_GOAL, accelMultiplier, catalystTrackTarget, chainEvalStart, chainStartExtents, chainHeadingFits, chainNearestFittingHeading, chainSnapStartPose, chainIntakeMouths, chainMirrorStart, chainSnapStart, chainStartLegal, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
+import { CHAIN_HOOKS_PER_GOAL, accelMultiplier, catalystRailHalf, catalystRailTarget, catalystMouth, catalystTrackTarget, chainEvalStart, chainStartExtents, chainHeadingFits, chainNearestFittingHeading, chainSnapStartPose, chainIntakeMouths, chainMirrorStart, chainSnapStart, chainStartLegal, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
 import {
   CHAIN_CATALYSTS,
   CHAIN_CATALYST_TYPES,
@@ -173,7 +173,7 @@ import {
   chainMassFloorBump,
   chainStorageMax,
 } from '../src/games/chain/config';
-import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, intakeMountOf, isEdgePos, isTurreted, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
+import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, intakeMountOf, isEdgePos, isTurreted, mountsClash, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -5004,6 +5004,71 @@ const mkMM = () => {
     }
     check('coerceSpec: 900 fuzzed specs hold every range/enum/mirror invariant + idempotency',
       problems.length === 0, problems.join(' | '));
+  }
+
+  /**
+   * RAIL CATALYST — a claw on a track that TRAVERSES the mounted side, plus the placement
+   * rules that come with occupying a whole side.
+   */
+  {
+    // 1. a rail can only be bolted to an EDGE (its track needs a span to run along)
+    let notEdge = '';
+    for (const m of CHAIN_CATALYST_MOUNTS) {
+      const c = coerceSpec({ ...DEFAULT_SPEC, catalystType: 'rail', catalystMount: m, scoreMode: 'turret', shooterMount: 'center' }, DEFAULT_SPEC, 'chain');
+      if (c.catalystType === 'rail' && !isEdgePos(c.catalystMount as string)) notEdge = `${m} -> ${c.catalystMount}`;
+    }
+    check('chain rail: every mount folds to one of the four edges', !notEdge, notEdge);
+
+    // 2. the catalyst never shares a cell with the SHOOTER, whatever the two are set to
+    let shared = '';
+    for (const sm of CHAIN_TURRET_POSITIONS) {
+      for (const cm of CHAIN_CATALYST_MOUNTS) {
+        for (const mode of ['turret', 'drum'] as const) {
+          for (const ct of ['arm', 'rail'] as const) {
+            const c = coerceSpec(
+              { ...DEFAULT_SPEC, scoreMode: mode, shooterMount: sm, catalystType: ct, catalystMount: cm },
+              DEFAULT_SPEC, 'chain',
+            );
+            if (mountsClash(
+              { pos: c.catalystMount as string, spansEdge: c.catalystType === 'rail' },
+              { pos: c.shooterMount as string, spansEdge: !isTurreted(c.scoreMode) },
+            )) shared = `${mode}/${sm} + ${ct}/${cm} -> ${c.catalystMount}`;
+          }
+        }
+      }
+    }
+    check('chain rail: a catalyst is never left sharing a cell with the shooter', !shared, shared);
+
+    // 3. the CARRIAGE actually moves, at a finite rate, and is clamped to the track
+    {
+      const spec = coerceSpec(
+        { ...DEFAULT_SPEC, catalystType: 'rail', catalystMount: 'back', scoreMode: 'turret', shooterMount: 'center' },
+        DEFAULT_SPEC, 'chain',
+      );
+      const half = catalystRailHalf(spec);
+      check('chain rail: the track spans the mounted side', half > 1, `half=${half.toFixed(2)}`);
+      const w = createChainWorld('match', 5, [
+        { id: 0, alliance: 'blue', spec, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+      ]);
+      const rob = w.robots[0];
+      check('chain rail: the carriage starts centred', rob.catalystRail === 0);
+      // a target far off to one side must pull the carriage that way, and it must take TIME
+      const far = { x: rob.pos.x + 40, y: rob.pos.y + 40 };
+      const want = catalystRailTarget(rob, far);
+      check('chain rail: an off-centre target wants an off-centre carriage', Math.abs(want) > 0.2, `want=${want.toFixed(2)}`);
+      check('chain rail: the wanted position is clamped to the track', Math.abs(want) <= 1 + 1e-9);
+      // and the MOUTH moves with the carriage — that is the whole mechanism
+      const centred = catalystMouth(rob);
+      const slid = catalystMouth({ ...rob, catalystRail: 1 });
+      check(
+        'chain rail: sliding the carriage MOVES the claw',
+        hyp(slid.x - centred.x, slid.y - centred.y) > 1,
+        `moved ${hyp(slid.x - centred.x, slid.y - centred.y).toFixed(2)}in`,
+      );
+      // a plain TURRET claw has no track, so its mouth cannot slide
+      const fixedSpec = coerceSpec({ ...spec, catalystType: 'turret' }, DEFAULT_SPEC, 'chain');
+      check('chain rail: a plain turret claw has no travel', catalystRailHalf(fixedSpec) === 0);
+    }
   }
 
   // CR CHASSIS SIZE: the sweeper is structure inside the 18" START CUBE, so its reach eats

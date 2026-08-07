@@ -600,6 +600,15 @@ export const CHAIN_ARM_DRAW = 2.2;
  * the sprite moves, exactly as a real claw's pivot is bolted inside the frame. */
 export const CHAIN_CORNER_BODY_INSET = 1.5;
 
+/** RAIL: inches of the mounted side the carriage CANNOT use — its own body plus the end
+ *  stops. The track spans the side less this at each end. */
+export const CHAIN_RAIL_MARGIN = 2.2;
+/** RAIL: how fast the carriage traverses, in fractions of its half-travel per second. A rail
+ *  is bought for reach, not for speed, so it repositions deliberately — fast enough to be
+ *  useful within a cycle, slow enough that it is visibly a machine moving rather than the
+ *  claw teleporting to wherever it is needed. */
+export const CHAIN_RAIL_RATE = 1.8;
+
 export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
   // ARM: `reach` here is only the FLOOR (what a maxed-out 18" chassis gets). The real value
   // is per-chassis — see `chainArmReach`, which `chainCatalystGeom` substitutes in. The arm
@@ -612,7 +621,13 @@ export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
   // real costs are the weight, the slow cycle, and the narrow cone. Still the shortest of
   // the three, just no longer punishing.
   launcher: { reach: 5, cone: 0.61, cycle: 1.0, massLb: 2.0, fling: true },
+  // TURRET: a claw that AIMS anywhere but stays bolted where it is.
   turret: { reach: 7, cone: Math.PI, cycle: 0.55, massLb: 2.6, fling: false },
+  // RAIL: the same turret claw on a linear track that also TRAVERSES the mounted side, so
+  // the claw can be positioned as well as aimed. It buys effective reach without extending
+  // (the carriage covers the span) and pays for it in weight and a slower cycle — a track,
+  // its carriage and a second actuator are real hardware bolted along a whole side.
+  rail: { reach: 7, cone: Math.PI, cycle: 0.7, massLb: 3.4, fling: false },
 };
 
 /**
@@ -691,7 +706,7 @@ export function catapultCycleFor(range: number): number {
  * meaningful constraint. The cone still governs everything further out. */
 export const CHAIN_CATALYST_NEAR = 5;
 
-export const CHAIN_CATALYST_TYPES = ['arm', 'launcher', 'turret'] as const;
+export const CHAIN_CATALYST_TYPES = ['arm', 'launcher', 'turret', 'rail'] as const;
 export const CHAIN_DEFAULT_CATALYST: ChainCatalystType = 'arm';
 export const CHAIN_DEFAULT_CATALYST_MOUNT: ChainCatalystMount = 'front';
 
@@ -912,7 +927,7 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
     length: 15, width: 17, intake: 'sloped', massLb: 32, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
-    intakeMount: 'front', shooterMount: 'center', catalystType: 'turret', catalystMount: 'back',
+    intakeMount: 'front', shooterMount: 'center', catalystType: 'rail', catalystMount: 'back',
     assists: CR_PRESET_ASSISTS,
   },
   {

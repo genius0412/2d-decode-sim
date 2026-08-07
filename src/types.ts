@@ -196,7 +196,16 @@ export type ChainShooterMount = ChainMountPos;
  *  • turret   — a claw on a rail + turret that auto-tracks the nearest hook. Reaches in
  *    ANY direction (no need to point the chassis) and cycles fastest, but is the heaviest
  *    and its reach is middling. */
-export type ChainCatalystType = 'arm' | 'launcher' | 'turret';
+/**
+ * How the catalyst mechanism is built.
+ *  - `arm`      — a fixed arm + claw at one mount
+ *  - `launcher` — a low scoop that flings a ring onto a hook
+ *  - `turret`   — a claw on a rotating turret: aims anywhere, stays put
+ *  - `rail`     — a turret claw on a linear TRACK that also traverses the chassis side,
+ *                 so the claw can be positioned as well as aimed. The track spans a whole
+ *                 side, which is why `CHAIN_RAIL_MOUNTS` allows only the four edges.
+ */
+export type ChainCatalystType = 'arm' | 'launcher' | 'turret' | 'rail';
 
 /** Where the catalyst mechanism is mounted. Sets where it REACHES FROM and which way its
  * reach cone points (the `turret` type is omnidirectional, so the mount only moves the pivot).
@@ -265,6 +274,12 @@ export interface RobotState {
    * even after a brief tap, instead of freezing partway. `moduleAngles` chases these
    * (plus the wobble). */
   moduleTargets: number[];
+  /** CHAIN REACTION, `rail` catalyst only: where the claw's CARRIAGE sits along its track,
+   * −1 .. +1 across the mounted side (0 = centred). Runtime state, not a build choice — the
+   * carriage traverses toward whatever the claw is working at, at a finite rate
+   * (`CHAIN_RAIL_RATE`), which is the point of buying a rail instead of a fixed turret.
+   * Every other catalyst type leaves it at 0. */
+  catalystRail: number;
   /** BUTTERFLY drivetrain: is the TRACTION (tank) set the one on the ground right now?
    * false ⇒ the mecanum set is down (the spawn default). RUNTIME state, not a build
    * choice — the driver drops the other set mid-match with the `driveMode` command, and

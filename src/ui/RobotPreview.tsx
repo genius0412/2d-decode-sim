@@ -9,7 +9,7 @@ import {
   CHAIN_ARM_DRAW,
   CHAIN_CORNER_BODY_INSET,
 } from '../games/chain/config';
-import { chainIntakeMouths } from '../games/chain/state';
+import { catalystRailHalf, chainIntakeMouths } from '../games/chain/state';
 import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from '../games/chain/mounts';
 import { footprintExtents } from '../sim/field';
 import { turretGeom, type TurretGeom } from '../render/drawRobot';
@@ -76,7 +76,10 @@ export function RobotPreview({
   const catType = spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
   // how far the CATALYST mechanism protrudes past its mounted edge (the arm is the longest);
   // folded into the viewBox below so a claw tip is never clipped off the drawing
-  const catOut = chain ? (catType === 'arm' ? CHAIN_ARM_DRAW + 1.5 : catType === 'turret' ? 3.0 : 2.0) : 0;
+  const catOut = chain ? (catType === 'arm' ? CHAIN_ARM_DRAW + 1.5 : catType === 'launcher' ? 2.0 : 3.0) : 0;
+  // half the RAIL carriage's travel — 0 for every non-rail catalyst, which makes the track
+  // markup below a no-op for them without a second branch
+  const catRailHalf = chain ? catalystRailHalf(spec) : 0;
   // How far past the chassis the mechanism sticks out, per axis, so the viewBox never clips a
   // claw tip. A CORNER mount protrudes on BOTH axes, which is why this tests the position's
   // components rather than switching on a single edge.
@@ -248,6 +251,33 @@ export function RobotPreview({
         </>
       ) : (
         <>
+          {/* RAIL only: the track the carriage runs along, spanning the mounted side. The
+              preview shows the robot STOWED, so the carriage is drawn centred — where it
+              actually sits at the start of a match. A plain turret claw has no track, which
+              is the one visible difference between the two builds. */}
+          {catType === 'rail' && catRailHalf > 0 && (
+            <>
+              <line
+                x1={catDist - 2.3}
+                y1={-catRailHalf}
+                x2={catDist - 2.3}
+                y2={catRailHalf}
+                stroke={stroke}
+                strokeWidth={0.35}
+              />
+              {[1, -1].map((sgn) => (
+                <line
+                  key={sgn}
+                  x1={catDist - 3.0}
+                  y1={sgn * catRailHalf}
+                  x2={catDist - 1.6}
+                  y2={sgn * catRailHalf}
+                  stroke={stroke}
+                  strokeWidth={0.55}
+                />
+              ))}
+            </>
+          )}
           <circle cx={catDist - 0.8} cy={0} r={2.1} fill="var(--ds-bg)" stroke={stroke} strokeWidth={0.4} />
           <line x1={catDist - 0.8} y1={0} x2={catDist + 2.8} y2={0} stroke={accent} strokeWidth={0.5} />
         </>
