@@ -2258,6 +2258,22 @@ tr.lb-detail td {
   display: flex;
   flex-direction: column;
 }
+/* "recorded before a small physics correction" — informational, not a warning.
+   The replay plays fine; only the final number may be a point or two off, so this
+   sits back rather than shouting. */
+.ds-replay-drift {
+  margin: 0 auto 8px;
+  max-width: 640px;
+  padding: 8px 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: 8px;
+  background: var(--ds-tile);
+  color: var(--ds-mut);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .ds-replay-top {
   display: flex;
   align-items: center;

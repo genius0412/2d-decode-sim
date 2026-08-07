@@ -185,6 +185,38 @@ export class ReplayPlayer {
 }
 
 /**
+ * Can this build play that replay, and how faithfully?
+ *
+ *  - `'ok'`     re-simulates exactly as recorded.
+ *  - `'drift'`  PLAYS, but the sim has changed at the float level since it was
+ *               recorded, so the outcome can differ slightly from the saved score.
+ *  - `'stale'`  cannot be played at all.
+ *
+ * THE MIDDLE CASE IS THE POINT. A determinism fix (`SIM_VERSION`) moves what
+ * `step()` produces by an ULP or two, which over a three-minute match can change a
+ * score — but the recording is still a valid input log against the same physics,
+ * the same field and the same season. Refusing to play it makes every match from
+ * before the fix disappear, which is a far worse outcome than showing it with a
+ * note that the ending may not land on exactly the saved number. A REFUSAL is
+ * reserved for the two cases where playback would be meaningless rather than
+ * imprecise: a container schema this build cannot read, and a different SEASON
+ * (BALANCE_VERSION), where the tuning constants themselves are different and the
+ * match would be a different game, not a slightly different rounding of the same one.
+ */
+export type ReplayPlayability = 'ok' | 'drift' | 'stale';
+
+export function replayPlayability(
+  r: Pick<Replay, 'format' | 'balanceVersion' | 'sim'>,
+  format = REPLAY_FORMAT,
+  balance = C.BALANCE_VERSION,
+  sim = C.SIM_VERSION,
+): ReplayPlayability {
+  if (r.format !== format) return 'stale';
+  if (r.balanceVersion !== balance) return 'stale';
+  return (r.sim ?? 0) !== sim ? 'drift' : 'ok';
+}
+
+/**
  * WHOSE VIEW a replay is watched from: the robot to highlight as "yours", and the
  * alliance whose driver station the camera sits behind.
  *

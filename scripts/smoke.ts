@@ -105,6 +105,7 @@ import {
   REPLAY_FORMAT,
   type CommandSource,
   replayViewpoint,
+  replayPlayability,
   type Replay,
   type ReplayResult,
 } from '../src/sim/replay';
@@ -3535,6 +3536,28 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   check('verifyReplay reproduces the final worldHash', v.hash === run.result.hash, `${v.hash} vs ${run.result.hash}`);
   check('verifyReplay reproduces the score', v.score.blue === run.result.score.blue && v.score.red === run.result.score.red);
   check('verifyReplay reproduces the tick count', v.ticks === run.result.ticks);
+
+  // ---- CAN THIS BUILD PLAY IT? three-valued, on purpose ------------------
+  // The first cut of this gate refused playback whenever the SIM version differed,
+  // which made every match recorded before a float-level determinism fix vanish —
+  // including the entire current season. That is a far worse outcome than an ending
+  // that lands a point or two off the saved score. A refusal is now reserved for the
+  // cases where playback would be MEANINGLESS rather than merely imprecise.
+  {
+    const rp = (over: Partial<Pick<Replay, 'format' | 'balanceVersion' | 'sim'>>) =>
+      replayPlayability({ format: 9, balanceVersion: 5, sim: 2, ...over }, 9, 5, 2);
+    check('playability: a current replay plays exactly', rp({}) === 'ok');
+    check('playability: an OLDER SIM version still PLAYS (this season stays watchable)',
+      rp({ sim: 1 }) === 'drift');
+    check('playability: ...including one recorded before sim versions existed',
+      rp({ sim: undefined }) === 'drift');
+    // the two genuine refusals
+    check('playability: a different SEASON is refused (different tuning, different game)',
+      rp({ balanceVersion: 4 }) === 'stale');
+    check('playability: an unreadable container is refused', rp({ format: 8 }) === 'stale');
+    check('playability: a season change outranks a sim change',
+      rp({ balanceVersion: 4, sim: 1 }) === 'stale');
+  }
 
   // ---- WHOSE VIEW the replay is watched from ------------------------------
   // The camera swings a full 180° between alliances, so the wrong seat shows every

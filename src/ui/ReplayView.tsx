@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReplay } from '../net/api';
-import { ReplayPlayer, REPLAY_FORMAT, replayViewpoint, type Replay } from '../sim/replay';
+import { ReplayPlayer, replayViewpoint, replayPlayability, type Replay } from '../sim/replay';
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
-import { SIM_DT, BALANCE_VERSION, SIM_VERSION } from '../config';
+import { SIM_DT } from '../config';
 import type { MatchPhase } from '../types';
 
 /**
@@ -34,6 +34,9 @@ export function ReplayView({
   const [error, setError] = useState('');
   // the version a stale replay was recorded under (for the message)
   const [staleVersion, setStaleVersion] = useState<number | null>(null);
+  /** playable, but recorded before a sim fix landed — the ending may differ slightly
+   *  from the saved score, which is worth saying rather than quietly showing */
+  const [drift, setDrift] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [tick, setTick] = useState(0);
   const [total, setTotal] = useState(1);
@@ -54,19 +57,19 @@ export function ReplayView({
     setError('');
     const use = (r: Replay): void => {
       replay.current = r;
-      // A replay is a deterministic INPUT log — it only re-simulates to its original
-      // outcome under the exact sim build that recorded it. After a physics/balance
-      // update (BALANCE_VERSION bump) or a replay-container change (REPLAY_FORMAT),
-      // re-running it here would diverge, so refuse playback and say why instead of
-      // showing a silently-wrong game.
-      // `sim` is the SIM-BEHAVIOUR version (see config.ts SIM_VERSION) — bumped by
-      // determinism/physics fixes that are not balance decisions and so must not
-      // reset the competitive season. Absent ⇒ 0 ⇒ recorded before it existed.
-      if (r.format !== REPLAY_FORMAT || r.balanceVersion !== BALANCE_VERSION || (r.sim ?? 0) !== SIM_VERSION) {
+      // A replay is a deterministic INPUT log. Whether this build can re-run it —
+      // exactly, approximately, or not at all — is `replayPlayability`, which is
+      // deliberately three-valued: a float-level determinism fix must NOT make every
+      // match recorded before it vanish, it just means the ending may not land on
+      // precisely the saved number. Only an unreadable container or a different
+      // SEASON is a refusal.
+      const play = replayPlayability(r);
+      if (play === 'stale') {
         setStaleVersion(r.balanceVersion ?? null);
         setStatus('stale');
         return;
       }
+      setDrift(play === 'drift');
       player.current = new ReplayPlayer(r);
       renderer.current = new Renderer();
       setTotal(Math.max(1, r.ticks));
@@ -212,6 +215,12 @@ export function ReplayView({
           changed since, so it can no longer be played back accurately. The score on the
           leaderboard still stands.
         </div>
+      )}
+      {status === 'ready' && drift && (
+        <p className="ds-replay-drift">
+          Recorded earlier this season, before a small physics correction. It plays, but the
+          ending may not land on exactly the saved score - the leaderboard figure is the real one.
+        </p>
       )}
       {status === 'ready' && (
         <div className={`ds-replay-score${done ? ' final' : ''}`}>
