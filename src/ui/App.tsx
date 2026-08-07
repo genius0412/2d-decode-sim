@@ -603,6 +603,18 @@ export function App() {
     // the server reattaches our held slot and a snapshot resyncs us
     transport.onOpen(() => transport.send(encodeMsg({ t: 'rejoin', room: ref.room, clientId: ref.clientId })));
     const s = new ServerSession(transport, false, ref.start, ref.clientId, ref.room);
+    // A rejoin the server REFUSES (the match ended, the grace lapsed) leaves a record that
+    // would keep offering the same dead match every time Home is opened. Forget it as soon
+    // as the refusal lands — the session itself already fails hard, and the controller
+    // freezes rather than predicting on (see `stepServer`).
+    const watch = window.setInterval(() => {
+      if (s.status().failed) {
+        window.clearInterval(watch);
+        clearActiveGame();
+        setActiveGame(null);
+      }
+    }, 400);
+    window.setTimeout(() => window.clearInterval(watch), 30_000);
     setSession(s);
     setSessionKind(ref.kind);
     // a duo run rejoined has more than one robot on the roster; a solo one does not

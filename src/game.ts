@@ -735,6 +735,27 @@ export class GameController {
       return; // the session is going away this frame; don't predict into it
     }
 
+    /**
+     * A DEAD SESSION MUST NOT KEEP SIMULATING.
+     *
+     * Prediction is a guess at what the server will confirm, so once the server is gone
+     * there is nothing left to guess — and continuing produces something worse than a
+     * frozen screen: a fully playable single-player match. Remote robots never receive a
+     * command, so they sit at their spawn poses while the local robot drives around a world
+     * nobody is scoring. That is exactly what a failed REJOIN looked like — tapping "rejoin"
+     * on a match that had already ended dropped the player into what read as an offline
+     * practice field, for as long as they cared to drive.
+     *
+     * The lead cap below cannot catch this: it is gated on `gotSnapshot`, which is false
+     * precisely when no snapshot ever arrived, so a session that never connected had no
+     * bound at all on how far it would predict. Freeze instead, and let the HUD's
+     * connection-lost panel be the whole story.
+     */
+    if (s.status().failed) {
+      this.acc = 0;
+      return;
+    }
+
     // reconcile to the freshest server snapshot BEFORE predicting this frame
     const snap = s.takeSnapshot();
     if (snap) {

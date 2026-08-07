@@ -4919,6 +4919,66 @@ const mkMM = () => {
   }
 
   /**
+   * A DEAD NETWORK SESSION MUST NOT KEEP SIMULATING.
+   *
+   * Reported bug: rejoining a match that had already finished dropped the player into what
+   * read as an offline solo practice field — remote robots frozen at their spawn poses, the
+   * local robot fully drivable, for over a minute. The cause is that prediction's LEAD CAP
+   * is gated on having seen a snapshot, so a session that never connected had no bound at
+   * all on how far it would predict forward.
+   *
+   * This checks the invariant directly against a stub session that reports `failed`: the
+   * world must not advance a single tick.
+   */
+  {
+    const setups: RobotSetup[] = [
+      { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+      { id: 1, alliance: 'red', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+    ];
+    const w = createWorld('match', 7, setups);
+    const before = { tick: w.tick, x: w.robots[0].pos.x, y: w.robots[0].pos.y };
+    // drive hard for a simulated 3 seconds, exactly as the player did
+    const cmd: RobotCommand = { driveX: 1, driveY: 1, rotate: 0.5, leftDrive: 1, rightDrive: 1, intake: true, fire: false };
+    // The guard is `if (session.status().failed) return;` at the top of stepServer. Model it
+    // here rather than constructing a GameController (which needs a DOM canvas): the point
+    // under test is that a failed session short-circuits BEFORE any step() call.
+    const failed = { failed: true };
+    let stepped = 0;
+    for (let i = 0; i < 180; i++) {
+      if (failed.failed) continue; // ← the guard
+      step(w, SIM_DT, new Map([[0, cmd]]));
+      stepped++;
+    }
+    check(
+      'net: a FAILED session never advances the world (no offline sandbox)',
+      stepped === 0 && w.tick === before.tick &&
+        w.robots[0].pos.x === before.x && w.robots[0].pos.y === before.y,
+      `stepped=${stepped} tick=${w.tick}`,
+    );
+    // and the counter-case: a LIVE session obviously does move (so the guard is the thing
+    // stopping it, not some other reason the world was already static)
+    const w2 = createWorld('match', 7, setups);
+    for (let i = 0; i < 180; i++) step(w2, SIM_DT, new Map([[0, cmd]]));
+    check(
+      'net: the same input DOES move a live world (the guard is what stops it)',
+      w2.tick > before.tick && (w2.robots[0].pos.x !== before.x || w2.robots[0].pos.y !== before.y),
+      `tick=${w2.tick}`,
+    );
+    // The two checks above model the guard; this one pins the REAL line. GameController needs
+    // a DOM canvas so it cannot be built here, and a modelled invariant protects nothing if
+    // the guard it models is deleted from `stepServer`.
+    const gameSrc = readFileSync('src/game.ts', 'utf8');
+    const stepServerBody = gameSrc.slice(gameSrc.indexOf('private stepServer('));
+    const guardAt = stepServerBody.indexOf('status().failed');
+    const firstStepAt = stepServerBody.indexOf('this.mod.step(');
+    check(
+      'net: stepServer BAILS on a failed session before it steps the world',
+      guardAt > 0 && firstStepAt > 0 && guardAt < firstStepAt,
+      `guard@${guardAt} firstStep@${firstStepAt}`,
+    );
+  }
+
+  /**
    * coerceSpec FUZZ — the chokepoint every untrusted spec passes (localStorage, account
    * sync, the wire, createWorld). Each property is re-derived from the OUTPUT spec
    * independently of the coercer's internals, so a broken clamp shows up as a violated

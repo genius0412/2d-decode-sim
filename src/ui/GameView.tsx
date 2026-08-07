@@ -245,6 +245,13 @@ export function GameView({
       window.clearInterval(clearTimer);
       if (perfTimer) window.clearInterval(perfTimer);
       window.removeEventListener('keydown', onKey);
+      // Check ONCE MORE on the way out. The poll above runs every 250ms, so leaving
+      // promptly after the final buzzer could beat it — and the cost of losing that race
+      // is Home still offering to rejoin a match that has already been decided.
+      if (session) {
+        const h = controller.getHud();
+        if (h && (h.phase === 'post' || h.net?.failed)) clearActiveGame();
+      }
       controller.dispose();
       controllerRef.current = null;
     };
