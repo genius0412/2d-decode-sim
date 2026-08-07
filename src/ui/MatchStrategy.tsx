@@ -309,9 +309,14 @@ export function MatchStrategy({
                 alliance={me.alliance}
                 value={me.startPose}
                 startIndex={me.startIndex ?? 0}
+                category={startRole ?? settings.startCat}
+                saved={settings.savedStartPoses}
                 lockedCategory={startRole}
-                onChange={(startPose) => applyStart({ startPose })}
+                onChange={(startPose) => applyStart(selectStart(sCat, { index: -1, pose: startPose }))}
                 onPickPreset={(i) => applyStart(selectStart(sCat, { index: i, pose: null }))}
+                onCategory={(c) => applyStart(switchCategory(settings, c))}
+                onSave={(pose) => applyStart(saveStart(sCat, pose))}
+                onDeleteSaved={(c, i) => applyStart(deleteSavedStart(sCat, c, i))}
               />
             ) : (
               <StartPositionEditor

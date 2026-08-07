@@ -199,8 +199,13 @@ export function MatchSetup({
               alliance={settings.alliance}
               value={settings.startPose}
               startIndex={settings.startIndex ?? 0}
-              onChange={(startPose) => set({ startPose })}
-              onPickPreset={(i) => set({ startIndex: i, startPose: null })}
+              category={settings.startCat}
+              saved={settings.savedStartPoses}
+              onChange={(startPose) => set(selectStart(settings, { index: -1, pose: startPose }))}
+              onPickPreset={(i) => set(selectStart(settings, { index: i, pose: null }))}
+              onCategory={(c) => set(switchCategory(settings, c))}
+              onSave={(pose) => set(saveStart(settings, pose))}
+              onDeleteSaved={(c, i) => set(deleteSavedStart(settings, c, i))}
             />
           )}
           <div className="ds-opts" style={{ marginTop: 12 }}>

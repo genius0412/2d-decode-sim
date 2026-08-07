@@ -10,6 +10,8 @@ import {
   chainRoleLabel,
 } from '../games/chain/config';
 import { chainEvalStart, chainMirrorStart, chainSnapStartPose } from '../games/chain/state';
+import { samePose, savedStartCap } from './startPositions';
+import { useAds } from '../ads/AdsProvider';
 import { drawChainField } from '../games/chain/drawField';
 import { drawChainRobot } from '../games/chain/drawRobot';
 
@@ -34,11 +36,12 @@ import { drawChainRobot } from '../games/chain/drawRobot';
  *   made to rotate), and the editor treats "turned too far to fit" as its own failure
  *   with its own repair: `snapTo` squares the robot up before it tries to move it,
  *   because no amount of sliding fixes an angle the corner cannot accept.
- * - **No saved-position library.** DECODE's `savedStartPoses` is a single canonical list
- *   shared across games; CR poses live at completely different coordinates, so saving one
- *   would plant an unreachable entry in DECODE's Close/Far library. The four anchors already
- *   cover both Lab corners x floor/stand, and free placement inside a 24" square is a nudge,
- *   not a layout worth naming.
+ * - **The categories are TOP / BOTTOM**, not DECODE's CLOSE / FAR — a CR robot picks which
+ *   Lab CORNER it occupies, and in a 2v2 the alliance's two robots lock one each so they
+ *   never stack. The shared `StartCat` slots carry it (close = TOP, far = BOTTOM), so the
+ *   saved library, the per-category memory and the account sync are the same machinery
+ *   DECODE uses — `savedStartPoses` is already archived per game by `switchGame`, which is
+ *   what makes one library per game work without the two ever seeing each other's poses.
  *
  * Poses are stored CANONICAL (blue, +x side) and mirrored at the `onChange` boundary, so a
  * placement survives an alliance switch.
@@ -55,9 +58,14 @@ export function ChainStartEditor({
   alliance,
   value,
   startIndex,
+  category,
+  saved,
   lockedCategory,
   onChange,
   onPickPreset,
+  onCategory,
+  onSave,
+  onDeleteSaved,
   size = 300,
 }: {
   spec: RobotSpec;
@@ -65,6 +73,10 @@ export function ChainStartEditor({
   /** the active CUSTOM pose (canonical frame), or null to use the `startIndex` anchor */
   value: StartPose | null | undefined;
   startIndex: number;
+  /** which Lab corner the active start belongs to (TOP / BOTTOM) */
+  category: StartCat;
+  /** the player's saved-position library, per category (per GAME — see `switchGame`) */
+  saved: { close: StartPose[]; far: StartPose[] };
   /** a 2v2 role: locks the robot to one Lab corner so alliance partners never stack */
   lockedCategory?: StartCat;
   /** set the custom pose (canonical frame) */
@@ -73,6 +85,11 @@ export function ChainStartEditor({
    * update (`{ startIndex, startPose: null }`); two separate calls lose one to a stale
    * -state overwrite. */
   onPickPreset: (i: number) => void;
+  /** switch the active Lab corner (restores that corner's remembered pick) */
+  onCategory: (c: StartCat) => void;
+  /** save the current pose into this corner's library (canonical frame) */
+  onSave: (pose: StartPose) => void;
+  onDeleteSaved: (c: StartCat, i: number) => void;
   size?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -87,10 +104,16 @@ export function ChainStartEditor({
   // COMMITTED to the parent when legal — an illegal pose never saves.
   const [draft, setDraft] = useState<StartPose | null>(null);
 
-  // keep each anchor's ORIGINAL index so a role-filtered list still picks the true one
+  // A 2v2 ROLE locks the corner; solo, the tabs pick it. Anchors keep their ORIGINAL index
+  // so a filtered list still selects the true one.
+  const cat = lockedCategory ?? category;
   const anchors = CHAIN_START_POSES.map((p, index) => ({ p, index })).filter(
-    ({ index }) => !lockedCategory || chainAnchorCat(index) === lockedCategory,
+    ({ index }) => chainAnchorCat(index) === cat,
   );
+  const savedList = saved[cat] ?? [];
+  // extra saved slots are a supporter perk, read from the ONE place that decides it so the
+  // cap can never differ between this editor and DECODE's
+  const maxSaved = savedStartCap(useAds().supporter);
 
   // the SAVED pose in the ACTUAL frame: a custom value mirrored out of canonical, else the
   // selected anchor (which is authored canonical too).
@@ -357,8 +380,28 @@ export function ChainStartEditor({
           )}
         </div>
 
-        {lockedCategory && (
+        {/* WHICH LAB CORNER. Locked by a 2v2 role (the alliance's two robots take one each
+            so they never stack), otherwise a pair of tabs — the CR twin of DECODE's
+            Close/Far, named for what the choice actually is here. */}
+        {lockedCategory ? (
           <div className="ds-startpos-role">{chainRoleLabel(lockedCategory)} robot · Lab corner</div>
+        ) : (
+          <div className="ds-startpos-tabs">
+            {(['close', 'far'] as StartCat[]).map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={`ds-startpos-tab ${cat === c ? 'on' : ''}`}
+                onClick={() => {
+                  setDraft(null);
+                  onCategory(c);
+                }}
+                title={`Start in the ${chainRoleLabel(c)} Lab corner`}
+              >
+                {chainRoleLabel(c)}
+              </button>
+            ))}
+          </div>
         )}
 
         <div className="ds-startpos-presets">
@@ -375,6 +418,48 @@ export function ChainStartEditor({
               <span className="ot">{p.name}</span>
             </button>
           ))}
+          {/* the player's OWN saved poses for this corner. Same library machinery DECODE
+              uses, and already stored per game (`switchGame` archives it), so a CR pose can
+              never surface in DECODE's list at coordinates that mean nothing there. */}
+          {savedList.map((sp, i) => {
+            const active = !!value && samePose(canon, sp);
+            return (
+              <button
+                key={`saved-${i}`}
+                type="button"
+                className={`ds-opt mini saved ${active ? 'on' : ''}`}
+                onClick={() => {
+                  setDraft(null);
+                  onChange({ x: sp.x, y: sp.y, headingDeg: sp.headingDeg });
+                }}
+                title="Your saved position"
+              >
+                <span className="ot">★ {i + 1}</span>
+                <span
+                  className="ds-startpos-del"
+                  role="button"
+                  aria-label="Delete saved position"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteSaved(cat, i);
+                  }}
+                >
+                  ×
+                </span>
+              </button>
+            );
+          })}
+          {savedList.length < maxSaved && (
+            <button
+              type="button"
+              className="ds-opt mini add"
+              disabled={!legality.legal}
+              title={legality.legal ? 'Save this position to your Lab-corner library' : 'Make the position legal first'}
+              onClick={() => onSave(canon)}
+            >
+              <span className="ot">＋ Save</span>
+            </button>
+          )}
         </div>
       </div>
     </div>
