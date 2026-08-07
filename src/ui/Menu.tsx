@@ -379,13 +379,27 @@ export function Menu({ settings, onChange }: Props) {
                 </span>
                 <span className="sl">drivetrain</span>
               </div>
-              <div className="ds-stat">
-                <span className="sv" style={{ fontSize: 13 }}>
-                  {INTAKE_SHORT[spec.intake]}
-                  {spec.canSort ? ' +sort' : ''}
-                </span>
-                <span className="sl">intake</span>
-              </div>
+              {/* The one PER-GAME tile. It used to print DECODE's intake style for both
+                  games, so a Chain Reaction robot claimed a "Sloped" intake — a DECODE
+                  part it does not have. CR has a single intake design, so naming it says
+                  nothing; the SCORING ARCHETYPE is that game's defining build choice and
+                  is otherwise absent from this summary. */}
+              {isDecode ? (
+                <div className="ds-stat">
+                  <span className="sv" style={{ fontSize: 13 }}>
+                    {INTAKE_SHORT[spec.intake]}
+                    {spec.canSort ? ' +sort' : ''}
+                  </span>
+                  <span className="sl">intake</span>
+                </div>
+              ) : (
+                <div className="ds-stat">
+                  <span className="sv" style={{ fontSize: 13 }}>
+                    {CHAIN_MODE_LABELS[spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]}
+                  </span>
+                  <span className="sl">scoring</span>
+                </div>
+              )}
             </div>
           </div>
         </div>

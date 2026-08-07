@@ -12,6 +12,7 @@ import {
 import { chainIntakeMouths } from '../games/chain/state';
 import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from '../games/chain/mounts';
 import { footprintExtents } from '../sim/field';
+import { turretGeom, type TurretGeom } from '../render/drawRobot';
 
 /** dimension-label type size, in the viewBox's inch units */
 const DIM_FONT = 1.7;
@@ -48,7 +49,9 @@ export function RobotPreview({
   const rollerTipY = frontY - (reach + 0.5); // shaft + wheels ride out just past the wedges
   // turret sits behind center of rotation, scaled by chassis length
   const turretY = -TURRET_OFFSET_FRAC * len;
-  const turretR = Math.min(w, len) * 0.2;
+  // the SAME sizing the field renderer uses, so the preview cannot promise a
+  // launcher that fits and then draw a different one in the match
+  const tGeom = turretGeom(len / 2, w / 2, Math.abs(TURRET_OFFSET_FRAC * len));
 
   // Chain Reaction geometry — the SAME intake mouths the sim captures with, one per mounted
   // edge, in ROBOT coords (+x forward). The collision footprint moves with the mount, so the
@@ -472,10 +475,11 @@ export function RobotPreview({
               opacity={0.7}
             />
           )}
-          {/* turret ring + barrel toward front */}
-          <circle cx={0} cy={turretY} r={turretR} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
-          <line x1={0} y1={turretY} x2={0} y2={turretY - turretR - 1.2} stroke={accent} strokeWidth={0.7} strokeLinecap="round" />
-          {spec.canSort && <circle cx={0} cy={turretY} r={turretR * 0.4} fill={accent} opacity={0.8} />}
+          {/* the flywheel launcher, in the ROBOT frame so the traction wheel sits on
+              the same side here as it does on the field (see drawLauncher) */}
+          <g transform={`${ROBOT_FRAME} translate(${TURRET_OFFSET_FRAC * len},0)`}>
+            <Launcher g={tGeom} accent={accent} stroke={stroke} sorted={spec.canSort} />
+          </g>
         </>
       )}
 
@@ -491,5 +495,75 @@ export function RobotPreview({
         {dimLabel}
       </text>
     </svg>
+  );
+}
+
+/**
+ * The DECODE flywheel launcher, in ROBOT coords (+x forward) — the SVG twin of
+ * `drawLauncher`. Both take their dimensions from `turretGeom`, so the preview
+ * cannot show a shooter that fits and then have the match draw one that doesn't.
+ *
+ * Two side plates around a ball channel, one off-centre traction wheel intruding
+ * into it (that is what throws the ball — a centred wheel would touch nothing), and
+ * the feed hole on the axis of rotation so the hopper below need not rotate with the
+ * turret. `sorted` fills the throat, the preview's existing tell for a colour sorter.
+ */
+function Launcher({
+  g,
+  accent,
+  stroke,
+  sorted,
+}: {
+  g: TurretGeom;
+  accent: string;
+  stroke: string;
+  sorted: boolean;
+}) {
+  const { ring, chanHalf, plateT, plateLen, holeR } = g;
+  const back = -(holeR + plateT);
+  const wheelD = Math.min(2.6, plateLen * 0.62);
+  const wheelT = Math.min(1.05, chanHalf * 0.62);
+  const wx = plateLen * 0.55 - wheelD / 2;
+  const wy = chanHalf - wheelT;
+  return (
+    <>
+      {/* side plates — the body, and the shape that should read first */}
+      {[-1, 1].map((s) => (
+        <rect
+          key={s}
+          x={back}
+          y={s > 0 ? chanHalf : -chanHalf - plateT}
+          width={plateLen - back}
+          height={plateT}
+          fill={stroke}
+          opacity={0.7}
+        />
+      ))}
+      {/* back wall closing the breech */}
+      <rect x={back} y={-chanHalf} width={plateT} height={chanHalf * 2} fill={stroke} opacity={0.5} />
+      {/* feed throat + the bearing it turns on */}
+      <circle
+        cx={0}
+        cy={0}
+        r={holeR}
+        fill={sorted ? accent : 'var(--ds-bg)'}
+        fillOpacity={sorted ? 0.8 : 1}
+      />
+      <circle cx={0} cy={0} r={ring} fill="none" stroke={accent} strokeWidth={0.35} opacity={0.8} />
+      {/* the traction wheel, off-centre against one plate */}
+      <rect x={wx} y={wy} width={wheelD} height={wheelT} fill={accent} opacity={0.9} />
+      {[1, 2, 3].map((i) => (
+        <line
+          key={i}
+          x1={wx + (wheelD * i) / 4}
+          y1={wy}
+          x2={wx + (wheelD * i) / 4}
+          y2={wy + wheelT}
+          stroke="var(--ds-bg)"
+          strokeWidth={0.22}
+          opacity={0.7}
+        />
+      ))}
+    </>
   );
 }

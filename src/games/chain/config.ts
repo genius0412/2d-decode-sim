@@ -40,6 +40,7 @@
  */
 
 import type {
+  AssistConfig,
   ChainCatalystMount,
   ChainCatalystType,
   ChainIntakeMount,
@@ -856,7 +857,27 @@ export const CHAIN_FOUL_SLOP = 1; // in of bumper slack for the robot-robot cont
  * Every `ballStorage` here must stay ≤ that build's `chainStorageMax`, or coerceSpec clamps
  * it and the card stops highlighting as selected — smoke asserts this.
  */
-export const CHAIN_PRESETS: readonly RobotSpec[] = [
+/**
+ * Every CR preset drives ROBOT-CENTRIC (user decision); only that assist differs from
+ * the player default, so aim/intake/fire automation stays on.
+ *
+ * Chain Reaction rewards pointing the robot at things — a sweeper collects over the
+ * edge it is mounted on, and a drum or dumper fires over its own edge — so for most of
+ * these builds the chassis heading IS the aim. Field-centric drive hides that heading
+ * from the stick. It is a preset default, not a rule: the assist is still a per-robot
+ * setting anyone can flip.
+ *
+ * Shared by reference rather than repeated nine times, so "the presets all drive the
+ * same way" stays true by construction.
+ */
+const CR_PRESET_ASSISTS: AssistConfig = {
+  fieldCentric: false,
+  aimAssist: true,
+  autoIntake: true,
+  autoFire: true,
+};
+
+const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
   // ── REAL TEAM BUILDS ──────────────────────────────────────────────────────────────────
   // Five entries supplied by the user, each a specific team's CAD-competition robot. They
   // lead the list because they are the ones people are actually looking for; the four
@@ -869,8 +890,9 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'Ender', teamName: 'Loomy Squad', teamNumber: 788,
     length: 15, width: 16.5, intake: 'sloped', massLb: 26, drivetrain: 'mecanum',
     driveRpm: 435, flywheelInertia: 0.3, canSort: false,
-    ballStorage: 40, groundClearance: 1.2, scoreMode: 'turret', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'back', catalystType: 'arm', catalystMount: 'right',
+    assists: CR_PRESET_ASSISTS,
   },
   {
     // KITSUNE: both mechanisms live on the REAR CORNERS — turret back-left, rail-turret claw
@@ -879,8 +901,9 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'KITSUNE', teamName: 'KITSUNE', teamNumber: 186033,
     length: 15, width: 17, intake: 'sloped', massLb: 27, drivetrain: 'mecanum',
     driveRpm: 435, flywheelInertia: 0.3, canSort: false,
-    ballStorage: 42, groundClearance: 1.2, scoreMode: 'turret', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'backleft', catalystType: 'turret', catalystMount: 'backright',
+    assists: CR_PRESET_ASSISTS,
   },
   {
     // P. J. Soumik: centre turret over a tank base, with the rail-turret claw at the back so
@@ -888,8 +911,9 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'P. J. Soumik', teamName: 'Soumik Squadron', teamNumber: 14164,
     length: 15, width: 17, intake: 'sloped', massLb: 32, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.3, canSort: false,
-    ballStorage: 42, groundClearance: 1.2, scoreMode: 'turret', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'center', catalystType: 'turret', catalystMount: 'back',
+    assists: CR_PRESET_ASSISTS,
   },
   {
     // Rocky: everything omnidirectional. Butterfly base, front+back sweepers, twin turret in
@@ -898,8 +922,9 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'Rocky', teamName: 'Estimate', teamNumber: 5050,
     length: 12, width: 17, intake: 'sloped', massLb: 30, drivetrain: 'butterfly',
     driveRpm: 435, tankRpm: 340, flywheelInertia: 0.3, canSort: false,
-    ballStorage: 24, groundClearance: 1.2, scoreMode: 'twinturret', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'twinturret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'center', catalystType: 'turret', catalystMount: 'frontback',
+    assists: CR_PRESET_ASSISTS,
   },
   {
     // String Theory: front+back sweepers and a centre turret, with a SWING claw on a pivot
@@ -907,8 +932,9 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'String Theory', teamName: 'Circuitrunners Surge', teamNumber: 1002,
     length: 12, width: 17, intake: 'sloped', massLb: 31, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.3, canSort: false,
-    ballStorage: 24, groundClearance: 1.2, scoreMode: 'turret', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'center', catalystType: 'arm', catalystMount: 'frontback',
+    assists: CR_PRESET_ASSISTS,
   },
   // ── ARCHETYPE DEMOS ───────────────────────────────────────────────────────────────────
   {
@@ -920,8 +946,9 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     // front+back sweepers eat the START CUBE twice over, so this build is necessarily short
     length: 12, width: 17, intake: 'sloped', massLb: 24, drivetrain: 'swerve',
     driveRpm: 500, flywheelInertia: 0.2, canSort: false,
-    ballStorage: 16, groundClearance: 1.3, scoreMode: 'turret', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'front',
+    assists: CR_PRESET_ASSISTS,
   },
   {
     // volume hauler: dumps a huge load at the wall, tank push + MAX storage + high
@@ -932,8 +959,9 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'Hauler', teamName: 'Dumper · fill forward, reverse and unload', teamNumber: 0,
     length: 15, width: 18, intake: 'sloped', massLb: 38, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.2, canSort: false,
-    ballStorage: 54, groundClearance: 1.5, scoreMode: 'dumper', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'dumper', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'back',
+    assists: CR_PRESET_ASSISTS,
   },
   {
     // the volume shooter: a chassis-wide drum streaming from anywhere, light mecanum.
@@ -944,8 +972,9 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     // side-mounted sweepers eat the cube across the WIDTH, so this one is narrow
     length: 14.5, width: 12, intake: 'sloped', massLb: 25, drivetrain: 'mecanum',
     driveRpm: 470, flywheelInertia: 0.3, canSort: false,
-    ballStorage: 32, groundClearance: 1.4, scoreMode: 'drum', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'drum', chainIntake: 'sweeper',
     intakeMount: 'side', shooterMount: 'front',
+    assists: CR_PRESET_ASSISTS,
   },
   {
     // fast wall-runner: a quick x-drive dumper working its own quadrant; low clearance
@@ -955,7 +984,22 @@ export const CHAIN_PRESETS: readonly RobotSpec[] = [
     name: 'Skimmer', teamName: 'Dumper · run the wall, fire broadside', teamNumber: 0,
     length: 14.5, width: 16, intake: 'sloped', massLb: 22, drivetrain: 'xdrive',
     driveRpm: 520, flywheelInertia: 0.1, canSort: false,
-    ballStorage: 35, groundClearance: 1.0, scoreMode: 'dumper', chainIntake: 'sweeper',
+    groundClearance: 1.0, scoreMode: 'dumper', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'right',
+    assists: CR_PRESET_ASSISTS,
   },
 ] as const;
+
+/**
+ * Every preset ships with a FULL hopper (user decision).
+ *
+ * COMPUTED, never written down. `chainStorageMax` is a function of chassis area,
+ * scoring archetype and intake mount, so a hardcoded number would quietly stop being
+ * the maximum the moment any of those constants moved — and `coerceSpec` clamping a
+ * now-too-large value is exactly what makes a preset card stop highlighting as
+ * selected. Deriving it means "max" is true by construction at every chassis size.
+ */
+export const CHAIN_PRESETS: readonly RobotSpec[] = CHAIN_PRESET_BUILDS.map((s) => ({
+  ...s,
+  ballStorage: chainStorageMax(s),
+}));

@@ -130,67 +130,134 @@ export function drawRobot(
   }
   ctx.restore();
 
-  // turret on top (world orientation) — sized so nothing pokes past the
-  // chassis in ANY turret direction: max reach is the distance from the
-  // turret center to the nearest chassis edge
+  // turret on top, in WORLD orientation
   const tp = turretWorldPos(r);
   const off = Math.abs(r.spec.length * C.TURRET_OFFSET_FRAC);
-  const reach = Math.min(hl - off, hw) - 0.5;
-  const ring = Math.min(4.4, reach);
+  const g = turretGeom(hl, hw, off);
   ctx.save();
   ctx.translate(tp.x, tp.y);
   ctx.rotate(r.turretHeading);
-  /* THE TURRET, as a shooter rather than a circle with a stick: a toothed slew RING it
-     rotates on, the body plate, a FLYWHEEL across the breech, and a HOOD that narrows to the
-     muzzle. The ring teeth are what say "this rotates"; the hood is what says "this is where
-     the ball leaves". */
-  const live = r.hopper.length > 0;
+  drawLauncher(ctx, g, r.hopper.length > 0);
+  ctx.restore();
+}
+
+/**
+ * Turret sizing, shared by the field renderer and the builder preview so the two
+ * cannot draw different shooters.
+ *
+ * `reach` is a HARD RADIUS BUDGET: the turret spins, so the only way to promise the
+ * launcher never pokes past the chassis is to keep every drawn point inside a circle
+ * centred on the turret, sized to the NEAREST chassis edge. The turret sits `off`
+ * behind centre, so that nearest edge is the REAR one (`hl - off`) or a side (`hw`),
+ * never the front.
+ *
+ * The consequence that matters: a rectangle's far CORNER is what touches the circle,
+ * not the middle of its end. So the barrel's length is solved from the budget
+ * (`plateLen² + outerY² = reach²`) rather than set to `reach` — which is exactly the
+ * bug the old tapered hood had, its corners sitting outside the circle it was sized by.
+ */
+export interface TurretGeom {
+  /** radius budget: nothing may be drawn outside this */
+  reach: number;
+  /** slew-ring radius (teeth ride 0.5 further out) */
+  ring: number;
+  /** half-width of the ball channel between the plates */
+  chanHalf: number;
+  /** side-plate thickness */
+  plateT: number;
+  /** plate outer face, = chanHalf + plateT */
+  outerY: number;
+  /** plate length forward of the turret centre */
+  plateLen: number;
+  /** feed-hole radius at the turret centre */
+  holeR: number;
+}
+
+export function turretGeom(hl: number, hw: number, off: number): TurretGeom {
+  const reach = Math.min(hl - off, hw) - 0.5;
+  // an artifact is 5in across, so the channel wants to be ~that — but on a minimum
+  // chassis the budget is under 5in total, and a channel that ignored it would put
+  // the plates outside the frame. The cap keeps the proportions instead.
+  const chanHalf = Math.min(C.BALL_RADIUS * 0.92, reach * 0.42);
+  const plateT = Math.min(0.75, reach * 0.15);
+  const outerY = chanHalf + plateT;
+  const plateLen = Math.sqrt(Math.max(0, reach * reach - outerY * outerY));
+  const holeR = Math.max(0.8, Math.min(chanHalf - 0.35, C.BALL_RADIUS * 0.8));
+  // the bearing hugs the throat rather than enclosing the whole assembly. Drawn any
+  // larger it lands on top of the plates and the two circles read as a target — the
+  // launcher is supposed to be the shape you notice, not the joint it turns on.
+  const ring = Math.min(holeR + 0.55, reach - 0.3);
+  return { reach, ring, chanHalf, plateT, outerY, plateLen, holeR };
+}
+
+/**
+ * The SHOOTER as it is actually built: a flywheel launcher on a slew ring.
+ *
+ * Two parallel SIDE PLATES form the channel a ball travels down. One TRACTION WHEEL
+ * sits off-centre, intruding into that channel from one side — it pinches the ball
+ * against the opposite plate and throws it, which is why it is offset rather than
+ * centred (a centred wheel would touch nothing). Seen from directly above, its axle
+ * runs across the channel, so the wheel reads as a rectangle: long across the shot
+ * direction is its diameter, thin across is its tread.
+ *
+ * The HOLE at the centre is the feed throat. It is dead-centre for a mechanical
+ * reason — it is on the axis of rotation, so the hopper underneath can feed the
+ * launcher without having to rotate with it.
+ */
+function drawLauncher(ctx: CanvasRenderingContext2D, g: TurretGeom, live: boolean): void {
+  const { ring, chanHalf, plateT, plateLen, holeR } = g;
   const ink = live ? '#22c55e' : '#6b7280';
-  // slew ring + teeth
+  const back = -(holeR + plateT); // plates wrap slightly behind the feed hole
+
+  // the two side plates — the launcher's body, and the shape that should read first
+  ctx.fillStyle = '#5c6675';
+  ctx.strokeStyle = 'rgba(200,214,228,0.5)';
+  ctx.lineWidth = 0.3;
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.rect(back, s * chanHalf, plateLen - back, s * plateT);
+    ctx.fill();
+    ctx.stroke();
+  }
+  // back wall closing the breech, so the channel has a mouth at one end only
+  ctx.fillStyle = '#454e5c';
+  ctx.fillRect(back, -chanHalf, plateT, chanHalf * 2);
+
+  // feed throat: a hole, so it is drawn as the ABSENCE of the deck rather than a
+  // disc on top of it — a dark opening with a lit rim reads as depth from above.
+  ctx.fillStyle = '#161a20';
+  ctx.beginPath();
+  ctx.arc(0, 0, holeR, 0, Math.PI * 2);
+  ctx.fill();
+  // the bearing it all turns on, as a thin race around the throat
   ctx.strokeStyle = ink;
-  ctx.lineWidth = 0.9;
+  ctx.lineWidth = 0.4;
   ctx.beginPath();
   ctx.arc(0, 0, ring, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.lineWidth = 0.42;
-  const teeth = Math.max(10, Math.round(ring * 4));
-  for (let i = 0; i < teeth; i++) {
-    const a = (i / teeth) * Math.PI * 2;
-    const c = Math.cos(a);
-    const sn = Math.sin(a);
+
+  // the traction wheel, off-centre against the +y plate
+  const wheelD = Math.min(2.6, plateLen * 0.62); // diameter, along the shot
+  const wheelT = Math.min(1.05, chanHalf * 0.62); // tread, across it
+  const wx = plateLen * 0.55 - wheelD / 2;
+  const wy = chanHalf - wheelT;
+  ctx.fillStyle = live ? '#4ade80' : '#8b95a5';
+  ctx.beginPath();
+  ctx.rect(wx, wy, wheelD, wheelT);
+  ctx.fill();
+  // tread bars, so it reads as a spinning wheel and not a painted block
+  ctx.strokeStyle = 'rgba(20,26,32,0.55)';
+  ctx.lineWidth = 0.28;
+  for (let i = 1; i < 4; i++) {
+    const x = wx + (wheelD * i) / 4;
     ctx.beginPath();
-    ctx.moveTo(c * ring, sn * ring);
-    ctx.lineTo(c * (ring + 0.5), sn * (ring + 0.5));
+    ctx.moveTo(x, wy);
+    ctx.lineTo(x, wy + wheelT);
     ctx.stroke();
   }
-  // body plate
-  ctx.fillStyle = '#3a4150';
-  ctx.beginPath();
-  ctx.arc(0, 0, Math.max(ring - 1, 1.5), 0, Math.PI * 2);
-  ctx.fill();
-  // flywheel across the breech (perpendicular to the barrel — that is the axis it spins on)
-  ctx.strokeStyle = live ? '#4ade80' : '#8b95a5';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(0.4, -ring * 0.62);
-  ctx.lineTo(0.4, ring * 0.62);
-  ctx.stroke();
-  // hood: tapers from the breech to the muzzle, so the barrel has a direction
-  ctx.fillStyle = '#525b6b';
-  ctx.beginPath();
-  ctx.moveTo(0, -1.35);
-  ctx.lineTo(reach, -0.85);
-  ctx.lineTo(reach, 0.85);
-  ctx.lineTo(0, 1.35);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(190,205,220,0.35)';
-  ctx.lineWidth = 0.3;
-  ctx.stroke();
-  // muzzle
-  ctx.fillStyle = ink;
-  ctx.fillRect(reach - 0.5, -0.85, 0.5, 1.7);
-  ctx.restore();
+  // axle stub through the wheel, on the far plate
+  ctx.fillStyle = '#2a303c';
+  ctx.fillRect(wx + wheelD / 2 - 0.2, wy, 0.4, wheelT + plateT);
 }
 
 /**
