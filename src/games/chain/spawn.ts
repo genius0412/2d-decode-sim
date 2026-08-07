@@ -29,7 +29,7 @@ import {
   CHAIN_PARTICLE_SIM,
   CHAIN_START_POSES,
 } from './config';
-import { accelSide, chainSnapStart, emptyChainState, onRingStand, ringStands, type ChainCatalyst } from './state';
+import { accelSide, chainSnapStartPose, emptyChainState, onRingStand, ringStands, type ChainCatalyst } from './state';
 
 /**
  * Chain Reaction world spawn — a PLAYABLE match.
@@ -62,10 +62,14 @@ function chainStartPose(
   // the CANONICAL blue frame and snapped legal before mirroring, so a hand-edited or
   // spoofed pose can never spawn a robot inside the corner assembly or outside its Lab.
   const base = custom
-    ? {
-        pos: chainSnapStart(spec, { x: custom.x, y: custom.y }),
-        heading: (custom.headingDeg * Math.PI) / 180,
-      }
+    ? (() => {
+        // HEADING is repaired alongside position: a robot turned too far off-axis sweeps
+        // wider than the 24" Lab and has no legal spot at all, so snapping only its
+        // position would leave it overlapping the corner assembly and it would be flung
+        // on tick one. `chainSnapStartPose` squares it up first.
+        const p = chainSnapStartPose(spec, custom);
+        return { pos: { x: p.x, y: p.y }, heading: (p.headingDeg * Math.PI) / 180 };
+      })()
     : (() => {
         const n = CHAIN_START_POSES.length;
         const p = CHAIN_START_POSES[((index % n) + n) % n];

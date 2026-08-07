@@ -146,6 +146,6 @@ export function startSelectionLegal(
 ): boolean {
   if (!startPose) return true;
   return game === 'chain'
-    ? chainStartLegal(spec, { x: startPose.x, y: startPose.y })
+    ? chainStartLegal(spec, { x: startPose.x, y: startPose.y }, startPose.headingDeg)
     : activeStartLegal(spec, alliance, startPose);
 }

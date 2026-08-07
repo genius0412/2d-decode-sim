@@ -147,7 +147,7 @@ import {
   CHAIN_PRISM,
   chainArmReach,
 } from '../src/games/chain/config';
-import { CHAIN_HOOKS_PER_GOAL, accelMultiplier, catalystTrackTarget, chainEvalStart, chainIntakeMouths, chainMirrorStart, chainSnapStart, chainStartLegal, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
+import { CHAIN_HOOKS_PER_GOAL, accelMultiplier, catalystTrackTarget, chainEvalStart, chainStartExtents, chainHeadingFits, chainNearestFittingHeading, chainSnapStartPose, chainIntakeMouths, chainMirrorStart, chainSnapStart, chainStartLegal, hookPos, labAreas, onRingStand, ringStandBoxes, ringStands } from '../src/games/chain/state';
 import {
   CHAIN_CATALYSTS,
   CHAIN_CATALYST_TYPES,
@@ -170,8 +170,10 @@ import {
   CHAIN_LAB,
   CHAIN_RINGSTAND_BOX,
   CHAIN_HALF_Y,
+  chainMassFloorBump,
+  chainStorageMax,
 } from '../src/games/chain/config';
-import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, intakeMountOf, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
+import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, intakeMountOf, isEdgePos, isTurreted, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -4794,26 +4796,30 @@ const mkMM = () => {
   // pose that jumps corners when the alliance flips, is the whole bug class here.
   {
     const spec = DEFAULT_SPEC;
-    const badAnchor = CHAIN_START_POSES.filter((a) => !chainEvalStart(spec, a.pos).legal).map((a) => a.name);
+    const badAnchor = CHAIN_START_POSES.filter((a) => !chainEvalStart(spec, a.pos, (a.heading * 180) / Math.PI).legal).map((a) => a.name);
     check('chain start editor: every named anchor evaluates LEGAL', badAnchor.length === 0, badAnchor.join(', '));
 
     // the verdict never contradicts the reasons it shows — a legal pose must satisfy BOTH
     // sub-rules, so a green ring can never be paired with a broken one
     let contradiction = '';
+    // sweep HEADINGS too: legality became heading-aware, so a 45deg pose exercises the
+    // widest footprint and 0/90 the narrowest
+    for (const deg of [0, 30, 45, 90, 135]) {
     for (let x = -CHAIN_HALF_X; x <= CHAIN_HALF_X && !contradiction; x += 3) {
       for (let y = -CHAIN_HALF_Y; y <= CHAIN_HALF_Y && !contradiction; y += 3) {
-        const ev = chainEvalStart(spec, { x, y });
-        if (ev.legal !== chainStartLegal(spec, { x, y })) contradiction = `verdict split at ${x},${y}`;
+        const ev = chainEvalStart(spec, { x, y }, deg);
+        if (ev.legal !== chainStartLegal(spec, { x, y }, deg)) contradiction = `verdict split at ${x},${y}`;
         else if (ev.legal && !(ev.inLab && ev.clearOfStand)) contradiction = `legal but unexplained at ${x},${y}`;
       }
+    }
     }
     check('chain start editor: legality and its stated reason never disagree', !contradiction, contradiction);
 
     // the two failure modes are distinguishable (so the status line can name one)
-    const mid = chainEvalStart(spec, { x: 0, y: 0 });
+    const mid = chainEvalStart(spec, { x: 0, y: 0 }, 0);
     // a spot INSIDE the Lab band that still overlaps the assembly — the case where the
     // status line must blame the Ring Stand rather than containment
-    const onStand = chainEvalStart(spec, { x: 62, y: 62 });
+    const onStand = chainEvalStart(spec, { x: 62, y: 62 }, 0);
     check('chain start editor: mid-field fails as OUT OF LAB', !mid.legal && !mid.inLab);
     check(
       'chain start editor: in-Lab but on the corner assembly fails as BLOCKED, not out-of-lab',
@@ -4825,8 +4831,10 @@ const mkMM = () => {
     // one call in both directions), and blue is the identity
     // a LEGAL custom pose (off-anchor, odd heading) — the spawn only honours a custom pose
     // verbatim when it is legal, so an illegal probe would test the snap instead of the mirror
-    const probe = { x: 57, y: -58, headingDeg: 150 };
-    check('chain start editor: the custom-pose probe is itself legal', chainStartLegal(spec, probe));
+    // 180deg, not a diagonal: heading is no longer free (a turned chassis sweeps wider
+    // than the 24in Lab allows), so a 150deg probe now tests the SNAP, not the mirror
+    const probe = { x: 57, y: -58, headingDeg: 180 };
+    check('chain start editor: the custom-pose probe is itself legal', chainStartLegal(spec, probe, probe.headingDeg));
     let mirrorOk = true;
     for (const a of ['blue', 'red'] as const) {
       const round = chainMirrorStart(chainMirrorStart(probe, a), a);
@@ -4860,13 +4868,142 @@ const mkMM = () => {
       );
     }
 
+    // HEADING is part of the rule now. A chassis turned off-axis sweeps a wider
+    // axis-aligned bound, and the Lab is only 24in across with a solid 6in assembly in
+    // its outer corner — so a big robot has NO legal diagonal start, and the editor has
+    // to be able to say so and repair it by turning rather than sliding.
+    {
+      const big = coerceSpec({ ...DEFAULT_SPEC, length: 18, width: 18 }, DEFAULT_SPEC, 'chain');
+      check(
+        'chain start heading: a squared-up robot fits the Lab',
+        chainHeadingFits(big, 0) && chainHeadingFits(big, 90) && chainHeadingFits(big, 180),
+      );
+      check(
+        'chain start heading: a big robot cannot start diagonally',
+        !chainHeadingFits(big, 45),
+        `ex at 45deg = ${chainStartExtents(big, 45).ex.toFixed(2)}`,
+      );
+      const fixed = chainNearestFittingHeading(big, 45);
+      check('chain start heading: the repair TURNS to a heading that fits', chainHeadingFits(big, fixed), `45 -> ${fixed}`);
+      check('chain start heading: a fitting heading is left alone', chainNearestFittingHeading(big, 0) === 0);
+      // THE invariant tying it together: "fits" must mean a legal pose really exists, and
+      // the pose-level snap must find one — for every spec and every heading.
+      let unplaceable = '';
+      let unrepaired = '';
+      for (const sp of [big, DEFAULT_SPEC, ...CHAIN_PRESETS]) {
+        const spc = coerceSpec({ ...sp }, DEFAULT_SPEC, 'chain');
+        for (let d = 0; d < 360 && !unplaceable && !unrepaired; d += 5) {
+          if (chainHeadingFits(spc, d)) {
+            const sn = chainSnapStart(spc, { x: 0, y: 0 }, d);
+            if (!chainStartLegal(spc, sn, d)) unplaceable = `${spc.name} deg ${d}`;
+          }
+          // and the POSE-level snap (what the spawn runs) always lands legal, whatever
+          // heading it is handed — this is the guard against spawning inside the assembly
+          const rep = chainSnapStartPose(spc, { x: 200, y: -500, headingDeg: d });
+          if (!chainStartLegal(spc, { x: rep.x, y: rep.y }, rep.headingDeg)) {
+            unrepaired = `${spc.name} deg ${d} -> ${rep.x.toFixed(1)},${rep.y.toFixed(1)}@${rep.headingDeg}`;
+          }
+        }
+      }
+      check('chain start heading: every fitting heading has a legal position', !unplaceable, unplaceable);
+      check('chain start heading: the pose snap ALWAYS lands legal, from any heading', !unrepaired, unrepaired);
+    }
+
     // free placement still cannot beat G04: an out-of-bounds pose SNAPS back into the Lab
-    const snapped = chainSnapStart(spec, { x: 0, y: 0 });
+    const snapped = chainSnapStart(spec, { x: 0, y: 0 }, 0);
     check(
       'chain start editor: snapping a mid-field pose returns a legal Lab spot',
-      chainStartLegal(spec, snapped),
+      chainStartLegal(spec, snapped, 0),
       `${snapped.x.toFixed(1)},${snapped.y.toFixed(1)}`,
     );
+  }
+
+  /**
+   * coerceSpec FUZZ — the chokepoint every untrusted spec passes (localStorage, account
+   * sync, the wire, createWorld). Each property is re-derived from the OUTPUT spec
+   * independently of the coercer's internals, so a broken clamp shows up as a violated
+   * invariant instead of quietly agreeing with itself.
+   */
+  {
+    let sd = 0x2f6e2b1;
+    const rnd = (): number => {
+      sd ^= sd << 13; sd >>>= 0;
+      sd ^= sd >> 17;
+      sd ^= sd << 5; sd >>>= 0;
+      return sd / 0x100000000;
+    };
+    const pickOf = <T,>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length) % xs.length];
+    const HOSTILE: unknown[] = [
+      undefined, null, NaN, Infinity, -Infinity, 0, -1, -1e9, 1e9, 1e309,
+      '18', 'banana', '', true, false, {}, [], { valueOf: () => 99 }, -0,
+    ];
+    const ENUMISH: unknown[] = [
+      ...HOSTILE, 'front', 'back', 'side', 'left', 'right', 'center', 'frontback',
+      'frontleft', 'backright', 'turret', 'twinturret', 'drum', 'dumper', 'arm', 'rail',
+      'sloped', 'vector', 'triangle', 'compact', 'extended', 'mecanum', 'tank', 'swerve',
+      'xdrive', 'butterfly', '__proto__', 'constructor',
+    ];
+    const randomRaw = (): Record<string, unknown> => {
+      const o: Record<string, unknown> = {};
+      for (const f of ['length', 'width', 'massLb', 'driveRpm', 'tankRpm', 'flywheelInertia',
+                       'ballStorage', 'groundClearance', 'catapultRange', 'catapultYaw', 'teamNumber']) {
+        if (rnd() < 0.75) o[f] = pickOf(HOSTILE);
+      }
+      for (const f of ['intake', 'drivetrain', 'scoreMode', 'chainIntake', 'catalystType',
+                       'intakeMount', 'shooterMount', 'catalystMount', 'chassisColor']) {
+        if (rnd() < 0.75) o[f] = pickOf(ENUMISH);
+      }
+      if (rnd() < 0.4) o.intakeSide = pickOf([true, false, 'yes', 1, null]);
+      if (rnd() < 0.4) o.shooterRear = pickOf([true, false, 'yes', 1, null]);
+      if (rnd() < 0.5) o.canSort = pickOf([true, false, 'yes', 1, null]);
+      if (rnd() < 0.5) o.name = pickOf([undefined, '', '   ', 'x'.repeat(200), 42, null]);
+      if (rnd() < 0.5) o.teamName = pickOf([undefined, '', 'y'.repeat(300), 7, null]);
+      if (rnd() < 0.5) o.assists = pickOf([undefined, null, {}, { aimAssist: false }, { fieldCentric: 'no' }]);
+      return o;
+    };
+
+    const problems: string[] = [];
+    const note = (m: string) => { if (problems.length < 6) problems.push(m); };
+    for (const game of ['decode', 'chain', undefined] as (GameId | undefined)[]) {
+      const lbl = game ?? 'no-game';
+      for (let i = 0; i < 300; i++) {
+        const raw = randomRaw();
+        let a: RobotSpec;
+        try {
+          a = coerceSpec(raw, DEFAULT_SPEC, game);
+        } catch (e) {
+          note(`${lbl}: THREW ${String(e)}`);
+          continue;
+        }
+        for (const [k, v] of Object.entries(a)) {
+          if (typeof v === 'number' && !Number.isFinite(v)) note(`${lbl}: ${k} not finite (${v})`);
+        }
+        const rpm = rpmLimits(a.drivetrain);
+        if (a.driveRpm < rpm.min || a.driveRpm > rpm.max) note(`${lbl}: driveRpm ${a.driveRpm}`);
+        if ((a.drivetrain === 'butterfly') !== (a.tankRpm !== undefined)) note(`${lbl}: tankRpm presence`);
+        const mass = massLimits(a.drivetrain, a.flywheelInertia, game === 'chain' ? chainMassFloorBump(a) : 0);
+        if (a.massLb < mass.min - 1e-9 || a.massLb > mass.max + 1e-9) note(`${lbl}: mass ${a.massLb}`);
+        if ((a.ballStorage ?? 0) > chainStorageMax(a)) note(`${lbl}: storage over max`);
+        if (a.intakeSide !== (a.intakeMount === 'side')) note(`${lbl}: intakeSide mirror`);
+        if (a.shooterRear !== (a.shooterMount === 'back')) note(`${lbl}: shooterRear mirror`);
+        if (!isTurreted(a.scoreMode) && !isEdgePos(a.shooterMount as never)) note(`${lbl}: turretless on ${a.shooterMount}`);
+        if (a.assists?.aimAssist !== true) note(`${lbl}: aim assist not forced on`);
+        if (a.name.length > 24 || a.teamName.length > 48) note(`${lbl}: identity too long`);
+        // IDEMPOTENT — it runs at several layers, so a second pass must change nothing
+        if (JSON.stringify(coerceSpec(a, DEFAULT_SPEC, game)) !== JSON.stringify(a)) {
+          note(`${lbl}: NOT idempotent from ${JSON.stringify(raw).slice(0, 120)}`);
+        }
+      }
+    }
+    // a CR build routed through DECODE and back must still be legal (switchGame / mixed rooms)
+    for (let i = 0; i < 100; i++) {
+      const cr = coerceSpec(randomRaw(), DEFAULT_SPEC, 'chain');
+      const back = coerceSpec(coerceSpec(cr, DEFAULT_SPEC, 'decode'), DEFAULT_SPEC, 'chain');
+      if ((back.ballStorage ?? 0) > chainStorageMax(back)) note('cr->decode->chain: storage over max');
+      if (!Number.isFinite(back.massLb)) note('cr->decode->chain: mass not finite');
+    }
+    check('coerceSpec: 900 fuzzed specs hold every range/enum/mirror invariant + idempotency',
+      problems.length === 0, problems.join(' | '));
   }
 
   // CR CHASSIS SIZE: the sweeper is structure inside the 18" START CUBE, so its reach eats
@@ -4936,7 +5073,6 @@ const mkMM = () => {
   // must end up inside its Lab Area and clear of the corner assembly — otherwise it spawns
   // inside a collider and gets flung across the field on tick one.
   {
-    const e = 8.5;
     const tries: StartPose[] = [
       { x: 0, y: 0, headingDeg: 180 },        // middle of the field
       { x: 71, y: 71, headingDeg: 0 },         // deep inside the corner assembly
@@ -4950,15 +5086,20 @@ const mkMM = () => {
         { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0, startPose: sp },
       ]);
       const p = w.robots[0].pos;
+      // extents are HEADING-AWARE, and per-axis: re-derive from the spawned robot's own
+      // spec + heading rather than from one scalar, or this re-check is a different
+      // (stricter, and wrong) rule than the one the spawn applied
+      const rspec = w.robots[0].spec;
+      const { ex, ey } = chainStartExtents(rspec, (w.robots[0].heading * 180) / Math.PI);
       const inLab =
-        p.x >= CHAIN_HALF_X - CHAIN_LAB + e - 0.01 &&
-        p.x <= CHAIN_HALF_X - e + 0.01 &&
-        Math.abs(p.y) >= CHAIN_HALF_Y - CHAIN_LAB + e - 0.01 &&
-        Math.abs(p.y) <= CHAIN_HALF_Y - e + 0.01;
+        p.x >= CHAIN_HALF_X - CHAIN_LAB + ex - 0.01 &&
+        p.x <= CHAIN_HALF_X - ex + 0.01 &&
+        Math.abs(p.y) >= CHAIN_HALF_Y - CHAIN_LAB + ey - 0.01 &&
+        Math.abs(p.y) <= CHAIN_HALF_Y - ey + 0.01;
       const clear = ringStandBoxes().every(
         (b) =>
-          !(Math.abs(p.x - b.x) < CHAIN_RINGSTAND_BOX / 2 + e - 0.01 &&
-            Math.abs(p.y - b.y) < CHAIN_RINGSTAND_BOX / 2 + e - 0.01),
+          !(Math.abs(p.x - b.x) < CHAIN_RINGSTAND_BOX / 2 + ex - 0.01 &&
+            Math.abs(p.y - b.y) < CHAIN_RINGSTAND_BOX / 2 + ey - 0.01),
       );
       if (!inLab || !clear) bad.push(`(${sp.x},${sp.y})→(${p.x.toFixed(0)},${p.y.toFixed(0)}) lab=${inLab} clear=${clear}`);
     }

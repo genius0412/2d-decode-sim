@@ -15,7 +15,7 @@ import {
 } from './config';
 import { type ChainEdge, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, intakeMountEdges, intakeMountOf, mountOrigin } from './mounts';
 import { CHAIN_CATALYST_NEAR, chainCatalystGeom } from './config';
-import { datan2, hyp, rot, wrapAngle } from '../../math';
+import { datan2, dcos, dsin, hyp, rot, wrapAngle } from '../../math';
 
 /**
  * The CR intake MOUTHS in the robot-local frame — the ONE source of truth shared by the capture
@@ -347,6 +347,76 @@ export function catalystDist(rob: RobotState, target: Vec2): number {
 
 
 /**
+ * Half-extents of the AXIS-ALIGNED box the robot's footprint occupies at `headingDeg`,
+ * plus a small clearance margin. The single source both the legality test and the
+ * editor's outline read.
+ *
+ * HEADING MATTERS, and the previous model said it did not. It used one scalar,
+ * `max(length, width)/2 + 0.5`, described as "generous, rotation-agnostic" — but that
+ * is not a bound over all headings at all: a square chassis turned 45° sweeps
+ * `(|cos|+|sin|)·s/2 ≈ 0.707s`, well past the `0.5s` that bound allowed. So a robot
+ * placed diagonally could be called legal and still overlap the solid corner assembly.
+ * Computing the real rotated extents fixes that AND is what lets the editor draw an
+ * outline that turns with the robot instead of a square that visibly does not.
+ *
+ * At 0°/90° this is exactly the chassis, so an axis-aligned robot now gets the room its
+ * true footprint deserves rather than being measured by its longer side.
+ */
+export function chainStartExtents(
+  spec: RobotSpec,
+  headingDeg: number,
+): { ex: number; ey: number } {
+  // dcos/dsin, not Math.cos/sin — this is sim source, and the trig discipline is what
+  // keeps two engines agreeing on a spawn position (see CLAUDE.md)
+  const rad = (headingDeg * Math.PI) / 180;
+  const c = Math.abs(dcos(rad));
+  const s = Math.abs(dsin(rad));
+  const hl = spec.length / 2;
+  const hw = spec.width / 2;
+  return { ex: c * hl + s * hw + 0.5, ey: s * hl + c * hw + 0.5 };
+}
+
+/**
+ * Does ANY legal position exist at this heading?
+ *
+ * The Lab Area is a 24" square, so a robot only fits inside it while its footprint's
+ * axis-aligned bound stays under 24" on both axes — and that bound GROWS as the robot
+ * turns off-axis, peaking at 45°. A maximum-size 18×18 robot sweeps ~25.5" diagonally
+ * and therefore has NO legal diagonal start at all, which is a true fact about the
+ * field rather than a limitation of the editor.
+ *
+ * Worth asking separately from `chainStartLegal`, because the two failures need
+ * different repairs: a bad POSITION is fixed by moving, a bad HEADING can only be
+ * fixed by turning, and a snap that only ever moves would hunt forever.
+ */
+export function chainHeadingFits(spec: RobotSpec, headingDeg: number): boolean {
+  const { ex, ey } = chainStartExtents(spec, headingDeg);
+  const lo = CHAIN_HALF_X - CHAIN_LAB; // inner Lab edge
+  const hi = CHAIN_HALF_X; // wall
+  // (a) the Lab band exists on both axes
+  if (lo + ex > hi - ex || lo + ey > hi - ey) return false;
+  // (b) AND some point in it also clears the corner assembly, which occupies the Lab's
+  // OUTER corner — `[hi - BOX, hi]` on both axes. Escaping it means retreating inward on
+  // one axis or the other, so at least one axis must have room for that retreat while
+  // staying inside the Lab. Checking (a) alone was not enough: at 45° a mid-size chassis
+  // fits the square and still has nowhere in it that misses the post.
+  const inner = hi - CHAIN_RINGSTAND_BOX;
+  return lo + ex <= inner - ex || lo + ey <= inner - ey;
+}
+
+/** the nearest heading (in whole degrees) at which the robot fits the Lab at all —
+ *  the repair for a pose turned too far to be placeable. Returns `headingDeg`
+ *  unchanged when it already fits; searches both ways so it turns the short way. */
+export function chainNearestFittingHeading(spec: RobotSpec, headingDeg: number): number {
+  if (chainHeadingFits(spec, headingDeg)) return headingDeg;
+  for (let d = 1; d <= 90; d++) {
+    if (chainHeadingFits(spec, headingDeg + d)) return headingDeg + d;
+    if (chainHeadingFits(spec, headingDeg - d)) return headingDeg - d;
+  }
+  return headingDeg; // a robot too big for the Lab at ANY heading — caller reports it
+}
+
+/**
  * Snap a CUSTOM Chain Reaction start pose to something legal and spawnable.
  *
  * Two hard constraints fight each other in every corner: G04 wants the robot COMPLETELY
@@ -356,76 +426,149 @@ export function catalystDist(rob: RobotState, target: Vec2): number {
  * and then, if the result still overlaps a corner assembly, pushes it out along whichever
  * axis needs the least movement.
  *
+ * The Lab square is axis-aligned, so clamping the footprint's AABB into it is EXACT —
+ * an AABB sits inside an axis-aligned box iff the rotated rect it bounds does. The
+ * corner-assembly push is conservative (AABB vs box can report an overlap two rotated
+ * rects would not have), which is the right way to be wrong next to a solid post.
+ *
  * `pos` is in the CANONICAL (blue, +x) frame, matching `CHAIN_START_POSES`.
  */
-export function chainSnapStart(spec: RobotSpec, pos: Vec2): Vec2 {
-  const e = Math.max(spec.length, spec.width) / 2 + 0.5; // generous, rotation-agnostic
-  const lo = CHAIN_HALF_X - CHAIN_LAB + e;
-  const hi = CHAIN_HALF_X - e;
+export function chainSnapStart(spec: RobotSpec, pos: Vec2, headingDeg: number): Vec2 {
+  const { ex, ey } = chainStartExtents(spec, headingDeg);
   const clamp1 = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+  const lo = CHAIN_HALF_X - CHAIN_LAB;
   // into the Lab square: x always positive-side, y into whichever corner it is nearer
-  const x = clamp1(pos.x, lo, hi);
+  const x = clamp1(pos.x, lo + ex, CHAIN_HALF_X - ex);
   const sy = pos.y >= 0 ? 1 : -1;
-  const y = sy * clamp1(Math.abs(pos.y), lo, hi);
-  // out of the corner assembly, along the cheaper axis
+  const y = sy * clamp1(Math.abs(pos.y), lo + ey, CHAIN_HALF_X - ey);
+
+  /**
+   * OUT OF THE CORNER ASSEMBLY.
+   *
+   * The assembly sits in the Lab's OUTER corner, so escaping it means retreating INWARD
+   * on one axis or the other — there is no outward room, the wall is there. Both
+   * retreats are computed to their exact target, the infeasible ones (those that would
+   * leave the Lab) are discarded, and the nearest survivor wins.
+   *
+   * This replaces a "push along the cheaper axis, then re-clamp into the Lab" step that
+   * could leave the robot still overlapping: the re-clamp would undo the push it had
+   * just made, one pass per box, with nothing re-checking the result. `chainStartLegal`
+   * was defined as this function's own fixed point, so such a position round-tripped and
+   * was reported LEGAL while sitting inside a solid post.
+   */
   const h = CHAIN_RINGSTAND_BOX / 2;
   let out = { x, y };
   for (const b of ringStandBoxes()) {
-    const dx = h + e - Math.abs(out.x - b.x);
-    const dy = h + e - Math.abs(out.y - b.y);
-    if (dx <= 0 || dy <= 0) continue; // clear of this one
-    if (dx < dy) out = { x: b.x - Math.sign(b.x || 1) * (h + e), y: out.y };
-    else out = { x: out.x, y: b.y - Math.sign(b.y || 1) * (h + e) };
-    out.x = clamp1(out.x, lo, hi);
-    out.y = sy * clamp1(Math.abs(out.y), lo, hi);
+    if (Math.abs(out.x - b.x) >= h + ex || Math.abs(out.y - b.y) >= h + ey) continue; // clear
+    const cands: Vec2[] = [];
+    const rx = Math.sign(b.x || 1) * (Math.abs(b.x) - h - ex); // inward past its inner face
+    const ry = Math.sign(b.y || 1) * (Math.abs(b.y) - h - ey);
+    if (Math.abs(rx) >= lo + ex) cands.push({ x: rx, y: out.y });
+    if (Math.abs(ry) >= lo + ey) cands.push({ x: out.x, y: ry });
+    if (cands.length === 0) continue; // no escape at this heading — chainHeadingFits says so
+    let best = cands[0];
+    let bestD = Infinity;
+    for (const c of cands) {
+      const d = hyp(c.x - out.x, c.y - out.y);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    out = best;
   }
   return out;
 }
 
 
-/** Is a CANONICAL (blue-frame) start position legal? G04 wants the robot COMPLETELY inside
+/**
+ * Repair a whole CANONICAL start POSE — heading first, then position.
+ *
+ * The order is forced: a heading no Lab corner can accept has no legal position to snap
+ * to, so clamping the position first would return a spot that is still illegal and the
+ * robot would spawn inside the corner assembly and get flung on tick one. Squaring up
+ * first guarantees the position clamp has somewhere to land.
+ *
+ * This is the chokepoint the SPAWN uses, so a hand-edited or spoofed pose — including a
+ * deliberately diagonal one — cannot get a robot into a collider.
+ */
+export function chainSnapStartPose(spec: RobotSpec, pose: StartPose): StartPose {
+  const headingDeg = chainNearestFittingHeading(spec, pose.headingDeg);
+  const p = chainSnapStart(spec, { x: pose.x, y: pose.y }, headingDeg);
+  return { x: p.x, y: p.y, headingDeg };
+}
+
+/** Is a CANONICAL (blue-frame) start pose legal? G04 wants the robot COMPLETELY inside
  * a Lab-Area corner square, and the solid corner assembly must not be overlapped. This is
  * the predicate the editor colours its footprint with; `chainSnapStart` is the repair. */
-export function chainStartLegal(spec: RobotSpec, pos: Vec2): boolean {
-  const snapped = chainSnapStart(spec, pos);
-  return Math.abs(snapped.x - pos.x) < 0.01 && Math.abs(snapped.y - pos.y) < 0.01;
+export function chainStartLegal(spec: RobotSpec, pos: Vec2, headingDeg: number): boolean {
+  // The RULES themselves, not "the snap left it alone". Defining legality as the snap's
+  // own fixed point made the two agree by construction — including when they were both
+  // wrong, which is exactly how a position inside the corner assembly got reported legal.
+  // Smoke asserts the direction that actually matters instead: whatever the snap returns
+  // satisfies this predicate.
+  const { ex, ey } = chainStartExtents(spec, headingDeg);
+  const lo = CHAIN_HALF_X - CHAIN_LAB;
+  const EPS = 0.01;
+  const within = (v: number, e: number): boolean =>
+    Math.abs(v) >= lo + e - EPS && Math.abs(v) <= CHAIN_HALF_X - e + EPS;
+  if (!within(pos.x, ex) || !within(pos.y, ey)) return false;
+  if (pos.x < 0) return false; // canonical poses live on the +x (blue) side
+  const h = CHAIN_RINGSTAND_BOX / 2;
+  for (const b of ringStandBoxes()) {
+    if (Math.abs(pos.x - b.x) < h + ex - EPS && Math.abs(pos.y - b.y) < h + ey - EPS) return false;
+  }
+  return true;
 }
 
 /** why a start pose is (il)legal, for the editor's status line and its footprint ring. */
 export interface ChainStartLegality {
-  /** the conservative, rotation-agnostic half-extent the rules are checked against — the
-   * robot may sit at ANY heading, so the tests use its largest dimension */
-  extent: number;
+  /** half-extents of the footprint AT THIS HEADING (see `chainStartExtents`) — what the
+   * rules are checked against, and what the editor outlines */
+  ex: number;
+  ey: number;
   /** fully inside one of the Lab-Area corner squares (G04) */
   inLab: boolean;
   /** clear of the SOLID Ring-Stand corner assembly */
   clearOfStand: boolean;
+  /** within ascend range of a Ring Stand — a legal place to start that is NOT the same
+   * as starting on the open Lab floor, so the editor names which one it is */
+  onStand: boolean;
+  /** a legal position exists at this HEADING at all (see `chainHeadingFits`). False
+   * means no amount of moving will help — the robot has to turn. */
+  headingFits: boolean;
   /** the authoritative verdict — the snap round-trip the spawn actually applies */
   legal: boolean;
 }
 
-/** Break `chainStartLegal` down into the two rules it enforces, so the editor can say
+/** Break `chainStartLegal` down into the rules it enforces, so the editor can say
  * WHICH one a pose breaks. `legal` stays the snap round-trip (the spawn's own answer), not
  * a re-derivation, so the ring can never disagree with where the robot really starts. */
-export function chainEvalStart(spec: RobotSpec, pos: Vec2): ChainStartLegality {
-  const e = Math.max(spec.length, spec.width) / 2 + 0.5; // same extent chainSnapStart uses
-  const lo = CHAIN_HALF_X - CHAIN_LAB + e;
-  const hi = CHAIN_HALF_X - e;
+export function chainEvalStart(
+  spec: RobotSpec,
+  pos: Vec2,
+  headingDeg: number,
+): ChainStartLegality {
+  const { ex, ey } = chainStartExtents(spec, headingDeg);
   const EPS = 0.01;
-  const inLab =
-    lo <= hi &&
-    pos.x >= lo - EPS &&
-    pos.x <= hi + EPS &&
-    Math.abs(pos.y) >= lo - EPS &&
-    Math.abs(pos.y) <= hi + EPS;
+  const inRange = (v: number, e: number): boolean =>
+    CHAIN_HALF_X - CHAIN_LAB + e <= CHAIN_HALF_X - e &&
+    v >= CHAIN_HALF_X - CHAIN_LAB + e - EPS &&
+    v <= CHAIN_HALF_X - e + EPS;
+  const inLab = inRange(pos.x, ex) && inRange(Math.abs(pos.y), ey);
   const h = CHAIN_RINGSTAND_BOX / 2;
   let clearOfStand = true;
   for (const b of ringStandBoxes()) {
-    if (Math.abs(pos.x - b.x) < h + e - EPS && Math.abs(pos.y - b.y) < h + e - EPS) {
+    if (Math.abs(pos.x - b.x) < h + ex - EPS && Math.abs(pos.y - b.y) < h + ey - EPS) {
       clearOfStand = false;
     }
   }
-  return { extent: e, inLab, clearOfStand, legal: chainStartLegal(spec, pos) };
+  return {
+    ex,
+    ey,
+    inLab,
+    clearOfStand,
+    onStand: onRingStand(pos),
+    headingFits: chainHeadingFits(spec, headingDeg),
+    legal: chainStartLegal(spec, pos, headingDeg),
+  };
 }
 
 /** CANONICAL (blue, +x) start pose <-> the alliance's ACTUAL one. Mirrors `chainStartPose`

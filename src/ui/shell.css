@@ -3820,6 +3820,23 @@ button.ds-key:active {
   background: color-mix(in srgb, var(--ds-red) 12%, var(--ds-panel));
   border-color: color-mix(in srgb, var(--ds-red) 40%, var(--ds-line));
 }
+/* WHERE a legal pose sits (Lab floor vs Ring Stand). Deliberately quieter than the
+   legality line above it: this is information, not a verdict, so it must not compete
+   with the thing that says whether the pose will save. Muted text on the plain panel
+   rather than a third coloured state. */
+.ds-startpos-where {
+  font: 600 11px/1.3 var(--ds-font-mono);
+  color: var(--ds-mut);
+  padding: 5px 10px;
+  margin-top: 4px;
+  border-radius: 8px;
+  border: 1px dashed var(--ds-line);
+}
+.ds-startpos-where.stand {
+  color: var(--ds-accent);
+  border-color: color-mix(in srgb, var(--ds-accent) 45%, var(--ds-line));
+  border-style: solid;
+}
 .ds-startpos-inputs {
   display: flex;
   gap: 8px;

@@ -9,7 +9,7 @@ import {
   chainAnchorCat,
   chainRoleLabel,
 } from '../games/chain/config';
-import { chainEvalStart, chainMirrorStart, chainSnapStart } from '../games/chain/state';
+import { chainEvalStart, chainMirrorStart, chainSnapStartPose } from '../games/chain/state';
 import { drawChainField } from '../games/chain/drawField';
 import { drawChainRobot } from '../games/chain/drawRobot';
 
@@ -21,16 +21,19 @@ import { drawChainRobot } from '../games/chain/drawRobot';
  *
  * The rule it enforces is G04: a robot must begin the match COMPLETELY within its Lab Area,
  * and — because the Ring-Stand corner assembly is a solid collider — clear of that assembly.
- * `chainEvalStart` gives the verdict live (green / red clearance box) and `chainSnapStart`
+ * `chainEvalStart` gives the verdict live (green / red clearance box) and `chainSnapStartPose`
  * is the repair, the SAME snap `chainStartPose` runs at spawn, so what you see placed is
  * exactly where the robot starts.
  *
  * Two things differ from DECODE, both because of CR's rules rather than for their own sake:
  *
- * - **Heading is always free.** G04 is a containment rule and the snap uses a conservative,
- *   rotation-agnostic extent (the chassis' larger dimension), so no heading can turn a legal
- *   spot illegal. The ring is therefore drawn as that axis-aligned CLEARANCE box — the thing
- *   actually being tested — rather than DECODE's rotated footprint.
+ * - **Heading COSTS ROOM.** The Lab Area is a 24" square, and a chassis turned off-axis
+ *   sweeps a wider axis-aligned bound than a squared-up one — peaking at 45°, where a
+ *   maximum 18x18 robot needs ~25.5" and therefore has no legal diagonal start at all.
+ *   So heading is not free here (it was modelled as free, wrongly, until the outline was
+ *   made to rotate), and the editor treats "turned too far to fit" as its own failure
+ *   with its own repair: `snapTo` squares the robot up before it tries to move it,
+ *   because no amount of sliding fixes an angle the corner cannot accept.
  * - **No saved-position library.** DECODE's `savedStartPoses` is a single canonical list
  *   shared across games; CR poses live at completely different coordinates, so saving one
  *   would plant an unreachable entry in DECODE's Close/Far library. The four anchors already
@@ -107,7 +110,7 @@ export function ChainStartEditor({
 
   // legality is judged in the CANONICAL frame (mirror is self-inverse)
   const canon = chainMirrorStart(pose, alliance);
-  const legality = chainEvalStart(spec, { x: canon.x, y: canon.y });
+  const legality = chainEvalStart(spec, { x: canon.x, y: canon.y }, canon.headingDeg);
 
   // a world + robot TEMPLATE for the real renderers, rebuilt only when the field/robot
   // identity changes (NOT on every drag). The spawn snaps its own pose legal, so pos/heading
@@ -148,20 +151,34 @@ export function ChainStartEditor({
     };
     drawChainRobot(ctx, robot, false, []);
 
-    // the CLEARANCE BOX the G04 test actually uses (axis-aligned, largest dimension), so a
-    // red ring always explains itself: this square must fit in the Lab and miss the assembly
-    const e = legality.extent;
+    /**
+     * The CLEARANCE OUTLINE — the robot's footprint plus its margin, ROTATED with the
+     * robot. It used to be an axis-aligned square sized by the longer chassis dimension,
+     * which sat there unmoved while the robot under it turned, and read as a bug.
+     *
+     * It rotates now because the RULE is heading-aware now (`chainStartExtents`): the
+     * test is the axis-aligned bound of exactly this rectangle, and for the Lab square
+     * those two are equivalent — a rotated rect is inside an axis-aligned box iff its
+     * AABB is. So drawing the rotated rect is not decoration over a different test; it
+     * IS the tested shape.
+     */
+    const col = legality.legal ? '#37d67a' : '#ff4d4d';
+    const hRad = robot.heading;
+    const mx = spec.length / 2 + 0.5;
+    const my = spec.width / 2 + 0.5;
+    ctx.save();
+    ctx.translate(pose.x, pose.y);
+    ctx.rotate(hRad);
     ctx.beginPath();
-    ctx.rect(pose.x - e, pose.y - e, e * 2, e * 2);
+    ctx.rect(-mx, -my, mx * 2, my * 2);
     ctx.fillStyle = legality.legal ? 'rgba(55,214,122,0.16)' : 'rgba(255,77,77,0.22)';
     ctx.fill();
-    const col = legality.legal ? '#37d67a' : '#ff4d4d';
     ctx.strokeStyle = col;
     ctx.lineWidth = 1.2;
     ctx.stroke();
+    ctx.restore();
 
     // heading handle
-    const hRad = robot.heading;
     const front = spec.length / 2 + 8;
     const hx = pose.x + Math.cos(hRad) * front;
     const hy = pose.y + Math.sin(hRad) * front;
@@ -180,7 +197,7 @@ export function ChainStartEditor({
     ctx.stroke();
 
     ctx.restore();
-  }, [world, pose.x, pose.y, pose.headingDeg, spec, alliance, legality.legal, legality.extent, size]);
+  }, [world, pose.x, pose.y, pose.headingDeg, spec, alliance, legality.legal, size]);
 
   /** commit an ACTUAL-frame pose back to the parent as canonical */
   const commit = (p: StartPose) => onChange(chainMirrorStart(p, alliance));
@@ -190,7 +207,7 @@ export function ChainStartEditor({
   const edit = (p: StartPose) => {
     setDraft(p);
     const c = chainMirrorStart(p, alliance);
-    if (chainEvalStart(spec, { x: c.x, y: c.y }).legal) commit(p);
+    if (chainEvalStart(spec, { x: c.x, y: c.y }, c.headingDeg).legal) commit(p);
   };
 
   const pointerWorld = (e: React.PointerEvent): { x: number; y: number } | null => {
@@ -235,9 +252,12 @@ export function ChainStartEditor({
     }
   };
   const snapTo = (p: StartPose) => {
-    const c = chainMirrorStart(p, alliance);
-    const s = chainSnapStart(spec, { x: c.x, y: c.y });
-    onChange({ x: s.x, y: s.y, headingDeg: c.headingDeg }); // already canonical
+    // the SAME repair the spawn runs, so what the button produces is exactly where the
+    // robot would start. It turns before it moves: a heading no corner accepts has no
+    // legal position, so snapping position alone would leave the robot red however far
+    // it slid, and the button would look broken.
+    const s = chainSnapStartPose(spec, chainMirrorStart(p, alliance));
+    onChange(s); // already canonical
     setDraft(null);
   };
   const endDrag = (e: React.PointerEvent) => {
@@ -246,7 +266,7 @@ export function ChainStartEditor({
     (e.target as Element).releasePointerCapture?.(e.pointerId);
     const cur = draft ?? base;
     const c = chainMirrorStart(cur, alliance);
-    if (chainEvalStart(spec, { x: c.x, y: c.y }).legal) {
+    if (chainEvalStart(spec, { x: c.x, y: c.y }, c.headingDeg).legal) {
       setDraft(null); // legal end: the saved pose already matches
     } else if (snapOn) {
       snapTo(cur); // opt-in: snap to the nearest legal spot
@@ -262,9 +282,25 @@ export function ChainStartEditor({
 
   const reason = legality.legal
     ? 'Legal setup ✓'
-    : !legality.inLab
-      ? 'Must start completely inside a Lab Area corner'
-      : 'Robot overlaps the Ring Stand assembly';
+    : // a heading that cannot fit is checked FIRST: it is the one failure moving the
+      // robot cannot repair, and blaming containment there would send the player
+      // dragging around a corner that was never going to accept this angle
+      !legality.headingFits
+      ? 'Turned too far to fit the Lab Area — square it up'
+      : !legality.inLab
+        ? 'Must start completely inside a Lab Area corner'
+        : 'Robot overlaps the Ring Stand assembly';
+
+  /**
+   * WHERE a legal pose starts, which is not the same question as whether it is legal.
+   *
+   * Both readings are legal and the difference is invisible on the canvas — the Ring
+   * Stand's ascend range is an unmarked radius around the solid corner assembly, so a
+   * robot parked just outside the assembly may or may not be within it, and nothing
+   * on screen says which. It decides whether the robot begins the match already in
+   * ascend range, so it is worth stating outright rather than leaving to be discovered.
+   */
+  const placement = legality.onStand ? 'On the Ring Stand' : 'On the Lab floor';
 
   return (
     <div className="ds-startpos">
@@ -288,6 +324,11 @@ export function ChainStartEditor({
         <div className={`ds-startpos-status ${legality.legal ? 'ok' : 'bad'}`}>
           {legality.legal ? reason : `${reason} - won't save`}
         </div>
+        {legality.legal && (
+          <div className={`ds-startpos-where ${legality.onStand ? 'stand' : ''}`}>
+            {legality.onStand ? '⬢' : '▢'} {placement}
+          </div>
+        )}
 
         <div className="ds-startpos-inputs">
           <label>
