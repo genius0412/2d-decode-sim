@@ -1,3 +1,91 @@
+# HANDOFF — 2026-08-08 (launcher sprite · CR start rules · rail turret · dead-session fix) — alpha only
+
+Branch **alpha**, NOT merged. `npm run build` · `npm test` · `contrast` 197 · `server:check`
+all green. Nothing in THIS batch is server-side, but the 08-07 batch below still needs a
+Fly deploy.
+
+**`npm test` takes ~7 minutes**, not the "fast" CLAUDE.md claims. Confirmed PRE-EXISTING (a
+clean stash of the pre-change tree also times out at 200s), so it is not from this work —
+but the doc is misleading and any wrapper timeout has to allow for it.
+
+## 1. DECODE shooter is a real flywheel launcher (`a157eeb`)
+Two side plates, a back wall, ONE off-centre traction wheel intruding into the channel (a
+centred wheel would touch nothing — it pinches the ball against the far plate), and the feed
+hole on the axis of rotation so the hopper below need not rotate with the turret.
+
+`turretGeom(hl, hw, off)` is shared by the field renderer AND `RobotPreview`. `reach` is a
+HARD RADIUS BUDGET to the NEAREST chassis edge — the REAR or a side, never the front, since
+the turret sits behind centre. **The barrel's length is SOLVED from that budget**
+(`plateLen² + outerY² = reach²`) rather than set equal to it: a rectangle's far CORNER
+touches the circle, not the middle of its end. That is exactly the bug the old tapered hood
+had. Swept over every legal chassis × every angle: zero points outside, tightest case exactly
+the 0.5" margin.
+
+## 2. CR start poses are HEADING-AWARE (`973a955`)
+The old model used one scalar, `max(l,w)/2 + 0.5`, described as "generous, rotation-agnostic".
+It was neither — a square chassis at 45° sweeps ~0.707s, past the 0.5s it allowed — so a
+diagonal robot could be legal AND overlapping the solid corner assembly.
+
+- `chainStartExtents(spec, headingDeg)` → per-axis extents. The editor draws the ROTATED
+  rect, which is honest rather than decorative: for the axis-aligned Lab, "rotated rect is
+  inside" ⟺ "its AABB is inside".
+- **A heading can be unplaceable.** The Lab is 24" with a solid 6" assembly in its outer
+  corner, so past an angle a robot has NO legal spot (a max 18×18 cannot start diagonally at
+  all). `chainHeadingFits` asks that separately; `chainSnapStartPose` — the SPAWN's
+  chokepoint — TURNS before it moves, because sliding cannot fix an angle.
+- **Real bug underneath**: the corner eviction pushed along the cheaper axis then re-clamped
+  into the Lab, undoing its own push, one pass per box, nothing re-checking. And
+  `chainStartLegal` was defined as that function's own FIXED POINT — so a position inside a
+  post round-tripped unchanged and was reported LEGAL. The two agreed because both were
+  wrong. Legality is now the RULES; smoke asserts the direction that matters (whatever the
+  snap returns satisfies the predicate, for every preset and heading).
+- The editor also names Lab floor vs Ring Stand — both legal, invisible on the canvas, and it
+  decides whether the robot starts in ascend range.
+
+## 3. Rail turret traverses + mechanisms stop sharing frame (`d4c55b2`)
+`RobotState.catalystRail` is real state: the carriage moves toward what the claw is working
+at at `CHAIN_RAIL_RATE`, stows centred while carrying, and `catalystMouth` moves with it — so
+reach, pickup and sprite all follow it. The rail was previously drawn and then ignored.
+
+`turret` (aims anywhere, stays bolted) and `rail` (also slides) are now separate types. A
+rail folds to one of the four EDGES; `occupiedCells`/`mountsClash` stop a catalyst sharing a
+cell with the shooter, and the builder DISABLES those cells with the reason rather than
+letting the coercer silently relocate a pick you just made.
+
+**The INTAKE is deliberately NOT a blocker** — a sweeper is a low roller and a claw reaches
+over it; counting it would also have made two shipped presets illegal. One line to change if
+that reading is wrong (open question, see §7).
+
+## 4. Dead sessions stop simulating (`80bed2f`) — user-reported
+Rejoining a FINISHED match dropped the player into what read as offline solo practice,
+playable for minutes. Cause: `stepServer`'s lead cap is gated on `gotSnapshot`, false exactly
+when no snapshot ever arrived — so a session that never connected had NO bound on prediction.
+It now bails on `status().failed` before stepping anything. Also: the active-game record is
+re-checked on GameView unmount (the 250ms poll could lose to a prompt exit), and a refused
+rejoin clears it. Smoke covers it behaviourally AND with a source check that the guard really
+precedes the first `step()` (GameController needs a DOM canvas, so the behavioural test
+models the guard — a modelled invariant protects nothing if the line it models is deleted).
+
+## 5. CR start categories + saved library (`dda705d`)
+TOP/BOTTOM tabs, per-corner saved poses, per-corner memory, same supporter cap as DECODE. The
+"impossible, the library is shared across games" comment was STALE — `switchGame` already
+archives `savedStartPoses` per game; nothing was reading it for CR.
+
+## 6. coerceSpec audit (asked for explicitly)
+625k property checks over 12k hostile specs — NaN/Infinity, wrong types, prototype keys,
+out-of-range — covering every range, enum, mirror, cross-game round trip and idempotency.
+**No defects found.** A 900-spec version now runs in smoke, and immediately earned itself:
+it caught a non-idempotent first draft of the rail placement rule (it ran before the per-game
+mount reset, so pass 1 and pass 2 placed the catalyst differently).
+
+## 7. Next
+- **Deploy the server** for the 08-07 spectating batch (`./scripts/fly-deploy.sh`).
+- **Open question for the user**: should the SWEEPER block a catalyst mount too (§3)?
+- At the alpha→main merge: **new Chain Reaction season from the admin menu; DECODE does NOT
+  roll.** Do not bump `BALANCE_VERSION`.
+
+---
+
 # HANDOFF — 2026-08-07 (spectating: friends, by-code, admin · role-swap cues) — alpha only
 
 Branch **alpha** (worktree `../2d-decode-sim-alpha`). NOT merged to main.
