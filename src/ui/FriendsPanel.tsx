@@ -89,12 +89,15 @@ export function FriendsPanel({
   signedIn,
   onOpenProfile,
   onJoinInvite,
+  onSpectate,
   myUserId,
 }: {
   signedIn: boolean;
   onOpenProfile: (username: string) => void;
   /** a friend invited you to a room and you clicked Join */
   onJoinInvite: (invite: RoomInvite) => void;
+  /** watch a friend's match read-only (their `watch` room + hosting region) */
+  onSpectate: (room: string, region?: string) => void;
   /** the signed-in account's user id — drives "Recently played" suggestions */
   myUserId?: string | null;
 }) {
@@ -257,8 +260,23 @@ export function FriendsPanel({
                     className={`fr-dot${f.status === 'dnd' ? ' dnd' : f.activity === 'match' || f.activity === 'lobby' ? ' busy' : ''}`}
                     aria-hidden
                   />
-                  {canChallenge(f) && f.username && (
-                    <ChallengeButton username={f.username} onChallenge={friends.openChallenge} />
+                  {/* WATCH replaces Challenge rather than joining it: the two are
+                      mutually exclusive by construction (`canChallenge` excludes a
+                      friend already in a match, which is exactly when `watch` is
+                      set), and the row has space for one action beside the menu. */}
+                  {f.watch ? (
+                    <button
+                      className="ds-btn small ghost"
+                      title={`Watch ${f.handle}’s match`}
+                      onClick={() => onSpectate(f.watch!.room, f.watch!.region)}
+                    >
+                      Watch
+                    </button>
+                  ) : (
+                    canChallenge(f) &&
+                    f.username && (
+                      <ChallengeButton username={f.username} onChallenge={friends.openChallenge} />
+                    )
                   )}
                   <RowMenu username={f.username} friends={friends} />
                 </Row>

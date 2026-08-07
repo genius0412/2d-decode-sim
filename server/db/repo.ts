@@ -1904,6 +1904,125 @@ export async function userMatchHistory(
   };
 }
 
+/** one finished game in the operator's "Recent games" list */
+export interface RecentMatchRow {
+  kind: 'versus' | 'record';
+  id: string;
+  game: string;
+  /** '1v1' | '2v2' (versus) or 'solo' | 'duo' (record) */
+  mode: string;
+  ranked: boolean | null;
+  createdAt: string;
+  replayId: string | null;
+  balanceVersion: number;
+  /** final alliance totals (versus) — both null for a record run */
+  redScore: number | null;
+  blueScore: number | null;
+  /** the record run's score (record only) */
+  score: number | null;
+  players: { userId: string; handle: string; alliance: 'red' | 'blue' | null }[];
+}
+
+/**
+ * The most recently FINISHED games across the whole service, for the admin panel.
+ *
+ * The counterpart to the live list: an operator investigating a report ("that
+ * match five minutes ago") needs the game after it has stopped being live, and a
+ * finished match cannot be spectated — only replayed. So this carries `replayId`,
+ * which is what the row's button opens.
+ *
+ * Deliberately NOT season- or version-scoped. Every other history query filters by
+ * `balance_version` because it feeds a leaderboard, where mixing balance versions
+ * would compare incomparable runs; this one answers "what just happened on the
+ * server", and the answer must not disappear the moment a season rolls over. The
+ * version is reported per row instead.
+ */
+export async function recentMatches(limit = 40, game?: Game): Promise<RecentMatchRow[]> {
+  const n = Math.min(200, Math.max(1, Math.floor(limit)));
+  const gameFilter = game ? `where game = $2` : '';
+  const params: unknown[] = game ? [n, g(game)] : [n];
+  const rows = await q<{
+    kind: 'versus' | 'record';
+    id: string;
+    game: string;
+    mode: string;
+    ranked: boolean | null;
+    created_at: string;
+    replay_id: string | null;
+    balance_version: number;
+    score: number | null;
+  }>(
+    `with feed as (
+       select 'versus' as kind, m.id::text as id, m.game as game, m.mode as mode,
+              m.ranked as ranked, m.created_at as created_at, m.replay_id::text as replay_id,
+              m.balance_version as balance_version, null::int as score
+         from matches m
+       union all
+       select 'record', r.id::text, r.game, r.mode, null::boolean, r.created_at,
+              r.replay_id::text, r.balance_version, r.score
+         from records r
+     )
+     select * from feed ${gameFilter} order by created_at desc limit $1`,
+    params,
+  );
+  if (rows.length === 0) return [];
+
+  // one fan-out for the versus rosters; record runs carry only their owner, which
+  // the feed above does not select (the union has to stay column-compatible), so
+  // they are fetched in the same round of work rather than per row.
+  const versusIds = rows.filter((r) => r.kind === 'versus').map((r) => r.id);
+  const recordIds = rows.filter((r) => r.kind === 'record').map((r) => r.id);
+  const [parts, recs] = await Promise.all([
+    versusIds.length
+      ? q<{ match_id: string; user_id: string; handle: string; alliance: 'red' | 'blue'; score: number }>(
+          `select mp.match_id::text as match_id, mp.user_id, p.handle, mp.alliance, mp.score
+             from match_participants mp join profiles p on p.user_id = mp.user_id
+            where mp.match_id = any($1::uuid[])`,
+          [versusIds],
+        )
+      : Promise.resolve([]),
+    recordIds.length
+      ? q<{ id: string; user_id: string; handle: string }>(
+          `select r.id::text as id, r.user_id, p.handle
+             from records r join profiles p on p.user_id = r.user_id
+            where r.id = any($1::uuid[])`,
+          [recordIds],
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const roster = new Map<string, RecentMatchRow['players']>();
+  const scores = new Map<string, { red: number | null; blue: number | null }>();
+  for (const p of parts) {
+    const list = roster.get(p.match_id) ?? [];
+    list.push({ userId: p.user_id, handle: p.handle, alliance: p.alliance });
+    roster.set(p.match_id, list);
+    // every participant on an alliance stores that alliance's TOTAL, so either
+    // one gives the side's score (see MatchHistoryEntry)
+    const s = scores.get(p.match_id) ?? { red: null, blue: null };
+    s[p.alliance] = p.score;
+    scores.set(p.match_id, s);
+  }
+  for (const r of recs) {
+    roster.set(r.id, [{ userId: r.user_id, handle: r.handle, alliance: null }]);
+  }
+
+  return rows.map((r) => ({
+    kind: r.kind,
+    id: r.id,
+    game: r.game,
+    mode: r.mode,
+    ranked: r.ranked,
+    createdAt: r.created_at,
+    replayId: r.replay_id,
+    balanceVersion: r.balance_version,
+    redScore: r.kind === 'versus' ? scores.get(r.id)?.red ?? null : null,
+    blueScore: r.kind === 'versus' ? scores.get(r.id)?.blue ?? null : null,
+    score: r.kind === 'record' ? r.score : null,
+    players: roster.get(r.id) ?? [],
+  }));
+}
+
 // -------------------------------------------------- pending (staged) matches ---
 // The designated matchmaker stages a paired ranked match; the fair host-region
 // machine claims it when the players reconnect. See server/matchTypes.ts.
@@ -2076,6 +2195,62 @@ export async function upsertPresence(
       JSON.stringify(gameQueues), JSON.stringify(guests),
     ],
   );
+}
+
+/** where one player is playing right now, resolved from the heartbeat */
+export interface UserLiveRoom {
+  /** the room code to spectate */
+  room: string;
+  /** the Fly region hosting it — a custom room's code has no region prefix, so a
+   *  spectate socket opened without this lands on the wrong machine */
+  region: string;
+  ranked: boolean;
+}
+
+const USER_ROOM_TTL_MS = 3_000;
+let userRoomCache: { at: number; val: Map<string, UserLiveRoom> } | null = null;
+
+/**
+ * Which live match each signed-in player is IN, keyed by user id — the lookup
+ * behind "watch your friend's game".
+ *
+ * Built from the presence heartbeat, so it is the SERVER's own observation of
+ * where somebody is, not a claim the client makes about itself. Two columns of
+ * the same rows are used together: `players` says which room each account holds a
+ * socket in, and `rooms` says which of those rooms has a match actually running.
+ * Both are needed — a room whose match has ended still holds its sockets for a
+ * while, and offering that as watchable would send the watcher to a dead world.
+ *
+ * INVISIBLE players never reach this: a friend's row only asks for a room when
+ * `listFriends` already resolved them as online, which invisibility rules out.
+ *
+ * Cached for a few seconds because every friends poll on the service asks for it
+ * and the answer is the same for all of them.
+ */
+export async function liveRoomsByUser(freshSeconds = 15): Promise<Map<string, UserLiveRoom>> {
+  const now = Date.now();
+  if (userRoomCache && now - userRoomCache.at < USER_ROOM_TTL_MS) return userRoomCache.val;
+  const rows = await q<{ region: string; rooms: unknown[] | null; players: PresencePlayer[] | null }>(
+    `select region, rooms, players from presence
+      where updated_at > now() - $1::interval and jsonb_array_length(players) > 0`,
+    [`${Math.max(1, Math.floor(freshSeconds))} seconds`],
+  );
+  const out = new Map<string, UserLiveRoom>();
+  for (const r of rows) {
+    const live = new Map<string, { ranked: boolean; region?: string }>();
+    for (const s of Array.isArray(r.rooms) ? r.rooms : []) {
+      const lr = s as { room?: string; ranked?: boolean; region?: string };
+      if (lr?.room) live.set(lr.room.toLowerCase(), { ranked: lr.ranked === true, region: lr.region });
+    }
+    for (const p of Array.isArray(r.players) ? r.players : []) {
+      if (p.act !== 'match' || !p.room) continue;
+      const hit = live.get(p.room.toLowerCase());
+      if (!hit) continue; // holding a socket in a room whose match is over
+      out.set(p.userId, { room: p.room, region: hit.region ?? r.region, ranked: hit.ranked });
+    }
+  }
+  userRoomCache = { at: now, val: out };
+  return out;
 }
 
 /** every live room across EVERY region with a fresh heartbeat. This is what makes
@@ -2282,6 +2457,10 @@ export interface FriendRow {
   activity: Activity | null;
   /** which game they're in ('decode' | 'chain') — only meaningful with `activity` */
   game: Game | null;
+  /** the room to SPECTATE, set only while a match they are in is actually running
+   *  (see `liveRoomsByUser`). Absent otherwise — including in a lobby, and for the
+   *  seconds a finished room lingers. */
+  watch?: { room: string; region: string; ranked: boolean };
   /** active supporter membership — renders a small badge beside the name */
   supporter?: boolean;
   /** 'owner' | 'admin' — renders the staff badge instead of the supporter one */
@@ -2460,6 +2639,14 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
   );
 
   const row = rows[0];
+  // where each friend is playing, for the Watch button. Resolved from the
+  // heartbeat rather than from the friend's own activity beat: a client can claim
+  // 'match' but cannot conjure a running room, and this is also the only source of
+  // the hosting region. Never fatal — a failed lookup just costs the Watch buttons.
+  const watchable = await liveRoomsByUser().catch((e) => {
+    console.error('[friends] live-room lookup failed:', e);
+    return new Map<string, UserLiveRoom>();
+  });
   const friends: FriendRow[] = (row?.friends ?? []).map((r) => {
     const since = r.since === null ? null : Number(r.since);
     const online = since !== null && since <= ONLINE_WINDOW_S;
@@ -2478,6 +2665,9 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
       offlineSeconds: online ? null : coarsen(since),
       activity,
       game: activity ? (r.activity_game === 'chain' ? 'chain' : 'decode') : null,
+      // `online` gates this so an invisible friend is never watchable: invisibility
+      // nulls their last-seen, which is what `online` is computed from.
+      watch: online ? watchable.get(r.user_id) : undefined,
       supporter: !!r.supporter,
       role: asRole(r.role),
     };

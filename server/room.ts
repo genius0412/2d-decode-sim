@@ -362,9 +362,16 @@ export class Room {
     };
   }
 
-  /** a one-line summary of a LIVE match for the "Watch Live" list (`GET /api/live`).
-   * Returns null unless a versus match is currently running (record/solo + lobby rooms
-   * are not listed). */
+  /**
+   * A one-line summary of this room if a match is RUNNING in it, else null.
+   *
+   * This describes the room; it does not decide who may see it. Every live room
+   * qualifies — ranked, custom and record alike — and the two consumers narrow it
+   * themselves: public `/api/live` keeps ranked only, the admin view keeps
+   * everything. Filtering here instead would have made "show the operator every
+   * game" impossible without a second, near-identical method drifting alongside
+   * this one.
+   */
   summary(): LiveRoom | null {
     const w = this.world;
     if (!w || this.phase !== 'match') return null;
@@ -373,7 +380,7 @@ export class Room {
     // room is torn down. Without this check "Watch Live" kept listing games that
     // had already ended (and it is not spectatable: the world is over).
     if (w.match.phase === 'post') return null;
-    if (this.config.kind === 'record') return null; // opponent-free runs aren't spectated
+    const record = this.config.kind === 'record';
     const players = [...this.clients.values()].map((c) => ({
       name: c.player.name,
       teamName: c.player.spec.teamName || undefined,
@@ -383,13 +390,15 @@ export class Room {
     return {
       room: this.pendingCode() ?? this.code,
       game: this.game,
-      mode: eloMode(this.clients.size),
+      mode: record ? (this.config.record ?? 'solo') : eloMode(this.clients.size),
       phase: w.match.phase,
       timeLeft: Math.max(0, Math.round(w.match.phaseTimeLeft)),
       ranked: this.ranked,
       players,
       score: { red: w.match.scores.red.total, blue: w.match.scores.blue.total },
       spectators: this.visibleSpectators(),
+      kind: record ? 'record' : 'versus',
+      region: SERVER_REGION || undefined,
     };
   }
 

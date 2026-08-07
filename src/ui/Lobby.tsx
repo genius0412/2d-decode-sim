@@ -213,7 +213,13 @@ export function Lobby({
 
   // 2v2 ROLE + consent swap: first robot on the alliance = CLOSE, second = FAR;
   // either can propose a swap the other must accept (see useRoleSwap).
-  const rs = useRoleSwap(players, me, (patch) => lobbyRef.current?.update(patch), settings.game);
+  const rs = useRoleSwap(
+    players,
+    me,
+    (patch) => lobbyRef.current?.update(patch),
+    settings.game,
+    settings.audio.volume,
+  );
   const startRole = rs.role;
   const [swapDismissed, dismissSwap] = useDismissable(rs.incoming);
 

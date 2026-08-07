@@ -67,7 +67,15 @@ const ANN_KINDS: { value: AnnouncementKind; label: string }[] = [
 /** admin console — only reachable by the account(s) in the server's ADMIN_USER_IDS.
  * Broadcasts a scheduled-restart countdown to every connected player; then you
  * deploy when it reaches 0. Also manages competitive SEASONS. */
-export function Admin({ onWatch }: { onWatch?: (room: string) => void }) {
+export function Admin({
+  onWatch,
+  onWatchReplay,
+}: {
+  /** spectate a live room (hidden — an admin watcher is not counted) */
+  onWatch?: (room: string, region?: string) => void;
+  /** open a finished game's replay */
+  onWatchReplay?: (replayId: string) => void;
+}) {
   // LIVE first: it is the tab you open during an incident, and the panel's other
   // jobs are all deliberate, unhurried ones you go looking for.
   const [tab, setTab] = useState<AdminTab>('live');
@@ -299,7 +307,7 @@ export function Admin({ onWatch }: { onWatch?: (room: string) => void }) {
     return (
       <div className="ds-section adm-wide">
         <AdminHeader tab={tab} setTab={setTab} />
-        <AdminLive onWatch={onWatch} />
+        <AdminLive onWatch={onWatch} onWatchReplay={onWatchReplay} />
       </div>
     );
   }

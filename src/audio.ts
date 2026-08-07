@@ -242,6 +242,33 @@ export class MatchAudio {
     this.tone(b, b, 0.1, 'triangle', 0.2, 0.075, v);
   }
 
+  /**
+   * ROLE SWAP REQUESTED — a two-note rising QUESTION, played to the partner being
+   * asked. It has to say "somebody is waiting on you" while the lobby is otherwise
+   * quiet, so it is the only cue here that ends on the higher note without
+   * resolving: an unanswered phrase reads as a question rather than an event.
+   * Deliberately close in family to `sfxRematchVote` (same triangle voice, same
+   * lobby) but a wider interval, so the two are told apart by shape, not volume.
+   */
+  sfxSwapRequest(): void {
+    const v = this.alertVolume * 0.8;
+    this.tone(520, 520, 0.08, 'triangle', 0.24, 0, v);
+    this.tone(784, 784, 0.16, 'triangle', 0.26, 0.09, v);
+  }
+
+  /**
+   * ROLE SWAP AGREED — the two notes CROSS: one glides up while the other glides
+   * down, over the same span, which is what just happened to the two robots. Both
+   * partners hear it at the moment the flip is enacted, so it is a confirmation
+   * ("done"), not an alert — hence the settled unison at the end.
+   */
+  sfxSwapDone(): void {
+    const v = this.alertVolume * 0.85;
+    this.tone(440, 880, 0.2, 'triangle', 0.2, 0, v);
+    this.tone(880, 440, 0.2, 'triangle', 0.2, 0, v);
+    this.tone(660, 660, 0.22, 'triangle', 0.24, 0.2, v);
+  }
+
   /** wheel thumping over a terrain beam: a dull low "thunk" (knock + short low body) */
   sfxBeam(): void {
     this.noiseBurst(520, 150, 0.06, 0.2, 1);

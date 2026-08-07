@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Room, type Client } from './room';
-import { decodeClientMsg, encodeMsg, DEFAULT_ROOM_CONFIG, RATED_FORMATS, SERVER_CAPS, type ClientMsg, type RoomConfig, type ServerMsg } from '../src/net/protocol';
+import { decodeClientMsg, encodeMsg, DEFAULT_ROOM_CONFIG, RATED_FORMATS, SERVER_CAPS, type ClientMsg, type LiveRoom, type RoomConfig, type ServerMsg } from '../src/net/protocol';
 import { sanitizePlayer } from '../src/net/sanitize';
 import { verifyAuthToken } from './auth';
 import { initPhysics } from '../src/sim/physicsEngine';
@@ -39,6 +39,7 @@ import {
   globalPresence,
   globalLiveRooms,
   adminPresence,
+  recentMatches,
   getMaintenance,
   setMaintenance,
   maintenanceBiting,
@@ -478,6 +479,38 @@ async function aggregateLive(): Promise<unknown[]> {
   return val;
 }
 
+/** every match running on THIS machine, unfiltered (see `Room.summary`) */
+function localLive(): LiveRoom[] {
+  return [...rooms.values()].map((r) => r.summary()).filter((s): s is LiveRoom => s !== null);
+}
+
+/**
+ * May a stranger see this room in "Watch Live"? Everything EXCEPT custom rooms.
+ *
+ * A custom room is somebody's private game: it is reached by a code they chose to
+ * hand out, and listing it publicly would hand that code to everyone. Friends
+ * still spectate it (their friends list carries the code — see `liveRoomsByUser`),
+ * anyone given the code can still type it in, and admins still see it.
+ *
+ * Ranked matches and record runs are both public: a ranked match is a rated game
+ * nobody chose the opponent for, and a record run is a leaderboard attempt whose
+ * score is published the moment it ends. Neither is reached by a shared secret.
+ * A record room reports `ranked: false`, so kind has to be checked first or the
+ * two would be filtered by the same test and record runs would vanish.
+ */
+function isPublicLive(r: unknown): boolean {
+  const room = r as Partial<LiveRoom>;
+  if (room?.kind === 'record') return true;
+  return room?.ranked === true;
+}
+
+/** local rooms unioned with every other region's, newest information winning.
+ *  Shared by `/api/live` and the admin view so the two can't disagree. */
+function unionLive(local: LiveRoom[], global: unknown[]): unknown[] {
+  const seen = new Set(local.map((r) => r.room));
+  return [...local, ...global.filter((r) => !seen.has((r as { room: string }).room))];
+}
+
 const httpServer = createServer((req, res) => {
   if (req.method === 'GET' && req.url?.startsWith('/health')) {
     // `?region=<code>` lets the client ping a SPECIFIC region (the picker) or read
@@ -564,6 +597,15 @@ const httpServer = createServer((req, res) => {
         }
         const machines = dbEnabled ? await adminPresence() : [];
         const local = operatorSnapshot();
+        // EVERY region and EVERY kind. The operator list used to be this machine's
+        // rooms only, which on a multi-region deploy meant "Live matches" answered
+        // with whatever happened to be hosted next to the admin — the same bug
+        // `/api/live` had. Custom and record rooms are kept here (they are filtered
+        // out of the PUBLIC list, not out of the room summary), so "spectate any
+        // game" means any game.
+        const liveRooms = dbEnabled
+          ? unionLive(localLive(), await aggregateLive().catch(() => []))
+          : localLive();
         res.writeHead(200, { ...cors, 'content-type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -572,10 +614,42 @@ const httpServer = createServer((req, res) => {
             // this machine's own numbers too, so a single-region/dev deploy — and
             // the gap between a socket opening and the next beat — still reads true
             local: { machine: MACHINE, region: REGION, online: onlineCount, ...local },
-            rooms: [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null),
+            rooms: liveRooms,
             queues: matchmaker.queueSizes(),
           }),
         );
+        return;
+      }
+      /**
+       * GET /api/admin/matches — the most recently FINISHED games, service-wide.
+       *
+       * The past half of "show me every game": the live list covers what is running
+       * now, and this covers what just ran. A finished match cannot be spectated, so
+       * each row carries its `replayId` and the panel opens the replay instead.
+       *
+       * This is a records read, not a surveillance one: every row is a match result
+       * that already appears in its own players' public match history. It is here
+       * because that history is per-account and an operator does not know the
+       * account yet — which is the whole reason for the page.
+       */
+      if (req.method === 'GET' && u.pathname === '/api/admin/matches') {
+        if (!isAdmin) {
+          res.writeHead(403, cors);
+          res.end('forbidden');
+          return;
+        }
+        if (!dbEnabled) {
+          res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ matches: [] }));
+          return;
+        }
+        const gq = u.searchParams.get('game');
+        const rows = await recentMatches(
+          Number(u.searchParams.get('limit')) || 40,
+          gq === 'chain' || gq === 'decode' ? gq : undefined,
+        );
+        res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+        res.end(JSON.stringify({ matches: rows }));
         return;
       }
       /**
@@ -958,19 +1032,63 @@ const httpServer = createServer((req, res) => {
     });
     return;
   }
+  /**
+   * LOOK UP ONE ROOM BY CODE — `GET /api/room?code=XXXXXX`.
+   *
+   * Answers "is this match live, and WHICH REGION is hosting it". Spectating needs
+   * both: a custom room's code is a bare 6 characters with no region prefix, so a
+   * spectate socket opened without a region lands on whichever machine anycast is
+   * nearest and finds no such room. Ranked codes ARE region-coded and route
+   * themselves, but they come through here identically so there is one path.
+   *
+   * NOT a directory: it answers about a code you already hold, and holding the code
+   * is what lets you join the room in the first place — so this discloses nothing
+   * that typing the code into the join box did not already. Custom rooms are absent
+   * from the public `/api/live` list precisely so they can only be reached this way.
+   */
+  if (req.method === 'GET' && req.url?.startsWith('/api/room')) {
+    const code = (new URL(req.url, 'http://x').searchParams.get('code') ?? '').toLowerCase();
+    const send = (room: LiveRoom | null): void => {
+      res.writeHead(room ? 200 : 404, {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+        'access-control-allow-origin': '*',
+      });
+      res.end(JSON.stringify(room ? { room } : { error: 'no such live match' }));
+    };
+    const find = (list: unknown[]): LiveRoom | null =>
+      (list as LiveRoom[]).find((r) => r.room.toLowerCase() === code) ?? null;
+    if (!code) {
+      send(null);
+      return;
+    }
+    const local = find(localLive());
+    if (local || !dbEnabled) {
+      send(local);
+      return;
+    }
+    aggregateLive().then(
+      (all) => send(find(all)),
+      (e) => {
+        console.error('[live] room lookup failed:', e);
+        send(null);
+      },
+    );
+    return;
+  }
   // live presence (served here, not in api.ts, because the counts live on this
   // process: the socket registry + the in-memory matchmaker queues)
-  // "Watch Live": every currently-running versus match ACROSS EVERY REGION. Each
+  // "Watch Live": every currently-running RANKED match ACROSS EVERY REGION. Each
   // entry's `room` code is spectated via the WS `spectate` message.
   if (req.method === 'GET' && req.url?.startsWith('/api/live')) {
-    const local = [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null);
+    const local = localLive();
     const send = (list: unknown[]): void => {
       res.writeHead(200, {
         'content-type': 'application/json',
         'cache-control': 'no-store',
         'access-control-allow-origin': '*',
       });
-      res.end(JSON.stringify({ region: REGION, rooms: list }));
+      res.end(JSON.stringify({ region: REGION, rooms: list.filter(isPublicLive) }));
     };
     // EVERY region, not just this one. Anycast lands each caller on their nearest
     // machine, and a machine only knows its OWN rooms — so this answered with
@@ -982,10 +1100,7 @@ const httpServer = createServer((req, res) => {
     // started since the last beat is never missing from its own region's answer.
     if (dbEnabled) {
       aggregateLive().then(
-        (all) => {
-          const seen = new Set(local.map((r) => (r as { room: string }).room));
-          send([...local, ...all.filter((r) => !seen.has((r as { room: string }).room))]);
-        },
+        (all) => send(unionLive(local, all)),
         (e) => {
           console.error('[live] aggregate failed, using local:', e);
           send(local);
@@ -1000,7 +1115,7 @@ const httpServer = createServer((req, res) => {
   // read-only: counts and timings, no player or account data. `?reset=1` zeroes the
   // lag histogram so a sample can be scoped to one match instead of since boot.
   if (req.method === 'GET' && req.url?.startsWith('/api/perf')) {
-    const live = [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null);
+    const live = localLive();
     const ms = (n: number): number => Math.round((n / 1e6) * 100) / 100; // ns → ms
     const body = {
       region: REGION,
@@ -1599,8 +1714,10 @@ if (dbEnabled) {
     const snap = operatorSnapshot();
     upsertPresence(
       MACHINE, REGION, onlineCount, [...authedUsers.keys()], qs['1v1'], qs['2v2'],
-      // live rooms ride the SAME beat, so "Watch Live" sees every region (0021)
-      [...rooms.values()].map((r) => r.summary()).filter((s) => s !== null),
+      // live rooms ride the SAME beat, so "Watch Live" sees every region (0021).
+      // UNFILTERED — the admin view reads this too, and a beat that had already
+      // dropped custom/record rooms could not be widened back at the endpoint.
+      localLive(),
       snap.players, snap.anon, matchmaker.queueSizesByGame(), snap.guests,
     ).catch((e) => console.error('[presence] heartbeat failed:', e));
   };

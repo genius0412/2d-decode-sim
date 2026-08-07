@@ -174,10 +174,29 @@ export function fetchGlobalStats(): Promise<GlobalStats> {
   return getJson(`/api/stats`);
 }
 
-/** every live match currently running (for the "Watch Live" list). Each `room` code
- * is spectated via `LobbyClient.spectate`. */
+/** every live RANKED match currently running (for the "Watch Live" list). Each
+ * `room` code is spectated via `LobbyClient.spectate`. Custom and record rooms are
+ * deliberately absent — they are reached by code (`fetchLiveRoom`). */
 export function fetchLiveRooms(): Promise<{ region: string; rooms: LiveRoom[] }> {
   return getJson(`/api/live`);
+}
+
+/**
+ * Look up ONE live match by its room code — used to spectate a custom game, and to
+ * find the region hosting a friend's match.
+ *
+ * Resolves to null when nothing is live under that code (a finished match, a typo,
+ * a lobby that never started). The `region` on the result is what the spectate
+ * socket must be opened with: a custom code carries no region prefix of its own, so
+ * without it the connection lands on the wrong machine and the room "does not exist".
+ */
+export async function fetchLiveRoom(code: string): Promise<LiveRoom | null> {
+  try {
+    const r = await getJson<{ room: LiveRoom }>(`/api/room?code=${encodeURIComponent(code)}`);
+    return r.room ?? null;
+  } catch {
+    return null; // 404 (not live) and an unreachable server read the same here
+  }
 }
 
 export interface Presence {
@@ -641,6 +660,42 @@ export async function adminFetchPresence(): Promise<AdminPresence | null> {
   }
 }
 
+/** one finished game in the admin's "Recent games" list. A finished match can't be
+ *  spectated, so `replayId` (when the match saved one) is what the row opens. */
+export interface AdminMatchRow {
+  kind: 'versus' | 'record';
+  id: string;
+  game: GameId;
+  mode: string;
+  ranked: boolean | null;
+  createdAt: string;
+  replayId: string | null;
+  balanceVersion: number;
+  redScore: number | null;
+  blueScore: number | null;
+  score: number | null;
+  players: { userId: string; handle: string; alliance: 'red' | 'blue' | null }[];
+}
+
+/** the most recently finished games service-wide (admin only) */
+export async function adminFetchMatches(limit = 40, game?: GameId): Promise<AdminMatchRow[] | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (game) qs.set('game', game);
+  try {
+    const res = await fetch(`${base}/api/admin/matches?${qs.toString()}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { matches: AdminMatchRow[] }).matches;
+  } catch {
+    return null;
+  }
+}
+
 /** broadcast a scheduled-restart countdown to every connected client */
 export async function adminAnnounce(seconds: number, message: string): Promise<boolean> {
   const base = gameServerHttpUrl();
@@ -886,6 +941,15 @@ export interface FriendRow extends BadgeFields {
   activity: Activity | null;
   /** which game the friend is in — only set alongside `activity` */
   game: GameId | null;
+  /**
+   * The match to SPECTATE, when this friend is in one that is actually running.
+   *
+   * Absent in a lobby, absent once the match ends, and absent for an invisible
+   * friend. `region` is required to open the spectate socket — a custom room's
+   * code carries no region of its own. Optional on the wire: a server older than
+   * this feature simply never sends it and no Watch button appears.
+   */
+  watch?: { room: string; region: string; ranked: boolean };
 }
 
 export type PresenceStatus = 'online' | 'dnd' | 'invisible';

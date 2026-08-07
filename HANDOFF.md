@@ -1,3 +1,109 @@
+# HANDOFF — 2026-08-07 (spectating: friends, by-code, admin · role-swap cues) — alpha only
+
+Branch **alpha** (worktree `../2d-decode-sim-alpha`). NOT merged to main.
+`npm run build` · `npm test` · `npm run contrast` · `server:check` all green.
+
+**Server change ⇒ needs a Fly deploy** (`./scripts/fly-deploy.sh`, NEVER a bare
+`flyctl deploy` — see CLAUDE.md). Until it lands, clients see the old behaviour: no
+`kind`/`region` on live rooms, no `watch` on friend rows, no `/api/room`, no
+`/api/admin/matches`. Every one of those is additive and optional on the wire, so old
+clients keep working against the new server and new clients degrade quietly against the
+old one (missing Watch buttons, an empty by-code lookup). No `caps` gate was needed.
+
+## 1. `Room.summary()` describes; the ENDPOINTS decide who sees it
+`summary()` used to return null for record rooms, which made "show the operator every
+game" impossible without a second near-identical method. It now returns every live room
+(ranked, custom, record) plus two new optional `LiveRoom` fields — `kind`
+(`'versus' | 'record'`) and `region` — and the filtering moved outward:
+
+- **`/api/live` (public)** keeps everything except CUSTOM (`isPublicLive` in
+  `server/index.ts`). Ranked matches and record runs are both listed; a custom room is
+  reached by a code its host chose to hand out, and listing it would publish that code.
+  Note the order in that predicate: a record room reports `ranked: false`, so `kind` has
+  to be checked FIRST or record runs get filtered by the ranked test.
+- **`/api/admin/presence`** keeps everything, and now unions the cross-region aggregate
+  the same way `/api/live` does. It was this machine's rooms only — the same bug
+  `/api/live` had fixed in 0021 — so the operator's "Live matches" answered with whatever
+  happened to be hosted next to the admin.
+- The presence HEARTBEAT publishes unfiltered (`localLive()`), because the admin view
+  reads that column too and a pre-filtered beat cannot be widened back at the endpoint.
+
+`unionLive`/`localLive`/`isPublicLive` are the three shared helpers; every consumer goes
+through them so the lists cannot drift.
+
+## 2. Spectate a custom game BY CODE (`GET /api/room?code=`)
+Custom codes are a bare 6 characters with no `<region>-` prefix, so `routeTarget` cannot
+route a spectate socket for one: it lands on whichever machine is nearest the WATCHER and
+finds no such room. `/api/room` answers "is this live, and which region hosts it" from the
+same union, and `spectateRoom(code, region?)` in App.tsx now passes the region through.
+
+**This is the load-bearing detail for all three spectate paths** — the Watch Live cards,
+the friends list and the admin rows all carry a region for exactly this reason. A Watch
+button that drops it works in single-region dev and fails in production only when the
+match happens to be hosted elsewhere, which is the worst possible failure shape.
+
+The box is on the Watch Live screen (`WatchByCode`). It resolves BEFORE opening a socket,
+so a finished match says so instead of connecting and reporting an unknown room.
+
+## 3. Watch a FRIEND (`FriendRow.watch`)
+`liveRoomsByUser()` in `repo.ts` builds userId → `{room, region, ranked}` from the
+heartbeat, and `listFriends` attaches it. Two columns of the same presence rows are used
+TOGETHER on purpose: `players` says which room each account holds a socket in, `rooms`
+says which of those has a match actually running. Both are needed — a finished room holds
+its sockets for a while, and offering that as watchable sends the watcher to a dead world.
+
+- It is the SERVER's observation, not a client claim: a client can self-report `activity:
+  'match'` but cannot conjure a running room, and this is the only source of the region.
+- Invisible friends never reach it — `watch` is gated on `online`, which invisibility
+  already nulls (their last-seen is stripped).
+- Cached 3s: every friends poll on the service asks for it and the answer is shared.
+- In the panel, **Watch REPLACES Challenge** rather than sitting beside it. They are
+  mutually exclusive by construction (`canChallenge` excludes a friend already in a
+  match, which is exactly when `watch` is set).
+
+## 4. Admin: every live game + the ones that just finished
+`AdminLive` live rows now show kind/region/code and pass the region to `onWatch`. The
+session-table rows do too — a client's socket lives on the machine hosting its room.
+
+New: **Recent games**, from `GET /api/admin/matches` → `recentMatches()`. A finished game
+cannot be spectated, only replayed, so each row opens its `replayId` (App passes
+`watchReplay`). Deliberately NOT season- or version-scoped, unlike every other history
+query: those filter by `balance_version` because they feed leaderboards, where mixing
+versions compares incomparable runs. This one answers "what just happened on the server",
+which must not empty itself when a season rolls. The version is shown per row instead.
+Polls at 30s, not the 5s presence rate — finished matches cannot change.
+
+Privacy note in the panel was rewritten rather than left alone: the page could previously
+claim it retained nothing and was a pure 5s snapshot, and "Recent games" makes that false.
+It now says which section looks backwards and why that is a records read (every row
+already appears in its own players' public match history).
+
+## 5. Role-swap sound cues
+`sfxSwapRequest` (two-note rising QUESTION — the only cue that ends unresolved, because it
+is asking something) and `sfxSwapDone` (two notes CROSSING, one up one down, which is what
+just happened to the two robots) in `audio.ts`. Fired from `useRoleSwap` on the edges, so
+both lobby and strategy screens get them from one place.
+
+- REQUEST plays only for the partner being ASKED; the proposer already knows.
+- AGREED plays on BOTH clients — each enacts its own flip, so the existing `enacted` ref
+  is already the right one-shot for it.
+- `incoming` was inlined into the returned object; it is now a named const because the
+  edge detector needs to depend on it.
+- Own `MatchAudio`, built lazily on the first cue (the game controller — which owns the
+  shared instance — does not exist on these screens). Same pattern as `Matchmaking`'s
+  match-found chime. Volumes come from `settings.audio.volume` via a new 5th argument.
+
+## 6. Not done / next
+- **Deploy the server** before any of §1–§4 works in production.
+- Full-reload reconnect and WebTransport remain deferred (unchanged).
+- The sprite work from the previous session (`39cc150`, `08af75d`, `8bb5e56` — subsystem
+  rendering, no bumpers/hubs) never got its own handoff entry. CR drum and catapult
+  sprites were explicitly left as-is in that pass.
+- At the alpha→main merge: **start a new Chain Reaction season from the admin menu;
+  DECODE does NOT roll.** Do not bump `BALANCE_VERSION`.
+
+---
+
 # HANDOFF — 2026-08-05b (G418.B drain fix · CR start editor · builder regroup) — alpha only
 
 Branch **alpha** (worktree `../2d-decode-sim-alpha`). 7 commits ahead of main, NOT merged.

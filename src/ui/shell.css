@@ -1431,6 +1431,24 @@
   background: var(--ds-panel);
 }
 
+/* ---- Watch Live: "spectate a custom game by code" -------------------- */
+/* The input takes the slack and the button keeps its natural width, so a 6-char
+   code box doesn't stretch the CTA across the whole panel. Wraps on a narrow
+   screen rather than squeezing the button under a tappable size. */
+.ds-watchcode {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.ds-watchcode .ds-input {
+  flex: 1 1 160px;
+  min-width: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+}
+
 /* ---- homepage site stats -------------------------------------------- */
 .ds-homestats {
   display: flex;

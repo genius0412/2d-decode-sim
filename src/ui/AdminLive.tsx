@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import {
   adminFetchPresence,
   adminFetchMaintenance,
+  adminFetchMatches,
   adminSetMaintenance,
+  type AdminMatchRow,
   type AdminPresence,
   type AdminPresencePlayer,
   type AdminPresenceGuest,
@@ -13,20 +15,37 @@ import { windowLabel } from './MaintenanceBanner';
 
 /**
  * The operator's live view: who is connected, what each of them is doing, which
- * matches are running, and the maintenance lockdown.
+ * matches are running and which just finished, and the maintenance lockdown.
  *
  * EVERY SESSION IS A ROW — signed-in accounts and guests alike. Guests are keyed by
  * the server's per-socket connection id, which is not an IP, not a fingerprint, is
  * written nowhere else, and dies with the socket. It tells two live sessions apart
  * right now; it cannot connect either to a past one. Nobody's screen, menu or inputs
- * are reported, and there is no history — the source is a ~5s snapshot that
- * overwrites itself. The privacy policy states this; if it widens, that moves too.
+ * are reported, and the PRESENCE half has no history — its source is a ~5s snapshot
+ * that overwrites itself. "Recent games" is the one section that looks backwards,
+ * and only at finished match RESULTS, each of which already appears in its own
+ * players' public match history. The privacy policy states this; if it widens, that
+ * moves too.
  */
 const REFRESH_MS = 5000;
 const GAME_LABEL: Record<string, string> = Object.fromEntries(SEASONS.map((s) => [s.key, s.name]));
 const gameName = (g?: string): string => (g ? (GAME_LABEL[g] ?? g) : '');
 
-export function AdminLive({ onWatch }: { onWatch?: (room: string) => void }) {
+/** what kind of game a live room is, in the operator's words */
+function roomKind(r: { ranked: boolean; kind?: 'versus' | 'record' }): string {
+  if (r.kind === 'record') return 'Record';
+  return r.ranked ? 'Ranked' : 'Custom';
+}
+
+export function AdminLive({
+  onWatch,
+  onWatchReplay,
+}: {
+  /** spectate a LIVE room (read-only, hidden from the spectator count) */
+  onWatch?: (room: string, region?: string) => void;
+  /** open a FINISHED game's replay — the only way to review one after the fact */
+  onWatchReplay?: (replayId: string) => void;
+}) {
   const [data, setData] = useState<AdminPresence | null>(null);
   const [err, setErr] = useState(false);
   const [filter, setFilter] = useState('');
@@ -174,7 +193,7 @@ export function AdminLive({ onWatch }: { onWatch?: (room: string) => void }) {
         Live matches <span className="ds-muted">({data.rooms.length})</span>
       </h3>
       {data.rooms.length === 0 ? (
-        <p className="ds-hint">Nothing is being played on this machine right now.</p>
+        <p className="ds-hint">Nothing is being played anywhere right now.</p>
       ) : (
         <div className="adm-rooms">
           {data.rooms.map((r) => (
@@ -183,13 +202,14 @@ export function AdminLive({ onWatch }: { onWatch?: (room: string) => void }) {
                 <b>{r.players.map((p) => p.name).join(' vs ') || r.room}</b>
                 <span className="ds-muted">
                   {' '}
-                  · {gameName(r.game)} · {r.ranked ? 'Ranked' : 'Custom'} {r.mode} · {r.phase} ·{' '}
-                  {r.score.red}–{r.score.blue}
+                  · {gameName(r.game)} · {roomKind(r)} {r.mode} · {r.phase} · {r.score.red}–
+                  {r.score.blue}
                   {r.spectators > 0 ? ` · 👁 ${r.spectators}` : ''}
+                  {r.region ? ` · ${r.region}` : ''} · <code>{r.room}</code>
                 </span>
               </div>
               {onWatch && (
-                <button className="ds-btn small" onClick={() => onWatch(r.room)}>
+                <button className="ds-btn small" onClick={() => onWatch(r.room, r.region)}>
                   Watch (hidden)
                 </button>
               )}
@@ -197,16 +217,121 @@ export function AdminLive({ onWatch }: { onWatch?: (room: string) => void }) {
           ))}
         </div>
       )}
+      <p className="ds-hint">
+        Every region and every kind — ranked, custom and record runs alike. Players only see ranked
+        matches on Watch Live; custom rooms stay reachable by their code.
+      </p>
+
+      <RecentGames onWatchReplay={onWatchReplay} />
 
       <p className="ds-hint adm-privacy">
-        <b>Scope of this page.</b> Nobody’s screen, menu, inputs or messages are recorded, and
-        nothing here is retained — every figure is a live snapshot that overwrites itself every few
-        seconds, so this page cannot answer “what was X doing an hour ago”. Watching a match from
-        here does <b>not</b> appear in the spectator count players see. All of this is stated in the
-        privacy policy.
+        <b>Scope of this page.</b> Nobody’s screen, menu, inputs or messages are recorded. The
+        presence figures above are a live snapshot that overwrites itself every few seconds, so they
+        cannot answer “what was X doing an hour ago”; <b>Recent games</b> is the only backward-looking
+        section, and it shows finished match results, each of which already appears in its own
+        players’ public match history. Watching a live match from here does <b>not</b> appear in the
+        spectator count players see. All of this is stated in the privacy policy.
       </p>
     </>
   );
+}
+
+/**
+ * Games that have FINISHED, newest first.
+ *
+ * Refreshed far more slowly than presence: a completed match is settled history,
+ * so polling it at the live rate would be a database query every five seconds to
+ * re-read rows that cannot change. The list is capped rather than paginated — this
+ * answers "what just happened", and an operator chasing something older has the
+ * player's own match history to open.
+ */
+function RecentGames({ onWatchReplay }: { onWatchReplay?: (replayId: string) => void }) {
+  const [rows, setRows] = useState<AdminMatchRow[] | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const load = (): void => {
+      void adminFetchMatches(40).then((m) => {
+        if (!alive) return;
+        setErr(m === null);
+        if (m) setRows(m);
+      });
+    };
+    load();
+    const t = window.setInterval(load, 30_000);
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+    };
+  }, []);
+
+  return (
+    <>
+      <h3 className="adm-h3">
+        Recent games {rows && <span className="ds-muted">({rows.length})</span>}
+      </h3>
+      {err && !rows ? (
+        <p className="ds-hint">Couldn’t read match history (no database, or not an admin).</p>
+      ) : !rows ? (
+        <div className="ds-loading">Reading recent games…</div>
+      ) : rows.length === 0 ? (
+        <p className="ds-hint">No games have finished yet.</p>
+      ) : (
+        <div className="adm-rooms">
+          {rows.map((m) => (
+            <div key={m.kind + m.id} className="adm-room">
+              <div>
+                <b>{rosterLabel(m)}</b>
+                <span className="ds-muted">
+                  {' '}
+                  · {gameName(m.game)} · {matchKind(m)} {m.mode} · {scoreLabel(m)} · {ago(m.createdAt)}
+                  {' · s'}
+                  {m.balanceVersion}
+                </span>
+              </div>
+              {m.replayId && onWatchReplay ? (
+                <button className="ds-btn small ghost" onClick={() => onWatchReplay(m.replayId as string)}>
+                  Replay
+                </button>
+              ) : (
+                <span className="ds-muted" title="This match saved no replay">
+                  no replay
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** "red names vs blue names" for a versus match, or the runner for a record run */
+function rosterLabel(m: AdminMatchRow): string {
+  if (m.kind === 'record') return m.players.map((p) => p.handle).join(' + ') || 'Record run';
+  const side = (a: 'red' | 'blue'): string =>
+    m.players.filter((p) => p.alliance === a).map((p) => p.handle).join(' + ') || a.toUpperCase();
+  return `${side('red')} vs ${side('blue')}`;
+}
+
+function matchKind(m: AdminMatchRow): string {
+  if (m.kind === 'record') return 'Record';
+  return m.ranked ? 'Ranked' : 'Custom';
+}
+
+function scoreLabel(m: AdminMatchRow): string {
+  if (m.kind === 'record') return `${m.score ?? 0} pts`;
+  return `${m.redScore ?? 0}–${m.blueScore ?? 0}`;
+}
+
+/** coarse "how long ago" — the operator wants recency, not a timestamp */
+function ago(iso: string): string {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }
 
 /** one shared table for both kinds of session, so a guest row and an account row
@@ -226,7 +351,7 @@ function SessionTable({
     region: string;
   }[];
   empty: string;
-  onWatch?: (room: string) => void;
+  onWatch?: (room: string, region?: string) => void;
 }) {
   if (rows.length === 0) return <p className="ds-hint">{empty}</p>;
   return (
@@ -254,7 +379,13 @@ function SessionTable({
               <td>
                 {r.room ? (
                   onWatch ? (
-                    <button className="ds-btn small ghost" onClick={() => onWatch(r.room as string)}>
+                    // the session's region IS the room's: a client's socket lives on
+                    // the machine hosting its room, which is what a bare custom code
+                    // cannot tell the spectate connection on its own
+                    <button
+                      className="ds-btn small ghost"
+                      onClick={() => onWatch(r.room as string, r.region || undefined)}
+                    >
                       {r.room} ↗
                     </button>
                   ) : (

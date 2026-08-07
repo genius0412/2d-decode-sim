@@ -610,13 +610,23 @@ export function App() {
     navigate('game');
   };
 
-  /** SPECTATE a live match read-only. Opens a socket to the room, sends `spectate`,
+  /**
+   * SPECTATE a live match read-only. Opens a socket to the room, sends `spectate`,
    * and builds a spectator ServerSession from the `matchStart` the server returns.
-   * Never saved as an "active game" (it isn't yours to rejoin). */
-  const spectateRoom = (code: string): void => {
+   * Never saved as an "active game" (it isn't yours to rejoin).
+   *
+   * `region` matters for CUSTOM rooms: their codes are bare (no `<region>-` prefix
+   * for the proxy to route on), so a socket opened without it lands on whichever
+   * machine is nearest to the WATCHER and reports no such room. Callers that
+   * already know the host region (the Watch Live cards, a friend's match, the
+   * admin list) pass it; the code box looks it up first.
+   */
+  const spectateRoom = (code: string, region?: string): void => {
     let transport: WebSocketTransport;
     try {
-      transport = new WebSocketTransport(gameServerUrlWith({ room: code }));
+      transport = new WebSocketTransport(
+        gameServerUrlWith(region ? { room: code, region } : { room: code }),
+      );
     } catch {
       return;
     }
@@ -947,6 +957,7 @@ export function App() {
         signedIn={signedIn}
         onOpenProfile={openProfile}
         onJoinInvite={onJoinInvite}
+        onSpectate={spectateRoom}
         myUserId={accountUserId}
         game={settings.game}
       >
@@ -1151,7 +1162,7 @@ export function App() {
           onDonate={() => navigate('donate')}
         />
       )}
-      {screen === 'admin' && isAdmin && <Admin onWatch={spectateRoom} />}
+      {screen === 'admin' && isAdmin && <Admin onWatch={spectateRoom} onWatchReplay={watchReplay} />}
 
       {/* Patch notes / new-season + new-act reveals — shown once on the menu shell,
           never over a live match (the game screen returns before this). Mounted

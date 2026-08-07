@@ -111,7 +111,7 @@ export function MatchStrategy({
   const toggleReady = (): void => lobby.update({ ready: !me?.ready });
 
   // 2v2 ROLE + consent swap (shared with Lobby via useRoleSwap)
-  const rs = useRoleSwap(players, me, (patch) => lobby.update(patch), settings.game);
+  const rs = useRoleSwap(players, me, (patch) => lobby.update(patch), settings.game, settings.audio.volume);
   const startRole = rs.role;
   const [swapDismissed, dismissSwap] = useDismissable(rs.incoming);
   const sCat: GameSettings = { ...settings, startCat: startRole ?? settings.startCat };

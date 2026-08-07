@@ -77,6 +77,7 @@ export function AppShell({
   signedIn,
   onOpenProfile,
   onJoinInvite,
+  onSpectate,
   myUserId,
   game,
 }: {
@@ -106,6 +107,8 @@ export function AppShell({
   onOpenProfile: (username: string) => void;
   /** a friend's "Join" click on a room invite, from anywhere the panel is open */
   onJoinInvite: (invite: RoomInvite) => void;
+  /** "Watch" on a friend who is mid-match — spectates their room read-only */
+  onSpectate: (room: string, region?: string) => void;
   /** the signed-in account's own user id — drives the panel's "Recently played"
    * suggestions (opponents/teammates from recent matches you can friend) */
   myUserId?: string | null;
@@ -155,6 +158,7 @@ export function AppShell({
             signedIn={signedIn}
             onOpenProfile={onOpenProfile}
             onJoinInvite={onJoinInvite}
+            onSpectate={onSpectate}
             myUserId={myUserId}
           />
         </div>

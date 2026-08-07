@@ -366,12 +366,20 @@ export type ClientMsg =
   // measures round-trip time for the connection-quality HUD (no server clock needed)
   | { t: 'ping'; ts: number };
 
-/** a live match summarised for the "Watch Live" list (`GET /api/live`). */
+/**
+ * A live match summarised for the "Watch Live" list (`GET /api/live`) and for the
+ * admin's live view.
+ *
+ * The two lists are the SAME shape but not the same set: `/api/live` is public and
+ * shows RANKED matches only, while the admin endpoint shows everything running,
+ * custom and record included. Filtering happens at the endpoints — `Room.summary()`
+ * describes every live room and decides nothing about who may see it.
+ */
 export interface LiveRoom {
   /** the room code to spectate (region-coded, e.g. `iad-abc123`) */
   room: string;
   game: GameId;
-  /** '1v1' | '2v2' (versus) — record/solo rooms are not listed */
+  /** '1v1' | '2v2' (versus) or 'solo' | 'duo' (record) */
   mode: string;
   /** match clock phase ('auto' | 'transition' | 'teleop' | 'post') */
   phase: string;
@@ -384,6 +392,12 @@ export interface LiveRoom {
   score: { red: number; blue: number };
   /** how many people are already watching */
   spectators: number;
+  /** 'versus' | 'record'. Optional: an older server predates it, and every reader
+   *  must treat a missing value as the historical meaning (versus). */
+  kind?: 'versus' | 'record';
+  /** which Fly region is hosting, for the admin's cross-region list. Absent on a
+   *  single-region/dev deploy. */
+  region?: string;
 }
 
 // ---- server → client --------------------------------------------------------
