@@ -170,6 +170,8 @@ import {
   CHAIN_LAB,
   CHAIN_RINGSTAND_BOX,
   CHAIN_HALF_Y,
+  CHAIN_MIN_WIDTH,
+  CHAIN_MAX_WIDTH,
   chainMassFloorBump,
   chainStorageMax,
 } from '../src/games/chain/config';
@@ -2446,12 +2448,15 @@ const setup = (
   // (CHAIN_MIN/MAX_LENGTH), wider than DECODE's per-intake range. The server must
   // clamp with the ROOM's game, or a record-run/ranked CR robot gets silently
   // resized to a DIFFERENT envelope than the config menu offered.
-  // A length legal in CR (10) but BELOW the sloped-intake DECODE floor (13.5): the
-  // chain-aware clamp keeps it; the game-less (DECODE) clamp would pull it up.
-  const crShort = sanitizePlayer({ name: 'C', alliance: 'blue', spec: { length: CHAIN_MIN_LENGTH, intake: 'sloped' }, assists: {} }, 'chain');
-  check('sanitizePlayer(chain) keeps a CR-legal short chassis', crShort.spec.length === CHAIN_MIN_LENGTH, `${crShort.spec.length}`);
+  // A length legal in CR (17) but ABOVE the sloped-intake DECODE ceiling (15): the
+  // chain-aware clamp keeps it; the game-less (DECODE) clamp would pull it DOWN. (This used
+  // to probe the other end — a CR chassis SHORTER than DECODE allows — but CR's floor is
+  // 15" now, above DECODE's, so the difference only shows at the top.)
+  const crLen = CHAIN_MAX_LENGTH;
+  const crShort = sanitizePlayer({ name: 'C', alliance: 'blue', spec: { length: crLen, intake: 'sloped' }, assists: {} }, 'chain');
+  check('sanitizePlayer(chain) keeps a CR-legal chassis', crShort.spec.length === crLen, `${crShort.spec.length}`);
   check('sanitizePlayer(chain) length matches config-menu range (not DECODE intake range)',
-    crShort.spec.length < INTAKE_PRESETS.sloped.minLength, `${crShort.spec.length} vs decode min ${INTAKE_PRESETS.sloped.minLength}`);
+    crShort.spec.length > INTAKE_PRESETS.sloped.maxLength, `${crShort.spec.length} vs decode max ${INTAKE_PRESETS.sloped.maxLength}`);
   // and the CR ceiling (18) is honoured too — DECODE sloped maxes at 15
   // the CR cap is per-build now: the 18" start cube MINUS the mounted sweeper's reach
   const crLongCap = chainSizeLimits({ ...DEFAULT_SPEC, intake: 'sloped', intakeMount: 'front' }).maxLength;
@@ -5131,68 +5136,82 @@ const mkMM = () => {
     }
   }
 
-  // CR CHASSIS SIZE: the sweeper is structure inside the 18" START CUBE, so its reach eats
-  // that cube on whichever axis it is MOUNTED on. Without this a "legal" build could be an
-  // 18x18 frame with a 5" sweeper on BOTH ends — a 28" starting footprint.
+  /**
+   * CR CHASSIS SIZE. The sweeper DEPLOYS, so it never had to share the 18" starting cube
+   * with the chassis — every build gets the same envelope, and the mount is paid for in
+   * HOPPER volume instead. The floor is 15" (CR robots are hoppers first) and the ceiling is
+   * 17", which the FIELD sets: a bigger chassis has no legal start pose at all.
+   */
   {
     const size = (intake: RobotSpec['intake'], mount: RobotSpec['intakeMount']) =>
       chainSizeLimits({ ...DEFAULT_SPEC, intake, intakeMount: mount });
-    const reach = (i: RobotSpec['intake']) => INTAKE_PRESETS[i].reach;
-    // one end mounted → one reach off the length; both ends → two
     check(
-      'chain size: an end-mounted sweeper eats the length, front+back eats it twice',
-      size('triangle', 'front').maxLength === CHAIN_MAX_LENGTH - reach('triangle') &&
-        size('triangle', 'frontback').maxLength === CHAIN_MAX_LENGTH - 2 * reach('triangle'),
-      `front ${size('triangle', 'front').maxLength} fb ${size('triangle', 'frontback').maxLength}`,
+      'chain size: the floor is 15in on both axes',
+      CHAIN_MIN_LENGTH === 15 && CHAIN_MIN_WIDTH === 15,
+      `${CHAIN_MIN_LENGTH}x${CHAIN_MIN_WIDTH}`,
     );
-    // some combinations simply cannot fit the cube — a 5"-reach sweeper on BOTH ends leaves
-    // 8" of chassis, under the 10" minimum. Those are reported infeasible, not clamped.
+    // A SINGLE sweeper never constrains the chassis any more: the deployed robot is at most
+    // 17 + 5 = 22in, inside the 24in expansion prism whatever the intake.
+    let singleCost = '';
+    for (const intake of ['sloped', 'vector', 'triangle'] as RobotSpec['intake'][]) {
+      for (const mount of ['front', 'back'] as RobotSpec['intakeMount'][]) {
+        const l = size(intake, mount);
+        if (l.maxLength !== CHAIN_MAX_LENGTH || l.maxWidth !== CHAIN_MAX_WIDTH) {
+          singleCost = `${intake}/${mount} -> ${l.maxLength}x${l.maxWidth}`;
+        }
+      }
+    }
+    check('chain size: one sweeper costs the chassis nothing (it fits the prism)', !singleCost, singleCost);
+    // ...but DOUBLE-mounting the longest one still cannot fit. That is the prism talking, not
+    // the start cube: a 15in chassis with a 5in triangle sweeper at BOTH ends is 25in deployed.
     check(
-      'chain size: a double-mounted long intake is reported as impossible, not silently clamped',
+      'chain size: the longest intake still cannot be double-mounted (25in > the 24in prism)',
       !chainMountFits({ ...DEFAULT_SPEC, intake: 'triangle' }, 'frontback') &&
-        chainMountFits({ ...DEFAULT_SPEC, intake: 'sloped' }, 'frontback'),
-      `triangle fb ${chainMountFits({ ...DEFAULT_SPEC, intake: 'triangle' }, 'frontback')} sloped fb ${chainMountFits({ ...DEFAULT_SPEC, intake: 'sloped' }, 'frontback')}`,
+        !chainMountFits({ ...DEFAULT_SPEC, intake: 'triangle' }, 'side') &&
+        chainMountFits({ ...DEFAULT_SPEC, intake: 'sloped' }, 'frontback') &&
+        chainMountFits({ ...DEFAULT_SPEC, intake: 'vector' }, 'side'),
     );
-    // ...and coerceSpec refuses it, falling back to the single front sweeper
     check(
-      'chain size: coerceSpec rejects an impossible mount instead of building it',
+      'chain size: coerceSpec refuses an impossible mount instead of building it',
       coerceSpec({ ...DEFAULT_SPEC, intake: 'triangle', intakeMount: 'frontback' }, undefined, 'chain').intakeMount === 'front',
     );
-    // flanks eat the WIDTH instead, and leave the length alone
+    // coerceSpec clamps to the shared envelope, both directions
+    const big = coerceSpec({ ...DEFAULT_SPEC, length: 24, width: 24 }, undefined, 'chain');
+    const small = coerceSpec({ ...DEFAULT_SPEC, length: 4, width: 4 }, undefined, 'chain');
     check(
-      'chain size: a side-mounted sweeper eats the width, not the length',
-      size('sloped', 'side').maxWidth === ROBOT_MAX_SIZE - 2 * reach('sloped') &&
-        size('sloped', 'side').maxLength === CHAIN_MAX_LENGTH,
-      `w ${size('sloped', 'side').maxWidth} l ${size('sloped', 'side').maxLength}`,
-    );
-    // a longer-reach intake costs more of the cube
-    check(
-      'chain size: a longer intake preset leaves less chassis',
-      size('triangle', 'front').maxLength < size('sloped', 'front').maxLength,
-      `triangle ${size('triangle', 'front').maxLength} vs sloped ${size('sloped', 'front').maxLength}`,
-    );
-    // and coerceSpec ENFORCES it — a spoofed max-size front+back build is clamped
-    const big = coerceSpec(
-      { ...DEFAULT_SPEC, intake: 'triangle', intakeMount: 'front', length: 18 },
-      undefined,
-      'chain',
+      'chain size: coerceSpec clamps an oversized build down to 17',
+      big.length === CHAIN_MAX_LENGTH && big.width === CHAIN_MAX_WIDTH,
+      `${big.length}x${big.width}`,
     );
     check(
-      'chain size: coerceSpec clamps an oversized build to its start-cube envelope',
-      big.length <= CHAIN_MAX_LENGTH - reach('triangle') + 0.01,
-      `length ${big.length} (cap ${CHAIN_MAX_LENGTH - reach('triangle')})`,
+      'chain size: coerceSpec clamps an undersized build UP to 15',
+      small.length === CHAIN_MIN_LENGTH && small.width === CHAIN_MIN_WIDTH,
+      `${small.length}x${small.width}`,
     );
-    const wide = coerceSpec(
-      { ...DEFAULT_SPEC, intake: 'sloped', intakeMount: 'side', width: 18 },
-      undefined,
-      'chain',
-    );
+    /**
+     * THE CEILING IS THE FIELD'S. G04 wants the robot completely inside its 24" Lab, whose
+     * outer corner holds the solid 6" Ring-Stand assembly — so every chassis the builder
+     * offers must have SOME legal start pose, or it is a robot you can build and never field.
+     */
+    let unstartable = '';
+    for (let sz = CHAIN_MIN_LENGTH; sz <= CHAIN_MAX_LENGTH && !unstartable; sz += 0.5) {
+      const spec = coerceSpec({ ...DEFAULT_SPEC, length: sz, width: sz }, undefined, 'chain');
+      const anyHeading = [0, 90, 180, 270].some((d) => chainHeadingFits(spec, d));
+      if (!anyHeading) unstartable = `${sz}x${sz}`;
+    }
     check(
-      'chain size: coerceSpec clamps a side-mounted build to its width envelope',
-      wide.width <= ROBOT_MAX_SIZE - 2 * reach('sloped') + 0.01,
-      `width ${wide.width}`,
+      'chain size: EVERY buildable chassis has a legal start pose',
+      !unstartable,
+      unstartable ? `${unstartable} cannot start anywhere` : `up to ${CHAIN_MAX_LENGTH}in`,
+    );
+    // ...and one inch past the ceiling genuinely cannot, which is what sets the ceiling
+    const over = { ...coerceSpec({ ...DEFAULT_SPEC }, undefined, 'chain'), length: 18, width: 18 };
+    check(
+      'chain size: an 18in chassis could NOT start — which is why the cap is 17',
+      ![0, 45, 90, 180, 270].some((d) => chainHeadingFits(over, d)),
     );
   }
+
 
   // CUSTOM start poses: whatever a player (or a spoofed client) asks for, the spawned robot
   // must end up inside its Lab Area and clear of the corner assembly — otherwise it spawns
@@ -6183,7 +6202,11 @@ const mkMM = () => {
       const spread = (m: RobotSpec['shooterMount']): number => {
         const s = chainSetup(0, 'blue');
         // deliberately non-square so length-vs-width spread is distinguishable
-        s.spec = { ...DEFAULT_SPEC, scoreMode: 'dumper', shooterMount: m, length: 12, width: 18, ballStorage: 12 };
+        // as non-square as the CR envelope now allows (15x17). It used to be 12x18, but the
+        // chassis floor is 15" — so the contrast is 17/15 rather than 18/12, and the check
+        // below compares the RATIO to the chassis' own aspect instead of a fixed margin that
+        // only ever worked for the old, wider spread.
+        s.spec = { ...DEFAULT_SPEC, scoreMode: 'dumper', shooterMount: m, length: CHAIN_MIN_LENGTH, width: CHAIN_MAX_WIDTH, ballStorage: 12 };
         const gw = createChainWorld('match', 977, [s]);
         gw.match.phase = 'teleop';
         gw.match.phaseTimeLeft = 120;
@@ -6204,12 +6227,13 @@ const mkMM = () => {
         });
         return along.length ? Math.max(...along) - Math.min(...along) : 0;
       };
-      const front = spread('front'); // spans width 18
-      const left = spread('left'); // spans length 12
+      const front = spread('front'); // spans the WIDTH
+      const left = spread('left'); // spans the LENGTH
+      const want = CHAIN_MAX_WIDTH / CHAIN_MIN_LENGTH; // the chassis' own aspect ratio
       check(
         'chain shooter mounts: the launch line spans the mounted edge (flank = chassis length)',
-        front > left + 2 && left > 4,
-        `frontSpread=${front.toFixed(1)} leftSpread=${left.toFixed(1)}`,
+        left > 4 && front > left && Math.abs(front / left - want) < 0.08,
+        `front=${front.toFixed(1)} left=${left.toFixed(1)} ratio=${(front / left).toFixed(3)} want=${want.toFixed(3)}`,
       );
     }
 
@@ -6851,10 +6875,16 @@ const mkMM = () => {
         maxArm >= minArm + 6,
         `${minArm.toFixed(1)}" (maxed) -> ${maxArm.toFixed(1)}" (compact)`,
       );
+      // The WORST case is now a chassis whose DEPLOYED sweepers already fill the prism (a 17"
+      // frame with a 3.5" vector sweeper at both ends is exactly 24"), leaving the arm no
+      // extension at all — just the ring it holds. That is a real trade-off rather than a
+      // bug: that robot spent its whole expansion allowance on collecting. It used to be
+      // pinned to `CHAIN_EXPANSION` (24 − 18), which assumed the worst build was a maxed
+      // chassis with NO sweeper cost — true only while the chassis could reach 18".
       check(
-        'catalyst: even the WORST-case arm equals the maxed-robot expansion + ring radius',
-        Math.abs(minArm - (CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2)) < 1e-9,
-        `${minArm} vs ${CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2}`,
+        'catalyst: the worst-case arm is the ring alone (its prism is already spent), never negative',
+        minArm >= CHAIN_CATALYST_OD / 2 - 1e-9 && Math.abs(minArm - CHAIN_CATALYST_OD / 2) < 1e-9,
+        `${minArm} vs ring radius ${CHAIN_CATALYST_OD / 2}`,
       );
     }
     // THE ARM MUST OUT-REACH THE INTAKE, at ANY legal size. It is the long-reach mechanism;

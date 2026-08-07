@@ -278,9 +278,9 @@ export function Menu({ settings, onChange }: Props) {
   // in the same dependency order (intake → size, drivetrain → rpm, drivetrain ×
   // inertia → mass), so the UI and the validator can never disagree
   // SIZE envelopes, mirroring coerceSpec's game-aware clamp exactly so the slider can never
-  // offer a value the coercer would immediately rewrite. CR's depends on the INTAKE MOUNT:
-  // the sweeper is structure inside the 18" start cube, so it eats the length on an end
-  // mount (twice, on front+back) or the width on a side mount.
+  // offer a value the coercer would immediately rewrite. CR's is the SAME 15-18" envelope for
+  // every build: the sweeper deploys, so it never competed with the chassis for the starting
+  // cube, and the mount is paid for in hopper volume instead (`chainMountStoreMult`).
   const crSize = chainSizeLimits(spec);
   const { min: minLength, max: maxLength } = isDecode
     ? lengthLimits(spec.intake)
@@ -577,8 +577,8 @@ export function Menu({ settings, onChange }: Props) {
                 under the chassis dimensions and read as frame settings.
 
                 ORDER IS LOAD-BEARING: FRAME (length/width/mass) comes LAST because every
-                block above clamps it — the intake mount eats the start cube on its axis, the
-                catalyst and flywheel raise the mass floor, the drivetrain sets both. Picking
+                block above clamps it — the catalyst and flywheel raise the mass floor, and
+                the drivetrain sets both mass and rpm. Picking
                 a mechanism and watching a slider below re-clamp reads as cause and effect;
                 the reverse reads as the builder fighting you. */}
             <h3 className="ds-subh">Drivetrain</h3>

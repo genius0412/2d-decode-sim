@@ -50,7 +50,7 @@ import type {
   StartCat,
 } from '../../types';
 import { catalystMountOf, intakeMountOf } from './mounts';
-import { INTAKE_PRESETS, ROBOT_MAX_SIZE, ROBOT_MIN_WIDTH } from '../../config';
+import { INTAKE_PRESETS, ROBOT_MAX_SIZE } from '../../config';
 
 /** millimetres → inches (the sim's world unit) */
 export const mm = (v: number): number => v / 25.4;
@@ -390,10 +390,39 @@ export const CHAIN_STORAGE_MIN = 1; // a floor of one ball; NOT scaled with the 
 export const CHAIN_STORAGE_MAX = 122;
 export const CHAIN_STORAGE_DEFAULT = 16;
 
-/** Chain Reaction chassis LENGTH range (in). Unlike DECODE, CR's intake doesn't eat into an
- * 18" cube (the sweeper deploys), so a CR chassis can run the full 18" long. */
-export const CHAIN_MIN_LENGTH = 10;
-export const CHAIN_MAX_LENGTH = 18;
+/**
+ * Chain Reaction chassis size range (in), BOTH axes.
+ *
+ * THE SWEEPER DEPLOYS, so it does not have to fit inside the 18" starting cube alongside the
+ * chassis — the same thing most real FTC intakes do, and what this file already claimed even
+ * while `chainSizeLimits` was quietly charging for it anyway. A CR chassis therefore gets the
+ * whole cube on both axes no matter where its sweeper is mounted.
+ *
+ * The FLOOR is 15", not the 10" a DECODE chassis may shrink to (user decision). CR robots are
+ * hoppers first — tens of Particles, a scoring mechanism and usually a claw — so a 10" square
+ * was a shape nobody would build for this game. It also made the mount trade-offs incoherent:
+ * a build could dodge a mount's cost by shrinking instead of by giving something up.
+ *
+ * Charging the cube (the previous model) capped a front+back sweeper at 12" long and a side
+ * sweeper at 12" wide, which is exactly what made a 15" floor impossible for 11 of the 12
+ * intake × mount combinations.
+ *
+ * The CEILING is 17", not the 18" cube — and that number comes from the FIELD, not from
+ * taste. G04 wants the robot completely inside its 24" Lab Area, whose outer corner is
+ * occupied by the solid 6" Ring-Stand assembly; escaping the post means retreating inward on
+ * one axis, which only leaves room while the half-extent (plus clearance) stays under 9".
+ * That is a 17" chassis. An 18" one has NO legal start pose at any heading in any corner, so
+ * offering it would be offering a robot you can build and never field.
+ *
+ * The strict reading is "at least ONE axis under 17" — an 18×15 robot can retreat along its
+ * short axis and does fit. Both sliders are capped at 17 anyway: a coupled 2D constraint
+ * cannot be expressed in two independent sliders without one of them silently moving the
+ * other, and giving up the long-thin corner case is a much smaller cost than that.
+ */
+export const CHAIN_MIN_LENGTH = 15;
+export const CHAIN_MAX_LENGTH = 17;
+export const CHAIN_MIN_WIDTH = 15;
+export const CHAIN_MAX_WIDTH = 17;
 
 /**
  * CR CHASSIS SIZE LIMITS, per build.
@@ -417,31 +446,42 @@ export function chainSizeLimits(spec: RobotSpec): {
   minWidth: number;
   maxWidth: number;
 } {
+  // The sweeper DEPLOYS, so it does not share the 18" STARTING CUBE with the chassis (see
+  // `CHAIN_MIN_LENGTH`) — but it is still real structure once deployed, so chassis + sweepers
+  // must fit the EXPANSION PRISM the robot may grow into during play. That is the constraint
+  // that survives, and it is a far looser one: 24" rather than 18", and it only bites the
+  // longest-reach intake mounted on BOTH ends (a 5" triangle sweeper twice over on a 15"
+  // chassis is a 25" robot, which no rule allows).
+  //
+  // The mount's ordinary price is HOPPER volume (`chainMountStoreMult`) — you pay in what the
+  // robot can carry, not in a chassis dimension you could shrink your way out of.
   const reach = INTAKE_PRESETS[spec.intake].reach;
   const mount = intakeMountOf(spec);
   const ends = mount === 'front' || mount === 'back' ? 1 : mount === 'frontback' ? 2 : 0;
   const flanks = mount === 'side' ? 2 : 0;
-  // NOT floored to the minimum on purpose: when the intake eats so much of the cube that
-  // nothing legal is left, the max drops BELOW the min and `chainMountFits` reports the
-  // combination as impossible. Flooring here would instead hand back a chassis that plus
-  // its intake exceeds 18" — an illegal robot the builder had quietly produced.
-  // The width floor is the plain chassis minimum, NOT the DECODE preset's `minWidth`. That
-  // number exists to house a DECODE funnel's side slopes; CR's intake is its own full-width
-  // SWEEPER (`CHAIN_INTAKES`) and only borrows the preset's REACH. Applying the funnel floor
-  // here would make flank mounts impossible for two of the three presets for a reason that
-  // does not exist in this game.
+  // NOT floored to the minimum on purpose: when the deployed sweepers leave nothing legal the
+  // max drops BELOW the min and `chainMountFits` reports the combination as impossible.
+  // Flooring here would hand back a robot that overruns the prism instead.
   return {
     minLength: CHAIN_MIN_LENGTH,
-    maxLength: CHAIN_MAX_LENGTH - ends * reach,
-    minWidth: ROBOT_MIN_WIDTH,
-    maxWidth: ROBOT_MAX_SIZE - flanks * reach,
+    maxLength: Math.min(CHAIN_MAX_LENGTH, CHAIN_PRISM - ends * reach),
+    minWidth: CHAIN_MIN_WIDTH,
+    maxWidth: Math.min(CHAIN_MAX_WIDTH, CHAIN_PRISM - flanks * reach),
   };
 }
 
-/** Can this intake preset be mounted this way at all? A sweeper on BOTH ends of a chassis
- * that already has a 10" minimum needs the reach to fit in 18 − 10 = 8" total; a long-reach
- * intake simply cannot be double-mounted. The builder greys these out rather than offering
- * a build that `coerceSpec` would have to rewrite. */
+/**
+ * Can this intake preset be mounted this way at all?
+ *
+ * TRUE for every combination today: the sweeper deploys, so no mount can shrink the chassis
+ * envelope below its own floor. It used to be the test that ruled out a long-reach intake on
+ * both ends of a chassis whose minimum already left no room for it.
+ *
+ * Kept, and kept called, on purpose. It is the one place that answers "is this build
+ * possible" for `coerceSpec` and for the builder's greying-out, and re-deriving that at both
+ * call sites the day a mechanism does constrain size is how the two drift apart. A predicate
+ * that is currently always true is cheaper than that.
+ */
 export function chainMountFits(spec: RobotSpec, mount: ChainIntakeMount): boolean {
   const l = chainSizeLimits({ ...spec, intakeMount: mount });
   return l.maxLength >= l.minLength && l.maxWidth >= l.minWidth;
@@ -726,8 +766,10 @@ export function chainCatapultYaw(spec: RobotSpec): number {
 
 /** the catalyst mechanism's geometry for a spec (defaulted). */
 /** The robot's total footprint along the axis a catalyst edge points down, INCLUDING a
- * sweeper mounted on that same axis — the sweeper is structure, and `chainSizeLimits`
- * already charges it against the start cube exactly this way. */
+ * sweeper mounted on that same axis. The sweeper is real structure once deployed, so a claw
+ * reaching past that edge has to clear it — this is about the EXPANSION prism during play,
+ * which is a different question from the starting cube (which the sweeper no longer has to
+ * fit inside; see `CHAIN_MIN_LENGTH`). */
 function chainAxisExtent(spec: RobotSpec, edge: ChainCatalystMount): number {
   const reach = INTAKE_PRESETS[spec.intake].reach;
   const mount = intakeMountOf(spec);
@@ -932,10 +974,10 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
   },
   {
     // Rocky: everything omnidirectional. Butterfly base, front+back sweepers, twin turret in
-    // the middle, rail-turret claw — nothing on this robot needs the chassis pointed anywhere.
-    // The front+back sweeper eats the start cube twice, so it is necessarily short.
+    // the middle, catalyst claw on a turret — nothing on this robot needs the chassis pointed
+    // anywhere. It pays for the second sweeper in HOPPER volume, not in chassis size.
     name: 'Rocky', teamName: 'Estimate', teamNumber: 5050,
-    length: 12, width: 17, intake: 'sloped', massLb: 30, drivetrain: 'butterfly',
+    length: 15, width: 17, intake: 'sloped', massLb: 30, drivetrain: 'butterfly',
     driveRpm: 435, tankRpm: 340, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'twinturret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'center', catalystType: 'turret', catalystMount: 'frontback',
@@ -945,7 +987,7 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
     // String Theory: front+back sweepers and a centre turret, with a SWING claw on a pivot
     // that serves either end — the build the `frontback` catalyst mount was added for.
     name: 'String Theory', teamName: 'Circuitrunners Surge', teamNumber: 1002,
-    length: 12, width: 17, intake: 'sloped', massLb: 31, drivetrain: 'tank',
+    length: 15, width: 17, intake: 'sloped', massLb: 31, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'center', catalystType: 'arm', catalystMount: 'frontback',
@@ -958,8 +1000,7 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
     // to face the goal — which is exactly the build that can afford a FRONT+BACK sweeper
     // and collect while driving in either direction. It pays ~25% of the hopper for that.
     name: 'Sniper', teamName: 'Turret · shoots and collects any direction', teamNumber: 0,
-    // front+back sweepers eat the START CUBE twice over, so this build is necessarily short
-    length: 12, width: 17, intake: 'sloped', massLb: 24, drivetrain: 'swerve',
+    length: 16, width: 17, intake: 'sloped', massLb: 24, drivetrain: 'swerve',
     driveRpm: 500, flywheelInertia: 0.2, canSort: false,
     groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'front',
@@ -972,7 +1013,7 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
     // No turning around at either end. Two end mounts on opposite edges cost NO storage
     // (front and back are mirror images), so it keeps the biggest hopper in the set.
     name: 'Hauler', teamName: 'Dumper · fill forward, reverse and unload', teamNumber: 0,
-    length: 15, width: 18, intake: 'sloped', massLb: 38, drivetrain: 'tank',
+    length: 15, width: 17, intake: 'sloped', massLb: 38, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.2, canSort: false,
     groundClearance: 1.0, scoreMode: 'dumper', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'back',
@@ -984,8 +1025,9 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
     // sideways along a line of particles and hoover it up with the flank rollers, then
     // face the goal and stream. The open flanks are the harshest storage cost (0.6).
     name: 'Drummer', teamName: 'Drum · strafe-collect, stream from anywhere', teamNumber: 0,
-    // side-mounted sweepers eat the cube across the WIDTH, so this one is narrow
-    length: 14.5, width: 12, intake: 'sloped', massLb: 25, drivetrain: 'mecanum',
+    // still the SLIMMEST build in the set — the flank sweepers' cost is the hopper opening
+    // (`CHAIN_STORE_SIDE_MULT`), and a narrow chassis keeps the strafe quick
+    length: 17, width: 15, intake: 'sloped', massLb: 25, drivetrain: 'mecanum',
     driveRpm: 470, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'drum', chainIntake: 'sweeper',
     intakeMount: 'side', shooterMount: 'front',
@@ -997,7 +1039,7 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
     // BROADSIDE catapult lets it run the wall and fire sideways WITHOUT ever turning —
     // the launch line then spans the chassis LENGTH, not its width.
     name: 'Skimmer', teamName: 'Dumper · run the wall, fire broadside', teamNumber: 0,
-    length: 14.5, width: 16, intake: 'sloped', massLb: 22, drivetrain: 'xdrive',
+    length: 15, width: 16, intake: 'sloped', massLb: 22, drivetrain: 'xdrive',
     driveRpm: 520, flywheelInertia: 0.1, canSort: false,
     groundClearance: 1.0, scoreMode: 'dumper', chainIntake: 'sweeper',
     intakeMount: 'front', shooterMount: 'right',
