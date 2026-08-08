@@ -712,6 +712,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* keeps a full-height panel off the very edges (and clear of a phone's rounded corners) */
+  padding: 12px;
   background: rgba(10, 12, 16, 0.55);
   backdrop-filter: blur(3px);
   z-index: 20;
@@ -723,12 +725,30 @@ button {
   background: var(--panel);
   border: 1px solid var(--ds-hud-line);
   border-radius: var(--ds-round-lg);
-  padding: 30px 40px;
+  /* padding scales down on a narrow screen: 40px a side is a quarter of a 320px phone,
+     and it was pushing the score table's three columns into each other */
+  padding: clamp(18px, 5vw, 30px) clamp(14px, 6vw, 40px);
   text-align: center;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-width: 320px;
+  /* `min-width` was an unconditional 320px, which is the ENTIRE width of the smallest
+     phone this app supports — box-sizing is border-box, so the panel could not shrink
+     below the viewport no matter how little was in it. `min()` keeps the comfortable
+     desktop floor and lets it collapse on a phone. */
+  min-width: min(320px, 100%);
+  max-width: 100%;
+  /* THE PANEL SCROLLS ITSELF, rather than overflowing a centred flex container.
+     A flex item centred by `align-items` (or by auto margins) that outgrows its container
+     is pushed off BOTH edges and the overflow it creates is NOT scrollable — measured at
+     320x568, where the results panel sat at top:-154 with `scrollHeight === clientHeight`,
+     putting the winner banner and both final scores permanently out of reach. Capping the
+     panel to the overlay and letting it scroll its own content sidesteps the whole problem:
+     it is always fully on screen, and anything that does not fit is reachable by scrolling.
+     `100%` (not `100dvh`) so it measures the padded overlay, not the raw viewport. */
+  max-height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .overlay-panel h2 {
@@ -812,7 +832,10 @@ button {
 }
 
 .overlay-panel.results {
-  min-width: 380px;
+  /* 380 was wider than a 375px iPhone and a 320px SE — the results panel physically could
+     not fit the two most common small phones. Same `min()` treatment: the roomy desktop
+     width when there is room for it, the viewport when there is not. */
+  min-width: min(380px, 100%);
 }
 
 .final-score {
@@ -1287,7 +1310,10 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  /* WRAPS on purpose: the local player's row carries a standings badge below the numbers,
+     and on a phone the name + three figures already fill the line. */
+  flex-wrap: wrap;
+  gap: 6px 14px;
   padding: 4px 10px;
   border-radius: 6px;
   background: var(--panel-2);

@@ -4391,7 +4391,9 @@ button.ds-key:active {
    the numbers rather than beside them: the row is already a name + three figures wide, and
    a fourth column would push the delta chip off a phone. */
 .elo-standing {
-  grid-column: 1 / -1;
+  /* the ELO row is FLEX, not grid — `grid-column` did nothing here. A 100% basis is what
+     actually pushes this onto its own line under the numbers. */
+  flex: 1 0 100%;
   display: flex;
   align-items: center;
   gap: 10px;
