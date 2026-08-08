@@ -15,17 +15,28 @@ Valorant / League sense: how good a person you are to play with. The ladder has 
 pairs and the ladder smoke block are all gone; ratings print as the raw number again) and
 replaced by `src/standing.ts`.
 
-**The model** (all constants + rationale in `src/standing.ts`):
+**The model** (all constants + rationale in `src/standing.ts`) — reworked in `43e0bc9` to
+follow Valorant / Brawl Stars more closely:
 - score 0–100, everyone starts at 100, spent only by doing something to other players
 - tiers: Good 80 · Warning 60 · Restricted 40 · Probation 20 · Suspended 0
-- consequence is read off the tier you LAND IN: no restriction above Restricted, then a
-  30-min queue lock, 2 h, 24 h — and rating is charged ONLY in the bottom two tiers
-- costs: report 3 (per distinct reporter, capped at 3/match, **non-escalating**) · dodge 5 ·
-  afk 12 · leave 15 · reportUpheld 25; repeats of the same kind inside 24 h ×1/1.5/2
+- **THE OFFENCE COUNT SETS THE PENALTY, not the score.** Per-kind `COOLDOWN_LADDER` /
+  `RATING_LADDER` indexed by how many of that kind are inside that kind's window. The tier
+  only AGGRAVATES: `StandingTier.bump` adds rungs — and **the bump can never reach a
+  ladder's top rung**, so the harshest penalty is always earned by repetition (smoke-checked
+  for every kind × tier; it was a real bug, a 2nd abandon at Restricted quoted 7 days)
+- **two tracks**: dodge (pre-match) is light — 1st free, then 5/15/30/120 min, no rating
+  until chronic; leave (live match) is heavy and bites on the FIRST one (30 min + rating);
+  afk warns first, then escalates like leave
+- windows decay per kind: dodge/report 24 h · afk/leave 7 d · reportUpheld 30 d
+- score costs: report 3 (per distinct reporter, capped at 3/match, **non-escalating**) ·
+  dodge 5 · afk 12 · leave 15 · reportUpheld 25; repeats ×1/1.5/2
 - recovery: +2 per clean finished ranked match, +3/day idle (lazy, on read — `healed_at` is
   advanced and credited in ONE statement so two reads cannot double-credit)
-- **raw reports never restrict the queue or charge rating** — that is the anti-brigading
-  guarantee, and it is smoke-checked at every tier
+- **raw reports never restrict the queue or charge rating** — the anti-brigading guarantee,
+  smoke-checked at every tier
+- `nextPenalty` publishes the next rung to the player and to the cancel notice; smoke pins
+  it to `applyStandingEvent` across every kind/score/count so it can never over- or
+  under-promise
 
 **Dodges no longer charge rating** (`src/dodge.ts` is now just kinds + the verdict shape;
 the penalty scale is gone). `DodgeVerdict.standing` carries the whole story to the client.
