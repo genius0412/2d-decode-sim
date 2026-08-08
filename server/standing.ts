@@ -22,7 +22,7 @@ import {
   writeStandingEvent,
 } from './db/repo';
 import {
-  STANDING_WINDOW_HOURS,
+  WINDOW_HOURS,
   applyStandingEvent,
   queueLocked,
   type StandingEventKind,
@@ -60,7 +60,7 @@ export async function chargeStanding(
     // brigading amplifier rather than a signal. Reports are priced per distinct reporter and
     // capped instead (see `applyStandingEvent`).
     const priorSameKind =
-      kind === 'report' ? 0 : await recentStandingCount(userId, kind, STANDING_WINDOW_HOURS);
+      kind === 'report' ? 0 : await recentStandingCount(userId, kind, WINDOW_HOURS[kind]);
     const verdict = applyStandingEvent(state, kind, {
       now: Date.now(),
       priorSameKind,
@@ -88,7 +88,7 @@ export async function chargeStanding(
     await writeStandingEvent(userId, final, { game: ctx.game, mode: ctx.mode, roomCode: ctx.roomCode });
     console.log(
       `[standing] ${userId} ${kind}${ctx.count && ctx.count > 1 ? `x${ctx.count}` : ''} ` +
-        `#${priorSameKind + 1}/${STANDING_WINDOW_HOURS}h: ${final.scoreBefore} -> ${final.scoreAfter} ` +
+        `#${priorSameKind + 1}/${WINDOW_HOURS[kind]}h (rung ${final.rung}): ${final.scoreBefore} -> ${final.scoreAfter} ` +
         `(${final.tierAfter}${final.cooldownMin ? `, ${final.cooldownMin}min lock` : ''}` +
         `${charged ? `, -${charged} rating` : ''})`,
     );

@@ -10,7 +10,7 @@ import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
 import { DODGE_REASON, type DodgeVerdict } from '../dodge';
-import { STANDING_MAX, STANDING_WINDOW_HOURS, lockRemaining, tierOf } from '../standing';
+import { STANDING_MAX, WINDOW_HOURS, lockRemaining, tierOf } from '../standing';
 import { expandLabel, widenHint, queuesFor } from './queueDepth';
 import { parkQueue, takeQueue, updateQueue, dropQueue, elapsedSeconds, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
@@ -347,6 +347,17 @@ export function Matchmaking({
     setError(msg);
   };
 
+  /** "30 minutes" / "2 hours" / "7 days" — a lock length in the biggest unit that stays exact */
+  const minutesText = (min: number): string => {
+    if (min < 60) return `${min} minute${min === 1 ? '' : 's'}`;
+    if (min < 60 * 24) {
+      const h = Math.round(min / 60);
+      return `${h} hour${h === 1 ? '' : 's'}`;
+    }
+    const d = Math.round(min / (60 * 24));
+    return `${d} day${d === 1 ? '' : 's'}`;
+  };
+
   /** the cancellation notice: WHY it died and what it cost you. Rendered next to every
    *  error slot, so it appears wherever the cancel surfaces. */
   const dodgeNote = (): JSX.Element | null => {
@@ -365,11 +376,17 @@ export function Matchmaking({
             {st && st.ratingCharge > 0 && ` · −${st.ratingCharge} rating`}
           </b>
           <span>
-            You {DODGE_REASON[y.kind]}. That is your {nth} in {STANDING_WINDOW_HOURS} hours
+            You {DODGE_REASON[y.kind]}. That is your {nth} in {WINDOW_HOURS.dodge} hours
             {st && st.cooldownMin > 0
-              ? ` — ranked is locked for ${st.cooldownMin >= 60 ? `${Math.round(st.cooldownMin / 60)}h` : `${st.cooldownMin} minutes`}.`
-              : ' — repeats cost more, and enough of them start locking the queue.'}
+              ? ` — ranked is locked for ${minutesText(st.cooldownMin)}.`
+              : '.'}
           </span>
+          {/* TELL THEM WHAT THE NEXT ONE COSTS. Both systems this is patterned on publish the
+              next rung rather than letting a player discover it by hitting it, and the whole
+              point of an escalating ladder is that it can be seen coming. */}
+          {st && st.nextCooldownMin > st.cooldownMin && (
+            <span>The next one locks it for {minutesText(st.nextCooldownMin)}.</span>
+          )}
           {st && (
             <span className="ds-muted">
               Account standing: {tierOf(st.scoreAfter).name.toLowerCase()}. Finishing matches earns it back.

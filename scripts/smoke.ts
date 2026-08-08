@@ -123,6 +123,7 @@ import { computeGlicko, glicko2Update, eloMode, RD_PROVISIONAL, type EloParticip
 import { isReportReason, REPORT_REASONS } from '../src/report';
 import {
   STANDING_MAX, STANDING_COST, STANDING_TIERS, REPORT_CAP, HEAL_PER_DAY, HEAL_PER_CLEAN_MATCH,
+  COOLDOWN_LADDER, RATING_LADDER, WINDOW_HOURS, ladderRung, nextPenalty,
   tierOf, healed, clampScore, repeatMult, applyStandingEvent, queueLocked, lockRemaining,
   judgeParticipation, MIN_JUDGED_TICKS, AFK_DRIVE_FRACTION, LEAVE_AWAY_FRACTION,
   type StandingEventKind, type StandingState,
@@ -4323,16 +4324,17 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
 
 
 // ---- ACCOUNT STANDING: competitive integrity, separate from skill -----------
-// Pure derivation, so these are exact. The rules being asserted are the PRODUCT ones — an
-// accident is cheap, a pattern is not, unreviewed reports never lock anybody out, and rating
-// is the LAST thing the escalation touches — rather than the constants agreeing with
-// themselves.
+// Pure derivation, so these are exact. The rules being asserted are the PRODUCT ones — the
+// count sets the punishment, abandoning a live match bites immediately while a pre-match
+// dodge does not, unreviewed reports never lock anybody out, and there is always a way back
+// — rather than the constants agreeing with themselves.
 {
   const fresh = (): StandingState => ({ score: STANDING_MAX, restrictedUntil: null });
   const T0 = 1_000_000_000_000;
   const kinds: StandingEventKind[] = ['dodge', 'report', 'afk', 'leave', 'reportUpheld'];
+  const enforcedKinds: StandingEventKind[] = ['dodge', 'afk', 'leave', 'reportUpheld'];
 
-  // 1. the tier ladder is ordered, total and monotonic in consequence
+  // 1. the tier ladder is ordered, total, and monotonic in how much it aggravates
   {
     let bad = '';
     for (let sc = 0; sc <= STANDING_MAX && !bad; sc++) {
@@ -4348,15 +4350,14 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       const hi = STANDING_TIERS[i - 1];
       const lo = STANDING_TIERS[i];
       if (lo.floor >= hi.floor) regress = `${lo.name} floor ${lo.floor} >= ${hi.name} ${hi.floor}`;
-      if (lo.cooldownMin < hi.cooldownMin) regress = `${lo.name} is cheaper to be in than ${hi.name}`;
-      if (lo.ratingCharge < hi.ratingCharge) regress = `${lo.name} charges less rating than ${hi.name}`;
+      if (lo.bump < hi.bump) regress = `${lo.name} aggravates less than ${hi.name}`;
     }
-    check('standing: a worse tier is never a lighter consequence', !regress, regress);
+    check('standing: a worse tier never aggravates less', !regress, regress);
   }
 
-  // 2. SEVERITY ORDER. These events are not comparable and must not cost the same: a dodge
-  //    postpones a match, an AFK destroys one, and a moderator upholding a report is the
-  //    only event backed by a human looking at the evidence.
+  // 2. SEVERITY ORDER, in points. These events are not comparable and must not cost the
+  //    same: a dodge postpones a match, an AFK destroys one, and a moderator upholding a
+  //    report is the only event backed by a human looking at the evidence.
   check(
     'standing: severity is ordered report < dodge < afk < leave < upheld',
     STANDING_COST.report < STANDING_COST.dodge &&
@@ -4366,34 +4367,87 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     kinds.map((k) => `${k} ${STANDING_COST[k]}`).join(' · '),
   );
 
-  // 3. ONE ACCIDENT IS FREE. A single dodge must not restrict anything or cost rating —
-  //    a real disconnect is indistinguishable from a deliberate one, and the system's first
-  //    move against an honest player has to be survivable.
+  // 3. THE LADDERS ESCALATE AND SATURATE. Patterned on the reference systems: the n-th
+  //    offence is worse than the (n−1)-th because it is the n-th, the clock roughly
+  //    multiplies, and it stops growing at the top rather than running away.
   {
-    const v = applyStandingEvent(fresh(), 'dodge', { now: T0 });
-    check(
-      'standing: a first dodge restricts nothing and costs no rating',
-      v.cooldownMin === 0 && v.ratingCharge === 0 && v.restrictedUntil === null &&
-        v.tierAfter === 'good',
-      `${v.scoreBefore}->${v.scoreAfter} (${v.tierAfter})`,
-    );
-    // and it stays survivable at the honest-accident rate: one a week, forever
-    let s = STANDING_MAX;
-    for (let week = 0; week < 20; week++) {
-      s = applyStandingEvent({ score: s, restrictedUntil: null }, 'dodge', { now: T0 }).scoreAfter;
-      s = healed(s, 24 * 7);
+    let bad = '';
+    for (const k of enforcedKinds) {
+      const cools = COOLDOWN_LADDER[k];
+      const rates = RATING_LADDER[k];
+      for (let i = 1; i < cools.length; i++) {
+        if (cools[i] <= cools[i - 1]) bad = `${k} cooldown rung ${i} (${cools[i]}) does not exceed ${cools[i - 1]}`;
+      }
+      for (let i = 1; i < rates.length; i++) {
+        if (rates[i] < rates[i - 1]) bad = `${k} rating rung ${i} goes backwards`;
+      }
+      if (cools.length < 3) bad = `${k} has too few rungs to escalate (${cools.length})`;
     }
+    check('standing: every penalty ladder escalates strictly and saturates', !bad, bad);
     check(
-      'standing: one dodge a week never leaves good standing (healing outruns it)',
-      tierOf(s).key === 'good',
-      `after 20 weeks: ${s}`,
+      'standing: the ladders are read past their end, not off it',
+      applyStandingEvent(fresh(), 'leave', { now: T0, priorSameKind: 999 }).cooldownMin ===
+        COOLDOWN_LADDER.leave[COOLDOWN_LADDER.leave.length - 1],
     );
   }
 
-  // 4. A PATTERN IS NOT. Repeats of the same kind inside the window escalate, and a run of
-  //    them walks a player down the ladder into a real restriction.
+  // 4. THE TWO TRACKS. This is the distinction the reference systems draw and the one this
+  //    module exists to copy: dodging a match that never started is the light track (first
+  //    one free, minutes, no rating), abandoning a LIVE one is the heavy track and bites on
+  //    the very first offence — there is no requeue that gives the others their match back.
+  {
+    const dodge1 = applyStandingEvent(fresh(), 'dodge', { now: T0 });
+    check(
+      'standing: a FIRST dodge restricts nothing and costs no rating',
+      dodge1.cooldownMin === 0 && dodge1.ratingCharge === 0 && dodge1.restrictedUntil === null,
+      `${dodge1.scoreBefore}->${dodge1.scoreAfter} (${dodge1.tierAfter})`,
+    );
+    const leave1 = applyStandingEvent(fresh(), 'leave', { now: T0 });
+    check(
+      'standing: a FIRST abandon locks the queue AND costs rating immediately',
+      leave1.cooldownMin > 0 && leave1.ratingCharge > 0 && leave1.restrictedUntil === T0 + leave1.cooldownMin * 60_000,
+      `${leave1.cooldownMin}min, -${leave1.ratingCharge} rating`,
+    );
+    const afk1 = applyStandingEvent(fresh(), 'afk', { now: T0 });
+    check(
+      'standing: a FIRST AFK is a warning — no lock, no rating',
+      afk1.cooldownMin === 0 && afk1.ratingCharge === 0,
+      `${afk1.scoreBefore}->${afk1.scoreAfter}`,
+    );
+    check(
+      'standing: the second AFK is not a warning any more',
+      applyStandingEvent(fresh(), 'afk', { now: T0, priorSameKind: 1 }).cooldownMin > 0,
+    );
+    // and the heavy track outweighs the light one at every rung
+    let lighter = '';
+    for (let n = 0; n < 4; n++) {
+      const d = applyStandingEvent(fresh(), 'dodge', { now: T0, priorSameKind: n });
+      const l = applyStandingEvent(fresh(), 'leave', { now: T0, priorSameKind: n });
+      if (l.cooldownMin <= d.cooldownMin) lighter = `offence ${n + 1}: leave ${l.cooldownMin} <= dodge ${d.cooldownMin}`;
+    }
+    check('standing: abandoning always outweighs dodging, rung for rung', !lighter, lighter);
+  }
+
+  // 5. ONE ACCIDENT STAYS SURVIVABLE. The honest-disconnect rate — one a week, forever —
+  //    must never accumulate into a penalty, or the system punishes bad internet.
+  {
+    let sc = STANDING_MAX;
+    let everLocked = false;
+    for (let week = 0; week < 20; week++) {
+      const v = applyStandingEvent({ score: sc, restrictedUntil: null }, 'dodge', { now: T0, priorSameKind: 0 });
+      if (v.cooldownMin > 0) everLocked = true;
+      sc = healed(v.scoreAfter, 24 * 7);
+    }
+    check(
+      'standing: one dodge a week never locks the queue and never leaves good standing',
+      !everLocked && tierOf(sc).key === 'good',
+      `after 20 weeks: ${sc}`,
+    );
+  }
+
+  // 6. A PATTERN IS NOT SURVIVABLE. Repeats inside the window walk up the ladder fast.
   check(
-    'standing: repeats escalate and then saturate',
+    'standing: repeats escalate the score cost and then saturate',
     repeatMult(1) === 1 && repeatMult(2) > repeatMult(1) && repeatMult(3) > repeatMult(2) &&
       repeatMult(9) === repeatMult(3) && repeatMult(0) === 1,
     `${repeatMult(1)}/${repeatMult(2)}/${repeatMult(3)}`,
@@ -4401,49 +4455,74 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   {
     let st = fresh();
     let n = 0;
-    let firstLock = 0;
+    let first = 0;
     while (n < 12 && !st.restrictedUntil) {
       const v = applyStandingEvent(st, 'dodge', { now: T0, priorSameKind: n });
       st = { score: v.scoreAfter, restrictedUntil: v.restrictedUntil };
       n++;
-      if (v.cooldownMin) firstLock = v.cooldownMin;
+      if (v.cooldownMin) first = v.cooldownMin;
     }
     check(
-      'standing: repeated dodging reaches a queue cooldown, but not on the first few',
-      n >= 4 && n <= 8 && firstLock > 0,
-      `locked on dodge #${n} for ${firstLock}min`,
+      'standing: a second dodge in the window already locks the queue',
+      n === 2 && first > 0,
+      `locked on dodge #${n} for ${first}min`,
     );
   }
 
-  // 5. THE CONSEQUENCE IS READ OFF THE TIER YOU LAND IN, not the one you started in — a
-  //    single severe event from good standing must be able to bite immediately.
+  // 7. BAD STANDING AGGRAVATES. A player already in a bad tier does not get the
+  //    first-offence rate on a fresh kind of offence — the "you have been here before"
+  //    surcharge, applied once rather than duplicated into every ladder.
   {
-    const deep = applyStandingEvent({ score: 30, restrictedUntil: null }, 'leave', { now: T0 });
+    const clean = applyStandingEvent(fresh(), 'dodge', { now: T0 });
+    const dirty = applyStandingEvent({ score: 25, restrictedUntil: null }, 'dodge', { now: T0 });
     check(
-      'standing: a severe offence is charged at the tier it lands you in',
-      deep.tierBefore === 'probation' && deep.tierAfter === 'suspended' &&
-        deep.cooldownMin === tierOf(deep.scoreAfter).cooldownMin &&
-        deep.ratingCharge === tierOf(deep.scoreAfter).ratingCharge,
-      `${deep.tierBefore}->${deep.tierAfter}: ${deep.cooldownMin}min, -${deep.ratingCharge} rating`,
+      'standing: a first dodge in bad standing starts further up the ladder',
+      dirty.cooldownMin > clean.cooldownMin && dirty.rung > clean.rung,
+      `good ${clean.cooldownMin}min (rung ${clean.rung}) vs probation ${dirty.cooldownMin}min (rung ${dirty.rung})`,
     );
-  }
-
-  // 6. RATING IS THE LAST RUNG. Nothing charges rating in the top three tiers, whatever the
-  //    offence — the whole design is that behaviour is not skill.
-  {
-    let leaked = '';
-    for (const k of kinds) {
-      for (const sc of [100, 85, 70, 61, 55, 41]) {
-        const v = applyStandingEvent({ score: sc, restrictedUntil: null }, k, { now: T0 });
-        if (v.ratingCharge > 0 && !['probation', 'suspended'].includes(v.tierAfter)) {
-          leaked = `${k} @${sc} charged ${v.ratingCharge} rating in ${v.tierAfter}`;
+    check(
+      'standing: the bump reads the tier you LAND in, not the one you came from',
+      applyStandingEvent({ score: 41, restrictedUntil: null }, 'leave', { now: T0 }).rung ===
+        ladderRung(0, tierOf(41 - STANDING_COST.leave).bump, COOLDOWN_LADDER.leave.length),
+    );
+    // THE TOP RUNG IS EARNED BY REPETITION, NOT BY A LOW SCORE. Without this the two
+    // escalations compound and a second abandon in poor standing jumps straight to the
+    // week — a leap nobody can see coming, and not the shape this is patterned on.
+    {
+      let reached = '';
+      for (const k of enforcedKinds) {
+        const len = COOLDOWN_LADDER[k].length;
+        for (let prior = 0; prior < len - 1; prior++) {
+          for (const t of STANDING_TIERS) {
+            if (ladderRung(prior, t.bump, len) >= len - 1) {
+              reached = `${k}: offence #${prior + 1} in ${t.name} already tops the ladder`;
+            }
+          }
         }
+        if (ladderRung(len - 1, 0, len) !== len - 1) reached = `${k}: the count alone cannot reach the top rung`;
       }
+      check('standing: only repetition reaches the harshest rung, never the score alone', !reached, reached);
     }
-    check('standing: rating is only ever charged in the bottom two tiers', !leaked, leaked);
   }
 
-  // 7. UNREVIEWED REPORTS NEVER LOCK ANYBODY OUT. This is the abuse vector a report system
+  // 8. RATING IS THE LIGHT TRACK'S LAST RESORT. A dodge must not touch rating until it is
+  //    plainly chronic — dodging is not bad driving, and the rating measures driving.
+  {
+    check(
+      'standing: dodging costs no rating until it is chronic',
+      RATING_LADDER.dodge[0] === 0 && RATING_LADDER.dodge[1] === 0 &&
+        RATING_LADDER.dodge[RATING_LADDER.dodge.length - 1] > 0,
+      RATING_LADDER.dodge.join('/'),
+    );
+    let early = '';
+    for (const n of [0, 1, 2]) {
+      const v = applyStandingEvent(fresh(), 'dodge', { now: T0, priorSameKind: n });
+      if (v.ratingCharge > 0) early = `dodge #${n + 1} from good standing charged ${v.ratingCharge}`;
+    }
+    check('standing: the first dodges of a clean account never cost rating', !early, early);
+  }
+
+  // 9. UNREVIEWED REPORTS NEVER LOCK ANYBODY OUT. This is the abuse vector a report system
   //    has to be built against: a squad that loses a match must not be able to queue-ban the
   //    winner. They move the score (which surfaces them to a moderator) and nothing else.
   {
@@ -4454,17 +4533,25 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       if (v.points > STANDING_COST.report * REPORT_CAP * repeatMult(1)) enforced = `report count uncapped: ${v.points}`;
     }
     check('standing: raw reports never restrict the queue or charge rating, and are capped', !enforced, enforced);
-    // ...but a moderator upholding them does restrict
     const upheld = applyStandingEvent({ score: 55, restrictedUntil: null }, 'reportUpheld', { now: T0 });
     check(
       'standing: a moderator upholding reports DOES restrict',
-      upheld.cooldownMin > 0 && upheld.tierAfter === 'probation',
+      upheld.cooldownMin > 0 && upheld.ratingCharge > 0,
       `${upheld.scoreBefore}->${upheld.scoreAfter} ${upheld.cooldownMin}min`,
     );
   }
 
-  // 8. RECOVERY. The debt has to be workable off, both by playing and by time — but waiting
-  //    must never beat playing, or the system teaches players to stop playing.
+  // 10. THE WINDOWS DECAY AT DIFFERENT SPEEDS, slower for the serious offences — a dodge is
+  //     a same-session mistake, walking out of matches is a habit worth remembering.
+  check(
+    'standing: serious offences are remembered longer than dodges',
+    WINDOW_HOURS.leave > WINDOW_HOURS.dodge && WINDOW_HOURS.afk > WINDOW_HOURS.dodge &&
+      WINDOW_HOURS.reportUpheld >= WINDOW_HOURS.leave,
+    `dodge ${WINDOW_HOURS.dodge}h · leave ${WINDOW_HOURS.leave}h · upheld ${WINDOW_HOURS.reportUpheld}h`,
+  );
+
+  // 11. RECOVERY. The debt has to be workable off, both by playing and by time — but waiting
+  //     must never beat playing, or the system teaches players to stop playing.
   {
     check(
       'standing: playing clean recovers faster per day than idling',
@@ -4474,17 +4561,20 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     check('standing: healing caps at the maximum', healed(STANDING_MAX, 24 * 365) === STANDING_MAX);
     check('standing: healing is granted per whole day, never retroactively negative',
       healed(50, 0) === 50 && healed(50, 23) === 50 && healed(50, 24) === 50 + HEAL_PER_DAY && healed(50, -5) === 50);
-    // a suspended player cannot idle out of the lock faster than the lock itself
+    // IDLING MUST NOT BE A STRATEGY. The lock itself is an absolute deadline, so waiting
+    // never shortens it — but the SCORE heals while it runs, and if that healing could
+    // return a suspended player to a clean slate, sitting out would be the cheapest way to
+    // clear a record. Serving even the longest lock must leave them still marked.
     const susp = applyStandingEvent({ score: 15, restrictedUntil: null }, 'leave', { now: T0 });
-    const healedBack = healed(susp.scoreAfter, (susp.cooldownMin / 60));
+    const healedBack = healed(susp.scoreAfter, susp.cooldownMin / 60);
     check(
-      'standing: a suspension outlives the healing you get while serving it',
-      tierOf(healedBack).key === 'suspended',
-      `${susp.scoreAfter} -> ${healedBack} after ${susp.cooldownMin}min`,
+      'standing: you cannot idle your way back to good standing while serving a lock',
+      tierOf(healedBack).key !== 'good' && healedBack < STANDING_MAX,
+      `${susp.scoreAfter} -> ${healedBack} (${tierOf(healedBack).name}) after ${susp.cooldownMin}min`,
     );
   }
 
-  // 9. the score is CLAMPED and total-function: no offence prints a negative or a NaN
+  // 12. the score is CLAMPED and total-function: no offence prints a negative or a NaN
   {
     let bad = '';
     for (const k of kinds) {
@@ -4493,14 +4583,15 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
         if (!Number.isFinite(v.scoreAfter) || v.scoreAfter < 0 || v.scoreAfter > STANDING_MAX) {
           bad = `${k} @${sc} -> ${v.scoreAfter}`;
         }
+        if (!Number.isFinite(v.cooldownMin) || v.cooldownMin < 0) bad = `${k} @${sc} cooldown ${v.cooldownMin}`;
       }
     }
-    check('standing: the score is clamped 0..max for every input', !bad, bad);
+    check('standing: the score and the lock are total functions of any input', !bad, bad);
     check('standing: a broken stored score reads as full, not as suspended',
       clampScore(NaN) === STANDING_MAX && clampScore(undefined as unknown as number) === STANDING_MAX);
   }
 
-  // 10. an existing lock is EXTENDED, never shortened, by a new offence
+  // 13. an existing lock is EXTENDED, never shortened, by a new offence
   {
     const long = T0 + 10 * 3_600_000;
     const v = applyStandingEvent({ score: 45, restrictedUntil: long }, 'dodge', { now: T0 });
@@ -4513,10 +4604,30 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       lockRemaining(T0 + 30 * 60_000, T0) === '30 minutes' && lockRemaining(T0 + 7_200_000, T0) === '2 hours');
   }
 
-  // 11. WHO SAT IT OUT vs WHO WALKED AWAY, judged from what the server actually counted.
+  // 14. THE NEXT RUNG IS PUBLISHED, and it is the one that actually lands. A preview that
+  //     disagreed with the charge would be worse than no preview at all.
+  {
+    let mismatch = '';
+    for (const k of enforcedKinds) {
+      for (const sc of [100, 75, 45, 22]) {
+        for (const n of [0, 1, 2, 5]) {
+          const preview = nextPenalty(k, n, sc);
+          const real = applyStandingEvent({ score: sc, restrictedUntil: null }, k, { now: T0, priorSameKind: n });
+          if (preview.cooldownMin !== real.cooldownMin || preview.ratingCharge !== real.ratingCharge) {
+            mismatch = `${k} @${sc} #${n + 1}: preview ${preview.cooldownMin}/${preview.ratingCharge} vs real ${real.cooldownMin}/${real.ratingCharge}`;
+          }
+        }
+      }
+    }
+    check('standing: the published "next one costs" is exactly what the next one costs', !mismatch, mismatch);
+    check('standing: a report preview promises nothing, because a report enforces nothing',
+      nextPenalty('report', 5, 30).cooldownMin === 0 && nextPenalty('report', 5, 30).ratingCharge === 0);
+  }
+
+  // 15. WHO SAT IT OUT vs WHO WALKED AWAY, judged from what the server actually counted.
   //     The failure mode that matters here is charging an innocent player, so the checks are
   //     written from that side: a short match is never judged, a quiet-but-present driver is
-  //     not a leaver, and someone who was merely bad at the game is not an offender at all.
+  //     not a leaver, and someone merely bad at the game is not an offender at all.
   {
     const F = MIN_JUDGED_TICKS * 4; // a full-length match's live ticks
     check(

@@ -33,12 +33,20 @@
 export const STANDING_MAX = 100;
 
 /**
- * Rolling window the repeat multiplier counts over. A day, not the dodge module's 12 hours:
- * standing is about a pattern of behaviour rather than one session's worth of queue-dodging,
- * and a player who does this every evening should still be treated as a repeat offender the
- * following evening.
+ * Rolling window each KIND's escalation counts over — and it is per-kind on purpose.
+ *
+ * Both reference systems decay a penalty tier slowly, and slower for the serious offences:
+ * a pre-match dodge is a same-session mistake, whereas abandoning live matches is a habit
+ * that should still be remembered next weekend. So dodges reset in a day, walking out of
+ * matches takes a week, and a moderator's upheld verdict is remembered for a month.
  */
-export const STANDING_WINDOW_HOURS = 24;
+export const WINDOW_HOURS: Record<StandingEventKind, number> = {
+  dodge: 24,
+  report: 24,
+  afk: 24 * 7,
+  leave: 24 * 7,
+  reportUpheld: 24 * 30,
+};
 
 export type StandingEventKind =
   | 'dodge'
@@ -59,8 +67,8 @@ export type StandingEventKind =
  *   report 3  — RAW, unreviewed, per distinct reporter and capped (see REPORT_CAP). It is
  *               the weakest evidence here — one person's opinion, filed in a temper as often
  *               as not — so it moves the number a little and nothing more.
- *   afk   12  — present, connected, not driving. Three people played a live match a robot
- *               down with no requeue and no refund. Costs more than twice a dodge because it
+ *   afk   12  — present, connected, not driving. The others played a live match a robot down
+ *               with no requeue and no refund. Costs more than twice a dodge because it
  *               destroys a match rather than postponing one.
  *   leave  15 — quit a live match. AFK plus taking the robot away.
  *   upheld 25 — a MODERATOR reviewed the reports and upheld them. The only event here backed
@@ -83,13 +91,88 @@ export const REPORT_CAP = 3;
 
 /**
  * Repeat multiplier: the n-th offence of the SAME kind inside the window costs this much of
- * the base. Two in a day is a pattern, three is a habit, and the curve flattens after that
- * because the score is already collapsing on its own by then.
+ * the base. Two is a pattern, three is a habit, and the curve flattens after that because
+ * the score is already collapsing on its own by then.
  */
 export const REPEAT_MULT = [1, 1.5, 2] as const;
 
 export const repeatMult = (n: number): number =>
   REPEAT_MULT[Math.min(Math.max(n, 1), REPEAT_MULT.length) - 1];
+
+/* ---------------------------------------------------------------------------
+   THE PENALTY LADDERS — the part patterned on Valorant and Brawl Stars.
+   ---------------------------------------------------------------------------
+
+   Both games escalate on the OFFENCE COUNT, not on where a hidden number sits: your
+   second abandon is worse than your first because it is your second, and the ban clock
+   roughly multiplies each time (minutes → hours → a day → longer). The score in this
+   module is what a player SEES; these ladders are what they FEEL, and the count is what
+   drives them.
+
+   The other thing both systems get right is that the two failures are not the same event:
+
+     - DODGING a match that has not started is the light track. It costs the others a
+       requeue, and the first one is free because a genuine disconnect is indistinguishable
+       from a rage-quit at this point. Escalation is minutes, and it never touches rating
+       until it is plainly chronic.
+     - ABANDONING a LIVE match is the heavy track, and it bites IMMEDIATELY — a lock and a
+       rating charge on the very first one. Three people just lost a match they were
+       playing; there is no requeue that fixes that, and a first-offence freebie here would
+       mean every match has one free quit in it.
+     - GOING AFK sits between them: a WARNING first (both systems warn before they ban for
+       it), then it escalates like abandoning.
+
+   Numbers are ours, chosen to fit a ~2-minute match rather than a 40-minute one. The SHAPE
+   is theirs. */
+
+/** ranked-queue lock, in MINUTES, for the n-th offence of a kind (index = offence − 1) */
+export const COOLDOWN_LADDER: Record<StandingEventKind, readonly number[]> = {
+  //           1st  2nd  3rd  4th   5th+
+  dodge:      [0,   5,   15,  30,   120],
+  afk:        [0,   30,  120, 1440],
+  leave:      [30,  120, 1440, 1440 * 7],
+  // a raw, unreviewed report NEVER locks anyone out of anything (see applyStandingEvent)
+  report:     [0],
+  // four rungs, not three, deliberately: the tier bump can add up to 3, and on a short
+  // ladder that meant one upheld verdict against an already-poor account jumped straight to
+  // the week. A moderator's first action should not be the harshest one available.
+  reportUpheld: [120, 1440, 1440 * 3, 1440 * 7],
+};
+
+/** ranked rating charged for the n-th offence of a kind. Zero everywhere it should be. */
+export const RATING_LADDER: Record<StandingEventKind, readonly number[]> = {
+  // a dodge costs NO rating until it is a habit — dodging is not bad driving
+  dodge:      [0,   0,   0,   10,   20],
+  afk:        [0,   5,   15,  30],
+  // abandoning a live match costs rating from the first one (Valorant's RR loss for a
+  // leaver), because the match it wrecked was a real, rated match
+  leave:      [10,  20,  40,  60],
+  report:     [0],
+  reportUpheld: [20, 40, 60, 80],
+};
+
+/**
+ * The rung an offence lands on: how many of that kind came before it, pushed up by the tier
+ * the player is already in (see `StandingTier.bump`), and saturating at the top.
+ *
+ * THE BUMP CANNOT REACH THE TOP RUNG BY ITSELF. The harshest penalty on a ladder — a
+ * week out of ranked — has to be EARNED BY REPETITION, not arrived at because a score
+ * happened to be low when an offence landed. Without this cap the two escalations
+ * compound: a player at Restricted with one prior abandon was being quoted a 7-day lock
+ * for their second, which is a jump nobody could see coming and does not match the
+ * "roughly multiplies each time" shape this is patterned on. The raw count still gets
+ * there — that is what the top rung is for.
+ */
+export function ladderRung(priorSameKind: number, bump: number, ladderLength: number): number {
+  const top = Math.max(0, ladderLength - 1);
+  const byCount = Math.min(top, Math.max(0, Math.floor(priorSameKind)));
+  const bumpCeiling = Math.max(0, ladderLength - 2);
+  const bumped = Math.min(byCount + Math.max(0, bump), bumpCeiling);
+  return Math.min(top, Math.max(byCount, bumped));
+}
+
+const rungValue = (ladder: readonly number[], rung: number): number =>
+  ladder[Math.max(0, Math.min(ladder.length - 1, rung))] ?? 0;
 
 export type StandingTierKey = 'good' | 'warning' | 'restricted' | 'probation' | 'suspended';
 
@@ -99,64 +182,61 @@ export interface StandingTier {
   name: string;
   /** lowest score in this tier */
   floor: number;
-  /** ranked-queue cooldown applied when an offence lands while in this tier, in MINUTES.
-   *  0 ⇒ the tier restricts nothing. */
-  cooldownMin: number;
-  /** rating charged per offence in this tier — the LAST stage of the escalation, and zero
-   *  for the top three tiers. A player only ever loses rating for behaviour after they have
-   *  been warned, cooled down, and cooled down again. */
-  ratingCharge: number;
-  /** one line explaining the consequence, shown under the tier name */
+  /**
+   * How many rungs this tier adds to every ladder.
+   *
+   * This is how the SCORE still matters without being the thing that sets the punishment: a
+   * player already in bad standing does not get the first-offence rate on a fresh kind of
+   * offence. It is the "you have been here before" surcharge both reference systems apply,
+   * expressed once rather than duplicated into every ladder.
+   */
+  bump: number;
+  /** one line explaining where they stand, shown under the tier name */
   blurb: string;
 }
 
 /**
  * The ladder, best first.
  *
- * WARNING carries no restriction on purpose. It is the rung whose whole job is to be seen
- * before anything is taken away — a player who dodges twice should find out that the system
- * is watching while it is still free to correct.
+ * WARNING adds nothing on purpose. It is the rung whose whole job is to be seen before
+ * anything extra is taken away — a player who dodged twice should find out the system is
+ * watching while correcting is still free.
  */
 export const STANDING_TIERS: readonly StandingTier[] = [
   {
     key: 'good',
     name: 'Good standing',
     floor: 80,
-    cooldownMin: 0,
-    ratingCharge: 0,
+    bump: 0,
     blurb: 'Everything is available. Nothing to do.',
   },
   {
     key: 'warning',
     name: 'Warning',
     floor: 60,
-    cooldownMin: 0,
-    ratingCharge: 0,
-    blurb: 'Nothing is restricted yet — but the next one starts a queue cooldown.',
+    bump: 0,
+    blurb: 'Nothing extra is being applied — but the next one escalates.',
   },
   {
     key: 'restricted',
     name: 'Restricted',
     floor: 40,
-    cooldownMin: 30,
-    ratingCharge: 0,
-    blurb: 'Leaving or sitting out a ranked match now locks the queue for 30 minutes.',
+    bump: 1,
+    blurb: 'Every penalty now starts one step up the ladder: longer locks, sooner.',
   },
   {
     key: 'probation',
     name: 'Probation',
     floor: 20,
-    cooldownMin: 120,
-    ratingCharge: 15,
-    blurb: 'Two-hour queue locks, and offences now cost ranked rating as well.',
+    bump: 2,
+    blurb: 'Penalties start two steps up, and even a dodge now costs ranked rating.',
   },
   {
     key: 'suspended',
     name: 'Suspended',
     floor: 0,
-    cooldownMin: 60 * 24,
-    ratingCharge: 40,
-    blurb: 'Ranked is locked for a day at a time, and every offence costs rating.',
+    bump: 3,
+    blurb: 'Every offence lands at the top of the ladder — day-long ranked locks.',
   },
 ];
 
@@ -233,20 +313,31 @@ export interface StandingVerdict {
   scoreAfter: number;
   tierBefore: StandingTierKey;
   tierAfter: StandingTierKey;
+  /** which rung of this kind's ladder it landed on (0-based), so the player can be told
+   *  what the NEXT one costs rather than finding out by doing it */
+  rung: number;
   /** queue cooldown applied, in minutes (0 ⇒ none) */
   cooldownMin: number;
   restrictedUntil: number | null;
-  /** ranked rating charged — 0 until the bottom two tiers */
+  /** ranked rating charged (0 for the light track until it is chronic) */
   ratingCharge: number;
+  /** the cooldown the NEXT offence of this kind would carry, in minutes */
+  nextCooldownMin: number;
 }
 
 /**
  * Apply one offence.
  *
- * THE TIER THAT DECIDES THE CONSEQUENCE IS THE ONE YOU LAND IN, not the one you were in. A
- * player who arrives at Probation in a single stretch of bad behaviour should feel Probation
- * immediately; reading the consequence off the tier they were in when they started would let
- * a long run of offences be charged at the mildest rate they ever held.
+ * THE COUNT SETS THE PUNISHMENT, the score only aggravates it. That is the shape both
+ * reference systems use, and it is the one players can actually follow: "this is my third
+ * time" is something a person knows about themselves, whereas "I am at 43 points" is not.
+ * The tier a player is already in adds rungs (`StandingTier.bump`), so bad standing makes
+ * every ladder start higher without being the thing that defines it.
+ *
+ * THE TIER USED FOR THE BUMP IS THE ONE THEY LAND IN, not the one they came from. A player
+ * who arrives in Probation in a single stretch of bad behaviour should feel Probation
+ * immediately; reading it off the tier they held when they started would charge a long run
+ * of offences at the mildest rate they ever had.
  *
  * PURE — no clock, no database. `now` and `priorSameKind` come from the caller so the server
  * can compute a verdict and a test can assert one.
@@ -258,7 +349,8 @@ export function applyStandingEvent(
 ): StandingVerdict {
   const scoreBefore = clampScore(state.score);
   const tierBefore = tierOf(scoreBefore);
-  const mult = repeatMult((opts.priorSameKind ?? 0) + 1);
+  const prior = Math.max(0, Math.floor(opts.priorSameKind ?? 0));
+  const mult = repeatMult(prior + 1);
   const units = kind === 'report' ? Math.max(1, Math.min(opts.count ?? 1, REPORT_CAP)) : 1;
   const points = Math.round(STANDING_COST[kind] * mult * units);
   const scoreAfter = clampScore(scoreBefore - points);
@@ -270,8 +362,12 @@ export function applyStandingEvent(
   // has to be built against. It still moves the score, which is what surfaces them to a
   // moderator — and a moderator upholding it is a `reportUpheld`, which does restrict.
   const enforced = kind !== 'report';
-  const cooldownMin = enforced ? landed.cooldownMin : 0;
-  const ratingCharge = enforced ? landed.ratingCharge : 0;
+  const cools = COOLDOWN_LADDER[kind];
+  const rates = RATING_LADDER[kind];
+  const rung = ladderRung(prior, landed.bump, cools.length);
+  const cooldownMin = enforced ? rungValue(cools, rung) : 0;
+  const ratingCharge = enforced ? rungValue(rates, rung) : 0;
+  const nextCooldownMin = enforced ? rungValue(cools, rung + 1) : 0;
   const restrictedUntil = cooldownMin
     ? Math.max(state.restrictedUntil ?? 0, opts.now + cooldownMin * 60_000)
     : state.restrictedUntil ?? null;
@@ -283,10 +379,34 @@ export function applyStandingEvent(
     scoreAfter,
     tierBefore: tierBefore.key,
     tierAfter: landed.key,
+    rung,
     cooldownMin,
     restrictedUntil,
     ratingCharge,
+    nextCooldownMin,
   };
+}
+
+/**
+ * What the NEXT offence of a kind would cost, given how many are already inside its window
+ * and where the score sits. Publishing the next rung is the point of an escalating ladder —
+ * a penalty a player cannot see coming does not deter anything, it just arrives.
+ */
+export function nextPenalty(
+  kind: StandingEventKind,
+  priorSameKind: number,
+  score: number,
+): { cooldownMin: number; ratingCharge: number } {
+  if (kind === 'report') return { cooldownMin: 0, ratingCharge: 0 };
+  // The tier used is the one the offence would LAND in — and the landing point has to be
+  // computed with the SAME repeat multiplier the charge will use, or the preview quietly
+  // under-promises on a repeat (it would price a third abandon off the second's tier).
+  const prior = Math.max(0, Math.floor(priorSameKind));
+  const points = Math.round(STANDING_COST[kind] * repeatMult(prior + 1));
+  const landed = tierOf(clampScore(clampScore(score) - points));
+  const cools = COOLDOWN_LADDER[kind];
+  const rung = ladderRung(prior, landed.bump, cools.length);
+  return { cooldownMin: rungValue(cools, rung), ratingCharge: rungValue(RATING_LADDER[kind], rung) };
 }
 
 /** is the ranked queue closed to this account right now? */
@@ -304,7 +424,7 @@ export function lockRemaining(until: number, now: number): string {
 
 /** what the player is told an offence WAS */
 export const STANDING_EVENT_LABEL: Record<StandingEventKind, string> = {
-  dodge: 'Abandoned a match that had already been found',
+  dodge: 'Left before the match started',
   afk: 'Did not drive for most of a match',
   leave: 'Left a match in progress',
   report: 'Reported by other players',

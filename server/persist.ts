@@ -15,7 +15,7 @@ import { recordScore } from '../src/sim/replay';
 import { simModuleFor } from '../src/games/sim';
 import type { BehaviourReport, DodgeReport, MatchOutcome, PersistOutcome } from './room';
 import { type DodgeVerdict } from '../src/dodge';
-import { STANDING_WINDOW_HOURS } from '../src/standing';
+import { WINDOW_HOURS } from '../src/standing';
 
 /**
  * Persist a finished match (off the hot path — called at phase 'post'). The
@@ -149,7 +149,7 @@ export async function persistDodges(d: DodgeReport): Promise<DodgeVerdict[]> {
         mode: d.mode,
         roomCode: d.roomCode,
       });
-      const count = await recentStandingCount(c.userId, 'dodge', STANDING_WINDOW_HOURS);
+      const count = await recentStandingCount(c.userId, 'dodge', WINDOW_HOURS.dodge);
       verdicts.push({ userId: c.userId, kind: c.kind, standing, count });
     }
     // the INNOCENT get a verdict too, with nothing charged — "this wasn't billed to you" is
