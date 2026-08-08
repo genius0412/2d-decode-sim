@@ -1,3 +1,74 @@
+# HANDOFF — 2026-08-08b (ranked standings + dodge penalties) — alpha only
+
+Branch **alpha**, NOT merged. `npm run build` · `npm test` · `contrast` **211** · `server:check`
+all green.
+
+**NEEDS A SERVER DEPLOY AND IT CARRIES A MIGRATION.** `0025_ranked_dodges.sql` is additive
+(create-if-not-exists), so rolling the server back leaves the table sitting unread. The
+migration runner applies it on boot. Also still pending from 08-07: the spectating batch.
+
+## 1. The standings ladder (`src/ranks.ts`)
+Names the EXISTING Glicko rating; stores nothing, so boundaries can be re-cut without a
+migration. Tiers are the FTC competition path — **Meet · Qualifier · Regional ·
+Championship · Worlds · INSPIRE** (apex), with divisions III→II→I inside each.
+
+**The number that had to be right:** a new account enters at **1000**, not Glicko's 1500
+centre (`getRatingFull` defaults to 1000, as does the column). Building bands around the
+internal centre would have put every real player two tiers below the middle of their own
+ladder. 1000 = bottom of Regional, third of six.
+
+Widths come from measuring the real implementation, not taste:
+
+| RD | per match | meaning |
+|----|-----------|---------|
+| 350 (new) | ±162 | placements swing hundreds — they genuinely place you |
+| 150 (post-placement) | ±51 | |
+| 80 (settled) | ±17 | **division = 3 wins, tier = 10** |
+| 50 (very settled) | ±7 | the top of the ladder is correctly sticky |
+
+Below `PLACEMENT_GAMES` (5) a player is ROOKIE with a games-played bar — naming a tier off
+a rating still moving ±50–160 would promote and demote them repeatedly on night one.
+
+## 2. Dodge penalties (`src/dodge.ts` + `server/`)
+Three ways a staged pairing dies, all previously free: **NO-SHOW** (never connected inside
+`RANKED_JOIN_GRACE_MS`), **STRATEGY BAIL** (dropped during the window), **NEVER READIED**
+(sat out `STRATEGY_DURATION_MS`). `cancelPending` now takes CULPRITS and each site works out
+who they are; everyone else is charged nothing.
+
+**Cause-blind by design.** From the server a pulled cable, a shut laptop and a killed tab are
+one event. Any rule charging less for "looked accidental" just publishes the cheap way to
+dodge. What IS observable is REPETITION — **20 / 45 / 90** over a rolling **12h** window.
+20 because a settled LOSS costs ~17 and a dodge cheaper than losing makes dodging a bad
+matchup rational.
+
+`applyDodgePenalty` deliberately does NOT touch `games` (a dodge is not a game — it must not
+finish placements) or `rd`/`vol` (RD describes how well we know your SKILL; shrinking it
+would mean dodging made the system more confident in you, growing it would hand the dodger
+bigger swings to climb back with). Floors at `RANK_FLOOR`.
+
+Applied through a new `onDodge` seam on `Room`, same injected shape as `persistMatch`, so
+room.ts stays DB-free and attribution is smoke-tested without a database. Fire-and-forget: a
+failed write means a dodge goes uncharged, which beats stalling the innocent players' requeue.
+
+## 3. UI
+`RankBadge` (one component, three sizes) on the career panel, the public profile, the
+leaderboard standing strip, and the local player's results row with a promotion/demotion
+callout. Tier accents are FILLS WITH FIXED INK (do not invert) and all seven are in the
+contrast audit against the single ink they carry. Colour never carries the rank alone.
+
+Dodge verdicts surface next to the cancellation — the penalised see the cost and which
+offence number, the innocent are told they were not charged.
+
+## 4. Next / open
+- **Deploy** (migration + server logic). Nothing works in production until then.
+- A queue COOLDOWN on repeat dodges is the natural next lever (Valorant's real deterrent is
+  the ban, not the RR). Rating-only was the ask; the matchmaker is in-memory so a cooldown
+  would be a small addition to `Matchmaker.enqueue`.
+- Ladder distribution is untested against a real population — the bands are calibrated to
+  swing sizes, not to where players actually land. Worth revisiting once there is data.
+
+---
+
 # HANDOFF — 2026-08-08 (launcher sprite · CR start rules · rail turret · dead-session fix) — alpha only
 
 Branch **alpha**, NOT merged. `npm run build` · `npm test` · `contrast` 197 · `server:check`
