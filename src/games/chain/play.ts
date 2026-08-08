@@ -267,8 +267,11 @@ export function updateChain(
      * renderer draws the carriage exactly where the sim put it.
      */
     if ((r.spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'rail') {
-      const carrying = chain.catalysts.some((c) => c.carriedBy === r.id);
-      const want = carrying ? 0 : catalystRailTarget(r, catalystTrackTarget(r, world));
+      // `catalystTrackTarget` already knows whether this robot is carrying (it tracks empty
+      // HOOKS when it is, rings when it is not) and answers null when there is nothing worth
+      // tracking, which stows the carriage centred. It used to be stowed here whenever the
+      // robot was carrying — refusing to traverse at exactly the moment a placement needed it.
+      const want = catalystRailTarget(r, catalystTrackTarget(r, world));
       const step = CHAIN_RAIL_RATE * dt;
       const d = want - r.catalystRail;
       r.catalystRail = Math.abs(d) <= step ? want : r.catalystRail + Math.sign(d) * step;

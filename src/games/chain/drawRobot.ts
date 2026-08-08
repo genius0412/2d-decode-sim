@@ -392,7 +392,12 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
     // and another robot's ring is not something this one can take.
     const mouth = catalystMouth(r);
     const tgt = catalystTrackTarget(r, world);
-    const bestA = tgt ? Math.atan2(tgt.y - mouth.y, tgt.x - mouth.x) : 0;
+    // AIM IN THE MOUNT'S OWN FRAME, so "no target" can mean STOWED (0 = pointing straight out
+    // of its mount) rather than pointing at world +x — which, with the chassis rotation
+    // subtracted below, would have swung an idle claw around as the robot turned.
+    const aim = tgt
+      ? Math.atan2(tgt.y - mouth.y, tgt.x - mouth.x) - r.heading - MOUNT_ANGLE[pos]
+      : 0;
 
     /**
      * THE RAIL (type `rail` only). A linear track spanning the mounted side with a carriage
@@ -451,8 +456,8 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
     // the CLAW on its short arm, swivelled to the tracked target
     ctx.save();
     ctx.translate(dist - 0.8, slide);
-    // world aim → this local frame (chassis heading + the mount rotation already applied)
-    ctx.rotate(bestA - r.heading - MOUNT_ANGLE[pos]);
+    // already in this local frame (chassis heading + mount rotation subtracted above)
+    ctx.rotate(aim);
     ctx.strokeStyle = ink;
     ctx.lineWidth = 0.5;
     ctx.fillStyle = STEEL_DK;

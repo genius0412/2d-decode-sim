@@ -648,6 +648,12 @@ export const CHAIN_RAIL_MARGIN = 2.2;
  *  useful within a cycle, slow enough that it is visibly a machine moving rather than the
  *  claw teleporting to wherever it is needed. */
 export const CHAIN_RAIL_RATE = 1.8;
+/** How far BEYOND its own working envelope a claw looks for something to track, in inches.
+ *  The mechanism should be lining itself up while the robot is still driving up — a carriage
+ *  that only starts moving once the target is already grabbable wastes its whole traverse
+ *  time inside the moment it was supposed to save. Beyond this there is nothing worth
+ *  tracking, and the carriage stows centred rather than parking against an end stop. */
+export const CHAIN_TRACK_APPROACH = 12;
 
 export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
   // ARM: `reach` here is only the FLOOR (what a maxed-out 18" chassis gets). The real value

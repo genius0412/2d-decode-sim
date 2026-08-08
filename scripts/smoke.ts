@@ -146,6 +146,7 @@ import {
   CHAIN_PARTICLE_SIM,
   CHAIN_PARTICLE_R,
   CHAIN_PRESETS,
+  CHAIN_RAIL_RATE,
   chainStorageMax,
   CHAIN_TWIN_MASS_FLOOR,
   CHAIN_TWIN_FIRE_MULT,
@@ -5659,6 +5660,104 @@ const mkMM = () => {
       // a plain TURRET claw has no track, so its mouth cannot slide
       const fixedSpec = coerceSpec({ ...spec, catalystType: 'turret' }, DEFAULT_SPEC, 'chain');
       check('chain rail: a plain turret claw has no travel', catalystRailHalf(fixedSpec) === 0);
+
+      /**
+       * 4. WHAT THE CARRIAGE TRACKS — the behaviour, not the geometry.
+       *
+       * The parts above all passed while the mechanism was visibly broken in a match,
+       * because every one of them tested a piece in isolation. What was wrong was the
+       * TARGET: the carriage stowed itself centred whenever the robot was carrying (i.e.
+       * exactly when a placement needed the reach), it offered empty hooks to an
+       * empty-handed claw, it ignored seated rings, and with nothing nearby it pinned
+       * itself against an end stop chasing a hook across the field. These assert the
+       * mechanism does the job, not that its maths is self-consistent.
+       */
+      const chainOf = (world: World) => world.chain!;
+      const drive = (world: World, ticks: number) => { for (let i = 0; i < ticks; i++) chainStep(world, SIM_DT, new Map()); };
+      const parkAt = (world: World, p: Vec2, headingRad: number) => {
+        const rr = world.robots[0];
+        rr.pos = { x: p.x, y: p.y };
+        rr.heading = headingRad;
+        rr.catalystRail = 0;
+      };
+      {
+        const w2 = createChainWorld('match', 9, [
+          { id: 0, alliance: 'blue', spec, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+        ]);
+        w2.match.phase = 'teleop';
+        w2.match.phaseTimeLeft = 120;
+        const rr = w2.robots[0];
+        const ch = chainOf(w2);
+        const stow = (): void => { for (const c of ch.catalysts) { c.carriedBy = null; c.hook = null; c.pos = { x: -60, y: -60 }; } };
+
+        // (a) CARRYING, parked beside an empty hook: the carriage MUST traverse to place.
+        stow();
+        const hook = hookPos('blue', 1);
+        parkAt(w2, { x: hook.x - 5, y: hook.y - 10 }, 0);
+        ch.catalysts[0].carriedBy = rr.id;
+        const carryTgt = catalystTrackTarget(rr, w2);
+        drive(w2, 120);
+        check(
+          'chain rail: a carried ring tracks an empty HOOK and traverses to place it',
+          !!carryTgt && Math.abs(rr.catalystRail) > 0.2,
+          `target=${carryTgt ? 'hook' : 'null'} carriage=${rr.catalystRail.toFixed(2)}`,
+        );
+
+        // (b) NOTHING IN RANGE: stow centred, never parked against an end stop.
+        stow();
+        parkAt(w2, { x: 0, y: 0 }, 0);
+        drive(w2, 180);
+        check(
+          'chain rail: with nothing in range the carriage stows centred, not at an end stop',
+          Math.abs(rr.catalystRail) < 1e-6,
+          `carriage=${rr.catalystRail.toFixed(3)}`,
+        );
+        check('chain rail: nothing in range means no target at all', catalystTrackTarget(rr, w2) === null);
+
+        // (c) EMPTY-HANDED: a SEATED ring is a legal grab (de-score) and must be tracked...
+        stow();
+        const seat = hookPos('blue', 0);
+        ch.catalysts[0].hook = { alliance: 'blue', index: 0 };
+        parkAt(w2, { x: seat.x - 6, y: seat.y - 8 }, 0);
+        const seatedTgt = catalystTrackTarget(rr, w2);
+        check(
+          'chain rail: an empty claw tracks a SEATED ring (de-scoring is a legal grab)',
+          !!seatedTgt && hyp(seatedTgt.x - seat.x, seatedTgt.y - seat.y) < 0.01,
+          seatedTgt ? `(${seatedTgt.x.toFixed(1)},${seatedTgt.y.toFixed(1)})` : 'null',
+        );
+
+        // ...but an EMPTY hook is not a target for an empty claw: there is nothing on it.
+        stow();
+        parkAt(w2, { x: seat.x - 6, y: seat.y - 8 }, 0);
+        check(
+          'chain rail: an empty claw never tracks an EMPTY hook',
+          catalystTrackTarget(rr, w2) === null,
+        );
+
+        // (d) CARRYING: a loose ring on the floor is not a target — the claw is full.
+        stow();
+        parkAt(w2, { x: 0, y: 0 }, 0);
+        ch.catalysts[0].carriedBy = rr.id;
+        ch.catalysts[1].pos = { x: rr.pos.x + 6, y: rr.pos.y + 4 };
+        check(
+          'chain rail: a full claw never tracks a loose ring it cannot pick up',
+          catalystTrackTarget(rr, w2) === null,
+        );
+
+        // (e) the traverse is RATE-LIMITED and clamped — a machine moving, not a teleport
+        stow();
+        const near = hookPos('blue', 1);
+        parkAt(w2, { x: near.x - 5, y: near.y - 10 }, 0);
+        ch.catalysts[0].carriedBy = rr.id;
+        drive(w2, 1);
+        const afterOne = Math.abs(rr.catalystRail);
+        drive(w2, 240);
+        check(
+          'chain rail: the carriage takes TIME to traverse and stays on the track',
+          afterOne > 0 && afterOne <= CHAIN_RAIL_RATE * SIM_DT + 1e-9 && Math.abs(rr.catalystRail) <= 1 + 1e-9,
+          `one tick moved ${afterOne.toFixed(4)}, settled at ${rr.catalystRail.toFixed(2)}`,
+        );
+      }
     }
   }
 
@@ -7878,9 +7977,13 @@ const mkMM = () => {
     }
   }
 
-  // ---- RAIL-TURRET CLAW tracks the NEAREST target, ring or hook ---------------------
-  // It used to track hooks only, so a claw would stare across the field at a hook while a
-  // ring sat at its feet. A loose ring is now a candidate and wins when it is closer.
+  // ---- RAIL-TURRET CLAW tracks what it would ACTUALLY act on ------------------------
+  // Two rewrites' worth of history here, both from the same mistake — the tracker not
+  // matching `catalystAction`. It first tracked hooks only, so a claw stared across the
+  // field while a ring sat at its feet. It then tracked the nearest of EVERYTHING at any
+  // distance, which is what made a rail carriage look broken in a match: it offered empty
+  // hooks to an empty claw, ignored seated rings, and pinned itself to an end stop chasing
+  // a hook thirty inches away. The target is now the job it is about to do.
   {
     const w = createChainWorld('match', 9, [chainSetup(0, 'blue')]);
     w.match.phase = 'teleop';
@@ -7896,39 +7999,42 @@ const mkMM = () => {
     const near = (t: { x: number; y: number } | null, p: { x: number; y: number }) =>
       !!t && Math.abs(t.x - p.x) < 0.01 && Math.abs(t.y - p.y) < 0.01;
 
-    // no loose ring in play -> a hook, exactly as before
-    const hookOnly = catalystTrackTarget(rob, w);
-    const isHook = (['red', 'blue'] as const).some((a) =>
-      Array.from({ length: CHAIN_HOOKS_PER_GOAL }, (_, i) => hookPos(a, i)).some((h) => near(hookOnly, h)),
+    // NOTHING nearby -> nothing tracked. A hook across the field is not work, and treating
+    // it as work is what parked the carriage against an end stop for the whole match.
+    check(
+      'catalyst track: a far-away hook is not a target for an idle claw',
+      catalystTrackTarget(rob, w) === null,
+      JSON.stringify(catalystTrackTarget(rob, w)),
     );
-    check('catalyst track: with no loose ring nearby it still tracks a hook', isHook,
-      `${hookOnly?.x.toFixed(1)},${hookOnly?.y.toFixed(1)}`);
 
-    // a ring at its feet beats every hook
+    // a ring at its feet is
     const ring = w.chain!.catalysts[0];
     ring.pos = { x: 12, y: 3 };
     check(
-      'catalyst track: a LOOSE ring closer than any hook wins',
+      'catalyst track: a LOOSE ring within working range is the target',
       near(catalystTrackTarget(rob, w), ring.pos),
       JSON.stringify(catalystTrackTarget(rob, w)),
     );
 
-    // ...but a CARRIED ring is not a target: it is already in the claw (distance ~0), so
-    // tracking it would lock the arm pointing at itself
+    // ...but a CARRIED ring is not: it is already in the claw (distance ~0), so tracking it
+    // would lock the mechanism pointing at itself
     ring.carriedBy = rob.id;
     check(
       'catalyst track: a CARRIED ring is never the target',
       !near(catalystTrackTarget(rob, w), ring.pos),
       JSON.stringify(catalystTrackTarget(rob, w)),
     );
-    // ...and neither is one already seated on a hook
+
+    // a ring SEATED on a hook is a legal grab (de-score), so an empty claw within range
+    // tracks it — at the HOOK, which is where the claw has to reach
     ring.carriedBy = null;
+    const seat = hookPos('blue', 0);
     ring.hook = { alliance: 'blue', index: 0 };
-    const seated = catalystTrackTarget(rob, w);
+    rob.pos = { x: seat.x - 6, y: seat.y - 8 };
     check(
-      'catalyst track: a ring already SEATED on a hook is not a loose target',
-      !near(seated, { x: 12, y: 3 }),
-      JSON.stringify(seated),
+      'catalyst track: a SEATED ring in range is tracked at its hook',
+      near(catalystTrackTarget(rob, w), seat),
+      JSON.stringify(catalystTrackTarget(rob, w)),
     );
   }
 

@@ -15,7 +15,7 @@ import {
   CHAIN_DEFAULT_INTAKE,
 } from './config';
 import { type ChainEdge, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, intakeMountEdges, intakeMountOf, isEdgePos, mountOrigin } from './mounts';
-import { CHAIN_CATALYST_NEAR, CHAIN_DEFAULT_CATALYST, chainCatalystGeom } from './config';
+import { CHAIN_CATALYST_NEAR, CHAIN_DEFAULT_CATALYST, CHAIN_TRACK_APPROACH, chainCatalystGeom } from './config';
 import { datan2, dcos, dsin, hyp, rot, wrapAngle } from '../../math';
 
 /**
@@ -352,20 +352,39 @@ export function catalystCanReach(rob: RobotState, target: Vec2, radius: number):
 }
 
 /**
- * What a RAIL-TURRET claw is tracking: the nearest thing it could actually work on, measured
- * from its mouth. Candidates are the four hooks per goal AND every LOOSE ring — a claw that
- * stared past a ring at its feet to track a hook across the field read as broken.
+ * What the claw is tracking: the thing it would ACTUALLY act on if the button were pressed
+ * right now, measured from its mouth. Drives both the drawn aim and the rail carriage, so
+ * the mechanism is always visibly working toward the job it is about to do.
  *
- * Carried rings are excluded: one may already be in this claw (distance ~0, which would lock
- * the arm pointing at itself), and another robot's ring is not something this one can take.
+ * IT HAS TO MIRROR `catalystAction`, and the first version did not — which is what made a
+ * rail carriage look broken:
+ *
+ *  • CARRYING a ring, the only useful target is an EMPTY HOOK to place it on. The old code
+ *    stowed the carriage centred while carrying, so the one moment the claw needs to reach
+ *    along its track — lining up a hook — was the one moment the track refused to move.
+ *  • EMPTY-HANDED, the targets are the rings it can pick up: LOOSE ones on the floor and
+ *    SEATED ones (taking a ring off a hook is a legal de-score). The old code had this
+ *    exactly inverted — it offered every hook whether or not anything was on it, and
+ *    skipped seated rings entirely.
+ *  • OUT OF RANGE IS NOT A TARGET. Every hook on the field was a candidate at any distance,
+ *    and the rail projection clamps to its end stops, so a robot with nothing to do parked
+ *    its carriage hard against one end and slid it side to side as the chassis turned.
+ *    Nothing within working distance ⇒ null ⇒ the carriage stows centred, which is what an
+ *    idle machine does.
  *
  * Pure and world-reading, so the renderer can draw the tracking without owning the decision —
  * and so the decision is testable, which a `ctx`-only helper would not be.
  */
 export function catalystTrackTarget(rob: RobotState, world?: World): Vec2 | null {
+  const chain = world?.chain;
+  if (!chain) return null;
   const mouth = catalystMouth(rob);
+  // WORKING RANGE: the claw's reach, plus the span the carriage can cover, plus an approach
+  // margin so the mechanism pre-positions while the robot is still driving up rather than
+  // waiting until the target is already grabbable.
+  const range = chainCatalystGeom(rob.spec).reach + catalystRailHalf(rob.spec) + CHAIN_TRACK_APPROACH;
   let best: Vec2 | null = null;
-  let bestD = Infinity;
+  let bestD = range;
   const consider = (p: Vec2) => {
     const d = hyp(p.x - mouth.x, p.y - mouth.y);
     if (d < bestD) {
@@ -373,12 +392,22 @@ export function catalystTrackTarget(rob: RobotState, world?: World): Vec2 | null
       best = p;
     }
   };
-  for (const a of ['red', 'blue'] as Alliance[]) {
-    for (let i = 0; i < CHAIN_HOOKS_PER_GOAL; i++) consider(hookPos(a, i));
+
+  const carrying = chain.catalysts.some((c) => c.carriedBy === rob.id);
+  if (carrying) {
+    // placing: only hooks with nothing already on them
+    for (const a of ['red', 'blue'] as Alliance[]) {
+      for (let i = 0; i < CHAIN_HOOKS_PER_GOAL; i++) {
+        if (chain.catalysts.some((o) => o.hook && o.hook.alliance === a && o.hook.index === i)) continue;
+        consider(hookPos(a, i));
+      }
+    }
+    return best;
   }
-  for (const c of world?.chain?.catalysts ?? []) {
-    if (c.carriedBy !== null || c.hook) continue; // carried, or already seated
-    consider(c.pos);
+  // grabbing: any ring nobody is holding — on the floor, or seated on a hook (de-score)
+  for (const c of chain.catalysts) {
+    if (c.carriedBy !== null) continue;
+    consider(c.hook ? hookPos(c.hook.alliance, c.hook.index) : c.pos);
   }
   return best;
 }
