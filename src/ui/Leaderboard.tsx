@@ -17,7 +17,6 @@ import { periodLabel } from '../seasons';
 import { PeriodPicker } from './PeriodPicker';
 import { SupporterBadge, type StaffRole } from './SupporterBadge';
 import { PLACEMENT_GAMES } from '../config';
-import { RankBadge } from './RankBadge';
 import {
   CHAIN_MODE_LABELS,
   CHAIN_INTAKE_LABELS,
@@ -186,10 +185,6 @@ function MyStanding({ me }: { me: EloStanding }) {
     return (
       <div className="lb-standing placed">
         <span className="lb-standing-rank">#{me.rank}</span>
-        {/* the board position AND the tier. The number is what orders the table; the tier
-            is what a player actually recognises themselves by, and on a leaderboard of
-            hundreds "#84" alone says nothing about whether that is good. */}
-        <RankBadge rating={me.rating} games={me.games} size="sm" className="lb-standing-rank-badge" />
         <span className="lb-standing-text">
           Your rank · <strong>{me.rating}</strong> ELO
         </span>

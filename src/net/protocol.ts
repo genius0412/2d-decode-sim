@@ -1,4 +1,5 @@
 import type { DodgeVerdict } from '../dodge';
+import type { StandingTierKey } from '../standing';
 import type {
   Alliance,
   Artifact,
@@ -221,7 +222,7 @@ export type PlayerPatch = Partial<
  * client is never stranded waiting for a `strategyStart` it can't render. Absent/old
  * clients send nothing ⇒ treated as no caps. Add new capability strings here as the
  * protocol grows. */
-export const CLIENT_CAPS: string[] = ['strategy', 'startpose', 'game'];
+export const CLIENT_CAPS: string[] = ['strategy', 'startpose', 'game', 'standing'];
 
 /**
  * Capabilities the SERVER advertises, reported on `GET /api/presence`.
@@ -431,6 +432,16 @@ export type ServerMsg =
    * the plain cancellation error it always did.
    */
   | { t: 'dodgeVerdict'; message: string; yours: DodgeVerdict | null; others: DodgeVerdict[] }
+  /**
+   * The ranked queue is CLOSED to this account: their account standing has fallen far
+   * enough to carry a cooldown (see `src/standing.ts`).
+   *
+   * Its own message rather than an `error` string, because a lock is a state with a CLOCK —
+   * the client counts it down and reopens the button by itself, instead of showing a
+   * sentence that is wrong thirty seconds later. Gated on the client's `standing` cap:
+   * a build that would not know what to do with it gets the plain error instead.
+   */
+  | { t: 'standingLock'; until: number; score: number; tier: StandingTierKey }
   // `ranked` + `intros` are present only for ranked matchmaking rooms; they
   // drive the pre-match intro overlay (ELO reveal). Optional so custom rooms and
   // older servers omit them and the client simply shows no intro.

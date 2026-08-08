@@ -121,8 +121,12 @@ import { bestHost } from '../server/regions';
 import type { PendingMatch } from '../server/matchTypes';
 import { computeGlicko, glicko2Update, eloMode, RD_PROVISIONAL, type EloParticipant } from '../server/ranked';
 import { isReportReason, REPORT_REASONS } from '../src/report';
-import { RANK_TIERS, RANK_FLOOR, RANK_ENTRY_RATING, TIER_SPAN, DIVISION_SPAN, standingFor, tierFor, tierChange } from '../src/ranks';
-import { dodgePenalty, DODGE_PENALTIES } from '../src/dodge';
+import {
+  STANDING_MAX, STANDING_COST, STANDING_TIERS, REPORT_CAP, HEAL_PER_DAY, HEAL_PER_CLEAN_MATCH,
+  tierOf, healed, clampScore, repeatMult, applyStandingEvent, queueLocked, lockRemaining,
+  judgeParticipation, MIN_JUDGED_TICKS, AFK_DRIVE_FRACTION, LEAVE_AWAY_FRACTION,
+  type StandingEventKind, type StandingState,
+} from '../src/standing';
 import type { ServerMsg, QueueMode } from '../src/net/protocol';
 import { dsin, dcos, dtan, datan2, hyp, rot, wrapAngle } from '../src/math';
 import { initPhysics } from '../src/sim/physicsEngine';
@@ -4317,166 +4321,237 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   check('favored winner gains modestly', aT.after - aT.before > 0 && aT.after - aT.before < 40, `+${aT.after - aT.before}`);
 }
 
-// ---- RANKED STANDINGS: the visible ladder over the Glicko rating ------------
-// Pure derivation, so these are exact. The boundaries were calibrated against the REAL
-// Glicko swing sizes, and the checks below re-derive that calibration rather than trusting
-// the constants — a boundary change that quietly makes a tier unclimbable fails here.
+
+// ---- ACCOUNT STANDING: competitive integrity, separate from skill -----------
+// Pure derivation, so these are exact. The rules being asserted are the PRODUCT ones — an
+// accident is cheap, a pattern is not, unreviewed reports never lock anybody out, and rating
+// is the LAST thing the escalation touches — rather than the constants agreeing with
+// themselves.
 {
-  // 1. the ladder is ordered, contiguous and total: every rating lands in exactly one tier
-  let bad = '';
-  for (let r = RANK_FLOOR; r <= 2200 && !bad; r += 7) {
-    const t = tierFor(r);
-    const i = RANK_TIERS.indexOf(t);
-    const next = RANK_TIERS[i + 1];
-    if (r < t.floor) bad = `${r} placed in ${t.name} below its floor`;
-    if (next && r >= next.floor) bad = `${r} placed in ${t.name} but ${next.name} starts at ${next.floor}`;
-  }
-  check('ranks: every rating lands in exactly one tier', !bad, bad);
+  const fresh = (): StandingState => ({ score: STANDING_MAX, restrictedUntil: null });
+  const T0 = 1_000_000_000_000;
+  const kinds: StandingEventKind[] = ['dodge', 'report', 'afk', 'leave', 'reportUpheld'];
 
-  // 2. the ladder is MONOTONIC — a higher rating is never a lower standing
-  let regress = '';
-  let prevIdx = -1;
-  for (let r = RANK_FLOOR; r <= 2200 && !regress; r += 3) {
-    const idx = RANK_TIERS.indexOf(tierFor(r));
-    if (idx < prevIdx) regress = `rating ${r} dropped a tier`;
-    prevIdx = idx;
-  }
-  check('ranks: a higher rating is never a lower tier', !regress, regress);
-
-  // 3. THE ENTRY RATING IS CENTRED. A new account enters at 1000 (getRatingFull's default,
-  //    NOT Glicko's 1500 centre) — the ladder has to be built around that number or every
-  //    real player sits at the bottom of their own ladder.
-  const entry = standingFor(RANK_ENTRY_RATING, PLACEMENT_GAMES);
-  const entryIdx = RANK_TIERS.indexOf(entry.tier);
-  check(
-    'ranks: the entry rating sits in the MIDDLE of the ladder, not the bottom',
-    entryIdx >= 1 && entryIdx <= RANK_TIERS.length - 2,
-    `${RANK_ENTRY_RATING} -> ${entry.label} (tier ${entryIdx + 1} of ${RANK_TIERS.length})`,
-  );
-
-  // 4. divisions run III (low) -> I (high) INSIDE a tier, and the label matches
-  const lo = standingFor(1000, 20);
-  const mid = standingFor(1050, 20);
-  const hi = standingFor(1100, 20);
-  check(
-    'ranks: divisions ascend III -> II -> I within a tier',
-    lo.division === 3 && mid.division === 2 && hi.division === 1 &&
-      lo.label === 'Regional III' && hi.label === 'Regional I',
-    `${lo.label} / ${mid.label} / ${hi.label}`,
-  );
-
-  // 5. progress fills 0..1 across a division and never leaves that range
-  let outOfRange = '';
-  for (let r = RANK_FLOOR; r <= 2200 && !outOfRange; r += 1) {
-    const st = standingFor(r, 20);
-    if (st.progress < 0 || st.progress > 1) outOfRange = `${r} -> ${st.progress}`;
-    if (st.toNext !== null && st.toNext < 0) outOfRange = `${r} -> toNext ${st.toNext}`;
-  }
-  check('ranks: progress stays in 0..1 and toNext never goes negative', !outOfRange, outOfRange);
-
-  // 6. PLACEMENTS hide the rating. Below PLACEMENT_GAMES the rating swings +-50..160 a match
-  //    (measured), so naming a tier from it would promote and demote a new player repeatedly.
-  let named = '';
-  for (let g = 0; g < PLACEMENT_GAMES; g++) {
-    for (const r of [400, 1000, 2000]) {
-      const st = standingFor(r, g);
-      if (!st.placement || st.tier.key !== 'rookie') named = `${g} games @${r} -> ${st.label}`;
-    }
-  }
-  check('ranks: a player in placements is ROOKIE whatever their rating', !named, named);
-  check(
-    'ranks: the placement bar tracks GAMES, not rating',
-    standingFor(400, 3).progress === standingFor(2000, 3).progress &&
-      Math.abs(standingFor(1000, 3).progress - 3 / PLACEMENT_GAMES) < 1e-9,
-  );
-  check('ranks: finishing placements reveals a real tier', !standingFor(1000, PLACEMENT_GAMES).placement);
-
-  // 7. CALIBRATION against the real Glicko: a division must be a session's progress and a
-  //    tier a milestone. Re-derived here so a boundary edit that makes the ladder
-  //    unclimbable (or trivial) fails instead of merely looking different.
-  const winsToClimb = (span: number): number => {
-    let g = { rating: 1000, rd: 80, vol: 0.06 };
-    let n = 0;
-    while (g.rating < 1000 + span && n < 500) { g = glicko2Update(g, g.rating, g.rd, 1); n++; }
-    return n;
-  };
-  const divWins = winsToClimb(DIVISION_SPAN);
-  const tierWins = winsToClimb(TIER_SPAN);
-  check(
-    'ranks: a DIVISION is a few settled wins (2-6), so progress is visible per session',
-    divWins >= 2 && divWins <= 6,
-    `${divWins} wins`,
-  );
-  check(
-    'ranks: a TIER is a milestone (6-20 settled wins), not a formality',
-    tierWins >= 6 && tierWins <= 20,
-    `${tierWins} wins`,
-  );
-  // and PLACEMENTS can genuinely place you: 5 perfect games must climb at least a tier
+  // 1. the tier ladder is ordered, total and monotonic in consequence
   {
-    let g = { rating: RANK_ENTRY_RATING, rd: 350, vol: 0.06 };
-    for (let i = 0; i < PLACEMENT_GAMES; i++) g = glicko2Update(g, RANK_ENTRY_RATING, g.rd, 1);
-    const placed = standingFor(g.rating, PLACEMENT_GAMES);
+    let bad = '';
+    for (let sc = 0; sc <= STANDING_MAX && !bad; sc++) {
+      const t = tierOf(sc);
+      if (sc < t.floor) bad = `${sc} placed in ${t.name} below its floor ${t.floor}`;
+      const better = STANDING_TIERS[STANDING_TIERS.indexOf(t) - 1];
+      if (better && sc >= better.floor) bad = `${sc} placed in ${t.name} but ${better.name} starts at ${better.floor}`;
+    }
+    check('standing: every score lands in exactly one tier', !bad, bad);
+
+    let regress = '';
+    for (let i = 1; i < STANDING_TIERS.length; i++) {
+      const hi = STANDING_TIERS[i - 1];
+      const lo = STANDING_TIERS[i];
+      if (lo.floor >= hi.floor) regress = `${lo.name} floor ${lo.floor} >= ${hi.name} ${hi.floor}`;
+      if (lo.cooldownMin < hi.cooldownMin) regress = `${lo.name} is cheaper to be in than ${hi.name}`;
+      if (lo.ratingCharge < hi.ratingCharge) regress = `${lo.name} charges less rating than ${hi.name}`;
+    }
+    check('standing: a worse tier is never a lighter consequence', !regress, regress);
+  }
+
+  // 2. SEVERITY ORDER. These events are not comparable and must not cost the same: a dodge
+  //    postpones a match, an AFK destroys one, and a moderator upholding a report is the
+  //    only event backed by a human looking at the evidence.
+  check(
+    'standing: severity is ordered report < dodge < afk < leave < upheld',
+    STANDING_COST.report < STANDING_COST.dodge &&
+      STANDING_COST.dodge < STANDING_COST.afk &&
+      STANDING_COST.afk < STANDING_COST.leave &&
+      STANDING_COST.leave < STANDING_COST.reportUpheld,
+    kinds.map((k) => `${k} ${STANDING_COST[k]}`).join(' · '),
+  );
+
+  // 3. ONE ACCIDENT IS FREE. A single dodge must not restrict anything or cost rating —
+  //    a real disconnect is indistinguishable from a deliberate one, and the system's first
+  //    move against an honest player has to be survivable.
+  {
+    const v = applyStandingEvent(fresh(), 'dodge', { now: T0 });
     check(
-      'ranks: perfect placements place you well above entry, but short of the apex',
-      RANK_TIERS.indexOf(placed.tier) > RANK_TIERS.indexOf(tierFor(RANK_ENTRY_RATING)) &&
-        placed.tier.key !== 'inspire',
-      `${Math.round(g.rating)} -> ${placed.label}`,
+      'standing: a first dodge restricts nothing and costs no rating',
+      v.cooldownMin === 0 && v.ratingCharge === 0 && v.restrictedUntil === null &&
+        v.tierAfter === 'good',
+      `${v.scoreBefore}->${v.scoreAfter} (${v.tierAfter})`,
+    );
+    // and it stays survivable at the honest-accident rate: one a week, forever
+    let s = STANDING_MAX;
+    for (let week = 0; week < 20; week++) {
+      s = applyStandingEvent({ score: s, restrictedUntil: null }, 'dodge', { now: T0 }).scoreAfter;
+      s = healed(s, 24 * 7);
+    }
+    check(
+      'standing: one dodge a week never leaves good standing (healing outruns it)',
+      tierOf(s).key === 'good',
+      `after 20 weeks: ${s}`,
     );
   }
 
-  // 8. the apex has no divisions and no "next"
-  const apex = standingFor(9999, 20);
+  // 4. A PATTERN IS NOT. Repeats of the same kind inside the window escalate, and a run of
+  //    them walks a player down the ladder into a real restriction.
   check(
-    'ranks: the apex tier has no division and no next step',
-    apex.tier.key === 'inspire' && apex.division === 0 && apex.toNext === null && apex.progress === 1,
-    apex.label,
+    'standing: repeats escalate and then saturate',
+    repeatMult(1) === 1 && repeatMult(2) > repeatMult(1) && repeatMult(3) > repeatMult(2) &&
+      repeatMult(9) === repeatMult(3) && repeatMult(0) === 1,
+    `${repeatMult(1)}/${repeatMult(2)}/${repeatMult(3)}`,
   );
-
-  // 9. the FLOOR holds — no rating, however broken, prints below it
-  for (const r of [-9999, 0, NaN, -Infinity]) {
-    check(`ranks: rating ${r} is floored, not printed raw`, standingFor(r, 20).rating >= RANK_FLOOR);
+  {
+    let st = fresh();
+    let n = 0;
+    let firstLock = 0;
+    while (n < 12 && !st.restrictedUntil) {
+      const v = applyStandingEvent(st, 'dodge', { now: T0, priorSameKind: n });
+      st = { score: v.scoreAfter, restrictedUntil: v.restrictedUntil };
+      n++;
+      if (v.cooldownMin) firstLock = v.cooldownMin;
+    }
+    check(
+      'standing: repeated dodging reaches a queue cooldown, but not on the first few',
+      n >= 4 && n <= 8 && firstLock > 0,
+      `locked on dodge #${n} for ${firstLock}min`,
+    );
   }
 
-  // 10. promotion/demotion fires on a crossing and ONLY on a crossing
-  check('ranks: crossing up is a promotion', tierChange(1149, 1151, 20) === 'promoted');
-  check('ranks: crossing down is a demotion', tierChange(1151, 1149, 20) === 'demoted');
-  check('ranks: moving within a tier is neither', tierChange(1000, 1100, 20) === null);
-  check(
-    'ranks: finishing placements is NOT reported as a promotion (there was no tier before)',
-    tierChange(1000, 1400, PLACEMENT_GAMES) === null,
-  );
-}
+  // 5. THE CONSEQUENCE IS READ OFF THE TIER YOU LAND IN, not the one you started in — a
+  //    single severe event from good standing must be able to bite immediately.
+  {
+    const deep = applyStandingEvent({ score: 30, restrictedUntil: null }, 'leave', { now: T0 });
+    check(
+      'standing: a severe offence is charged at the tier it lands you in',
+      deep.tierBefore === 'probation' && deep.tierAfter === 'suspended' &&
+        deep.cooldownMin === tierOf(deep.scoreAfter).cooldownMin &&
+        deep.ratingCharge === tierOf(deep.scoreAfter).ratingCharge,
+      `${deep.tierBefore}->${deep.tierAfter}: ${deep.cooldownMin}min, -${deep.ratingCharge} rating`,
+    );
+  }
 
-// ---- DODGE PENALTIES --------------------------------------------------------
-{
-  // escalation is strictly increasing, and the FIRST dodge already costs more than losing
-  // the match would have (~17 for a settled player) — or dodging a bad matchup is rational
-  const settledLoss = Math.abs(
-    glicko2Update({ rating: 1000, rd: 80, vol: 0.06 }, 1000, 80, 0).rating - 1000,
-  );
-  check(
-    'dodge: the first dodge costs MORE than simply losing the match',
-    dodgePenalty(1) > settledLoss,
-    `${dodgePenalty(1)} vs a ${settledLoss.toFixed(0)} loss`,
-  );
-  check(
-    'dodge: repeats escalate strictly',
-    dodgePenalty(1) < dodgePenalty(2) && dodgePenalty(2) < dodgePenalty(3),
-    `${dodgePenalty(1)}/${dodgePenalty(2)}/${dodgePenalty(3)}`,
-  );
-  check(
-    'dodge: the second dodge more than doubles the first (a pattern, not an accident)',
-    dodgePenalty(2) > dodgePenalty(1) * 2,
-  );
-  check('dodge: the escalation saturates rather than growing without bound',
-    dodgePenalty(9) === dodgePenalty(DODGE_PENALTIES.length) && dodgePenalty(0) === 0);
-  // a habitual dodger cannot out-earn the penalty in the same session
-  check(
-    'dodge: the top penalty outweighs several settled wins',
-    dodgePenalty(3) > settledLoss * 4,
-    `${dodgePenalty(3)} vs ${(settledLoss * 4).toFixed(0)}`,
-  );
+  // 6. RATING IS THE LAST RUNG. Nothing charges rating in the top three tiers, whatever the
+  //    offence — the whole design is that behaviour is not skill.
+  {
+    let leaked = '';
+    for (const k of kinds) {
+      for (const sc of [100, 85, 70, 61, 55, 41]) {
+        const v = applyStandingEvent({ score: sc, restrictedUntil: null }, k, { now: T0 });
+        if (v.ratingCharge > 0 && !['probation', 'suspended'].includes(v.tierAfter)) {
+          leaked = `${k} @${sc} charged ${v.ratingCharge} rating in ${v.tierAfter}`;
+        }
+      }
+    }
+    check('standing: rating is only ever charged in the bottom two tiers', !leaked, leaked);
+  }
+
+  // 7. UNREVIEWED REPORTS NEVER LOCK ANYBODY OUT. This is the abuse vector a report system
+  //    has to be built against: a squad that loses a match must not be able to queue-ban the
+  //    winner. They move the score (which surfaces them to a moderator) and nothing else.
+  {
+    let enforced = '';
+    for (const sc of [100, 45, 25, 5]) {
+      const v = applyStandingEvent({ score: sc, restrictedUntil: null }, 'report', { now: T0, count: 9 });
+      if (v.cooldownMin || v.ratingCharge || v.restrictedUntil) enforced = `report @${sc} enforced ${v.cooldownMin}min/${v.ratingCharge}r`;
+      if (v.points > STANDING_COST.report * REPORT_CAP * repeatMult(1)) enforced = `report count uncapped: ${v.points}`;
+    }
+    check('standing: raw reports never restrict the queue or charge rating, and are capped', !enforced, enforced);
+    // ...but a moderator upholding them does restrict
+    const upheld = applyStandingEvent({ score: 55, restrictedUntil: null }, 'reportUpheld', { now: T0 });
+    check(
+      'standing: a moderator upholding reports DOES restrict',
+      upheld.cooldownMin > 0 && upheld.tierAfter === 'probation',
+      `${upheld.scoreBefore}->${upheld.scoreAfter} ${upheld.cooldownMin}min`,
+    );
+  }
+
+  // 8. RECOVERY. The debt has to be workable off, both by playing and by time — but waiting
+  //    must never beat playing, or the system teaches players to stop playing.
+  {
+    check(
+      'standing: playing clean recovers faster per day than idling',
+      HEAL_PER_CLEAN_MATCH * 4 > HEAL_PER_DAY,
+      `${HEAL_PER_CLEAN_MATCH}/match vs ${HEAL_PER_DAY}/day`,
+    );
+    check('standing: healing caps at the maximum', healed(STANDING_MAX, 24 * 365) === STANDING_MAX);
+    check('standing: healing is granted per whole day, never retroactively negative',
+      healed(50, 0) === 50 && healed(50, 23) === 50 && healed(50, 24) === 50 + HEAL_PER_DAY && healed(50, -5) === 50);
+    // a suspended player cannot idle out of the lock faster than the lock itself
+    const susp = applyStandingEvent({ score: 15, restrictedUntil: null }, 'leave', { now: T0 });
+    const healedBack = healed(susp.scoreAfter, (susp.cooldownMin / 60));
+    check(
+      'standing: a suspension outlives the healing you get while serving it',
+      tierOf(healedBack).key === 'suspended',
+      `${susp.scoreAfter} -> ${healedBack} after ${susp.cooldownMin}min`,
+    );
+  }
+
+  // 9. the score is CLAMPED and total-function: no offence prints a negative or a NaN
+  {
+    let bad = '';
+    for (const k of kinds) {
+      for (const sc of [0, 1, 100, -50, 1e9, NaN, Infinity]) {
+        const v = applyStandingEvent({ score: sc, restrictedUntil: null }, k, { now: T0, priorSameKind: 99 });
+        if (!Number.isFinite(v.scoreAfter) || v.scoreAfter < 0 || v.scoreAfter > STANDING_MAX) {
+          bad = `${k} @${sc} -> ${v.scoreAfter}`;
+        }
+      }
+    }
+    check('standing: the score is clamped 0..max for every input', !bad, bad);
+    check('standing: a broken stored score reads as full, not as suspended',
+      clampScore(NaN) === STANDING_MAX && clampScore(undefined as unknown as number) === STANDING_MAX);
+  }
+
+  // 10. an existing lock is EXTENDED, never shortened, by a new offence
+  {
+    const long = T0 + 10 * 3_600_000;
+    const v = applyStandingEvent({ score: 45, restrictedUntil: long }, 'dodge', { now: T0 });
+    check('standing: a new offence never shortens an existing lock', v.restrictedUntil === long, `${v.restrictedUntil}`);
+    check('standing: the queue is locked while the clock runs and opens after it',
+      queueLocked({ score: 45, restrictedUntil: long }, T0) &&
+        !queueLocked({ score: 45, restrictedUntil: long }, long + 1) &&
+        !queueLocked({ score: 5, restrictedUntil: null }, T0));
+    check('standing: the remaining lock reads in human units',
+      lockRemaining(T0 + 30 * 60_000, T0) === '30 minutes' && lockRemaining(T0 + 7_200_000, T0) === '2 hours');
+  }
+
+  // 11. WHO SAT IT OUT vs WHO WALKED AWAY, judged from what the server actually counted.
+  //     The failure mode that matters here is charging an innocent player, so the checks are
+  //     written from that side: a short match is never judged, a quiet-but-present driver is
+  //     not a leaver, and someone who was merely bad at the game is not an offender at all.
+  {
+    const F = MIN_JUDGED_TICKS * 4; // a full-length match's live ticks
+    check(
+      'standing: a driver who played is not charged',
+      judgeParticipation({ liveTicks: F, driveTicks: F * 0.9, awayTicks: 0 }) === null,
+    );
+    check(
+      'standing: a quiet but present driver (barely over the AFK bar) is not charged',
+      judgeParticipation({ liveTicks: F, driveTicks: Math.ceil(F * (AFK_DRIVE_FRACTION + 0.02)), awayTicks: 0 }) === null,
+    );
+    check(
+      'standing: driving for almost none of the match is AFK',
+      judgeParticipation({ liveTicks: F, driveTicks: Math.floor(F * 0.02), awayTicks: 0 }) === 'afk',
+    );
+    check(
+      'standing: being disconnected for most of it is LEAVING, not AFK',
+      judgeParticipation({ liveTicks: F, driveTicks: 0, awayTicks: Math.ceil(F * (LEAVE_AWAY_FRACTION + 0.1)) }) === 'leave',
+    );
+    check(
+      'standing: a brief dropout mid-match is neither',
+      judgeParticipation({ liveTicks: F, driveTicks: F * 0.8, awayTicks: Math.floor(F * 0.05) }) === null,
+    );
+    // the one that protects innocent players: nothing is judged from a match too short to
+    // mean anything (a cancel, a restart, a room that died in its first seconds)
+    let judgedShort = '';
+    for (const t of [0, 1, MIN_JUDGED_TICKS - 1]) {
+      if (judgeParticipation({ liveTicks: t, driveTicks: 0, awayTicks: t }) !== null) judgedShort = `${t} ticks judged`;
+    }
+    check('standing: a match too short to judge charges nobody', !judgedShort, judgedShort);
+    check(
+      'standing: broken counters never produce a charge',
+      judgeParticipation({ liveTicks: NaN, driveTicks: 0, awayTicks: 0 }) === null &&
+        judgeParticipation({ liveTicks: -5, driveTicks: 0, awayTicks: 0 }) === null,
+    );
+  }
 }
 
 // ---- ranked results: server broadcasts eloResult, re-keyed to robot ids ------

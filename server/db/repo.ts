@@ -2,6 +2,9 @@ import type { Replay } from '../../src/sim/replay';
 import type { AssistConfig, GameId, RobotSpec } from '../../src/types';
 import type { PendingMatch, PendingRosterEntry } from '../matchTypes';
 import { PLACEMENT_GAMES } from '../../src/config';
+import {
+  STANDING_MAX, HEAL_PER_DAY, HEAL_PER_CLEAN_MATCH, clampScore, type StandingVerdict,
+} from '../../src/standing';
 import { q, tx } from './pool';
 
 /** every board/period is keyed by game; old callers/rows default to DECODE. */
@@ -1339,35 +1342,37 @@ export async function upsertRating(
 }
 
 /**
- * Apply a DODGE PENALTY to a player's board and record it.
+ * Charge RATING for a behaviour offence — the LAST rung of the standing escalation, and the
+ * only place behaviour is ever allowed to touch the skill number (see src/standing.ts: it is
+ * zero above Probation).
  *
  * Deliberately NOT `upsertRating`, for two reasons that both matter:
  *
- *  - `games` is NOT incremented. A dodge is not a game; counting it would let a player
- *    finish placements — or shrink toward "established" — by abandoning matches.
+ *  - `games` is NOT incremented. Abandoning a match is not playing one; counting it would
+ *    let a player finish placements — or shrink toward "established" — by quitting.
  *  - `rd` and `vol` are NOT touched. Rating deviation states how well we know someone's
- *    SKILL, and a dodge says nothing about that. Shrinking RD would mean dodging made the
- *    system MORE confident in you, which is backwards; growing it would hand the dodger
- *    bigger swings to climb back with, which rewards the behaviour.
+ *    SKILL, and none of this says anything about that. Shrinking RD would mean misbehaving
+ *    made the system MORE confident in you, which is backwards; growing it would hand the
+ *    offender bigger swings to climb back with, which rewards the behaviour.
  *
- * The rating is floored, so a run of penalties cannot print an absurd number on a badge.
- * Returns what was actually stored — at the floor that differs from the nominal penalty, and
- * the player should be told the truth rather than the sticker price.
+ * The rating is floored, so a run of charges cannot print an absurd number. Returns what was
+ * actually stored — at the floor that differs from the nominal charge, and the player should
+ * be told the truth rather than the sticker price.
  */
-export async function applyDodgePenalty(
+export async function chargeRatingForBehaviour(
   userId: string,
   mode: '1v1' | '2v2',
   act: number,
-  penalty: number,
+  charge: number,
   floor: number,
-  kind: string,
   game?: Game,
 ): Promise<{ before: number; after: number }> {
   const cur = await getRatingFull(userId, mode, act, game);
   const before = Math.round(cur.rating);
-  const after = Math.max(floor, before - Math.max(0, Math.round(penalty)));
+  const after = Math.max(floor, before - Math.max(0, Math.round(charge)));
+  if (after === before) return { before, after };
   // upsert WITHOUT touching games/rd/vol (see above). A player with no rating row on this
-  // board yet gets one seeded at the penalised value, games still 0.
+  // board yet gets one seeded at the charged value, games still 0.
   await q(
     `insert into elo_ratings (user_id, mode, act, game, rating, rd, vol, games)
      values ($1, $2, $3, $4, $5, $6, $7, 0)
@@ -1375,24 +1380,198 @@ export async function applyDodgePenalty(
        do update set rating = excluded.rating, updated_at = now()`,
     [userId, mode, act, g(game), after, cur.rd, cur.vol],
   );
-  await q(
-    `insert into ranked_dodges (user_id, game, mode, act, kind, penalty, rating_before, rating_after)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [userId, g(game), mode, act, kind, before - after, before, after],
-  );
   return { before, after };
 }
 
-/** How many dodges this player has inside the rolling escalation window. Counted by TIME
- *  alone — not per season or per board — so a season boundary cannot forgive a pattern
- *  mid-window, and alternating between the 1v1 and 2v2 queues does not reset the count. */
-export async function recentDodgeCount(userId: string, hours: number): Promise<number> {
+/**
+ * The ranked board this player most recently played on.
+ *
+ * Used when a behaviour charge has no board of its own — a moderator upholding reports days
+ * after the fact. Charging their most recent board puts the penalty where the player will
+ * actually see it, instead of on a game/mode they may never open. Null ⇒ they have no ranked
+ * history at all, and the charge is dropped rather than invented.
+ */
+export async function lastRankedBoard(
+  userId: string,
+): Promise<{ mode: '1v1' | '2v2'; game: Game; act: number } | null> {
+  const rows = await q<{ mode: string; game: string; act: number }>(
+    `select mode, game, act from elo_ratings
+      where user_id = $1 order by updated_at desc limit 1`,
+    [userId],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    mode: r.mode === '2v2' ? '2v2' : '1v1',
+    game: (r.game === 'chain' ? 'chain' : 'decode') as Game,
+    act: Number(r.act ?? 0),
+  };
+}
+
+// ----------------------------------------------------- account standing ------
+
+export interface StandingSnapshot {
+  score: number;
+  /** epoch ms the ranked queue reopens, or null */
+  restrictedUntil: number | null;
+}
+
+const snap = (r: { score: number; restricted_until: string | null } | undefined): StandingSnapshot => ({
+  score: clampScore(Number(r?.score ?? STANDING_MAX)),
+  restrictedUntil: r?.restricted_until ? new Date(r.restricted_until).getTime() : null,
+});
+
+/**
+ * This account's standing, with TIME HEALING applied on read.
+ *
+ * The heal is lazy rather than a scheduled job, and it advances `healed_at` by the same
+ * whole days it credits — in ONE statement, so two concurrent reads cannot both credit the
+ * same day. A cron would be a second thing to deploy and a second thing to be wrong about a
+ * player's number.
+ *
+ * Creates the row on first sight: a player with no row has never offended, which is exactly
+ * a full score, and seeding it here means every later write is a plain update.
+ */
+export async function getStanding(userId: string): Promise<StandingSnapshot> {
+  return tx(async (query) => {
+    await query(
+      `insert into account_standing (user_id) values ($1) on conflict (user_id) do nothing`,
+      [userId],
+    );
+    const healedRows = await query<{ score: number; restricted_until: string | null }>(
+      `update account_standing
+          set score = least($2::int, score + (floor(extract(epoch from (now() - healed_at)) / 86400)::int * $3::int)),
+              healed_at = healed_at + (floor(extract(epoch from (now() - healed_at)) / 86400) || ' days')::interval,
+              updated_at = now()
+        where user_id = $1
+          and score < $2::int
+          and now() - healed_at >= interval '1 day'
+        returning score, restricted_until`,
+      [userId, STANDING_MAX, HEAL_PER_DAY],
+    );
+    if (healedRows.length) return snap(healedRows[0]);
+    const rows = await query<{ score: number; restricted_until: string | null }>(
+      `select score, restricted_until from account_standing where user_id = $1`,
+      [userId],
+    );
+    return snap(rows[0]);
+  });
+}
+
+/** standings for a set of accounts, for the moderation queue. Missing rows are simply
+ *  absent — the caller reads that as a full score rather than paying for a write. */
+export async function standingsFor(userIds: string[]): Promise<Record<string, StandingSnapshot>> {
+  if (!userIds.length) return {};
+  const rows = await q<{ user_id: string; score: number; restricted_until: string | null }>(
+    `select user_id, score, restricted_until from account_standing where user_id = any($1::text[])`,
+    [userIds],
+  );
+  const out: Record<string, StandingSnapshot> = {};
+  for (const r of rows) out[r.user_id] = snap(r);
+  return out;
+}
+
+/** How many offences of ONE kind this player has inside the escalation window. Counted by
+ *  TIME alone — not per season or per board — so a season boundary cannot forgive a pattern
+ *  mid-window, and switching between the 1v1 and 2v2 queues does not reset it. */
+export async function recentStandingCount(userId: string, kind: string, hours: number): Promise<number> {
   const rows = await q<{ n: number }>(
-    `select count(*)::int as n from ranked_dodges
-      where user_id = $1 and at > now() - $2::interval`,
-    [userId, `${Math.max(1, Math.floor(hours))} hours`],
+    `select count(*)::int as n from standing_events
+      where user_id = $1 and kind = $2 and at > now() - $3::interval`,
+    [userId, kind, `${Math.max(1, Math.floor(hours))} hours`],
   );
   return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Commit one offence: the new score and lock, plus a LEDGER row.
+ *
+ * Both in one transaction because they are one fact. A score that moved with no event to
+ * explain it is exactly the thing that makes a penalty system feel arbitrary, and it is the
+ * first thing a player asks a moderator about.
+ *
+ * `healed_at` is reset to now: healing measures time since the last offence, so an offence
+ * has to restart that clock or a player could bank idle days and spend them immediately.
+ */
+export async function writeStandingEvent(
+  userId: string,
+  v: StandingVerdict,
+  ctx: { game?: Game; mode?: string; roomCode?: string } = {},
+): Promise<void> {
+  await tx(async (query) => {
+    await query(
+      `insert into account_standing (user_id, score, restricted_until, healed_at, updated_at)
+       values ($1, $2, $3, now(), now())
+       on conflict (user_id) do update
+         set score = excluded.score,
+             restricted_until = greatest(
+               coalesce(account_standing.restricted_until, to_timestamp(0)),
+               coalesce(excluded.restricted_until, to_timestamp(0))
+             ),
+             healed_at = now(),
+             updated_at = now()`,
+      [userId, v.scoreAfter, v.restrictedUntil ? new Date(v.restrictedUntil).toISOString() : null],
+    );
+    await query(
+      `insert into standing_events (user_id, kind, points, score_after, cooldown_min, rating_charge, game, mode, room_code)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [userId, v.kind, v.points, v.scoreAfter, v.cooldownMin, v.ratingCharge,
+       ctx.game ? g(ctx.game) : null, ctx.mode ?? null, ctx.roomCode ?? null],
+    );
+  });
+}
+
+/**
+ * Credit a completed, clean ranked match.
+ *
+ * Only touches rows that EXIST and are below the maximum: a player who has never offended
+ * needs no row, and creating one for every finished match would write a table's worth of
+ * "100" for nothing. The restriction clock is untouched — serving a cooldown and playing
+ * your way back are separate things, and a match played before the lock lands should not
+ * shorten it.
+ */
+export async function healStandingForCleanMatch(userIds: string[]): Promise<void> {
+  if (!userIds.length) return;
+  await q(
+    `update account_standing
+        set score = least($2::int, score + $3::int), updated_at = now()
+      where user_id = any($1::text[]) and score < $2::int`,
+    [userIds, STANDING_MAX, HEAL_PER_CLEAN_MATCH],
+  );
+}
+
+/** the ledger for one player, newest first — the player's own "why" and the moderator's
+ *  history in the same shape */
+export async function listStandingEvents(userId: string, limit = 20): Promise<StandingEventRow[]> {
+  const rows = await q<{
+    id: string; kind: string; points: number; score_after: number;
+    cooldown_min: number; rating_charge: number; game: string | null; at: string;
+  }>(
+    `select id, kind, points, score_after, cooldown_min, rating_charge, game, at
+       from standing_events where user_id = $1 order by at desc limit $2`,
+    [userId, Math.min(100, Math.max(1, Math.floor(limit)))],
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    kind: r.kind,
+    points: Number(r.points),
+    scoreAfter: Number(r.score_after),
+    cooldownMin: Number(r.cooldown_min),
+    ratingCharge: Number(r.rating_charge),
+    game: r.game,
+    at: r.at,
+  }));
+}
+
+export interface StandingEventRow {
+  id: string;
+  kind: string;
+  points: number;
+  scoreAfter: number;
+  cooldownMin: number;
+  ratingCharge: number;
+  game: string | null;
+  at: string;
 }
 
 // ------------------------------------------------------- player reports ------
@@ -1416,6 +1595,18 @@ export async function submitReport(r: {
     [r.reportedId, r.reporterId, r.reason, r.detail?.slice(0, 300) || null, r.roomCode ?? '', g(r.game)],
   );
   return rows.length > 0;
+}
+
+/** How many DISTINCT people have reported this player out of one room. The standing nudge
+ *  is priced per reporter (and capped): one person filing three categories is one opinion,
+ *  three people filing one each is three. */
+export async function distinctReporters(reportedId: string, roomCode: string): Promise<number> {
+  const rows = await q<{ n: number }>(
+    `select count(distinct reporter_id)::int as n from player_reports
+      where reported_id = $1 and room_code = $2`,
+    [reportedId, roomCode],
+  );
+  return Number(rows[0]?.n ?? 0);
 }
 
 /**

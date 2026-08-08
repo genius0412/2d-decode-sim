@@ -276,18 +276,6 @@ const serverPairs = (t) => {
     // header, and no single coloured-text value clears AA on all three grounds.
     ['SupporterBadge glyph', t('--ds-gold-ink'), t('--ds-gold'), AA],
 
-    /* RANKED TIER SHIELDS. Fills with ONE fixed ink (--ds-rank-ink), same category as
-       gold: the shield is a coloured badge carrying dark type, never type itself. All
-       six must clear AA against that single ink — a tier lightened to look nicer next
-       to its neighbour would take its own initial and division pips below AA, and the
-       shield is exactly where a player looks to identify the tier at a glance. */
-    ['Rank shield · Rookie', t('--ds-rank-ink'), t('--ds-rank-rookie'), AA],
-    ['Rank shield · Meet', t('--ds-rank-ink'), t('--ds-rank-meet'), AA],
-    ['Rank shield · Qualifier', t('--ds-rank-ink'), t('--ds-rank-qualifier'), AA],
-    ['Rank shield · Regional', t('--ds-rank-ink'), t('--ds-rank-regional'), AA],
-    ['Rank shield · Championship', t('--ds-rank-ink'), t('--ds-rank-championship'), AA],
-    ['Rank shield · Worlds', t('--ds-rank-ink'), t('--ds-rank-worlds'), AA],
-    ['Rank shield · Inspire', t('--ds-rank-ink'), t('--ds-rank-inspire'), AA],
     // ...and the staff variants of the same badge. Unlike gold, both of these
     // fills INVERT between themes, so checking them in each theme is the whole
     // point: the assertion is that the PAIR stays legible, not that the hex does.
@@ -309,6 +297,20 @@ const serverPairs = (t) => {
     ['.ds-opt.blue.on .ot', t('--ds-blue-ink'), composite(t('--ds-blue'), 0.12, panel), AA],
     ['.ds-startpos-status.ok', t('--ds-ok-ink'), composite(t('--ds-ok'), 0.12, panel), AA],
     ['.ds-startpos-status.bad', t('--ds-red-ink'), composite(t('--ds-red'), 0.12, panel), AA],
+
+    /* ACCOUNT STANDING. The tier is carried by the SEMANTIC tokens (ok / warn / red) rather
+       than a ramp of its own — but the card sits on `--ds-tile`, not the panel, so the dots
+       and the meter fill need checking against THAT ground (1.4.11 non-text), and the lock
+       notice paints red ink on a red tint like the option rows above. The tier NAME is plain
+       ink beside the dot, deliberately, so colour is never the only carrier. */
+    ['.ds-standing-dot good on tile (1.4.11)', t('--ds-ok-ink'), tile, NON_TEXT],
+    ['.ds-standing-dot warning on tile (1.4.11)', t('--ds-warn'), tile, NON_TEXT],
+    ['.ds-standing-dot restricted on tile (1.4.11)', t('--ds-red-ink'), tile, NON_TEXT],
+    ['.ds-standing-blurb on tile', t('--ds-mut'), tile, AA],
+    ['.ds-standing-name on tile', t('--ds-ink'), tile, AA],
+    ['.ds-standing-lock', t('--ds-red-ink'), composite(t('--ds-red'), 0.12, panel), AA],
+    ['.adm-pill.standing', t('--ds-red-ink'), composite(t('--ds-red'), 0.14, panel), AA],
+    ['.adm-pill.standing.ok', t('--ds-ok-ink'), composite(t('--ds-ok'), 0.14, panel), AA],
   ];
 };
 

@@ -1,23 +1,21 @@
 import { dbEnabled } from './db/pool';
 import {
-  actForSeason,
-  applyDodgePenalty,
   currentSeasonNumber,
   ensureProfile,
   ensureSeason,
   personalBest,
-  recentDodgeCount,
+  recentStandingCount,
   recordRank,
   saveReplay,
   submitRecord,
 } from './db/repo';
+import { chargeStanding, creditCleanMatch } from './standing';
 import { persistVersusMatch } from './ranked';
 import { recordScore } from '../src/sim/replay';
 import { simModuleFor } from '../src/games/sim';
-import type { DodgeReport, MatchOutcome, PersistOutcome } from './room';
-import { DODGE_WINDOW_HOURS, dodgePenalty, type DodgeVerdict } from '../src/dodge';
-import { RANK_FLOOR } from '../src/ranks';
-import { BALANCE_VERSION } from '../src/config';
+import type { BehaviourReport, DodgeReport, MatchOutcome, PersistOutcome } from './room';
+import { type DodgeVerdict } from '../src/dodge';
+import { STANDING_WINDOW_HOURS } from '../src/standing';
 
 /**
  * Persist a finished match (off the hot path — called at phase 'post'). The
@@ -136,8 +134,6 @@ export async function persistMatch(o: MatchOutcome): Promise<PersistOutcome> {
 export async function persistDodges(d: DodgeReport): Promise<DodgeVerdict[]> {
   if (!dbEnabled || !d.culprits.length) return [];
   try {
-    const bv = await currentSeasonNumber(BALANCE_VERSION, d.game);
-    const act = await actForSeason(bv, d.game);
     const verdicts: DodgeVerdict[] = [];
     // de-duplicate: one player can be named by two rules at once (absent AND unready), and
     // one abandoned match must never be billed twice
@@ -145,32 +141,48 @@ export async function persistDodges(d: DodgeReport): Promise<DodgeVerdict[]> {
     for (const c of d.culprits) {
       if (seen.has(c.userId)) continue;
       seen.add(c.userId);
-      const prior = await recentDodgeCount(c.userId, DODGE_WINDOW_HOURS);
-      const penalty = dodgePenalty(prior + 1);
-      const { before, after } = await applyDodgePenalty(
-        c.userId, d.mode, act, penalty, RANK_FLOOR, c.kind, d.game,
-      );
-      verdicts.push({
-        userId: c.userId,
-        kind: c.kind,
-        penalty: before - after,
-        count: prior + 1,
-        ratingBefore: before,
-        ratingAfter: after,
+      // STANDING, not rating: a dodge says nothing about how well someone drives (see
+      // src/dodge.ts). Rating only enters this at the bottom of the standing ladder, and
+      // `chargeStanding` is what decides that — not this call site.
+      const standing = await chargeStanding(c.userId, 'dodge', {
+        game: d.game,
+        mode: d.mode,
+        roomCode: d.roomCode,
       });
-      console.log(
-        `[dodge] ${c.userId} ${c.kind} #${prior + 1} in ${DODGE_WINDOW_HOURS}h: ${before} -> ${after} (-${before - after})`,
-      );
+      const count = await recentStandingCount(c.userId, 'dodge', STANDING_WINDOW_HOURS);
+      verdicts.push({ userId: c.userId, kind: c.kind, standing, count });
     }
-    // the INNOCENT get a verdict too, with no penalty — "this wasn't charged to you" is the
-    // difference between a system that reads as fair and one that reads as arbitrary
+    // the INNOCENT get a verdict too, with nothing charged — "this wasn't billed to you" is
+    // the difference between a system that reads as fair and one that reads as arbitrary
     for (const userId of d.rosterUserIds) {
       if (seen.has(userId)) continue;
-      verdicts.push({ userId, kind: null, penalty: 0, count: 0, ratingBefore: 0, ratingAfter: 0 });
+      verdicts.push({ userId, kind: null, standing: null, count: 0 });
     }
     return verdicts;
   } catch (e) {
-    console.error('[dodge] FAILED writing penalties:', e);
+    console.error('[dodge] FAILED charging standing:', e);
     return [];
+  }
+}
+
+/**
+ * Charge (and credit) what a finished ranked match showed about its players.
+ *
+ * Fire-and-forget, like the dodge path: standing is bookkeeping ABOUT a match, and a slow
+ * write must never hold up the results screen or the room teardown.
+ *
+ * The CLEAN CREDIT is the other half of the design and is easy to forget — a system that
+ * only ever subtracts is one nobody can climb out of, so finishing a match you played is
+ * how the debt actually comes off.
+ */
+export async function persistBehaviour(b: BehaviourReport): Promise<void> {
+  if (!dbEnabled) return;
+  try {
+    for (const o of b.offenders) {
+      await chargeStanding(o.userId, o.kind, { game: b.game, mode: b.mode, roomCode: b.roomCode });
+    }
+    await creditCleanMatch(b.cleanUserIds);
+  } catch (e) {
+    console.error('[standing] FAILED recording match behaviour:', e);
   }
 }

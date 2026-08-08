@@ -9,7 +9,8 @@ import type { NetSession } from '../net/session';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
-import { DODGE_REASON, DODGE_WINDOW_HOURS, DODGE_PENALTIES, type DodgeVerdict } from '../dodge';
+import { DODGE_REASON, type DodgeVerdict } from '../dodge';
+import { STANDING_MAX, STANDING_WINDOW_HOURS, lockRemaining, tierOf } from '../standing';
 import { expandLabel, widenHint, queuesFor } from './queueDepth';
 import { parkQueue, takeQueue, updateQueue, dropQueue, elapsedSeconds, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
@@ -88,6 +89,14 @@ export function Matchmaking({
    *  a rating drop the player is not told about is the thing that makes a penalty feel
    *  arbitrary. `null` for a player who was NOT at fault, which is worth saying out loud. */
   const [dodge, setDodge] = useState<{ yours: DodgeVerdict | null; others: DodgeVerdict[] } | null>(null);
+  // the ranked queue refused us on ACCOUNT STANDING (a live clock, so `tick` re-renders it)
+  const [lock, setLock] = useState<{ until: number; score: number } | null>(null);
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!lock || lock.until <= tick) return;
+    const id = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [lock, tick]);
   // set once a paired match opens its pre-match strategy window (see MatchStrategy)
   const [strategy, setStrategy] = useState<StrategyState | null>(null);
 
@@ -240,6 +249,7 @@ export function Matchmaking({
       joinAssignedMatch(room);
     });
     lobby.on('dodgeVerdict', (yours, others) => setDodge({ yours, others }));
+    lobby.on('standingLock', (until, score) => { setLock({ until, score }); setSearching(false); });
     lobby.on('error', (msg) => strategyCancelled(msg));
     lobby.on('closed', () => {
       if (!startedRef.current && !assigningRef.current)
@@ -343,25 +353,58 @@ export function Matchmaking({
     if (!dodge) return null;
     const y = dodge.yours;
     if (y?.kind) {
+      const st = y.standing;
       const nth = y.count === 1 ? 'first' : y.count === 2 ? 'second' : `${y.count}th`;
       return (
         <div className="ds-dodge charged">
-          <b>−{y.penalty} rating · {y.ratingBefore} → {y.ratingAfter}</b>
+          {/* STANDING, not rating — and the number is the headline because it is the thing
+              that actually changed. A dodge only ever reaches the rating after a warning and
+              two cooldowns have been ignored, and when it does, it is said plainly. */}
+          <b>
+            {st ? `−${st.points} standing · ${st.scoreBefore} → ${st.scoreAfter}` : 'Match cancelled'}
+            {st && st.ratingCharge > 0 && ` · −${st.ratingCharge} rating`}
+          </b>
           <span>
-            You {DODGE_REASON[y.kind]}. That is your {nth} in {DODGE_WINDOW_HOURS} hours —
-            {y.count < DODGE_PENALTIES.length ? ' the next one costs more.' : ' further ones cost the same.'}
+            You {DODGE_REASON[y.kind]}. That is your {nth} in {STANDING_WINDOW_HOURS} hours
+            {st && st.cooldownMin > 0
+              ? ` — ranked is locked for ${st.cooldownMin >= 60 ? `${Math.round(st.cooldownMin / 60)}h` : `${st.cooldownMin} minutes`}.`
+              : ' — repeats cost more, and enough of them start locking the queue.'}
           </span>
+          {st && (
+            <span className="ds-muted">
+              Account standing: {tierOf(st.scoreAfter).name.toLowerCase()}. Finishing matches earns it back.
+            </span>
+          )}
         </div>
       );
     }
     const who = dodge.others.filter((o) => o.kind).length;
     return (
       <div className="ds-dodge clear">
-        <b>Your rating was not charged</b>
+        <b>Nothing was charged to you</b>
         <span>
           {who > 0
             ? `${who === 1 ? 'A player' : `${who} players`} didn’t make it to the match. You were ready — this one is on them.`
             : 'The match was cancelled before it started.'}
+        </span>
+      </div>
+    );
+  };
+
+  /** RANKED IS LOCKED: the queue refused this account because its standing carries a
+   *  cooldown. Its own notice rather than an error string — a lock has a clock, so it counts
+   *  down and the button comes back on its own. */
+  const lockNote = (): JSX.Element | null => {
+    if (!lock || lock.until <= tick) return null;
+    return (
+      <div className="ds-dodge charged">
+        <b>Ranked is locked for {lockRemaining(lock.until, tick)}</b>
+        <span>
+          Your account standing is {tierOf(lock.score).name.toLowerCase()} ({lock.score}/{STANDING_MAX}).{' '}
+          {tierOf(lock.score).blurb}
+        </span>
+        <span className="ds-muted">
+          Custom rooms and solo practice are unaffected — and finishing matches you start is what earns it back.
         </span>
       </div>
     );
@@ -410,6 +453,7 @@ export function Matchmaking({
       joinAssignedMatch(room);
     });
     lobby.on('dodgeVerdict', (yours, others) => setDodge({ yours, others }));
+    lobby.on('standingLock', (until, score) => { setLock({ until, score }); setSearching(false); });
     lobby.on('error', (msg) => strategyCancelled(msg));
     lobby.on('closed', () => {
       if (!startedRef.current && !assigningRef.current)
@@ -462,6 +506,7 @@ export function Matchmaking({
       onStart(new ServerSession(transport, lobby.isHost(), m, lobby.clientId, room));
     });
     lobby.on('dodgeVerdict', (yours, others) => setDodge({ yours, others }));
+    lobby.on('standingLock', (until, score) => { setLock({ until, score }); setSearching(false); });
     lobby.on('error', (msg) => strategyCancelled(msg));
     lobby.on('closed', () => {
       if (!startedRef.current) strategyCancelled('Lost connection to the match server.');
@@ -594,6 +639,7 @@ export function Matchmaking({
           </p>
           {error && <p className="ds-form-err">⚠ {error}</p>}
           {dodgeNote()}
+          {lockNote()}
           <div className="ds-actions">
             <button className="ds-cta ghost" onClick={cancel}>
               CANCEL
@@ -620,6 +666,7 @@ export function Matchmaking({
         </p>
         {error && <p className="ds-form-err">⚠ {error}</p>}
           {dodgeNote()}
+          {lockNote()}
         <div className="ds-actions">
           {!noWiden && multiServer() && (
             <button className="ds-cta ghost" onClick={expand}>
@@ -671,6 +718,7 @@ export function Matchmaking({
       )}
       {error && <p className="ds-form-err">⚠ {error}</p>}
           {dodgeNote()}
+          {lockNote()}
       {restartPending && (
         <p className="ds-form-err">⚠ Server is restarting shortly - queueing is paused for a moment.</p>
       )}

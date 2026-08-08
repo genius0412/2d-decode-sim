@@ -9,6 +9,8 @@ import { verifyAuthToken } from './auth';
 import { initPhysics } from '../src/sim/physicsEngine';
 import { migrate } from './db/migrate';
 import { persistMatch, persistDodges } from './persist';
+import { chargeStanding, rankedLock } from './standing';
+import { lockRemaining, tierOf } from '../src/standing';
 import { isReportReason, REPORT_DETAIL_MAX } from '../src/report';
 import { handleApi } from './api';
 import { Matchmaker } from './matchmaking';
@@ -42,6 +44,10 @@ import {
   adminPresence,
   recentMatches,
   submitReport,
+  distinctReporters,
+  getStanding,
+  listStandingEvents,
+  standingsFor,
   listReportedUsers,
   listReportsFor,
   setReportsStatus,
@@ -692,15 +698,42 @@ const httpServer = createServer((req, res) => {
             return;
           }
           const n = await setReportsStatus(target, status, user?.userId ?? 'admin');
+          // UPHELD is the only event in the standing system a human has actually verified,
+          // so it is the only one big enough to move a player two tiers — and unlike the raw
+          // reports it replaces, it restricts. DISMISSED deliberately does nothing: the raw
+          // nudges those reports already applied heal off on their own, and reversing them
+          // would need a per-report ledger to undo exactly, which is a lot of machinery for
+          // a few points that expire anyway.
+          if (status === 'reviewed' && n > 0) {
+            void chargeStanding(target, 'reportUpheld', {}).catch((e) =>
+              console.error('[standing] upheld charge failed:', e),
+            );
+          }
           res.writeHead(200, { ...cors, 'content-type': 'application/json' });
           res.end(JSON.stringify({ ok: true, updated: n }));
           return;
         }
-        const body = target
-          ? { reports: await listReportsFor(target), matches: await userRecentMatches(target) }
-          : { users: await listReportedUsers() };
+        if (target) {
+          const [reports, matches, standings, events] = await Promise.all([
+            listReportsFor(target),
+            userRecentMatches(target),
+            standingsFor([target]),
+            listStandingEvents(target, 20),
+          ]);
+          res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ reports, matches, standing: standings[target] ?? null, standingEvents: events }));
+          return;
+        }
+        // The QUEUE carries each player's standing alongside the report counts. It is the
+        // corroborating half of a report: a name with twelve reports and a full standing is
+        // a very different case from one the SERVER has independently watched leave three
+        // matches, and a moderator should not have to open a row to tell them apart.
+        const users = await listReportedUsers();
+        const standings = await standingsFor(users.map((u) => u.userId));
         res.writeHead(200, { ...cors, 'content-type': 'application/json' });
-        res.end(JSON.stringify(body));
+        res.end(JSON.stringify({
+          users: users.map((u) => ({ ...u, standing: standings[u.userId]?.score ?? null })),
+        }));
         return;
       }
       /**
@@ -1194,6 +1227,42 @@ const httpServer = createServer((req, res) => {
     res.end(JSON.stringify(body));
     return;
   }
+  /**
+   * YOUR OWN ACCOUNT STANDING, with the ledger behind it.
+   *
+   * Authed and self-only: the standing endpoint answers for the account on the token and
+   * takes no user parameter at all, so it cannot be turned into a lookup for whether some
+   * other player has been penalised. Moderators see other people's standing through the
+   * admin reports API, which is separately gated.
+   *
+   * The EVENTS come with it, unasked. A number that dropped with no explanation attached is
+   * the thing that makes a penalty system feel arbitrary, and the player should not have to
+   * ask a human what happened to them.
+   */
+  if (req.method === 'GET' && new URL(req.url ?? '/', 'http://x').pathname === '/api/standing') {
+    const head = { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' };
+    const auth = req.headers['authorization'];
+    const token = typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
+    void (async () => {
+      const user = await verifyAuthToken(token).catch(() => null);
+      if (!user || !dbEnabled) {
+        res.writeHead(200, head);
+        res.end(JSON.stringify({ standing: null }));
+        return;
+      }
+      try {
+        const s = await getStanding(user.userId);
+        const events = await listStandingEvents(user.userId, 20);
+        res.writeHead(200, head);
+        res.end(JSON.stringify({ standing: { score: s.score, restrictedUntil: s.restrictedUntil }, events }));
+      } catch (e) {
+        console.error('[standing] read failed:', e);
+        res.writeHead(200, head);
+        res.end(JSON.stringify({ standing: null }));
+      }
+    })();
+    return;
+  }
   if (req.method === 'GET' && new URL(req.url ?? '/', 'http://x').pathname === '/api/presence') {
     // `?full=1` opts out of the idle short-circuit in `aggregatePresence` — the
     // ranked screen asks for it because its queue depth is a number people act on.
@@ -1609,7 +1678,23 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
             detail: typeof msg.detail === 'string' ? msg.detail.slice(0, REPORT_DETAIL_MAX) : null,
             roomCode: room!.code,
             game: room!.gameId,
-          }).catch((e) => console.error('[report] write failed:', e));
+          })
+            .then((fresh) => {
+              // A NEW report (not a duplicate) nudges the reported player's standing. It is
+              // the weakest evidence in the system — one person's opinion, filed in a temper
+              // as often as not — so it moves the number a little, never restricts anything,
+              // and is capped per match inside `applyStandingEvent`. What it is really for is
+              // SURFACING someone to a moderator; the moderator upholding it is what bites.
+              if (!fresh) return;
+              return distinctReporters(r.reportedId, room!.code).then((count) =>
+                chargeStanding(r.reportedId, 'report', {
+                  game: room!.gameId,
+                  roomCode: room!.code,
+                  count,
+                }),
+              );
+            })
+            .catch((e) => console.error('[report] write failed:', e));
         }
         send({ t: 'reported', ok: true });
       } else if (msg.t === 'queue') {
@@ -1633,6 +1718,7 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
             return;
           }
           markAuthed(u.userId);
+          const enqueueNow = (): void => {
           void verifyParty(u.userId, msg).then((party) => {
             if (party === 'bad-token') {
               // Never silently fall back to the OPEN queue here. The player asked
@@ -1675,6 +1761,32 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
               room = r; // dev/no-DB local fallback only
             },
             });
+          });
+          };
+          // ACCOUNT STANDING gate — checked HERE rather than in the matchmaker, because a
+          // locked player must never enter the pool at all. Refusing them at PAIRING time
+          // would mean the other players had already been staged and would have to be
+          // requeued, which costs the wrong people their minutes. Fails OPEN (see
+          // `rankedLock`): a database that cannot answer must not lock everybody out.
+          void rankedLock(u.userId).then((lock) => {
+            if (!lock) {
+              enqueueNow();
+              return;
+            }
+            const tier = tierOf(lock.score);
+            if ((Array.isArray(msg.caps) ? msg.caps : []).includes('standing')) {
+              // a lock is a state with a CLOCK, so the client is sent the deadline and
+              // counts it down itself rather than being handed a sentence that is wrong
+              // thirty seconds later
+              send({ t: 'standingLock', until: lock.until, score: lock.score, tier: tier.key });
+            } else {
+              send({
+                t: 'error',
+                message:
+                  `Ranked is locked for another ${lockRemaining(lock.until, Date.now())} ` +
+                  `- your account standing is ${tier.name.toLowerCase()}.`,
+              });
+            }
           });
         });
       } else if (msg.t === 'expandSearch') {

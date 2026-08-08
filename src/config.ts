@@ -84,6 +84,11 @@ export const SIM_VERSION = 2;
  * how hard each result swings the rating — it just no longer drives the UI. */
 export const PLACEMENT_GAMES = 5;
 
+/** Ratings never print below this. Glicko has no floor of its own, so a long enough losing
+ *  run — or a run of behaviour charges (see `src/standing.ts`) — would otherwise show a
+ *  player a number that reads as broken rather than as bad. */
+export const RATING_FLOOR = 400;
+
 // -------------------------------------------------------------- scoring ----
 export const PTS_LEAVE = 3;
 export const PTS_CLASSIFIED = 3;

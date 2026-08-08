@@ -698,6 +698,48 @@ export async function adminFetchMatches(limit = 40, game?: GameId): Promise<Admi
 }
 
 /** the moderation queue: one row per reported player, most recently reported first */
+/** one row of the account-standing ledger, as the server sends it */
+export interface StandingEvent {
+  id: string;
+  kind: string;
+  points: number;
+  scoreAfter: number;
+  cooldownMin: number;
+  ratingCharge: number;
+  game: string | null;
+  at: string;
+}
+
+export interface StandingInfo {
+  score: number;
+  /** epoch ms the ranked queue reopens, or null */
+  restrictedUntil: number | null;
+}
+
+/**
+ * THIS account's standing and the offences behind it.
+ *
+ * Self-only by construction — the endpoint takes no user parameter, so there is no version
+ * of this call that reads someone else's standing. Null (signed out, no server, no database)
+ * simply hides the panel: a player with no account has nothing to be in bad standing about.
+ */
+export async function fetchStanding(): Promise<{ standing: StandingInfo | null; events: StandingEvent[] }> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return { standing: null, events: [] };
+  try {
+    const res = await fetch(`${base}/api/standing`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return { standing: null, events: [] };
+    const body = (await res.json()) as { standing: StandingInfo | null; events?: StandingEvent[] };
+    return { standing: body.standing ?? null, events: body.events ?? [] };
+  } catch {
+    return { standing: null, events: [] };
+  }
+}
+
 export async function adminFetchReports(): Promise<ReportedUser[] | null> {
   const base = gameServerHttpUrl();
   const token = await getAuthToken();
@@ -719,6 +761,8 @@ export async function adminFetchReports(): Promise<ReportedUser[] | null> {
 export async function adminFetchReportedUser(userId: string): Promise<{
   reports: ReportRow[];
   matches: ModMatch[];
+  standing: StandingInfo | null;
+  standingEvents: StandingEvent[];
 } | null> {
   const base = gameServerHttpUrl();
   const token = await getAuthToken();
@@ -729,7 +773,11 @@ export async function adminFetchReportedUser(userId: string): Promise<{
       cache: 'no-store',
     });
     if (!res.ok) return null;
-    return (await res.json()) as { reports: ReportRow[]; matches: ModMatch[] };
+    const body = (await res.json()) as {
+      reports: ReportRow[]; matches: ModMatch[];
+      standing?: StandingInfo | null; standingEvents?: StandingEvent[];
+    };
+    return { ...body, standing: body.standing ?? null, standingEvents: body.standingEvents ?? [] };
   } catch {
     return null;
   }

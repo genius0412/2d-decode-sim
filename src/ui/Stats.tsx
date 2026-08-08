@@ -5,6 +5,7 @@ import { gameServerConfigured } from '../net/env';
 import { authEnabled, authClient } from '../lib/authClient';
 import { CareerView } from './CareerView';
 import { ShareButton } from './ShareButton';
+import { StandingCard } from './StandingCard';
 
 export interface CareerNav {
   onWatch?: (replayId: string) => void;
@@ -88,6 +89,10 @@ function StatsSignedIn({ nav }: { nav: CareerNav }) {
       loadStats={loadStats}
       fetchPage={fetchPage}
       nameFallback={nameFallback}
+      // ACCOUNT STANDING is self-only, so it hangs off THIS screen rather than the shared
+      // CareerPanel, which also renders public profiles. Someone else's penalties are
+      // between them and the moderators.
+      head={() => <StandingCard />}
       headerAction={(stats) =>
         stats?.username ? <ShareButton username={stats.username} label="Share my profile" /> : undefined
       }

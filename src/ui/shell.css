@@ -122,27 +122,6 @@
      brand accent reads as decoration). Burnt amber clears 4.5:1 on the floor. */
   --ds-warn: #8f5400;
 
-  /* ---- RANKED TIER ACCENTS -------------------------------------------------
-     FILLS WITH FIXED INK, the same category as --ds-gold and the alliance chips:
-     a tier shield is a coloured badge carrying dark type, never type itself, so
-     these do NOT invert. `--ds-rank-ink` is the one ink they all carry, which is
-     why every fill below has to clear AA against that single value rather than
-     against whichever surface it lands on.
-
-     The ramp is bronze -> silver -> green -> blue -> purple -> gold: conventional
-     enough to read as a ladder at a glance, and monotonic in perceived "worth" so
-     nobody has to learn it. Colour NEVER carries the rank alone — the badge always
-     prints its tier name, and the shield its initial plus division pips — because
-     six accents on one ladder will collide for someone. */
-  --ds-rank-ink: #0f1214;
-  --ds-rank-rookie: #96a0b0;
-  --ds-rank-meet: #c07f4e;
-  --ds-rank-qualifier: #a6b3c2;
-  --ds-rank-regional: #4aa877;
-  --ds-rank-championship: #5b93e0;
-  --ds-rank-worlds: #a77bf0;
-  --ds-rank-inspire: #f5a623;
-
   /* ---- HUD cards floating over the DARK field canvas (src/render/ is untouched) ----
      These carry a 1px stroke and NO block shadow (an offset block on a dark field
      reads as a stray highlight, not as depth). The stroke is what separates the card
@@ -4215,136 +4194,6 @@ button.ds-key:active {
   white-space: nowrap;
 }
 
-/* =====================================================================
-   RANKED STANDINGS — the tier badge (src/ui/RankBadge.tsx)
-
-   One component in three sizes, so a player recognises their rank instantly
-   whether it is on the results screen, the career panel or a profile. The tier
-   accent is applied ONCE here via `data-tier`, and everything inside inherits it
-   through `currentColor` — adding a tier is a token plus one line, not a new
-   rule per element.
-   ===================================================================== */
-.ds-rank {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--ds-rank-rookie); /* overridden per tier below; the shield reads it */
-}
-.ds-rank[data-tier='rookie'] { color: var(--ds-rank-rookie); }
-.ds-rank[data-tier='meet'] { color: var(--ds-rank-meet); }
-.ds-rank[data-tier='qualifier'] { color: var(--ds-rank-qualifier); }
-.ds-rank[data-tier='regional'] { color: var(--ds-rank-regional); }
-.ds-rank[data-tier='championship'] { color: var(--ds-rank-championship); }
-.ds-rank[data-tier='worlds'] { color: var(--ds-rank-worlds); }
-.ds-rank[data-tier='inspire'] { color: var(--ds-rank-inspire); }
-
-.ds-rank-shield {
-  width: 38px;
-  height: 43px;
-  flex: none;
-}
-.ds-rank.sm .ds-rank-shield { width: 26px; height: 29px; }
-.ds-rank.lg .ds-rank-shield { width: 58px; height: 65px; }
-.ds-rank-shield-fill { fill: currentColor; }
-/* the edge is a darkened rim of the SAME hue rather than a border token: a shared
-   line colour made the six shields read as one component in six paint jobs */
-.ds-rank-shield-edge { stroke: color-mix(in srgb, currentColor 55%, #000); stroke-width: 1.5; }
-.ds-rank-shield-ch {
-  fill: var(--ds-rank-ink);
-  font: 800 15px/1 var(--ds-font);
-  letter-spacing: -0.02em;
-}
-.ds-rank.sm .ds-rank-shield-ch { font-size: 15px; }
-.ds-rank-pipdot { fill: var(--ds-rank-ink); opacity: 0.85; }
-
-.ds-rank-col {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-/* the LABEL is plain ink, not the tier accent. Six accents as type on the panel would
-   be six new contrast pairs to defend, and three of them could not clear AA without
-   being lightened into each other — the shield carries the colour, the words carry
-   the meaning. */
-.ds-rank-label {
-  font: 800 15px/1.15 var(--ds-font);
-  color: var(--ds-ink);
-  letter-spacing: -0.01em;
-}
-.ds-rank.sm .ds-rank-label { font-size: 13px; }
-.ds-rank.lg .ds-rank-label { font-size: 22px; }
-.ds-rank-sub {
-  font: 600 11px/1.2 var(--ds-font-mono);
-  color: var(--ds-mut);
-}
-.ds-rank.lg .ds-rank-sub { font-size: 13px; }
-
-.ds-rank-bar {
-  display: block;
-  height: 5px;
-  margin-top: 3px;
-  border-radius: 999px;
-  background: var(--ds-tile);
-  border: 1px solid var(--ds-line);
-  overflow: hidden;
-  min-width: 90px;
-}
-.ds-rank.lg .ds-rank-bar { height: 8px; min-width: 160px; }
-.ds-rank-fill {
-  display: block;
-  height: 100%;
-  background: currentColor;
-  border-radius: 999px;
-  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-/* the compact mark, for a table cell or a name row */
-.ds-rank-pip {
-  display: inline-flex;
-  align-items: baseline;
-  justify-content: center;
-  min-width: 22px;
-  padding: 1px 5px;
-  border-radius: 5px;
-  font: 800 11px/1.4 var(--ds-font-mono);
-  color: var(--ds-rank-ink);
-  background: var(--ds-rank-rookie);
-}
-.ds-rank-pip[data-tier='rookie'] { background: var(--ds-rank-rookie); }
-.ds-rank-pip[data-tier='meet'] { background: var(--ds-rank-meet); }
-.ds-rank-pip[data-tier='qualifier'] { background: var(--ds-rank-qualifier); }
-.ds-rank-pip[data-tier='regional'] { background: var(--ds-rank-regional); }
-.ds-rank-pip[data-tier='championship'] { background: var(--ds-rank-championship); }
-.ds-rank-pip[data-tier='worlds'] { background: var(--ds-rank-worlds); }
-.ds-rank-pip[data-tier='inspire'] { background: var(--ds-rank-inspire); }
-.ds-rank-pip sub { font-size: 8px; }
-
-/* PROMOTION / DEMOTION callout on the results screen — the one moment the ladder is
-   worth interrupting for. Promotion borrows the tier accent it just reached; demotion
-   uses the danger ink rather than a red FILL, because it sits as type on the panel. */
-.ds-rank-change {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font: 800 11px/1.4 var(--ds-font-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.ds-rank-change.up {
-  color: var(--ds-ok-ink);
-  background: color-mix(in srgb, var(--ds-ok) 14%, var(--ds-panel));
-  border: 1px solid color-mix(in srgb, var(--ds-ok) 40%, var(--ds-line));
-}
-.ds-rank-change.down {
-  color: var(--ds-red-ink);
-  background: color-mix(in srgb, var(--ds-red) 12%, var(--ds-panel));
-  border: 1px solid color-mix(in srgb, var(--ds-red) 40%, var(--ds-line));
-}
-
 /* the DODGE verdict, shown when a ranked pairing was cancelled */
 .ds-dodge {
   display: flex;
@@ -4366,13 +4215,30 @@ button.ds-key:active {
 }
 .ds-dodge b { color: var(--ds-ink); }
 
-/* the two standing cards at the top of the career panel */
-.ds-standings {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 12px;
+/* `.ds-muted` — the quiet sibling of whatever it sits in. It is used in ~27 places and, up
+   to now, was never DEFINED anywhere: every one of them inherited its parent's ink, so text
+   written as an aside read at full weight and colour. Defining it here is what those call
+   sites always meant. Inside a TINTED notice it keeps the notice's own ink at reduced
+   opacity rather than switching to --ds-mut, which would be tuned against the wrong ground. */
+.ds-muted { color: var(--ds-mut); }
+.ds-dodge .ds-muted,
+.ds-standing-lock .ds-muted {
+  color: inherit;
+  opacity: 0.82;
+  font-weight: 600;
 }
-.ds-standing-card {
+
+/* =====================================================================
+   ACCOUNT STANDING (src/ui/StandingCard.tsx)
+
+   The tiers borrow the SEMANTIC tokens rather than minting a colour ramp of their own: good
+   is `--ds-ok`, warning is `--ds-warn`, and the three restricted tiers are `--ds-red`. That
+   is deliberate — this ladder is not a rank to show off, it is a status with a meaning, and
+   those three tokens already carry exactly those meanings everywhere else in the app (and
+   are already in the contrast audit). Colour never carries it alone: the tier is always
+   spelled out beside the dot.
+   ===================================================================== */
+.ds-standing {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -4381,32 +4247,93 @@ button.ds-key:active {
   border: 1px solid var(--ds-line);
   background: var(--ds-tile);
 }
-.ds-standing-mode {
+.ds-standing.good {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.ds-standing-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ds-standing-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+  /* the -ink sibling, not the fill: `--ds-red` is tuned to carry dark type ON it, and at
+     10px on the tile it lands at 2.8:1 — under the 3:1 a non-text indicator has to clear */
+  background: var(--ds-red-ink);
+}
+.ds-standing-dot[data-tier='good'] { background: var(--ds-ok-ink); }
+.ds-standing-dot[data-tier='warning'] { background: var(--ds-warn); }
+.ds-standing-name {
+  font: 750 15px/1 var(--ds-font);
+  color: var(--ds-ink);
+}
+.ds-standing-score {
+  margin-left: auto;
+  font: 700 13px/1 var(--ds-font-mono);
+  color: var(--ds-ink);
+}
+.ds-standing-line { font: 600 13px/1.4 var(--ds-font); color: var(--ds-ink); }
+.ds-standing-bar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ds-mut) 25%, transparent);
+  overflow: hidden;
+}
+.ds-standing-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ds-red-ink);
+}
+.ds-standing[data-tier='good'] .ds-standing-fill { background: var(--ds-ok); }
+.ds-standing[data-tier='warning'] .ds-standing-fill { background: var(--ds-warn); }
+.ds-standing-blurb {
+  margin: 0;
+  font: 600 12px/1.45 var(--ds-font);
+  color: var(--ds-mut);
+}
+.ds-standing-lock {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--ds-round);
+  font: 600 12px/1.4 var(--ds-font);
+  color: var(--ds-red-ink);
+  background: color-mix(in srgb, var(--ds-red) 12%, var(--ds-panel));
+  border: 1px solid color-mix(in srgb, var(--ds-red) 40%, var(--ds-line));
+}
+.ds-standing-cap {
   font: 700 10px/1 var(--ds-font-mono);
   letter-spacing: 0.12em;
   color: var(--ds-mut);
 }
-
-/* the local player's standing inside their ELO row on the results screen. It sits BELOW
-   the numbers rather than beside them: the row is already a name + three figures wide, and
-   a fourth column would push the delta chip off a phone. */
-.elo-standing {
-  /* the ELO row is FLEX, not grid — `grid-column` did nothing here. A 100% basis is what
-     actually pushes this onto its own line under the numbers. */
-  flex: 1 0 100%;
+.ds-standing-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--ds-line);
+  flex-direction: column;
+  gap: 6px;
 }
+.ds-standing-log li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  align-items: baseline;
+}
+.ds-standing-what { font: 600 12px/1.4 var(--ds-font); color: var(--ds-ink); }
+.ds-standing-cost { font: 600 11px/1.4 var(--ds-font-mono); }
 
-/* the tier badge inside the leaderboard's own standing strip — the strip is a fixed-height
-   row, so the badge drops its bar and rides at the smaller size */
-.lb-standing-rank-badge { margin-right: 4px; }
-.lb-standing-rank-badge .ds-rank-bar { display: none; }
+/* the standing pill in the moderation queue — the server's own read on a reported player,
+   next to what other players claim about them */
+.adm-pill.standing { color: var(--ds-red-ink); background: color-mix(in srgb, var(--ds-red) 14%, var(--ds-panel)); }
+.adm-pill.standing.ok { color: var(--ds-ok-ink); background: color-mix(in srgb, var(--ds-ok) 14%, var(--ds-panel)); }
 
 /* REPORT a player — the post-match dialog. Lives inside the results panel, which is itself
    a scroll container on a phone, so this only has to size itself sanely. */

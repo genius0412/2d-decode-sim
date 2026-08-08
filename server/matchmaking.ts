@@ -1,5 +1,5 @@
 import { Room, type Client } from './room';
-import { persistMatch, persistDodges } from './persist';
+import { persistMatch, persistDodges, persistBehaviour } from './persist';
 import { actForSeason, currentSeasonNumber, getRating, createPendingMatch } from './db/repo';
 import { dbEnabled } from './db/pool';
 import { BALANCE_VERSION } from '../src/config';
@@ -360,7 +360,7 @@ export class Matchmaker {
   private localStart(mode: QueueMode, rawGroup: QueueEntry[]): void {
     const group = allianceOrder(rawGroup);
     const code = `mm-${mode}-${roomSeq++}`;
-    const room = new Room(code, () => this.rooms.delete(room), { kind: 'versus', game: group[0].game }, persistMatch, undefined, undefined, persistDodges);
+    const room = new Room(code, () => this.rooms.delete(room), { kind: 'versus', game: group[0].game }, persistMatch, undefined, undefined, persistDodges, (b) => void persistBehaviour(b));
     this.rooms.add(room);
     const half = group.length / 2;
     const seed = (this.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;

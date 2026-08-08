@@ -50,6 +50,9 @@ type Handlers = {
   /** a staged RANKED pairing was cancelled and this is what it cost. Arrives just BEFORE
    *  the `error` that tears the screen down, so the UI can show the reason alongside it. */
   dodgeVerdict: (yours: DodgeVerdict | null, others: DodgeVerdict[]) => void;
+  /** the ranked queue refused this account: its standing carries a cooldown. `until` is an
+   *  epoch ms deadline, so the screen counts it down instead of showing a stale sentence. */
+  standingLock: (until: number, score: number, tier: string) => void;
   closed: () => void;
 };
 
@@ -175,6 +178,8 @@ export class LobbyClient {
       this.handlers.error?.(m.message);
     } else if (m.t === 'dodgeVerdict') {
       this.handlers.dodgeVerdict?.(m.yours, m.others);
+    } else if (m.t === 'standingLock') {
+      this.handlers.standingLock?.(m.until, m.score, m.tier);
     } else if (m.t === 'serverNotice') {
       setServerNotice(m.message ? { kind: m.kind, message: m.message, until: m.until } : null);
     }

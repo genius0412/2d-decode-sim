@@ -34,6 +34,7 @@ import {
 } from '../src/net/protocol';
 import { sanitizePlayerPatch } from '../src/net/sanitize';
 import type { DodgeKind, DodgeVerdict } from '../src/dodge';
+import { judgeParticipation } from '../src/standing';
 import { eloMode, type EloOutcome } from './ranked';
 import type { PendingMatch } from './matchTypes';
 
@@ -45,6 +46,24 @@ export interface DodgeReport {
   game: GameId;
   /** every roster member, so the innocent can be told they were not charged */
   rosterUserIds: string[];
+  /** the room it died in — recorded on the standing ledger so a moderator reading a
+   *  player's history can line an offence up against the match it came from */
+  roomCode: string;
+}
+
+/**
+ * What a finished RANKED match says about the people who played it: who sat it out, who
+ * walked away from it, and who simply played it. The room only ever OBSERVES — it counts
+ * ticks and classifies them with the pure `judgeParticipation` — so the decision about what
+ * any of it costs stays in one place (src/standing.ts) and can be tested without a match.
+ */
+export interface BehaviourReport {
+  offenders: { userId: string; kind: 'afk' | 'leave' }[];
+  /** everyone who played it clean, credited toward working a penalty off */
+  cleanUserIds: string[];
+  mode: '1v1' | '2v2';
+  game: GameId;
+  roomCode: string;
 }
 
 /** what the persistence layer resolves to after a finished match: ranked ELO
@@ -291,7 +310,25 @@ export class Room {
      * charged, which the room relays so nobody is penalised without being told. DB-agnostic:
      * tests/dev pass nothing and the cancel behaves exactly as it always did. */
     private readonly onDodge?: (d: DodgeReport) => void | Promise<DodgeVerdict[] | void>,
+    /** invoked once at the end of a ranked match with who sat it out, who walked away from
+     * it, and who played it clean. The DB layer turns that into account-standing changes;
+     * the room itself only OBSERVES (it counts ticks), so tests/dev pass nothing and the
+     * match behaves exactly as before. */
+    private readonly onBehaviour?: (b: BehaviourReport) => void,
   ) {}
+
+  /**
+   * PARTICIPATION, counted while the match is actually live.
+   *
+   * Standing charges for sitting out or walking away have to be grounded in something the
+   * server SAW, not in a report or a guess, so the tick loop keeps three counters: how many
+   * live ticks there were, how many of them each robot issued a real command on, and how
+   * many of them its driver was not connected for. Everything about what those numbers MEAN
+   * is decided at finalize (see `behaviourReport`).
+   */
+  private liveTicks = 0;
+  private readonly driveTicks = new Map<number, number>();
+  private readonly awayTicks = new Map<number, number>();
 
   /** authed users whose match is currently live in THIS room (holds their single-
    * game lock). Registered at match begin, released at finalize / drop / stop. */
@@ -1063,6 +1100,7 @@ export class Room {
           mode: p.mode,
           game: this.game,
           rosterUserIds: p.roster.map((r) => r.userId).filter((u): u is string => !!u),
+          roomCode: this.code,
         }),
       )
         .then((verdicts) => {
@@ -1126,6 +1164,46 @@ export class Room {
     }, 1000 * C.SIM_DT);
   }
 
+  /**
+   * Count one tick of participation (see the counters above).
+   *
+   * ONLY live phases count. `pre` is the countdown nobody drives through, `post` is the
+   * results screen, and a `freeplay` room is not a match at all — including any of them
+   * would let a long countdown make an honest driver look absent.
+   *
+   * "Drove" is deliberately generous: any stick off centre, or any button. The question this
+   * answers is "was a person there", not "did they play well", and a driver parked in their
+   * base spinning the intake is playing badly, which is not an offence.
+   */
+  private countParticipation(w: World): void {
+    const phase = w.match.phase;
+    if (phase !== 'auto' && phase !== 'teleop' && phase !== 'transition') return;
+    this.liveTicks++;
+    for (const r of w.robots) {
+      const c = this.lastFrame?.get(r.id);
+      const moving =
+        !!c &&
+        (Math.abs(c.driveX) > 0.05 || Math.abs(c.driveY) > 0.05 || Math.abs(c.rotate) > 0.05 ||
+          Math.abs(c.leftDrive) > 0.05 || Math.abs(c.rightDrive) > 0.05 ||
+          c.intake || c.fire || !!c.catalyst || !!c.fling || !!c.driveMode);
+      if (moving) this.driveTicks.set(r.id, (this.driveTicks.get(r.id) ?? 0) + 1);
+      // AWAY is measured from the socket, not from the sticks: a driver whose client is
+      // gone is a different thing from one who is present and idle, and only the first is
+      // "left the match".
+      const away = this.departed.has(r.id) || !this.driverConnected(r.id);
+      if (away) this.awayTicks.set(r.id, (this.awayTicks.get(r.id) ?? 0) + 1);
+    }
+  }
+
+  /** is the client driving this robot currently connected? (a reconnecting driver inside
+   *  their grace window still counts as away for these ticks — they were, in fact, away) */
+  private driverConnected(robotId: number): boolean {
+    for (const c of this.clients.values()) {
+      if (this.robotOf.get(c.id) === robotId) return c.connected;
+    }
+    return false;
+  }
+
   /** advance the authoritative sim exactly one tick: build the per-robot command
    * frame, step, RECORD it (the replay input log), snapshot on cadence, and
    * finalize at match end. Both the real-time loop and `advanceForTest` go
@@ -1137,6 +1215,7 @@ export class Room {
     this.lastFrame = this.frameCommands(w.tick + 1);
     simModuleFor(this.game).step(w, C.SIM_DT, this.lastFrame);
     this.recorder?.record(w.tick, this.lastFrame);
+    this.countParticipation(w);
     const due = w.tick % SNAPSHOT_INTERVAL === 0;
     // Don't finalize the instant the match ends: balls are still flowing down the
     // ramp/through the gate and scoring for a beat. Keep stepping (and recording)
@@ -1205,6 +1284,7 @@ export class Room {
           assists: d.assists,
         });
       }
+      this.reportBehaviour(participants);
       const ret = this.onResult({ game: this.game, config: this.config, ranked: this.ranked, result, replay, participants });
       // resolves once persisted (async DB write): versus → per-driver ELO deltas;
       // record → the run's leaderboard standing. Broadcast so the results screen
@@ -1231,6 +1311,49 @@ export class Room {
       }
     }
     this.stop();
+  }
+
+  /**
+   * Turn this match's participation counters into a behaviour report.
+   *
+   * RANKED ONLY. A custom room is people messing about with friends; standing exists to
+   * protect the ranked queue, and charging someone for going to make a cup of tea during a
+   * private practice match would be indefensible.
+   *
+   * The MODE comes from the roster size rather than the queue that made the room, because
+   * this is only ever read back as context on a ledger row.
+   */
+  private reportBehaviour(participants: MatchParticipant[]): void {
+    if (!this.onBehaviour || !this.ranked || this.unpersisted) return;
+    const offenders: { userId: string; kind: 'afk' | 'leave' }[] = [];
+    const cleanUserIds: string[] = [];
+    for (const p of participants) {
+      if (!p.userId) continue;
+      const rid = this.robotOf.get(p.clientId) ?? this.robotIdOfUser(p.userId);
+      if (rid === undefined) continue;
+      const kind = judgeParticipation({
+        liveTicks: this.liveTicks,
+        driveTicks: this.driveTicks.get(rid) ?? 0,
+        awayTicks: this.awayTicks.get(rid) ?? 0,
+      });
+      if (kind) offenders.push({ userId: p.userId, kind });
+      else cleanUserIds.push(p.userId);
+    }
+    if (!offenders.length && !cleanUserIds.length) return;
+    this.onBehaviour({
+      offenders,
+      cleanUserIds,
+      mode: participants.length > 2 ? '2v2' : '1v1',
+      game: this.game,
+      roomCode: this.code,
+    });
+  }
+
+  /** the robot a DEPARTED user was driving (their client is gone, so `robotOf` cannot
+   *  answer) — without this, walking out would erase the evidence of walking out */
+  private robotIdOfUser(userId: string): number | undefined {
+    for (const [rid, d] of this.departed) if (d.userId === userId) return rid;
+    return undefined;
   }
 
   /**

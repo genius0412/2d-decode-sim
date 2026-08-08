@@ -3,9 +3,9 @@ import {
   adminFetchReports,
   adminFetchReportedUser,
   adminSetReportStatus,
-  type ModMatch,
 } from '../net/api';
-import { REPORT_LABELS, type ReportedUser, type ReportRow, type ReportReason } from '../report';
+import { REPORT_LABELS, type ReportedUser, type ReportReason } from '../report';
+import { STANDING_EVENT_LABEL, STANDING_MAX, tierOf, type StandingEventKind } from '../standing';
 import { SEASONS } from '../seasons';
 
 /**
@@ -89,7 +89,7 @@ function ReportedRow({
   onWatchReplay?: (replayId: string) => void;
   onTriaged: () => void;
 }) {
-  const [detail, setDetail] = useState<{ reports: ReportRow[]; matches: ModMatch[] } | null>(null);
+  const [detail, setDetail] = useState<Awaited<ReturnType<typeof adminFetchReportedUser>>>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -118,6 +118,14 @@ function ReportedRow({
           {u.open > 0 && <span className="adm-pill queued">{u.open} open</span>}
           <span className="adm-pill">{u.total} total</span>
           <span className="adm-pill">{u.reporters} reporter{u.reporters === 1 ? '' : 's'}</span>
+          {/* STANDING is the corroborating half. Reports are what other players CLAIM; this
+              is what the server itself watched them do — a full standing next to twelve
+              reports reads very differently from a collapsed one. */}
+          {typeof u.standing === 'number' && u.standing < STANDING_MAX && (
+            <span className={`adm-pill standing${tierOf(u.standing).key === 'good' ? ' ok' : ''}`}>
+              {tierOf(u.standing).name} {u.standing}
+            </span>
+          )}
         </span>
         <span className="adm-report-reasons ds-muted">
           {u.reasons.slice(0, 3).map((r) => `${REPORT_LABELS[r.reason as ReportReason] ?? r.reason} ×${r.n}`).join(' · ')}
@@ -146,6 +154,26 @@ function ReportedRow({
                   </div>
                 ))}
               </div>
+
+              {detail.standingEvents.length > 0 && (
+                <>
+                  <h4 className="adm-h3">
+                    What the server saw{detail.standing ? ` — standing ${detail.standing.score}/${STANDING_MAX}` : ''}
+                  </h4>
+                  <div className="adm-report-list">
+                    {detail.standingEvents.slice(0, 8).map((e) => (
+                      <div className="adm-report-item row" key={e.id}>
+                        <span className="ds-muted">
+                          {STANDING_EVENT_LABEL[e.kind as StandingEventKind] ?? e.kind} · −{e.points}
+                          {e.cooldownMin > 0 && ` · ${e.cooldownMin}min lock`}
+                          {e.ratingCharge > 0 && ` · −${e.ratingCharge} rating`}
+                          {' · '}{ago(e.at)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
 
               <h4 className="adm-h3">Their recent matches</h4>
               {detail.matches.length === 0 ? (

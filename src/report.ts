@@ -71,6 +71,10 @@ export interface ReportedUser {
   latest: string;
   /** category counts, most common first */
   reasons: { reason: ReportReason; n: number }[];
+  /** their ACCOUNT STANDING score, or null if they have never been charged one. The
+   *  corroborating half of a report: reports are what other players claim, standing is what
+   *  the server itself watched them do. */
+  standing?: number | null;
 }
 
 /** one report in the per-user drill-down */
