@@ -1,3 +1,4 @@
+import type { DodgeVerdict } from '../dodge';
 import type {
   Alliance,
   Artifact,
@@ -409,6 +410,16 @@ export type ServerMsg =
   // reply to a 'rejoin': ok ⇒ slot reclaimed (a snapshot follows); !ok ⇒ the
   // grace window lapsed / slot is gone, stop trying
   | { t: 'rejoined'; ok: boolean }
+  /**
+   * A staged RANKED pairing died before it started, and this is what it cost.
+   *
+   * Sent to every still-connected member — including the innocent, whose `yours` is null.
+   * That is deliberate: being told "the match was cancelled and you were not charged" is the
+   * difference between a system that looks arbitrary and one that looks fair, and it is the
+   * only moment the game can say so. Optional on the wire, so an older client simply shows
+   * the plain cancellation error it always did.
+   */
+  | { t: 'dodgeVerdict'; message: string; yours: DodgeVerdict | null; others: DodgeVerdict[] }
   // `ranked` + `intros` are present only for ranked matchmaking rooms; they
   // drive the pre-match intro overlay (ELO reveal). Optional so custom rooms and
   // older servers omit them and the client simply shows no intro.

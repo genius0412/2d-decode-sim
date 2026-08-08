@@ -1338,6 +1338,63 @@ export async function upsertRating(
   return rows[0]?.games ?? 1;
 }
 
+/**
+ * Apply a DODGE PENALTY to a player's board and record it.
+ *
+ * Deliberately NOT `upsertRating`, for two reasons that both matter:
+ *
+ *  - `games` is NOT incremented. A dodge is not a game; counting it would let a player
+ *    finish placements — or shrink toward "established" — by abandoning matches.
+ *  - `rd` and `vol` are NOT touched. Rating deviation states how well we know someone's
+ *    SKILL, and a dodge says nothing about that. Shrinking RD would mean dodging made the
+ *    system MORE confident in you, which is backwards; growing it would hand the dodger
+ *    bigger swings to climb back with, which rewards the behaviour.
+ *
+ * The rating is floored, so a run of penalties cannot print an absurd number on a badge.
+ * Returns what was actually stored — at the floor that differs from the nominal penalty, and
+ * the player should be told the truth rather than the sticker price.
+ */
+export async function applyDodgePenalty(
+  userId: string,
+  mode: '1v1' | '2v2',
+  act: number,
+  penalty: number,
+  floor: number,
+  kind: string,
+  game?: Game,
+): Promise<{ before: number; after: number }> {
+  const cur = await getRatingFull(userId, mode, act, game);
+  const before = Math.round(cur.rating);
+  const after = Math.max(floor, before - Math.max(0, Math.round(penalty)));
+  // upsert WITHOUT touching games/rd/vol (see above). A player with no rating row on this
+  // board yet gets one seeded at the penalised value, games still 0.
+  await q(
+    `insert into elo_ratings (user_id, mode, act, game, rating, rd, vol, games)
+     values ($1, $2, $3, $4, $5, $6, $7, 0)
+     on conflict (user_id, mode, game, act)
+       do update set rating = excluded.rating, updated_at = now()`,
+    [userId, mode, act, g(game), after, cur.rd, cur.vol],
+  );
+  await q(
+    `insert into ranked_dodges (user_id, game, mode, act, kind, penalty, rating_before, rating_after)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [userId, g(game), mode, act, kind, before - after, before, after],
+  );
+  return { before, after };
+}
+
+/** How many dodges this player has inside the rolling escalation window. Counted by TIME
+ *  alone — not per season or per board — so a season boundary cannot forgive a pattern
+ *  mid-window, and alternating between the 1v1 and 2v2 queues does not reset the count. */
+export async function recentDodgeCount(userId: string, hours: number): Promise<number> {
+  const rows = await q<{ n: number }>(
+    `select count(*)::int as n from ranked_dodges
+      where user_id = $1 and at > now() - $2::interval`,
+    [userId, `${Math.max(1, Math.floor(hours))} hours`],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
 /** one row of a ranked board. Same name-plus-badge shape as `BoardRow` — the two
  *  boards sit behind one segmented control and render through the same cell. */
 export interface EloBoardRow {

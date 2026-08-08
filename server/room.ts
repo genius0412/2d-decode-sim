@@ -33,8 +33,19 @@ import {
   type ServerMsg,
 } from '../src/net/protocol';
 import { sanitizePlayerPatch } from '../src/net/sanitize';
+import type { DodgeKind, DodgeVerdict } from '../src/dodge';
 import { eloMode, type EloOutcome } from './ranked';
 import type { PendingMatch } from './matchTypes';
+
+/** what the room hands the DB layer when a staged ranked pairing dies. The room knows WHO
+ *  failed and HOW; the penalty scale and the rolling window live outside it. */
+export interface DodgeReport {
+  culprits: { userId: string; kind: DodgeKind }[];
+  mode: '1v1' | '2v2';
+  game: GameId;
+  /** every roster member, so the innocent can be told they were not charged */
+  rosterUserIds: string[];
+}
 
 /** what the persistence layer resolves to after a finished match: ranked ELO
  * deltas (versus) or a record run's leaderboard standing (record). */
@@ -275,6 +286,11 @@ export class Room {
      * refused a second join/queue elsewhere (they must rejoin or leave this one). */
     private readonly onUserActive?: (userId: string) => void,
     private readonly onUserInactive?: (userId: string) => void,
+    /** invoked when a STAGED ranked pairing dies, with the players at fault. The DB layer
+     * applies the escalating penalty and answers with what each player was actually
+     * charged, which the room relays so nobody is penalised without being told. DB-agnostic:
+     * tests/dev pass nothing and the cancel behaves exactly as it always did. */
+    private readonly onDodge?: (d: DodgeReport) => void | Promise<DodgeVerdict[] | void>,
   ) {}
 
   /** authed users whose match is currently live in THIS room (holds their single-
@@ -472,7 +488,13 @@ export class Room {
       // pre-match departure CANCELS the staged match (both drivers requeue). Full
       // strategy-phase reconnection is deferred (see docs/netcodeplan.md).
       if (this.pendingMatch && this.phase === 'strategy') {
-        this.cancelPending('Match cancelled - a player disconnected.');
+        // STRATEGY BAIL: this socket's user is the one who left. Charged cause-blind — from
+        // here a closed tab and a pulled cable are the same event, and pretending otherwise
+        // would just advertise which one is cheaper (see src/dodge.ts).
+        this.cancelPending(
+          'Match cancelled - a player disconnected.',
+          c.userId ? [{ userId: c.userId, kind: 'bail' as DodgeKind }] : [],
+        );
         return;
       }
       this.clients.delete(id);
@@ -791,7 +813,16 @@ export class Room {
     if (p.channel) this.channel = p.channel;
     this.intros = p.roster.map((r, i) => ({ id: i, elo: r.introElo }));
     if (this.pendingTimer) clearTimeout(this.pendingTimer);
-    this.pendingTimer = setTimeout(() => this.cancelPending(), RANKED_JOIN_GRACE_MS);
+    // NO-SHOW: whoever is still missing when the grace lapses is the one who dodged. The
+    // players who DID connect are innocent and are charged nothing.
+    this.pendingTimer = setTimeout(
+      () =>
+        this.cancelPending(
+          'Match cancelled - an opponent did not connect.',
+          this.absentRoster().map((userId) => ({ userId, kind: 'noshow' as DodgeKind })),
+        ),
+      RANKED_JOIN_GRACE_MS,
+    );
     if (this.pendingTimer.unref) this.pendingTimer.unref();
     this.maybeStartRanked(); // in case everyone is already here
   }
@@ -931,7 +962,17 @@ export class Room {
     if (connected.length === p.roster.length && connected.every((c) => c.player.ready)) {
       this.beginRanked();
     } else {
-      this.cancelPending('Match cancelled - not everyone readied up in time.');
+      // NEVER READIED: the players who sat out the window. Anyone who readied is innocent —
+      // they did everything asked of them and still lost the match.
+      this.cancelPending(
+        'Match cancelled - not everyone readied up in time.',
+        [
+          ...[...this.clients.values()]
+            .filter((c) => c.connected && c.userId && !c.player.ready)
+            .map((c) => ({ userId: c.userId as string, kind: 'unready' as DodgeKind })),
+          ...this.absentRoster().map((userId) => ({ userId, kind: 'noshow' as DodgeKind })),
+        ],
+      );
     }
   }
 
@@ -953,7 +994,10 @@ export class Room {
     const byUser = new Map<string, Client>();
     for (const c of this.clients.values()) if (c.connected && c.userId) byUser.set(c.userId, c);
     if (!p.roster.every((r) => r.userId && byUser.has(r.userId))) {
-      this.cancelPending('Match cancelled - an opponent disconnected.');
+      this.cancelPending(
+        'Match cancelled - an opponent disconnected.',
+        this.absentRoster().map((userId) => ({ userId, kind: 'bail' as DodgeKind })),
+      );
       return;
     }
     // roster index = robotId; keep start poses distinct per alliance as an AFK fallback
@@ -984,7 +1028,10 @@ export class Room {
 
   /** a staged ranked match no player (or not everyone) showed up for: tell whoever
    * did connect and tear the room down (no rated match runs). */
-  private cancelPending(message = 'Match cancelled - an opponent did not connect.'): void {
+  private cancelPending(
+    message = 'Match cancelled - an opponent did not connect.',
+    culprits: { userId: string; kind: DodgeKind }[] = [],
+  ): void {
     if (this.world !== null) return; // already started
     if (this.pendingTimer) {
       clearTimeout(this.pendingTimer);
@@ -994,9 +1041,53 @@ export class Room {
       clearTimeout(this.strategyTimer);
       this.strategyTimer = null;
     }
+    const p = this.pendingMatch;
+    /**
+     * BILL THE DODGE before tearing the room down.
+     *
+     * A cancelled ranked pairing costs three other people their next few minutes, and until
+     * now it cost the person who caused it nothing. The culprits are worked out at each
+     * cancel site (who never connected / who dropped / who never readied) rather than here,
+     * because only the caller knows which of the three failures happened.
+     *
+     * Everyone still connected is TOLD the verdict — the penalised so a rating drop is never
+     * unexplained, and the innocent so they know the cancel was not charged to them. The
+     * sockets are still open at this point; `stop()` below closes them, so this has to fire
+     * first and the verdict is relayed from the async reply.
+     */
+    if (p && this.ranked && culprits.length && this.onDodge) {
+      const listeners = [...this.clients.values()].filter((c) => c.connected);
+      void Promise.resolve(
+        this.onDodge({
+          culprits,
+          mode: p.mode,
+          game: this.game,
+          rosterUserIds: p.roster.map((r) => r.userId).filter((u): u is string => !!u),
+        }),
+      )
+        .then((verdicts) => {
+          if (!verdicts?.length) return;
+          for (const c of listeners) {
+            if (!c.userId) continue;
+            const mine = verdicts.find((v) => v.userId === c.userId) ?? null;
+            c.send({ t: 'dodgeVerdict', message, yours: mine, others: verdicts.filter((v) => v.userId !== c.userId && v.kind) });
+          }
+        })
+        .catch((e) => console.error('[dodge] penalty failed:', e));
+    }
     this.broadcast({ t: 'error', message });
     this.stop();
     this.onEmpty();
+  }
+
+  /** roster members who are NOT currently connected here — the no-show set. */
+  private absentRoster(): string[] {
+    const p = this.pendingMatch;
+    if (!p) return [];
+    const present = new Set(
+      [...this.clients.values()].filter((c) => c.connected && c.userId).map((c) => c.userId),
+    );
+    return p.roster.map((r) => r.userId).filter((u): u is string => !!u && !present.has(u));
   }
 
   private startLoop(): void {
@@ -1362,5 +1453,14 @@ export class Room {
   /** TEST SEAM: fire the strategy deadline synchronously (no real timer). */
   forceStrategyDeadlineForTest(): void {
     this.onStrategyDeadline();
+  }
+
+  /** TEST SEAM: fire the ranked JOIN GRACE synchronously — the no-show path, which is
+   *  otherwise only reachable by waiting out RANKED_JOIN_GRACE_MS. */
+  forceJoinGraceForTest(): void {
+    this.cancelPending(
+      'Match cancelled - an opponent did not connect.',
+      this.absentRoster().map((userId) => ({ userId, kind: 'noshow' as DodgeKind })),
+    );
   }
 }

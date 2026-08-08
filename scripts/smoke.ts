@@ -113,7 +113,7 @@ import {
   type Replay,
   type ReplayResult,
 } from '../src/sim/replay';
-import { Room, type Client } from '../server/room';
+import { Room, type Client, type DodgeReport } from '../server/room';
 import { maintenanceBiting } from '../server/db/repo';
 import { maintenanceLine } from '../src/ui/MaintenanceBanner';
 import { Matchmaker, radiusCeiling, type QueueEntry } from '../server/matchmaking';
@@ -4636,6 +4636,117 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   room.forceStrategyDeadlineForTest();
   check('strategy deadline: cancels (error) when not everyone readied', rec.red.some((m) => m.t === 'error'));
   check('strategy deadline: no match started', !rec.red.some((m) => m.t === 'matchStart'));
+}
+
+/**
+ * DODGE ATTRIBUTION — who gets billed when a staged ranked pairing dies.
+ *
+ * The penalty scale is tested as pure math elsewhere; what matters here is that the room
+ * names the RIGHT player. Punishing the person who showed up and readied would be far worse
+ * than not having the feature, so each of the three failure shapes gets its own case, and
+ * each asserts the innocent party is charged nothing.
+ *
+ * The room reports through its `onDodge` seam, so no database is involved.
+ */
+{
+  const mkClient = (id: string, userId: string, rec: Record<string, ServerMsg[]>): Client => {
+    rec[id] = [];
+    return {
+      id,
+      send: (m) => rec[id].push(m),
+      player: { clientId: id, name: id, teamName: 'T', teamNumber: 1, alliance: 'red', startIndex: 0, ready: false, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } },
+      connected: true,
+      disconnectAt: 0,
+      userId,
+      caps: ['strategy'],
+    };
+  };
+  const roster = [
+    { userId: 'u-red', name: 'red', teamName: 'T', teamNumber: 1, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0, alliance: 'red' as const, introElo: null },
+    { userId: 'u-blue', name: 'blue', teamName: 'T', teamNumber: 1, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0, alliance: 'blue' as const, introElo: null },
+  ];
+  /** build a staged ranked room, capturing what the room reports as the dodge */
+  const staged = (label: string, attach: string[]) => {
+    const rec: Record<string, ServerMsg[]> = {};
+    const reports: DodgeReport[] = [];
+    const room = new Room(
+      label, () => {}, { kind: 'versus' }, undefined, undefined, undefined,
+      (d) => { reports.push(d); return []; },
+    );
+    for (const id of attach) room.add(mkClient(id, `u-${id}`, rec));
+    room.applyPending({ code: `iad-${label}`, hostRegion: 'iad', mode: '1v1', seed: 11, ranked: true, roster });
+    return { room, rec, reports };
+  };
+  const culpritsOf = (reports: DodgeReport[]): string =>
+    reports.flatMap((r) => r.culprits.map((c) => `${c.userId}:${c.kind}`)).sort().join(',');
+
+  // 1. NO-SHOW — blue never connects, the join grace lapses. Red showed up: not their fault.
+  {
+    const { room, reports } = staged('smoke-dodge-noshow', ['red']);
+    room.forceJoinGraceForTest();
+    check(
+      'dodge: a no-show past the join grace is billed to the player who never connected',
+      culpritsOf(reports) === 'u-blue:noshow',
+      culpritsOf(reports) || '(nobody billed)',
+    );
+    check(
+      'dodge: the player who DID connect is not billed for the no-show',
+      !culpritsOf(reports).includes('u-red'),
+    );
+  }
+
+  // 2. STRATEGY BAIL — both connect, then blue's socket goes during the window.
+  {
+    const { room, reports } = staged('smoke-dodge-bail', ['red', 'blue']);
+    room.detach('blue');
+    check(
+      'dodge: a drop during the strategy window is billed to the player who left',
+      culpritsOf(reports) === 'u-blue:bail',
+      culpritsOf(reports) || '(nobody billed)',
+    );
+  }
+
+  // 3. NEVER READIED — both connect, only red readies, the deadline lapses.
+  {
+    const { room, reports } = staged('smoke-dodge-unready', ['red', 'blue']);
+    room.onMessage('red', { t: 'update', patch: { ready: true } });
+    room.forceStrategyDeadlineForTest();
+    check(
+      'dodge: sitting out the ready window is billed to the player who never readied',
+      culpritsOf(reports) === 'u-blue:unready',
+      culpritsOf(reports) || '(nobody billed)',
+    );
+    check(
+      'dodge: the player who readied on time is not billed',
+      !culpritsOf(reports).includes('u-red'),
+    );
+  }
+
+  // 4. A CUSTOM room is not ranked, so abandoning one costs nothing — the contract the
+  //    penalty enforces only exists for a pairing the matchmaker committed people to.
+  {
+    const rec: Record<string, ServerMsg[]> = {};
+    const reports: DodgeReport[] = [];
+    const room = new Room(
+      'smoke-dodge-custom', () => {}, { kind: 'versus' }, undefined, undefined, undefined,
+      (d) => { reports.push(d); return []; },
+    );
+    room.add(mkClient('red', 'u-red', rec));
+    room.add(mkClient('blue', 'u-blue', rec));
+    room.detach('blue');
+    check('dodge: leaving a CUSTOM room is never a dodge', reports.length === 0);
+  }
+
+  // 5. the whole roster is reported, so the innocent can be told they were NOT charged
+  {
+    const { room, reports } = staged('smoke-dodge-roster', ['red']);
+    room.forceJoinGraceForTest();
+    check(
+      'dodge: the report carries the full roster, so the innocent can be told',
+      reports[0]?.rosterUserIds.slice().sort().join(',') === 'u-blue,u-red',
+      reports[0]?.rosterUserIds.join(','),
+    );
+  }
 }
 
 // a disconnect during strategy cancels the (unratable) pre-match

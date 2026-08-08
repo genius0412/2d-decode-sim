@@ -1,9 +1,12 @@
 import { dbEnabled } from './db/pool';
 import {
+  actForSeason,
+  applyDodgePenalty,
   currentSeasonNumber,
   ensureProfile,
   ensureSeason,
   personalBest,
+  recentDodgeCount,
   recordRank,
   saveReplay,
   submitRecord,
@@ -11,7 +14,10 @@ import {
 import { persistVersusMatch } from './ranked';
 import { recordScore } from '../src/sim/replay';
 import { simModuleFor } from '../src/games/sim';
-import type { MatchOutcome, PersistOutcome } from './room';
+import type { DodgeReport, MatchOutcome, PersistOutcome } from './room';
+import { DODGE_WINDOW_HOURS, dodgePenalty, type DodgeVerdict } from '../src/dodge';
+import { RANK_FLOOR } from '../src/ranks';
+import { BALANCE_VERSION } from '../src/config';
 
 /**
  * Persist a finished match (off the hot path — called at phase 'post'). The
@@ -113,4 +119,58 @@ export async function persistMatch(o: MatchOutcome): Promise<PersistOutcome> {
     console.error('[persist] FAILED writing to DB:', e);
   }
   return {};
+}
+
+/**
+ * Charge a cancelled ranked pairing to whoever caused it.
+ *
+ * Runs OFF the cancel path (the room fires and forgets), so a slow or failing database can
+ * never delay tearing the room down or stop the innocent players from requeueing. A failed
+ * write means a dodge goes uncharged, which is the right way to fail: the alternative is a
+ * player stuck staring at a dead room while a transaction retries.
+ *
+ * The escalation is counted PER PLAYER over a rolling window, and the count is read fresh
+ * for each culprit rather than shared — two people dodging the same match are not each
+ * other's repeat offence.
+ */
+export async function persistDodges(d: DodgeReport): Promise<DodgeVerdict[]> {
+  if (!dbEnabled || !d.culprits.length) return [];
+  try {
+    const bv = await currentSeasonNumber(BALANCE_VERSION, d.game);
+    const act = await actForSeason(bv, d.game);
+    const verdicts: DodgeVerdict[] = [];
+    // de-duplicate: one player can be named by two rules at once (absent AND unready), and
+    // one abandoned match must never be billed twice
+    const seen = new Set<string>();
+    for (const c of d.culprits) {
+      if (seen.has(c.userId)) continue;
+      seen.add(c.userId);
+      const prior = await recentDodgeCount(c.userId, DODGE_WINDOW_HOURS);
+      const penalty = dodgePenalty(prior + 1);
+      const { before, after } = await applyDodgePenalty(
+        c.userId, d.mode, act, penalty, RANK_FLOOR, c.kind, d.game,
+      );
+      verdicts.push({
+        userId: c.userId,
+        kind: c.kind,
+        penalty: before - after,
+        count: prior + 1,
+        ratingBefore: before,
+        ratingAfter: after,
+      });
+      console.log(
+        `[dodge] ${c.userId} ${c.kind} #${prior + 1} in ${DODGE_WINDOW_HOURS}h: ${before} -> ${after} (-${before - after})`,
+      );
+    }
+    // the INNOCENT get a verdict too, with no penalty — "this wasn't charged to you" is the
+    // difference between a system that reads as fair and one that reads as arbitrary
+    for (const userId of d.rosterUserIds) {
+      if (seen.has(userId)) continue;
+      verdicts.push({ userId, kind: null, penalty: 0, count: 0, ratingBefore: 0, ratingAfter: 0 });
+    }
+    return verdicts;
+  } catch (e) {
+    console.error('[dodge] FAILED writing penalties:', e);
+    return [];
+  }
 }

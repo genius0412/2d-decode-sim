@@ -8,7 +8,7 @@ import { sanitizePlayer } from '../src/net/sanitize';
 import { verifyAuthToken } from './auth';
 import { initPhysics } from '../src/sim/physicsEngine';
 import { migrate } from './db/migrate';
-import { persistMatch } from './persist';
+import { persistMatch, persistDodges } from './persist';
 import { handleApi } from './api';
 import { Matchmaker } from './matchmaking';
 import { MATCHMAKER_REGION } from './regions';
@@ -1372,6 +1372,7 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
         (uid) => {
           if (userRoom.get(uid) === code) userRoom.delete(uid);
         },
+        persistDodges,
       );
       rooms.set(code, r);
       created = true;
