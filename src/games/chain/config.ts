@@ -49,8 +49,9 @@ import type {
   RobotSpec,
   StartCat,
 } from '../../types';
-import { catalystMountOf, intakeMountOf } from './mounts';
+import { catalystMountOf, catalystSwingOf, intakeMountOf } from './mounts';
 import { INTAKE_PRESETS, ROBOT_MAX_SIZE } from '../../config';
+import { massLimits } from '../../sim/drivetrain';
 
 /** millimetres → inches (the sim's world unit) */
 export const mm = (v: number): number => v / 25.4;
@@ -324,10 +325,17 @@ export const CHAIN_TWIN_MASS_FLOOR = 2.5; // lb added to the chassis mass floor
 export const CHAIN_TWIN_BARREL_OFFSET = 1.5; // in — lateral spacing of the two muzzles
 export const CHAIN_DEFAULT_SCORE_MODE: ChainScoreMode = 'turret';
 
-/** turret slew rate (rad/s). The turret tracks the lead solution at THIS max rate — it follows
+/**
+ * Turret slew rate (rad/s). The turret tracks the lead solution at THIS max rate — it follows
  * steady driving easily but CANNOT snap to a sudden velocity change (a shove), so shots fired
- * mid-correction fly along the stale heading and miss (aim is physical, not a guaranteed hit). */
-export const CHAIN_TURRET_SLEW = 4;
+ * mid-correction fly along the stale heading and miss (aim is physical, not a guaranteed hit).
+ *
+ * 4 → 7: a half-turn took 0.79s, which on a field this size meant the turret was still
+ * catching up through most of a drive-by. At 7 it is 0.45s — quick enough to feel responsive,
+ * and still FINITE, which is the whole point: a turret that snapped would make the lead
+ * solution a guarantee instead of something the driver has to hold still for.
+ */
+export const CHAIN_TURRET_SLEW = 7;
 
 // turretless-launcher aiming (drum + dumper turn the whole robot to face the goal)
 export const CHAIN_AIM_TOL = 0.14; // rad heading error under which a turned shooter fires
@@ -643,11 +651,32 @@ export const CHAIN_CORNER_BODY_INSET = 1.5;
 /** RAIL: inches of the mounted side the carriage CANNOT use — its own body plus the end
  *  stops. The track spans the side less this at each end. */
 export const CHAIN_RAIL_MARGIN = 2.2;
-/** RAIL: how fast the carriage traverses, in fractions of its half-travel per second. A rail
- *  is bought for reach, not for speed, so it repositions deliberately — fast enough to be
- *  useful within a cycle, slow enough that it is visibly a machine moving rather than the
- *  claw teleporting to wherever it is needed. */
-export const CHAIN_RAIL_RATE = 1.8;
+/**
+ * RAIL: how fast the carriage traverses, in fractions of its half-travel per second.
+ *
+ * 1.8 → 3.6: end to end was 1.1s, longer than the claw's own cycle time, so the traverse was
+ * the thing you waited on rather than the mechanism you bought. At 3.6 it crosses in ~0.55s —
+ * about one cycle — so lining up is part of the same motion as grabbing.
+ *
+ * Still deliberately FINITE. A carriage that arrived instantly would make the rail a
+ * strictly-better turret claw instead of a mechanism with travel time, and the whole reason
+ * it reads as hardware on screen is that you can see it move.
+ */
+export const CHAIN_RAIL_RATE = 3.6;
+/**
+ * CLAW slew rate (rad/s) — how fast the catalyst claw swivels toward what it is working on.
+ *
+ * It used to be INSTANT: the sprite read the target angle every frame, so the claw teleported
+ * onto each new one. Fast is right, but a mechanism that arrives with no motion at all reads
+ * as a UI element rather than as hardware, and it hid the moment where the claw is choosing
+ * something. At 9 rad/s a half-turn takes ~0.35s — quicker than the rail underneath it, since
+ * spinning a claw is a far smaller job than driving a carriage down a track.
+ *
+ * RENDER-ONLY, deliberately. The reach cone for a turret/rail claw is a full circle, so this
+ * angle decides nothing in the sim — putting it in the world state would add a field to every
+ * snapshot to animate something no rule reads.
+ */
+export const CHAIN_CLAW_SLEW = 9;
 /** How far BEYOND its own working envelope a claw looks for something to track, in inches.
  *  The mechanism should be lining itself up while the robot is still driving up — a carriage
  *  that only starts moving once the target is already grabbable wastes its whole traverse
@@ -802,7 +831,12 @@ function chainAxisExtent(spec: RobotSpec, edge: ChainCatalystMount): number {
  * the top-down sprite just says which way it points.
  */
 export function chainArmReach(spec: RobotSpec): number {
-  const left = CHAIN_PRISM - chainAxisExtent(spec, catalystMountOf(spec));
+  // A SWING extends past the front or the back whichever end it is serving, so what it
+  // spends is the FORE-AFT axis — wherever its pivot happens to be bolted. (The old
+  // `'frontback'` mount fell through to the width branch, which measured the wrong axis for
+  // exactly the mechanism the value existed to describe.)
+  const axis = catalystSwingOf(spec) ? 'front' : catalystMountOf(spec);
+  const left = CHAIN_PRISM - chainAxisExtent(spec, axis);
   return Math.max(0, left) + CHAIN_CATALYST_OD / 2;
 }
 
@@ -948,13 +982,13 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
   // Unlike the demos, these are NAMED ROBOTS — `name` is the robot, `teamName` is the team,
   // and `teamNumber` is real.
   {
-    // Ender: a rear turret pointed off the left flank, claw on the opposite (right) side so
-    // the two mechanisms never fight for the same space.
+    // Ender: a rear turret pointed off the left flank, and the CLAW CATAPULT on the opposite
+    // (right) side so the two mechanisms never fight for the same space.
     name: 'Ender', teamName: 'Loomy Squad', teamNumber: 788,
     length: 15, width: 16.5, intake: 'sloped', massLb: 26, drivetrain: 'mecanum',
     driveRpm: 435, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
-    intakeMount: 'front', shooterMount: 'back', catalystType: 'arm', catalystMount: 'right',
+    intakeMount: 'front', shooterMount: 'back', catalystType: 'launcher', catalystMount: 'right',
     assists: CR_PRESET_ASSISTS,
   },
   {
@@ -980,23 +1014,28 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
   },
   {
     // Rocky: everything omnidirectional. Butterfly base, front+back sweepers, twin turret in
-    // the middle, catalyst claw on a turret — nothing on this robot needs the chassis pointed
+    // the middle, and the claw on a CENTRE SWING — one arm on a pivot in the middle of the
+    // chassis, working front or back. Nothing on this robot needs the chassis pointed
     // anywhere. It pays for the second sweeper in HOPPER volume, not in chassis size.
     name: 'Rocky', teamName: 'Estimate', teamNumber: 5050,
     length: 15, width: 17, intake: 'sloped', massLb: 30, drivetrain: 'butterfly',
     driveRpm: 435, tankRpm: 340, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'twinturret', chainIntake: 'sweeper',
-    intakeMount: 'frontback', shooterMount: 'center', catalystType: 'turret', catalystMount: 'frontback',
+    intakeMount: 'frontback', shooterMount: 'center', catalystType: 'turret',
+    catalystMount: 'center', catalystSwing: true,
     assists: CR_PRESET_ASSISTS,
   },
   {
-    // String Theory: front+back sweepers and a centre turret, with a SWING claw on a pivot
-    // that serves either end — the build the `frontback` catalyst mount was added for.
+    // String Theory: front+back sweepers and a centre turret, with a SWING ARM bolted to the
+    // RIGHT RAIL — the pivot is on the flank and the arm swings fore and aft, so it works the
+    // front-right and back-right corners. This build is why the swing stopped being a mount:
+    // as the centre cell of the mount picker, "a swing" and "on the right" were alternatives.
     name: 'String Theory', teamName: 'Circuitrunners Surge', teamNumber: 1002,
     length: 15, width: 17, intake: 'sloped', massLb: 31, drivetrain: 'tank',
     driveRpm: 340, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
-    intakeMount: 'frontback', shooterMount: 'center', catalystType: 'arm', catalystMount: 'frontback',
+    intakeMount: 'frontback', shooterMount: 'center', catalystType: 'arm',
+    catalystMount: 'right', catalystSwing: true,
     assists: CR_PRESET_ASSISTS,
   },
   // ── ARCHETYPE DEMOS ───────────────────────────────────────────────────────────────────
@@ -1062,7 +1101,27 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
  * now-too-large value is exactly what makes a preset card stop highlighting as
  * selected. Deriving it means "max" is true by construction at every chassis size.
  */
-export const CHAIN_PRESETS: readonly RobotSpec[] = CHAIN_PRESET_BUILDS.map((s) => ({
+/** how many of the entries above are the REAL TEAM ROBOTS (the rest are archetype demos) */
+export const CHAIN_REAL_PRESETS = 5;
+
+/**
+ * The shipped builds, with two properties DERIVED rather than typed out.
+ *
+ * MASS (the five real robots): the lightest their build is allowed to be. A CR robot is a
+ * hopper on wheels — the mass floor already accounts for the drivetrain, the flywheel and
+ * every mechanism bolted on (`chainMassFloorBump`), so anything above the floor is ballast
+ * nobody asked for. Derived, not written down, because the floor MOVES when a mechanism is
+ * retuned and a hard-coded number would silently become "a bit heavy" instead of "minimum".
+ *
+ * BALL STORAGE (all of them): the most that build can hold. Same reasoning — capacity is a
+ * function of footprint, archetype and intake mount, so writing it out would let a preset
+ * drift below its own maximum the moment any of those change.
+ */
+export const CHAIN_PRESETS: readonly RobotSpec[] = CHAIN_PRESET_BUILDS.map((s, i) => ({
   ...s,
+  massLb:
+    i < CHAIN_REAL_PRESETS
+      ? massLimits(s.drivetrain, s.flywheelInertia, chainMassFloorBump(s)).min
+      : s.massLb,
   ballStorage: chainStorageMax(s),
 }));

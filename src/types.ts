@@ -119,9 +119,19 @@ export interface RobotSpec {
   /** Chain Reaction: the CATALYST mechanism archetype (arm / launcher / turret). Optional
    * (defaulted in coerceSpec). */
   catalystType?: ChainCatalystType;
-  /** Chain Reaction: which chassis edge the catalyst CLAW is mounted on. Optional
+  /** Chain Reaction: where on the chassis the catalyst mechanism is BOLTED. Optional
    * (defaulted in coerceSpec). */
   catalystMount?: ChainCatalystMount;
+  /** Chain Reaction: is the mechanism on a fore-aft SWING — one arm on a pivot that rotates
+   * between the front and the back, so it works whichever end is nearer?
+   *
+   * SEPARATE from the mount on purpose. The swing used to BE a mount (`'frontback'`, welded
+   * to the centre cell), which made "a swing" and "on the right" mutually exclusive choices
+   * in one picker — so a fore-aft swing arm bolted to the right rail, a real and common
+   * build, could not be expressed at all. Now the mount says where the pivot is (centre,
+   * left or right) and this says whether it swings. Optional (defaulted in coerceSpec, which
+   * also migrates the legacy `'frontback'` mount). */
+  catalystSwing?: boolean;
   /** Chain Reaction, LAUNCHER archetype only: the fixed YAW the catapult is bolted at,
    * in DEGREES relative to chassis forward (−180..180, 15° steps). The catapult is NOT on
    * a turret — it throws wherever the chassis is pointed plus this offset — so which way
@@ -207,14 +217,17 @@ export type ChainShooterMount = ChainMountPos;
  */
 export type ChainCatalystType = 'arm' | 'launcher' | 'turret' | 'rail';
 
-/** Where the catalyst mechanism is mounted. Sets where it REACHES FROM and which way its
- * reach cone points (the `turret` type is omnidirectional, so the mount only moves the pivot).
- * Every `ChainMountPos` except `center` — a claw has to reach out from somewhere — PLUS:
- *  • frontback — a SWING arm on a pivot that rotates between the front and rear edges, so it
- *    works either end without turning the chassis. It reaches from whichever end is nearer the
- *    target, so it covers two cones instead of one; the cost is that it is one arm, so it can
- *    only ever be at one end at a time. */
-export type ChainCatalystMount = Exclude<ChainMountPos, 'center'> | 'frontback';
+/**
+ * Where the catalyst mechanism is BOLTED. Sets where it reaches from and which way its reach
+ * cone points (the `turret` type is omnidirectional, so the mount only moves the pivot).
+ *
+ * Any `ChainMountPos`, including `center` — which is only meaningful together with
+ * `RobotSpec.catalystSwing`, since a claw cannot reach anything from the middle of a chassis
+ * unless it is on an arm that swings out to an end.
+ *
+ * `'frontback'` is the LEGACY value for what is now `{ mount: 'center', swing: true }`. It is
+ * still accepted on the wire and from old saves; `coerceSpec` migrates it. */
+export type ChainCatalystMount = ChainMountPos | 'frontback';
 
 export type BallState =
   | { kind: 'ground' }

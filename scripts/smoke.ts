@@ -147,6 +147,8 @@ import {
   CHAIN_PARTICLE_R,
   CHAIN_PRESETS,
   CHAIN_RAIL_RATE,
+  CHAIN_REAL_PRESETS,
+  chainMassFloorBump,
   chainStorageMax,
   CHAIN_TWIN_MASS_FLOOR,
   CHAIN_TWIN_FIRE_MULT,
@@ -185,7 +187,7 @@ import {
   chainMassFloorBump,
   chainStorageMax,
 } from '../src/games/chain/config';
-import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, MOUNT_ANGLE, RAIL_DIR, intakeMountOf, isEdgePos, isTurreted, mountsClash, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
+import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, MOUNT_ANGLE, RAIL_DIR, catalystMountOf, catalystMountPositions, catalystSwingOf, intakeMountOf, isEdgePos, isTurreted, mountsClash, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -5662,6 +5664,84 @@ const mkMM = () => {
       check('chain rail: a plain turret claw has no travel', catalystRailHalf(fixedSpec) === 0);
 
       /**
+       * 3b. THE SWING IS A MECHANISM, NOT A PLACE.
+       *
+       * It used to be the mount value `'frontback'`, welded to the centre cell of the picker,
+       * which made "a swing" and "on the right" mutually exclusive choices — so a fore-aft
+       * swing arm bolted to the right rail (an ordinary build, and one of the shipped presets)
+       * could not be expressed at all. The flag and the position are now independent.
+       */
+      {
+        // a CENTRE turret as the fixture: it occupies one cell in the middle, so it never
+        // relocates the claw and these checks measure the swing rules rather than the clash
+        // rules (which have their own check at the end of this block)
+        const build = (over: Partial<RobotSpec>): RobotSpec =>
+          coerceSpec({ ...DEFAULT_SPEC, catalystType: 'arm', scoreMode: 'turret', shooterMount: 'center', ...over },
+            DEFAULT_SPEC, 'chain');
+
+        // the LEGACY value migrates to the new shape and keeps behaving exactly as it did
+        const legacy = build({ catalystMount: 'frontback' as RobotSpec['catalystMount'] });
+        check(
+          'chain swing: the legacy frontback mount migrates to a centre pivot',
+          catalystMountOf(legacy) === 'center' && catalystSwingOf(legacy) &&
+            JSON.stringify(catalystMountPositions(catalystMountOf(legacy), true)) === JSON.stringify(['front', 'back']),
+          `${catalystMountOf(legacy)} swing=${catalystSwingOf(legacy)}`,
+        );
+
+        // A SWING ON THE RIGHT — the build this whole change exists for. It works the two
+        // RIGHT-hand corners, and nothing on the left.
+        const right = build({ catalystMount: 'right', catalystSwing: true });
+        const ends = catalystMountPositions(catalystMountOf(right), catalystSwingOf(right));
+        check(
+          'chain swing: a RIGHT swing works the front-right and back-right, not the left',
+          catalystSwingOf(right) && catalystMountOf(right) === 'right' &&
+            ends.includes('frontright') && ends.includes('backright') &&
+            !ends.some((e) => e.includes('left')),
+          `${catalystMountOf(right)} -> ${ends.join('+')}`,
+        );
+        check(
+          'chain swing: a LEFT swing mirrors it',
+          JSON.stringify(catalystMountPositions('left', true)) === JSON.stringify(['frontleft', 'backleft']),
+        );
+
+        // a pivot needs a front and a back to swing between, so an END or a CORNER is not a
+        // place one can go — the SWING is dropped, the mount the player chose is kept
+        for (const m of ['front', 'back', 'frontleft', 'backright'] as const) {
+          const bad = build({ catalystMount: m, catalystSwing: true });
+          check(
+            `chain swing: a pivot cannot be bolted to ${m} (swing dropped, mount kept)`,
+            !catalystSwingOf(bad) && catalystMountOf(bad) === m,
+            `${catalystMountOf(bad)} swing=${catalystSwingOf(bad)}`,
+          );
+        }
+        // a RAIL is a track, not a pivot
+        const railSwing = build({ catalystType: 'rail', catalystMount: 'right', catalystSwing: true });
+        check('chain swing: a rail never swings', !catalystSwingOf(railSwing));
+        // ...and nothing reaches from the middle of a chassis without one
+        const middle = build({ catalystMount: 'center', catalystSwing: false });
+        check(
+          'chain swing: a centre mount with no pivot is moved to an edge',
+          catalystMountOf(middle) !== 'center',
+          catalystMountOf(middle),
+        );
+
+        // THE CENTRE PIVOT MUST NOT CLASH WITH A CENTRE TURRET. A swing claims the ends it
+        // sweeps, not the post it turns on — if it claimed the middle cell, the commonest CR
+        // build in the game (centre turret + centre swing, two shipped presets) would be
+        // illegal and coerceSpec would silently move the claw somewhere else.
+        const rocky = coerceSpec(
+          { ...DEFAULT_SPEC, scoreMode: 'twinturret', shooterMount: 'center',
+            catalystType: 'turret', catalystMount: 'center', catalystSwing: true },
+          DEFAULT_SPEC, 'chain',
+        );
+        check(
+          'chain swing: a centre pivot coexists with a centre turret',
+          catalystMountOf(rocky) === 'center' && catalystSwingOf(rocky),
+          `${catalystMountOf(rocky)} swing=${catalystSwingOf(rocky)}`,
+        );
+      }
+
+      /**
        * 4. THE SPRITE AND THE SIM SLIDE THE SAME WAY.
        *
        * `drawChainRobot` draws the carriage inside a frame rotated by `MOUNT_ANGLE[pos]` and
@@ -7122,6 +7202,45 @@ const mkMM = () => {
     }
     check('chain presets: every CR archetype survives coerceSpec unchanged', ok, bad.join(' '));
 
+    /**
+     * WHAT THE CARDS PROMISE. Two properties are DERIVED in `CHAIN_PRESETS` rather than
+     * written out, and both would fail silently: a preset whose mass drifts above its floor
+     * is just "a bit heavy", and one whose hopper drifts below its cap is just "a bit small".
+     * Neither looks like a bug in the UI, so they are asserted here.
+     */
+    {
+      let heavy = '';
+      let small = '';
+      CHAIN_PRESETS.forEach((p, i) => {
+        const c = coerceSpec({ ...p }, undefined, 'chain');
+        // EVERY preset carries the most its build can hold
+        if (c.ballStorage !== chainStorageMax(c)) small = `${p.name} ${c.ballStorage}/${chainStorageMax(c)}`;
+        // the five REAL ROBOTS are as light as their build is allowed to be
+        if (i < CHAIN_REAL_PRESETS) {
+          const floor = massLimits(c.drivetrain, c.flywheelInertia, chainMassFloorBump(c)).min;
+          if (Math.abs(c.massLb - floor) > 1e-9) heavy = `${p.name} ${c.massLb}lb vs floor ${floor}lb`;
+        }
+      });
+      check('chain presets: every preset carries its MAXIMUM ball storage', !small, small);
+      check('chain presets: the five real robots sit exactly at their mass floor', !heavy, heavy);
+    }
+
+    // the SWING is a mechanism with a position now, so the cards have to show that off too:
+    // a centre pivot AND one bolted to a flank, which is the pairing the old mount-shaped
+    // swing could not express at all
+    check(
+      'chain presets: a centre swing and a FLANK swing are both shown off',
+      CHAIN_PRESETS.some((p) => catalystSwingOf(p) && catalystMountOf(p) === 'center') &&
+        CHAIN_PRESETS.some((p) => catalystSwingOf(p) && (catalystMountOf(p) === 'right' || catalystMountOf(p) === 'left')),
+      CHAIN_PRESETS.filter((p) => catalystSwingOf(p)).map((p) => `${p.name}:${catalystMountOf(p)}`).join(' ') || 'none',
+    );
+    check(
+      'chain presets: every catalyst mechanism is represented',
+      (['arm', 'launcher', 'turret', 'rail'] as const).every((t) =>
+        CHAIN_PRESETS.some((p) => (p.catalystType ?? 'turret') === t)),
+      CHAIN_PRESETS.map((p) => p.catalystType ?? 'turret').join(' '),
+    );
+
     // showcasing the mount space is now these cards' job — keep them from drifting back
     // to all-default mounts the next time someone retunes the presets.
     check(
@@ -7519,9 +7638,13 @@ const mkMM = () => {
               for (const width of [lim.minWidth, lim.maxWidth]) {
                 const s = coerceSpec({ ...base, length, width }, DEFAULT_SPEC, 'chain');
                 const reach = chainArmReach(s);
-                const axis = cm === 'front' || cm === 'back' ? s.length : s.width;
+                // read the axis off the COERCED build, not the requested mount: a centre cell
+                // without a swing is relocated, and a SWING spends the fore-aft axis wherever
+                // its pivot sits (it extends past an END, not past its own flank)
+                const cmEff = catalystSwingOf(s) ? 'front' : catalystMountOf(s);
+                const axis = cmEff === 'front' || cmEff === 'back' ? s.length : s.width;
                 const ends =
-                  cm === 'front' || cm === 'back'
+                  cmEff === 'front' || cmEff === 'back'
                     ? intakeMountOf(s) === 'frontback'
                       ? 2
                       : intakeMountOf(s) === 'side'
@@ -7532,7 +7655,7 @@ const mkMM = () => {
                       : 0;
                 const spent = axis + ends * INTAKE_PRESETS[s.intake].reach;
                 const cap = CHAIN_PRISM - spent + CHAIN_CATALYST_OD / 2;
-                if (reach > cap + 1e-9) illegal = `${intake}/${im}/${cm} reach ${reach} > ${cap}`;
+                if (reach > cap + 1e-9) illegal = `${intake}/${im}/${cm}->${cmEff} reach ${reach} > ${cap}`;
                 minArm = Math.min(minArm, reach);
                 maxArm = Math.max(maxArm, reach);
               }

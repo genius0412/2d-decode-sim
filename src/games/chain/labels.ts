@@ -79,6 +79,8 @@ export const CHAIN_CATALYST_MOUNT_LABELS: Record<ChainCatalystMount, string> = {
   front: 'FRONT',
   frontright: 'F·RIGHT',
   left: 'LEFT',
+  center: 'CENTER',
+  /** legacy value — a centre-pivot swing. Kept so an old save still labels. */
   frontback: 'SWING',
   right: 'RIGHT',
   backleft: 'B·LEFT',

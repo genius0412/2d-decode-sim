@@ -15,14 +15,38 @@ import {
   chainCatapultRange,
   chainCatapultYaw,
   CHAIN_ARM_DRAW,
+  CHAIN_CLAW_SLEW,
   CHAIN_CORNER_BODY_INSET,
 } from './config';
 import { catalystMouth, catalystRailHalf, catalystTrackTarget, chainIntakeMouths } from './state';
-import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from './mounts';
+import { EDGE_ANGLE, MOUNT_ANGLE, catalystDrawPos, catalystMountOf, catalystSwingOf, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from './mounts';
+import { wrapAngle } from '../../math';
 import { beamRide } from './beams';
 
 /** cosmetic clock for the crossing shudder (render-only, so a wall clock is fine + deterministic-safe) */
 const nowMs = (): number => (typeof performance !== 'undefined' ? performance.now() : 0);
+
+/**
+ * CLAW SWIVEL, eased per robot. Same category as the shudder above: cosmetic, wall-clocked,
+ * and outside the sim — a turret/rail claw's cone is a full circle, so this angle decides
+ * nothing. Keyed by robot id; a stale entry costs one number and re-converges in a third of a
+ * second, so nothing has to clean it up.
+ */
+const clawAim = new Map<number, { a: number; t: number }>();
+function easeClaw(id: number, target: number): number {
+  const t = nowMs();
+  const prev = clawAim.get(id);
+  if (!prev) {
+    clawAim.set(id, { a: target, t });
+    return target; // first sight of this robot: start aimed, never swing in from zero
+  }
+  const dt = Math.min(0.1, Math.max(0, (t - prev.t) / 1000)); // clamp a tab-switch gap
+  const step = CHAIN_CLAW_SLEW * dt;
+  const err = wrapAngle(target - prev.a);
+  const a = Math.abs(err) <= step ? target : wrapAngle(prev.a + Math.sign(err) * step);
+  clawAim.set(id, { a, t });
+  return a;
+}
 
 /**
  * Chain Reaction robot sprite (top-down). Shares the chassis + drivetrain wheels with
@@ -285,7 +309,7 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
   // A FRONTBACK swing is ONE arm on a pivot that rotates between the ends, so it is drawn at
   // the front — where it stows. Drawing it at both ends would read as two arms, which is
   // exactly what it isn't.
-  const pos = catalystMountPositions(catalystMountOf(r.spec))[0];
+  const pos = catalystDrawPos(catalystMountOf(r.spec), catalystSwingOf(r.spec));
   const o = mountOrigin(r.spec, pos);
   // Is this robot actually holding a ring? The ring SPRITE is drawn in draw.ts, but the
   // mechanism needs to know too — an arm's jaws close on what they are carrying, and a claw
@@ -395,9 +419,11 @@ function drawCatalystMech(ctx: CanvasRenderingContext2D, r: RobotState, world?: 
     // AIM IN THE MOUNT'S OWN FRAME, so "no target" can mean STOWED (0 = pointing straight out
     // of its mount) rather than pointing at world +x — which, with the chassis rotation
     // subtracted below, would have swung an idle claw around as the robot turned.
-    const aim = tgt
+    const aimTarget = tgt
       ? Math.atan2(tgt.y - mouth.y, tgt.x - mouth.x) - r.heading - MOUNT_ANGLE[pos]
       : 0;
+    // swivel toward it at a finite rate rather than teleporting onto it (see `easeClaw`)
+    const aim = easeClaw(r.id, aimTarget);
 
     /**
      * THE RAIL (type `rail` only). A linear track spanning the mounted side with a carriage

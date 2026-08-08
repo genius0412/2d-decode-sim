@@ -42,9 +42,12 @@ import {
   CHAIN_SHOOTER_MOUNTS,
   CHAIN_TURRET_POSITIONS,
   catalystMountOf,
+  catalystSwingOf,
   intakeMountOf,
+  isSwingMount,
   isTurreted,
   shooterMountOf,
+  swingHomeFor,
 } from '../games/chain/mounts';
 import {
   butterflyTankRpm,
@@ -764,23 +767,52 @@ export function Menu({ settings, onChange }: Props) {
                     </button>
                   ))}
                 </div>
-                {/* Same 3x3 chassis map as the turret picker. The CENTRE cell is the SWING
-                    rather than a centre mount: a claw cannot reach from the middle of the
-                    chassis, and a pivot that serves both ends is exactly what belongs between
-                    the front and back cells. */}
+                {/* SWING is a property of the MECHANISM, not a place to put it. It used to be
+                    the centre cell of this grid, which made "a swing" and "on the right"
+                    mutually exclusive picks — so a fore-aft swing arm bolted to the right
+                    rail, an ordinary build, could not be expressed at all. Now it toggles,
+                    and the grid below says where the pivot goes. */}
+                {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) !== 'rail' && (
+                  <button
+                    className={`ds-opt ${catalystSwingOf(spec) ? 'on' : ''}`}
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      const on = !catalystSwingOf(spec);
+                      // turning it ON from a mount a pivot cannot use (an end or a corner)
+                      // moves it to the nearest one that works, rather than refusing the click
+                      const m = catalystMountOf(spec);
+                      setSpec({
+                        catalystSwing: on,
+                        catalystMount: on && !isSwingMount(m) ? swingHomeFor(m) : m,
+                      });
+                    }}
+                  >
+                    <span className="ot">Swing arm{catalystSwingOf(spec) ? ' · ON' : ''}</span>
+                    <span className="od">
+                      One arm on a fore-aft pivot — it works whichever END of its side is nearer,
+                      so it covers two cones instead of one
+                    </span>
+                  </button>
+                )}
+                {/* Same 3x3 chassis map as the turret picker: where the mechanism is BOLTED. */}
                 <div className="ds-opts three" style={{ marginTop: 8 }}>
                   {CHAIN_CATALYST_MOUNTS.map((m) => {
-                    // A cell is unavailable for two physical reasons, and the picker says
+                    // A cell is unavailable for three physical reasons, and the picker says
                     // WHICH — coerceSpec would quietly relocate the mount otherwise, and a
                     // button that moves your choice somewhere else without explaining is
                     // worse than one that refuses.
                     const railed = (spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'rail';
+                    const swung = catalystSwingOf(spec);
                     const noTrack = railed && !isEdgePos(m);
+                    // a fore-aft pivot needs a front and a back to swing between; and with no
+                    // pivot at all, the middle of the chassis reaches nothing
+                    const noPivot = swung && !isSwingMount(m);
+                    const noReach = !swung && m === 'center';
                     const taken = mountsClash(
-                      { pos: m, spansEdge: railed },
+                      { pos: m, spansEdge: railed, swing: swung },
                       { pos: shooterMountOf(spec), spansEdge: !isTurreted(spec.scoreMode) },
                     );
-                    const off = noTrack || taken;
+                    const off = noTrack || taken || noPivot || noReach;
                     return (
                       <button
                         key={m}
@@ -789,12 +821,16 @@ export function Menu({ settings, onChange }: Props) {
                         onClick={() => setSpec({ catalystMount: m })}
                         title={
                           noTrack
-                            ? 'A rail needs a whole chassis side to run along — corners and the swing have no span for a track'
+                            ? 'A rail needs a whole chassis side to run along — corners and the centre have no span for a track'
                             : taken
                               ? 'The shooter is mounted here'
-                              : m === 'frontback'
-                                ? 'One arm on a pivot that swings between the front and rear edges — it works whichever end is nearer'
-                                : `Claw mounted at the ${CHAIN_CATALYST_MOUNT_LABELS[m]} of the chassis`
+                              : noPivot
+                                ? 'A fore-aft swing pivots between the ends of its side — bolt it to the centre line or a flank'
+                                : noReach
+                                  ? 'Nothing reaches from the middle of a chassis — turn on the swing arm to work from here'
+                                  : swung
+                                    ? `Pivot on the ${CHAIN_CATALYST_MOUNT_LABELS[m]}, swinging front to back`
+                                    : `Claw mounted at the ${CHAIN_CATALYST_MOUNT_LABELS[m]} of the chassis`
                         }
                       >
                         <span className="ot">{CHAIN_CATALYST_MOUNT_LABELS[m]}</span>

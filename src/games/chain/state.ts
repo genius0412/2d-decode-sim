@@ -14,7 +14,7 @@ import {
   CHAIN_INTAKES,
   CHAIN_DEFAULT_INTAKE,
 } from './config';
-import { type ChainEdge, MOUNT_ANGLE, RAIL_DIR, catalystMountOf, catalystMountPositions, intakeMountEdges, intakeMountOf, isEdgePos, mountOrigin } from './mounts';
+import { type ChainEdge, MOUNT_ANGLE, RAIL_DIR, catalystMountOf, catalystMountPositions, catalystSwingOf, intakeMountEdges, intakeMountOf, isEdgePos, mountOrigin } from './mounts';
 import { CHAIN_CATALYST_NEAR, CHAIN_DEFAULT_CATALYST, CHAIN_TRACK_APPROACH, chainCatalystGeom } from './config';
 import { datan2, dcos, dsin, hyp, rot, wrapAngle } from '../../math';
 
@@ -307,7 +307,7 @@ export function catalystRailTarget(rob: RobotState, target: Vec2 | null): number
  * choice of where to work from at any instant.
  */
 export function catalystMouths(rob: RobotState): Vec2[] {
-  return catalystMountPositions(catalystMountOf(rob.spec)).map((p) => mouthAt(rob, p));
+  return catalystMountPositions(catalystMountOf(rob.spec), catalystSwingOf(rob.spec)).map((p) => mouthAt(rob, p));
 }
 
 /**
@@ -347,7 +347,7 @@ export function catalystMouth(rob: RobotState, target?: Vec2): Vec2 {
  */
 export function catalystCanReach(rob: RobotState, target: Vec2, radius: number): boolean {
   const cone = chainCatalystGeom(rob.spec).cone;
-  for (const pos of catalystMountPositions(catalystMountOf(rob.spec))) {
+  for (const pos of catalystMountPositions(catalystMountOf(rob.spec), catalystSwingOf(rob.spec))) {
     const mouth = mouthAt(rob, pos);
     const dx = target.x - mouth.x;
     const dy = target.y - mouth.y;

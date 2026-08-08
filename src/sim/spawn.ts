@@ -52,7 +52,9 @@ import {
   CHAIN_CATALYST_MOUNTS,
   CHAIN_RAIL_MOUNTS,
   intakeMountOf,
+  CHAIN_SWING_MOUNTS,
   isEdgePos,
+  isSwingMount,
   isTurreted,
   mountsClash,
   railEdgeOf,
@@ -275,9 +277,15 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
   out.catalystType = (CHAIN_CATALYST_TYPES as readonly string[]).includes(sp.catalystType as string)
     ? (sp.catalystType as RobotSpec['catalystType'])
     : (base.catalystType ?? CHAIN_DEFAULT_CATALYST);
-  out.catalystMount = (CHAIN_CATALYST_MOUNTS as readonly string[]).includes(sp.catalystMount as string)
-    ? (sp.catalystMount as RobotSpec['catalystMount'])
-    : (base.catalystMount ?? CHAIN_DEFAULT_CATALYST_MOUNT);
+  // 'frontback' is not in CHAIN_CATALYST_MOUNTS any more (it was the swing, not a place), but
+  // it still arrives from old saves and older clients — accept it here and migrate it below.
+  out.catalystMount =
+    (CHAIN_CATALYST_MOUNTS as readonly string[]).includes(sp.catalystMount as string) ||
+    sp.catalystMount === 'frontback'
+      ? (sp.catalystMount as RobotSpec['catalystMount'])
+      : (base.catalystMount ?? CHAIN_DEFAULT_CATALYST_MOUNT);
+  out.catalystSwing =
+    typeof sp.catalystSwing === 'boolean' ? sp.catalystSwing : !!base.catalystSwing;
   // CATAPULT build: range (in) and the fixed mounting yaw (deg, 15° steps). Only meaningful
   // on the launcher, but kept on the spec unconditionally so switching mechanism back and
   // forth doesn't silently discard the build.
@@ -343,6 +351,28 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
    */
   {
     const railed = out.catalystType === 'rail';
+    /**
+     * THE SWING, resolved before anything else reads the mount.
+     *
+     * `'frontback'` was the old way of saying "a centre-pivot swing" — a MOUNT that was
+     * really a mechanism, which is why "a swing, on the right" could not be expressed. It is
+     * migrated here rather than at the call sites so every reader (sim, renderers, picker,
+     * the wire) sees one shape.
+     *
+     * Then two physical rules: a RAIL is a track, not a pivot, so it never swings; and a
+     * pivot needs a front and a back to swing between, so it lives on the centre line or a
+     * flank. An illegal pairing drops the SWING rather than moving the mount — the player
+     * chose where to bolt it, and silently relocating hardware is the thing this whole block
+     * exists to avoid.
+     */
+    if (out.catalystMount === ('frontback' as RobotSpec['catalystMount'])) {
+      out.catalystMount = 'center';
+      out.catalystSwing = true;
+    }
+    out.catalystSwing = !railed && !!out.catalystSwing && isSwingMount(out.catalystMount as string);
+    // ...and the middle of a chassis reaches nothing without one, so a centre mount that is
+    // not a pivot falls to the front edge.
+    if (out.catalystMount === 'center' && !out.catalystSwing) out.catalystMount = 'front';
     if (railed && !isEdgePos(out.catalystMount as string)) {
       out.catalystMount = railEdgeOf(out.catalystMount as string);
     }
@@ -356,11 +386,17 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
     // which is a strong hint the rule is about the deck rather than about the edge.
     const blockers = [{ pos: out.shooterMount as string, spansEdge: !isTurreted(out.scoreMode) }];
     const clashes = (m: string): boolean =>
-      blockers.some((b) => mountsClash({ pos: m, spansEdge: railed }, b));
+      blockers.some((b) => mountsClash({ pos: m, spansEdge: railed, swing: !!out.catalystSwing }, b));
     if (clashes(out.catalystMount as string)) {
+      // The fallback set has to be places THIS mechanism can legally live, or the relocation
+      // silently produces a build the next pass has to fix again — which is exactly how this
+      // broke idempotency: a swing pushed onto a corner had its swing quietly dropped on the
+      // second pass, so coerceSpec(coerceSpec(x)) !== coerceSpec(x).
       const options = railed
         ? (CHAIN_RAIL_MOUNTS as readonly string[])
-        : (CHAIN_CATALYST_MOUNTS as readonly string[]);
+        : out.catalystSwing
+          ? (CHAIN_SWING_MOUNTS as readonly string[])
+          : (CHAIN_CATALYST_MOUNTS as readonly string[]).filter((m) => m !== 'center');
       const free = options.find((m) => !clashes(m));
       // if EVERY position clashes the build is over-stuffed; leave the mount alone rather
       // than inventing one, and let the builder's own warning explain it

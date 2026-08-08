@@ -10,7 +10,7 @@ import {
   CHAIN_CORNER_BODY_INSET,
 } from '../games/chain/config';
 import { catalystRailHalf, chainIntakeMouths } from '../games/chain/state';
-import { EDGE_ANGLE, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from '../games/chain/mounts';
+import { EDGE_ANGLE, MOUNT_ANGLE, catalystDrawPos, catalystMountOf, catalystSwingOf, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from '../games/chain/mounts';
 import { footprintExtents } from '../sim/field';
 import { turretGeom, type TurretGeom } from '../render/drawRobot';
 
@@ -70,7 +70,7 @@ export function RobotPreview({
   // has to be measured in too — an <svg> clips to its viewport, and a 10"-wide
   // robot would otherwise lop the ends off "16.5" wide · 14.5" long".
   // A FRONTBACK swing is one arm drawn where it stows (the front) — see drawCatalystMech.
-  const catPos = catalystMountPositions(catalystMountOf(spec))[0];
+  const catPos = catalystDrawPos(catalystMountOf(spec), catalystSwingOf(spec));
   const catOrigin = mountOrigin(spec, catPos);
   const catDist = 0; // shapes are drawn from the frame outward once translated to the mount
   const catType = spec.catalystType ?? CHAIN_DEFAULT_CATALYST;
