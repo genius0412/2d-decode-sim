@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { type UserStats } from '../net/api';
 import { SupporterBadge } from './SupporterBadge';
+import { RankBadge } from './RankBadge';
 
 /**
  * The competitive-stats panel shared by "My Stats" (own account) and the public
@@ -67,6 +68,21 @@ export function CareerPanel({
 
       {status === 'ok' && stats && (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* STANDINGS FIRST. A rating is the input; the standing is the answer, and it is
+              what a player opens this panel to see. The raw numbers stay below it — they are
+              still the truth and a competitive player wants them — but they are no longer
+              the only way to find out where you stand. */}
+          <div className="ds-standings">
+            {(['1v1', '2v2'] as const).map((mode) => {
+              const e = mode === '1v1' ? elo1 : elo2;
+              return (
+                <div className="ds-standing-card" key={mode}>
+                  <span className="ds-standing-mode">{mode.toUpperCase()} STANDING</span>
+                  <RankBadge rating={e?.rating ?? 1000} games={e?.games ?? 0} size="lg" />
+                </div>
+              );
+            })}
+          </div>
           <div className="ds-stats">
             <div className="ds-stat">
               <span className="sv">{elo1?.rating ?? 1000}</span>

@@ -14,6 +14,8 @@ import { AdSlot, ResultsAd, useAdUnitActive } from './AdSlot';
 import { DEFAULT_MOBILE_LAYOUT } from '../settings';
 import type { MatchResultInfo, NetSession, NetStatus } from '../net/session';
 import { clearActiveGame } from '../net/activeGame';
+import { RankBadge } from './RankBadge';
+import { standingFor, tierChange } from '../ranks';
 import type { RecordRankInfo } from '../net/protocol';
 import type { Replay } from '../sim/replay';
 import { CHAIN_MODE_LABELS } from '../games/chain/labels';
@@ -761,6 +763,7 @@ function EloRow({ r, index }: { r: EloResultRow; index: number }) {
   }, [index]);
   const after = useCountUp(r.after, live, 1100, r.before);
   const dir = delta >= 0 ? 'up' : 'down';
+  const promo = tierChange(r.before, r.after, r.games);
   return (
     <div className={`elo-row ${r.alliance} ${r.isLocal ? 'you' : ''} ${live ? 'in' : ''}`}>
       <span className="elo-name">
@@ -784,6 +787,19 @@ function EloRow({ r, index }: { r: EloResultRow; index: number }) {
           {delta >= 0 ? `+${delta}` : delta}
         </span>
       </span>
+      {/* THE STANDING, for the local player only. Every driver's rating change is worth
+          showing — that is the scoreboard — but a tier badge per row would turn the
+          results into a wall of shields. The question "where did that leave ME" is the
+          one worth answering here, and a promotion is the moment the ladder earns an
+          interruption. */}
+      {r.isLocal && (
+        <span className="elo-standing">
+          <RankBadge rating={r.after} games={r.games} size="sm" />
+          {promo && <span className={`ds-rank-change ${promo === 'promoted' ? 'up' : 'down'}`}>
+            {promo === 'promoted' ? '▲ Promoted' : '▼ Demoted'} — {standingFor(r.after, r.games).tier.name}
+          </span>}
+        </span>
+      )}
     </div>
   );
 }

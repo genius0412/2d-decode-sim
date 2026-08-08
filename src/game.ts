@@ -80,6 +80,9 @@ export interface EloResultRow {
   isLocal: boolean;
   /** Glicko rating deviation after the game — high ⇒ provisional rating */
   provisional: boolean;
+  /** games on this board AFTER the match — the standings badge needs it to know
+   *  whether the player is still in placements (see src/ranks.ts) */
+  games: number;
 }
 
 /** one driver's pre-match intro card (ranked matches only) */
@@ -1078,6 +1081,7 @@ export class GameController {
         after: d.after,
         isLocal: d.robotId === this.localRobotId,
         provisional: d.games < C.PLACEMENT_GAMES, // still in placements (games-based)
+        games: d.games,
       };
     });
     return rows.sort((a, b) => (a.alliance === b.alliance ? 0 : a.alliance === 'red' ? -1 : 1));

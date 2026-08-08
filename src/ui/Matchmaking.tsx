@@ -9,6 +9,7 @@ import type { NetSession } from '../net/session';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
+import { DODGE_REASON, DODGE_WINDOW_HOURS, DODGE_PENALTIES, type DodgeVerdict } from '../dodge';
 import { expandLabel, widenHint, queuesFor } from './queueDepth';
 import { parkQueue, takeQueue, updateQueue, dropQueue, elapsedSeconds, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
@@ -83,6 +84,10 @@ export function Matchmaking({
   const [bumps, setBumps] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
+  /** what a cancelled ranked pairing cost — shown next to the cancellation itself, because
+   *  a rating drop the player is not told about is the thing that makes a penalty feel
+   *  arbitrary. `null` for a player who was NOT at fault, which is worth saying out loud. */
+  const [dodge, setDodge] = useState<{ yours: DodgeVerdict | null; others: DodgeVerdict[] } | null>(null);
   // set once a paired match opens its pre-match strategy window (see MatchStrategy)
   const [strategy, setStrategy] = useState<StrategyState | null>(null);
 
@@ -234,6 +239,7 @@ export function Matchmaking({
       matchFound();
       joinAssignedMatch(room);
     });
+    lobby.on('dodgeVerdict', (yours, others) => setDodge({ yours, others }));
     lobby.on('error', (msg) => strategyCancelled(msg));
     lobby.on('closed', () => {
       if (!startedRef.current && !assigningRef.current)
@@ -331,6 +337,36 @@ export function Matchmaking({
     setError(msg);
   };
 
+  /** the cancellation notice: WHY it died and what it cost you. Rendered next to every
+   *  error slot, so it appears wherever the cancel surfaces. */
+  const dodgeNote = (): JSX.Element | null => {
+    if (!dodge) return null;
+    const y = dodge.yours;
+    if (y?.kind) {
+      const nth = y.count === 1 ? 'first' : y.count === 2 ? 'second' : `${y.count}th`;
+      return (
+        <div className="ds-dodge charged">
+          <b>−{y.penalty} rating · {y.ratingBefore} → {y.ratingAfter}</b>
+          <span>
+            You {DODGE_REASON[y.kind]}. That is your {nth} in {DODGE_WINDOW_HOURS} hours —
+            {y.count < DODGE_PENALTIES.length ? ' the next one costs more.' : ' further ones cost the same.'}
+          </span>
+        </div>
+      );
+    }
+    const who = dodge.others.filter((o) => o.kind).length;
+    return (
+      <div className="ds-dodge clear">
+        <b>Your rating was not charged</b>
+        <span>
+          {who > 0
+            ? `${who === 1 ? 'A player' : `${who} players`} didn’t make it to the match. You were ready — this one is on them.`
+            : 'The match was cancelled before it started.'}
+        </span>
+      </div>
+    );
+  };
+
   const find = async (): Promise<void> => {
     if (!gameServerUrl()) {
       setError('The game server isn’t configured.');
@@ -373,6 +409,7 @@ export function Matchmaking({
       matchFound();
       joinAssignedMatch(room);
     });
+    lobby.on('dodgeVerdict', (yours, others) => setDodge({ yours, others }));
     lobby.on('error', (msg) => strategyCancelled(msg));
     lobby.on('closed', () => {
       if (!startedRef.current && !assigningRef.current)
@@ -424,6 +461,7 @@ export function Matchmaking({
       startedRef.current = true;
       onStart(new ServerSession(transport, lobby.isHost(), m, lobby.clientId, room));
     });
+    lobby.on('dodgeVerdict', (yours, others) => setDodge({ yours, others }));
     lobby.on('error', (msg) => strategyCancelled(msg));
     lobby.on('closed', () => {
       if (!startedRef.current) strategyCancelled('Lost connection to the match server.');
@@ -555,6 +593,7 @@ export function Matchmaking({
             we’ll pull you in the moment they accept.
           </p>
           {error && <p className="ds-form-err">⚠ {error}</p>}
+          {dodgeNote()}
           <div className="ds-actions">
             <button className="ds-cta ghost" onClick={cancel}>
               CANCEL
@@ -580,6 +619,7 @@ export function Matchmaking({
           kept, and we’ll pull you into the match the moment it’s found.
         </p>
         {error && <p className="ds-form-err">⚠ {error}</p>}
+          {dodgeNote()}
         <div className="ds-actions">
           {!noWiden && multiServer() && (
             <button className="ds-cta ghost" onClick={expand}>
@@ -630,6 +670,7 @@ export function Matchmaking({
         </div>
       )}
       {error && <p className="ds-form-err">⚠ {error}</p>}
+          {dodgeNote()}
       {restartPending && (
         <p className="ds-form-err">⚠ Server is restarting shortly - queueing is paused for a moment.</p>
       )}

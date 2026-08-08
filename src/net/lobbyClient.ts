@@ -1,3 +1,4 @@
+import type { DodgeVerdict } from '../dodge';
 import type { GameId } from '../types';
 import type { RobotSetup } from '../sim/spawn';
 import type { Transport } from './transport';
@@ -46,6 +47,9 @@ type Handlers = {
    * changes ride the existing `update`/`roster`; a `matchStart` follows on ready. */
   strategyStart: (deadline: number, yourRobotId: number, mode: QueueMode, intros: PlayerIntro[]) => void;
   error: (message: string) => void;
+  /** a staged RANKED pairing was cancelled and this is what it cost. Arrives just BEFORE
+   *  the `error` that tears the screen down, so the UI can show the reason alongside it. */
+  dodgeVerdict: (yours: DodgeVerdict | null, others: DodgeVerdict[]) => void;
   closed: () => void;
 };
 
@@ -169,6 +173,8 @@ export class LobbyClient {
       this.handlers.strategyStart?.(m.deadline, m.yourRobotId, m.mode, m.intros);
     } else if (m.t === 'error') {
       this.handlers.error?.(m.message);
+    } else if (m.t === 'dodgeVerdict') {
+      this.handlers.dodgeVerdict?.(m.yours, m.others);
     } else if (m.t === 'serverNotice') {
       setServerNotice(m.message ? { kind: m.kind, message: m.message, until: m.until } : null);
     }

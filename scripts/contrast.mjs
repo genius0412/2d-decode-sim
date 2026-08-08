@@ -275,6 +275,19 @@ const serverPairs = (t) => {
     // renders on the leaderboard panel, the lobby roster tile, AND a profile
     // header, and no single coloured-text value clears AA on all three grounds.
     ['SupporterBadge glyph', t('--ds-gold-ink'), t('--ds-gold'), AA],
+
+    /* RANKED TIER SHIELDS. Fills with ONE fixed ink (--ds-rank-ink), same category as
+       gold: the shield is a coloured badge carrying dark type, never type itself. All
+       six must clear AA against that single ink — a tier lightened to look nicer next
+       to its neighbour would take its own initial and division pips below AA, and the
+       shield is exactly where a player looks to identify the tier at a glance. */
+    ['Rank shield · Rookie', t('--ds-rank-ink'), t('--ds-rank-rookie'), AA],
+    ['Rank shield · Meet', t('--ds-rank-ink'), t('--ds-rank-meet'), AA],
+    ['Rank shield · Qualifier', t('--ds-rank-ink'), t('--ds-rank-qualifier'), AA],
+    ['Rank shield · Regional', t('--ds-rank-ink'), t('--ds-rank-regional'), AA],
+    ['Rank shield · Championship', t('--ds-rank-ink'), t('--ds-rank-championship'), AA],
+    ['Rank shield · Worlds', t('--ds-rank-ink'), t('--ds-rank-worlds'), AA],
+    ['Rank shield · Inspire', t('--ds-rank-ink'), t('--ds-rank-inspire'), AA],
     // ...and the staff variants of the same badge. Unlike gold, both of these
     // fills INVERT between themes, so checking them in each theme is the whole
     // point: the assertion is that the PAIR stays legible, not that the hex does.

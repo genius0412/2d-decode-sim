@@ -122,6 +122,27 @@
      brand accent reads as decoration). Burnt amber clears 4.5:1 on the floor. */
   --ds-warn: #8f5400;
 
+  /* ---- RANKED TIER ACCENTS -------------------------------------------------
+     FILLS WITH FIXED INK, the same category as --ds-gold and the alliance chips:
+     a tier shield is a coloured badge carrying dark type, never type itself, so
+     these do NOT invert. `--ds-rank-ink` is the one ink they all carry, which is
+     why every fill below has to clear AA against that single value rather than
+     against whichever surface it lands on.
+
+     The ramp is bronze -> silver -> green -> blue -> purple -> gold: conventional
+     enough to read as a ladder at a glance, and monotonic in perceived "worth" so
+     nobody has to learn it. Colour NEVER carries the rank alone — the badge always
+     prints its tier name, and the shield its initial plus division pips — because
+     six accents on one ladder will collide for someone. */
+  --ds-rank-ink: #0f1214;
+  --ds-rank-rookie: #96a0b0;
+  --ds-rank-meet: #c07f4e;
+  --ds-rank-qualifier: #a6b3c2;
+  --ds-rank-regional: #4aa877;
+  --ds-rank-championship: #5b93e0;
+  --ds-rank-worlds: #a77bf0;
+  --ds-rank-inspire: #f5a623;
+
   /* ---- HUD cards floating over the DARK field canvas (src/render/ is untouched) ----
      These carry a 1px stroke and NO block shadow (an offset block on a dark field
      reads as a stray highlight, not as depth). The stroke is what separates the card
@@ -4193,3 +4214,194 @@ button.ds-key:active {
 .ds-queuechip .qb-txt {
   white-space: nowrap;
 }
+
+/* =====================================================================
+   RANKED STANDINGS — the tier badge (src/ui/RankBadge.tsx)
+
+   One component in three sizes, so a player recognises their rank instantly
+   whether it is on the results screen, the career panel or a profile. The tier
+   accent is applied ONCE here via `data-tier`, and everything inside inherits it
+   through `currentColor` — adding a tier is a token plus one line, not a new
+   rule per element.
+   ===================================================================== */
+.ds-rank {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ds-rank-rookie); /* overridden per tier below; the shield reads it */
+}
+.ds-rank[data-tier='rookie'] { color: var(--ds-rank-rookie); }
+.ds-rank[data-tier='meet'] { color: var(--ds-rank-meet); }
+.ds-rank[data-tier='qualifier'] { color: var(--ds-rank-qualifier); }
+.ds-rank[data-tier='regional'] { color: var(--ds-rank-regional); }
+.ds-rank[data-tier='championship'] { color: var(--ds-rank-championship); }
+.ds-rank[data-tier='worlds'] { color: var(--ds-rank-worlds); }
+.ds-rank[data-tier='inspire'] { color: var(--ds-rank-inspire); }
+
+.ds-rank-shield {
+  width: 38px;
+  height: 43px;
+  flex: none;
+}
+.ds-rank.sm .ds-rank-shield { width: 26px; height: 29px; }
+.ds-rank.lg .ds-rank-shield { width: 58px; height: 65px; }
+.ds-rank-shield-fill { fill: currentColor; }
+/* the edge is a darkened rim of the SAME hue rather than a border token: a shared
+   line colour made the six shields read as one component in six paint jobs */
+.ds-rank-shield-edge { stroke: color-mix(in srgb, currentColor 55%, #000); stroke-width: 1.5; }
+.ds-rank-shield-ch {
+  fill: var(--ds-rank-ink);
+  font: 800 15px/1 var(--ds-font);
+  letter-spacing: -0.02em;
+}
+.ds-rank.sm .ds-rank-shield-ch { font-size: 15px; }
+.ds-rank-pipdot { fill: var(--ds-rank-ink); opacity: 0.85; }
+
+.ds-rank-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/* the LABEL is plain ink, not the tier accent. Six accents as type on the panel would
+   be six new contrast pairs to defend, and three of them could not clear AA without
+   being lightened into each other — the shield carries the colour, the words carry
+   the meaning. */
+.ds-rank-label {
+  font: 800 15px/1.15 var(--ds-font);
+  color: var(--ds-ink);
+  letter-spacing: -0.01em;
+}
+.ds-rank.sm .ds-rank-label { font-size: 13px; }
+.ds-rank.lg .ds-rank-label { font-size: 22px; }
+.ds-rank-sub {
+  font: 600 11px/1.2 var(--ds-font-mono);
+  color: var(--ds-mut);
+}
+.ds-rank.lg .ds-rank-sub { font-size: 13px; }
+
+.ds-rank-bar {
+  display: block;
+  height: 5px;
+  margin-top: 3px;
+  border-radius: 999px;
+  background: var(--ds-tile);
+  border: 1px solid var(--ds-line);
+  overflow: hidden;
+  min-width: 90px;
+}
+.ds-rank.lg .ds-rank-bar { height: 8px; min-width: 160px; }
+.ds-rank-fill {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  border-radius: 999px;
+  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* the compact mark, for a table cell or a name row */
+.ds-rank-pip {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  min-width: 22px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font: 800 11px/1.4 var(--ds-font-mono);
+  color: var(--ds-rank-ink);
+  background: var(--ds-rank-rookie);
+}
+.ds-rank-pip[data-tier='rookie'] { background: var(--ds-rank-rookie); }
+.ds-rank-pip[data-tier='meet'] { background: var(--ds-rank-meet); }
+.ds-rank-pip[data-tier='qualifier'] { background: var(--ds-rank-qualifier); }
+.ds-rank-pip[data-tier='regional'] { background: var(--ds-rank-regional); }
+.ds-rank-pip[data-tier='championship'] { background: var(--ds-rank-championship); }
+.ds-rank-pip[data-tier='worlds'] { background: var(--ds-rank-worlds); }
+.ds-rank-pip[data-tier='inspire'] { background: var(--ds-rank-inspire); }
+.ds-rank-pip sub { font-size: 8px; }
+
+/* PROMOTION / DEMOTION callout on the results screen — the one moment the ladder is
+   worth interrupting for. Promotion borrows the tier accent it just reached; demotion
+   uses the danger ink rather than a red FILL, because it sits as type on the panel. */
+.ds-rank-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font: 800 11px/1.4 var(--ds-font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ds-rank-change.up {
+  color: var(--ds-ok-ink);
+  background: color-mix(in srgb, var(--ds-ok) 14%, var(--ds-panel));
+  border: 1px solid color-mix(in srgb, var(--ds-ok) 40%, var(--ds-line));
+}
+.ds-rank-change.down {
+  color: var(--ds-red-ink);
+  background: color-mix(in srgb, var(--ds-red) 12%, var(--ds-panel));
+  border: 1px solid color-mix(in srgb, var(--ds-red) 40%, var(--ds-line));
+}
+
+/* the DODGE verdict, shown when a ranked pairing was cancelled */
+.ds-dodge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--ds-round);
+  font: 600 12px/1.4 var(--ds-font);
+}
+.ds-dodge.charged {
+  color: var(--ds-red-ink);
+  background: color-mix(in srgb, var(--ds-red) 12%, var(--ds-panel));
+  border: 1px solid color-mix(in srgb, var(--ds-red) 40%, var(--ds-line));
+}
+.ds-dodge.clear {
+  color: var(--ds-mut);
+  background: var(--ds-panel);
+  border: 1px dashed var(--ds-line);
+}
+.ds-dodge b { color: var(--ds-ink); }
+
+/* the two standing cards at the top of the career panel */
+.ds-standings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+.ds-standing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--ds-round);
+  border: 1px solid var(--ds-line);
+  background: var(--ds-tile);
+}
+.ds-standing-mode {
+  font: 700 10px/1 var(--ds-font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ds-mut);
+}
+
+/* the local player's standing inside their ELO row on the results screen. It sits BELOW
+   the numbers rather than beside them: the row is already a name + three figures wide, and
+   a fourth column would push the delta chip off a phone. */
+.elo-standing {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--ds-line);
+}
+
+/* the tier badge inside the leaderboard's own standing strip — the strip is a fixed-height
+   row, so the badge drops its bar and rides at the smaller size */
+.lb-standing-rank-badge { margin-right: 4px; }
+.lb-standing-rank-badge .ds-rank-bar { display: none; }
