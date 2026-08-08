@@ -1,3 +1,70 @@
+# HANDOFF — 2026-08-08c (mobile results fix · player reports + moderation) — alpha only
+
+Branch **alpha**, NOT merged. `npm test` · build · `contrast` 211 · `server:check` green.
+
+**NEEDS A DEPLOY, AND NOW CARRIES TWO MIGRATIONS**: `0025_ranked_dodges.sql` and
+`0026_player_reports.sql`. Both additive (create-if-not-exists). Still pending from 08-07:
+the spectating batch.
+
+## 1. Mobile: the DECODE results screen (`38d5645`)
+Measured before touching anything. At **375x812** the panel was 380x877 at top:-32 /
+bottom:844 — clipped at both ends. At **320x568**, top:-154, so the winner banner and both
+final scores were off-screen, and `overlay.scrollHeight === overlay.clientHeight` meant
+**none of it was reachable**. Unusable, not just ugly.
+
+- **Width**: `min-width: 380px` (results) and `320px` (all overlays) with border-box sizing
+  meant the panel could not shrink below the smallest supported phone. Both `min(…, 100%)`
+  now; padding `clamp()`s instead of a flat 40px a side.
+- **Height — the real bug**: a flex item centred by `align-items: center` that outgrows its
+  container is pushed off BOTH edges and the overflow is NOT scrollable. Tried
+  `align-items: safe center` (fixes alignment, no scroll) and auto-margin centring (margins
+  resolve to 0 when overflowing, no scroll) — measured both. The panel now caps at
+  `max-height: 100%` and **scrolls its own content**, sidestepping the question.
+- `.elo-standing` used `grid-column` inside a FLEX row — did nothing; `flex: 1 0 100%` now.
+
+After: 320 → 296 wide, 332px scroll · 375 → 351 wide, 48px scroll · 414 → 390, no scroll.
+
+**Technique worth reusing:** the results screen is unreachable by URL and the solo sim
+pauses when the browser pane is hidden (rAF), so it was validated by a throwaway page that
+imported the REAL `Results` component with a realistic breakdown. Same trick used for the
+rank badges and the report dialog. Faster and more honest than a mock.
+
+Swept the alpha screens at 375 too: 3x3 mount pickers, butterfly dual-RPM, CR archetypes,
+frame sliders, standings cards — all fit. The only things crossing the viewport edge are
+inside the nav rail / sub-nav, which are intentional horizontal scrollers.
+
+## 2. Player reports + moderation (`ea581da`)
+**Reporting is post-match only** — the moment the player saw it, can still see who, and the
+match is the evidence.
+
+**Named by ROBOT ID, never a user id.** The client is never told who its opponents are;
+`Room.resolveReport` maps it server-side from the room's own roster, so a crafted message
+cannot report an arbitrary account. Smoke covers self-report, unknown robot, outside-the-room,
+and anonymous at either end.
+
+**Categories come from this game.** No chat exists, so no "abusive messages" category —
+smoke asserts that. The real surfaces are the match (throwing/AFK/dodging), the client
+(specs are client-supplied), and the free text a player owns (display/team/robot name),
+which is why `name` is first-class.
+
+**The queue** shows open vs total AND **distinct reporters** — four reports from four people
+is a different signal from four from one. Opening a row loads reports AND the player's
+recent matches in one request, with a **Watch** button per replay. That is the whole point:
+a cheating report is unjudgeable from text.
+
+Reports store the ROOM, not a match id — the match row is written at phase 'post' and a
+report from the results screen races it.
+
+## 3. Next / open
+- **Deploy** (two migrations + server logic).
+- Report ABUSE (mass-reporting an innocent player) is currently only visible via the
+  distinct-reporter count. A per-reporter rate limit is the obvious next lever.
+- No moderator ACTION exists yet beyond triage — no ban/mute/rename. Deliberate: actions
+  need an appeals story, and the ask was to make reports visible and reviewable.
+- Queue cooldown for repeat dodgers still outstanding (see 08-08b).
+
+---
+
 # HANDOFF — 2026-08-08b (ranked standings + dodge penalties) — alpha only
 
 Branch **alpha**, NOT merged. `npm run build` · `npm test` · `contrast` **211** · `server:check`
