@@ -266,6 +266,22 @@ export const MOUNT_DIR: Record<ChainMountPos, { x: number; y: number }> = {
   center: { x: 1, y: 0 },
 };
 
+/**
+ * The RAIL AXIS of a mount: the direction a carriage slides along that side, in the ROBOT
+ * frame. It is `MOUNT_DIR` turned 90° left, which is precisely the mount's own local +y —
+ * the axis `drawChainRobot` slides the carriage along after `ctx.rotate(MOUNT_ANGLE[pos])`.
+ *
+ * IT EXISTS SO THE SIM AND THE SPRITE CANNOT DISAGREE. They used to derive the slide
+ * independently: the renderer from the rotated mount frame, the sim from the raw robot frame
+ * (+y for front/back, +x for the flanks). Those happen to agree for `front` and `right` and
+ * are exactly INVERTED for `back` and `left`, so on half the mounts the carriage was drawn
+ * sliding one way while the claw actually worked from the other. One table, read by both.
+ */
+export const RAIL_DIR: Record<ChainMountPos, { x: number; y: number }> = Object.fromEntries(
+  (Object.keys(MOUNT_DIR) as ChainMountPos[]).map((k) => [k, { x: -MOUNT_DIR[k].y, y: MOUNT_DIR[k].x }]),
+) as Record<ChainMountPos, { x: number; y: number }>;
+
+
 /** The turret ring's radius, scaled to the chassis. Shared by the sim's inboard pull
  * (`turretLocal`) and BOTH renderers, which used to disagree — the in-game sprite drew ~4.4"
  * while the builder preview drew `min(w,len) * 0.2`. 0.24 capped at 3.8 lands between the two,

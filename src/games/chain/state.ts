@@ -14,7 +14,7 @@ import {
   CHAIN_INTAKES,
   CHAIN_DEFAULT_INTAKE,
 } from './config';
-import { type ChainEdge, MOUNT_ANGLE, catalystMountOf, catalystMountPositions, intakeMountEdges, intakeMountOf, isEdgePos, mountOrigin } from './mounts';
+import { type ChainEdge, MOUNT_ANGLE, RAIL_DIR, catalystMountOf, catalystMountPositions, intakeMountEdges, intakeMountOf, isEdgePos, mountOrigin } from './mounts';
 import { CHAIN_CATALYST_NEAR, CHAIN_DEFAULT_CATALYST, CHAIN_TRACK_APPROACH, chainCatalystGeom } from './config';
 import { datan2, dcos, dsin, hyp, rot, wrapAngle } from '../../math';
 
@@ -264,10 +264,17 @@ function mouthAt(rob: RobotState, pos: Exclude<ChainMountPos, 'center'>): Vec2 {
   return { x: rob.pos.x + w.x, y: rob.pos.y + w.y };
 }
 
-/** slide a mount origin along its own edge by `d` inches (robot frame). A front/back rail
- *  runs across y, a left/right rail along x. */
-function railOffset(o: Vec2, pos: string, d: number): Vec2 {
-  return pos === 'front' || pos === 'back' ? { x: o.x, y: o.y + d } : { x: o.x + d, y: o.y };
+/**
+ * Slide a mount origin along its own edge by `d` inches, in the ROBOT frame.
+ *
+ * The axis comes from `RAIL_DIR` — the mount's own local +y — which is the SAME axis
+ * `drawChainRobot` slides the drawn carriage along. This used to be derived here instead
+ * ("front/back run across y, the flanks along x"), which is inverted from the mount frame on
+ * `back` and `left`: the sprite slid one way while the claw worked from the other.
+ */
+function railOffset(o: Vec2, pos: ChainMountPos, d: number): Vec2 {
+  const dir = RAIL_DIR[pos];
+  return { x: o.x + dir.x * d, y: o.y + dir.y * d };
 }
 
 /**
@@ -278,12 +285,16 @@ function railOffset(o: Vec2, pos: string, d: number): Vec2 {
 export function catalystRailTarget(rob: RobotState, target: Vec2 | null): number {
   const half = catalystRailHalf(rob.spec);
   if (half <= 0 || !target) return 0;
-  const pos = catalystMountOf(rob.spec);
+  // `catalystRailHalf` already returned 0 for anything that is not a single EDGE, so by
+  // here the mount is one of front/back/left/right
+  const pos = catalystMountOf(rob.spec) as Exclude<ChainMountPos, 'center'>;
   // the target in the ROBOT frame — the rail is a chassis axis, so the projection has to
   // happen there rather than in world space
   const d = rot({ x: target.x - rob.pos.x, y: target.y - rob.pos.y }, -rob.heading);
-  const o = mountOrigin(rob.spec, pos as Exclude<ChainMountPos, 'center'>);
-  const along = pos === 'front' || pos === 'back' ? d.y - o.y : d.x - o.x;
+  const o = mountOrigin(rob.spec, pos);
+  // project onto the SAME axis the carriage actually slides along (see `railOffset`)
+  const dir = RAIL_DIR[pos];
+  const along = (d.x - o.x) * dir.x + (d.y - o.y) * dir.y;
   return Math.max(-1, Math.min(1, along / half));
 }
 

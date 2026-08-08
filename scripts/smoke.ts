@@ -185,7 +185,7 @@ import {
   chainMassFloorBump,
   chainStorageMax,
 } from '../src/games/chain/config';
-import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, intakeMountOf, isEdgePos, isTurreted, mountsClash, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
+import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, MOUNT_ANGLE, RAIL_DIR, intakeMountOf, isEdgePos, isTurreted, mountsClash, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -5662,7 +5662,59 @@ const mkMM = () => {
       check('chain rail: a plain turret claw has no travel', catalystRailHalf(fixedSpec) === 0);
 
       /**
-       * 4. WHAT THE CARRIAGE TRACKS — the behaviour, not the geometry.
+       * 4. THE SPRITE AND THE SIM SLIDE THE SAME WAY.
+       *
+       * `drawChainRobot` draws the carriage inside a frame rotated by `MOUNT_ANGLE[pos]` and
+       * offsets it along that frame's +y. The sim used to derive its own axis from the raw
+       * robot frame instead — which matches on `front` and `right` and is exactly INVERTED on
+       * `back` and `left`, so on half the mounts the carriage was drawn sliding one way while
+       * the claw actually worked from the other. Both now read `RAIL_DIR`; this asserts that
+       * table really is the mount's local +y, and that the MOUTH follows it.
+       */
+      for (const mount of ['front', 'back', 'left', 'right'] as const) {
+        const ms = coerceSpec(
+          { ...DEFAULT_SPEC, catalystType: 'rail', catalystMount: mount, scoreMode: 'turret', shooterMount: 'center' },
+          DEFAULT_SPEC, 'chain',
+        );
+        // the renderer's slide axis: local +y taken through the mount rotation it applies
+        const a = MOUNT_ANGLE[mount];
+        const drawn = { x: -dsin(a), y: dcos(a) }; // rotate (0,1) by MOUNT_ANGLE
+        check(
+          `chain rail: RAIL_DIR[${mount}] IS the drawn frame's +y`,
+          Math.abs(RAIL_DIR[mount].x - drawn.x) < 1e-9 && Math.abs(RAIL_DIR[mount].y - drawn.y) < 1e-9,
+          `table (${RAIL_DIR[mount].x},${RAIL_DIR[mount].y}) vs drawn (${drawn.x.toFixed(3)},${drawn.y.toFixed(3)})`,
+        );
+        // and the SIM's mouth moves along that same axis when the carriage slides
+        const w3 = createChainWorld('match', 3, [
+          { id: 0, alliance: 'blue', spec: ms, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+        ]);
+        const rr = w3.robots[0];
+        rr.pos = { x: 0, y: 0 };
+        rr.heading = 0; // robot frame == world frame, so the mouth delta reads directly
+        const hf = catalystRailHalf(ms);
+        const at0 = catalystMouth({ ...rr, catalystRail: 0 });
+        const at1 = catalystMouth({ ...rr, catalystRail: 1 });
+        const moved = { x: at1.x - at0.x, y: at1.y - at0.y };
+        check(
+          `chain rail: a ${mount} carriage at +1 puts the claw where the sprite draws it`,
+          Math.abs(moved.x - RAIL_DIR[mount].x * hf) < 1e-6 && Math.abs(moved.y - RAIL_DIR[mount].y * hf) < 1e-6,
+          `mouth moved (${moved.x.toFixed(2)},${moved.y.toFixed(2)}), sprite slides (${(RAIL_DIR[mount].x * hf).toFixed(2)},${(RAIL_DIR[mount].y * hf).toFixed(2)})`,
+        );
+        // ...and a target on that side must WANT that end, not the opposite one — the sign
+        // the player actually sees
+        const probe = {
+          x: at0.x + RAIL_DIR[mount].x * (hf + 2),
+          y: at0.y + RAIL_DIR[mount].y * (hf + 2),
+        };
+        check(
+          `chain rail: a ${mount} target on the +side wants the +end (no inversion)`,
+          catalystRailTarget(rr, probe) > 0.5,
+          `want=${catalystRailTarget(rr, probe).toFixed(2)}`,
+        );
+      }
+
+      /**
+       * 5. WHAT THE CARRIAGE TRACKS — the behaviour, not the geometry.
        *
        * The parts above all passed while the mechanism was visibly broken in a match,
        * because every one of them tested a piece in isolation. What was wrong was the
