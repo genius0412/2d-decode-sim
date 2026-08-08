@@ -1,5 +1,6 @@
 import type { Replay } from '../sim/replay';
 import type { LiveRoom, StaffRole } from './protocol';
+import type { ReportedUser, ReportRow } from '../report';
 import type { AssistConfig, GameId, RobotSpec } from '../types';
 import { gameServerHttpUrl } from './env';
 import { getAuthToken } from '../lib/authClient';
@@ -693,6 +694,75 @@ export async function adminFetchMatches(limit = 40, game?: GameId): Promise<Admi
     return ((await res.json()) as { matches: AdminMatchRow[] }).matches;
   } catch {
     return null;
+  }
+}
+
+/** the moderation queue: one row per reported player, most recently reported first */
+export async function adminFetchReports(): Promise<ReportedUser[] | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(`${base}/api/admin/reports`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { users: ReportedUser[] }).users ?? [];
+  } catch {
+    return null;
+  }
+}
+
+/** one player's reports AND their recent matches — the drill-down. Both in one request
+ *  because a moderator cannot judge a cheating report without watching a match. */
+export async function adminFetchReportedUser(userId: string): Promise<{
+  reports: ReportRow[];
+  matches: ModMatch[];
+} | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(`${base}/api/admin/reports?user=${encodeURIComponent(userId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as { reports: ReportRow[]; matches: ModMatch[] };
+  } catch {
+    return null;
+  }
+}
+
+/** one of a reported player's recent matches, with the replay a moderator watches */
+export interface ModMatch {
+  matchId: string;
+  replayId: string | null;
+  game: GameId;
+  mode: string;
+  ranked: boolean | null;
+  createdAt: string;
+  score: number;
+  won: boolean | null;
+}
+
+/** triage every OPEN report against a player */
+export async function adminSetReportStatus(
+  userId: string,
+  status: 'reviewed' | 'dismissed',
+): Promise<boolean> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return false;
+  try {
+    const res = await fetch(
+      `${base}/api/admin/reports?user=${encodeURIComponent(userId)}&status=${status}`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}` } },
+    );
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 

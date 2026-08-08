@@ -15,6 +15,7 @@ import { DEFAULT_MOBILE_LAYOUT } from '../settings';
 import type { MatchResultInfo, NetSession, NetStatus } from '../net/session';
 import { clearActiveGame } from '../net/activeGame';
 import { RankBadge } from './RankBadge';
+import { ReportDialog } from './ReportDialog';
 import { standingFor, tierChange } from '../ranks';
 import type { RecordRankInfo } from '../net/protocol';
 import type { Replay } from '../sim/replay';
@@ -478,6 +479,21 @@ export function GameView({
           coopRematch={hud.rematch && hud.rematch.need > 1 ? hud.rematch : null}
           onCoopRematch={() => controllerRef.current?.toggleRematch()}
           onExit={onExit}
+          /* every OTHER driver in this match, by robot id + the name they played under.
+             Built from the session's own roster, so it is exactly the set the server will
+             accept a report for. */
+          reportable={
+            session && signedIn
+              ? session.setups
+                  .filter((su) => su.id !== session.localRobotId)
+                  .map((su) => ({ robotId: su.id, name: su.spec.name || `Driver ${su.id}` }))
+              : []
+          }
+          onReport={
+            session?.sendReport
+              ? (rid, reason, detail) => session.sendReport?.(rid, reason, detail)
+              : undefined
+          }
           matchResult={controllerRef.current?.getMatchResult() ?? null}
           recordResult={controllerRef.current?.getRecordResult() ?? null}
           signedIn={signedIn}
@@ -872,6 +888,8 @@ function Results({
   recordResult,
   signedIn,
   onWatchReplay,
+  reportable,
+  onReport,
 }: {
   hud: HudSnapshot;
   /** performance.now() ms the whoosh fires — the reveal (count-up + winner slam)
@@ -893,7 +911,12 @@ function Results({
   recordResult: RecordRankInfo | null;
   signedIn: boolean;
   onWatchReplay?: (replay: Replay) => void;
+  /** the OTHER drivers in this match, reportable by robot id (empty in solo) */
+  reportable?: { robotId: number; name: string }[];
+  /** send a report; absent in solo / on an older session */
+  onReport?: (robotId: number, reason: string, detail: string) => void;
 }) {
+  const [reporting, setReporting] = useState(false);
   const red = hud.alliance === 'red' ? hud.score : hud.oppScore;
   const blue = hud.alliance === 'blue' ? hud.score : hud.oppScore;
   const winner: Alliance | 'tie' =
@@ -1069,6 +1092,22 @@ function Results({
           {coopRematch && <RematchVote vote={coopRematch} onToggle={onCoopRematch} />}
           <button onClick={onExit}>MENU</button>
         </div>
+        {/* REPORT is deliberately not in the button row. It is a rare, deliberate action and
+            the row is where REMATCH and MENU live — the two things every player reaches for
+            every match. A quiet link below keeps it available without putting it under a
+            thumb aiming for the exit. */}
+        {onReport && reportable && reportable.length > 0 && !reporting && (
+          <button className="ds-linkbtn results-report" onClick={() => setReporting(true)}>
+            ⚑ Report a player
+          </button>
+        )}
+        {reporting && onReport && reportable && (
+          <ReportDialog
+            drivers={reportable}
+            onSubmit={(rid, reason, detail) => onReport(rid, reason, detail)}
+            onClose={() => setReporting(false)}
+          />
+        )}
         {/* AFTER the buttons, deliberately. The results screen is a good place
             for an ad — the match is over and the player is reading rather than
             driving — but REMATCH and MENU must stay the first things reachable,

@@ -1450,6 +1450,32 @@ export class Room {
     }
   }
 
+  /**
+   * Resolve a REPORT from one of this room's clients.
+   *
+   * The reporter names a ROBOT ID, never a user id — the client is never told who its
+   * opponents are (see `PlayerIntro`, which carries only a robot id and an ELO), and this
+   * keeps it that way. It also makes the report un-spoofable in the way that matters: a
+   * client can only report somebody who is actually in the match it is actually in, because
+   * the mapping from robot id to account happens here, on the server, from this room's own
+   * roster.
+   *
+   * Returns null when the report is not actionable — an unknown robot, an anonymous target,
+   * or a player reporting themselves. All three are silently dropped rather than answered
+   * with an error: none of them is something the reporting player can fix, and a failure
+   * message would only tell a prober what does and does not exist.
+   */
+  resolveReport(reporterClientId: string, robotId: number): { reporterId: string; reportedId: string } | null {
+    const reporter = this.clients.get(reporterClientId);
+    if (!reporter?.userId) return null; // must be signed in to report
+    let reportedId: string | undefined;
+    for (const c of this.clients.values()) {
+      if (this.robotOf.get(c.id) === robotId) reportedId = c.userId;
+    }
+    if (!reportedId || reportedId === reporter.userId) return null;
+    return { reporterId: reporter.userId, reportedId };
+  }
+
   /** TEST SEAM: fire the strategy deadline synchronously (no real timer). */
   forceStrategyDeadlineForTest(): void {
     this.onStrategyDeadline();

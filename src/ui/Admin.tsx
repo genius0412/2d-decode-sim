@@ -23,6 +23,7 @@ import {
 } from '../net/api';
 import { Markdown } from './markdown';
 import { AdminLive } from './AdminLive';
+import { AdminReports } from './AdminReports';
 
 type AdminTab = 'live' | 'server' | 'content' | 'moderation';
 const TABS: { id: AdminTab; label: string }[] = [
@@ -488,6 +489,11 @@ export function Admin({
 
       {tab === 'moderation' && (
         <>
+      {/* REPORTS FIRST. The records and display-name tools below are things a moderator
+          goes looking for; the report queue is the thing that arrives on its own and has
+          people waiting on it. */}
+      <AdminReports onWatchReplay={onWatchReplay} />
+      <hr className="adm-sep" />
       <h2 className="ds-h2">Moderation - records</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Inspect a leaderboard bucket (live season) and remove cheated or invalid runs. Deleting a

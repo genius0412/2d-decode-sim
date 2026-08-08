@@ -120,6 +120,7 @@ import { Matchmaker, radiusCeiling, type QueueEntry } from '../server/matchmakin
 import { bestHost } from '../server/regions';
 import type { PendingMatch } from '../server/matchTypes';
 import { computeGlicko, glicko2Update, eloMode, RD_PROVISIONAL, type EloParticipant } from '../server/ranked';
+import { isReportReason, REPORT_REASONS } from '../src/report';
 import { RANK_TIERS, RANK_FLOOR, RANK_ENTRY_RATING, TIER_SPAN, DIVISION_SPAN, standingFor, tierFor, tierChange } from '../src/ranks';
 import { dodgePenalty, DODGE_PENALTIES } from '../src/dodge';
 import type { ServerMsg, QueueMode } from '../src/net/protocol';
@@ -4636,6 +4637,69 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   room.forceStrategyDeadlineForTest();
   check('strategy deadline: cancels (error) when not everyone readied', rec.red.some((m) => m.t === 'error'));
   check('strategy deadline: no match started', !rec.red.some((m) => m.t === 'matchStart'));
+}
+
+/**
+ * PLAYER REPORTS — resolution, which is the part that can be abused.
+ *
+ * A report names a ROBOT ID, never a user id, and the ROOM maps it onto an account from its
+ * own roster. That is what stops a crafted message reporting an arbitrary person, so these
+ * check the mapping and every way it should refuse rather than the DB write.
+ */
+{
+  const mk = (id: string, userId: string | undefined, robot: number): Client => ({
+    id,
+    send: () => {},
+    player: { clientId: id, name: id, teamName: 'T', teamNumber: 1, alliance: robot === 0 ? 'red' : 'blue', startIndex: 0, ready: true, spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS } },
+    connected: true,
+    disconnectAt: 0,
+    userId,
+    caps: ['strategy'],
+  });
+  const room = new Room('smoke-report', () => {}, { kind: 'versus' });
+  room.add(mk('a', 'u-a', 0));
+  room.add(mk('b', 'u-b', 1));
+  room.onMessage('a', { t: 'start' }); // assigns robot ids from the roster
+
+  const ok = room.resolveReport('a', 1);
+  check(
+    'report: a robot id resolves to that driver\'s account, server-side',
+    ok?.reporterId === 'u-a' && ok?.reportedId === 'u-b',
+    JSON.stringify(ok),
+  );
+  check('report: you cannot report YOURSELF', room.resolveReport('a', 0) === null);
+  check('report: an unknown robot id resolves to nothing', room.resolveReport('a', 7) === null);
+  check(
+    'report: a client that is not in this room cannot report into it',
+    room.resolveReport('nobody', 1) === null,
+  );
+
+  // an ANONYMOUS reporter or target is not actionable — a report has to be attributable at
+  // both ends or a moderator cannot tell a pattern from a brigade
+  const anon = new Room('smoke-report-anon', () => {}, { kind: 'versus' });
+  anon.add(mk('a', 'u-a', 0));
+  anon.add(mk('b', undefined, 1));
+  anon.onMessage('a', { t: 'start' });
+  check('report: an anonymous TARGET cannot be reported', anon.resolveReport('a', 1) === null);
+  const anon2 = new Room('smoke-report-anon2', () => {}, { kind: 'versus' });
+  anon2.add(mk('a', undefined, 0));
+  anon2.add(mk('b', 'u-b', 1));
+  anon2.onMessage('b', { t: 'start' });
+  check('report: an anonymous REPORTER cannot report', anon2.resolveReport('a', 1) === null);
+
+  // the category list is validated at the boundary — a crafted reason never reaches the DB
+  check(
+    'report: only known categories are accepted',
+    isReportReason('cheating') && isReportReason('name') &&
+      !isReportReason('drop table') && !isReportReason('') && !isReportReason(null),
+  );
+  // and there is no CHAT category, because this game has no chat — offering one would
+  // collect reports nobody could ever act on
+  check(
+    'report: no chat/messaging category (DSIM has neither)',
+    !REPORT_REASONS.some((r) => /chat|message|voice/i.test(r)),
+    REPORT_REASONS.join(','),
+  );
 }
 
 /**

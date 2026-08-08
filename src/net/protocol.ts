@@ -292,6 +292,14 @@ export type ClientMsg =
   // as an admin, this watcher is not counted in the visible spectator total (see
   // Room.hideSpectator). It is never a claim the client can make on its own.
   | { t: 'spectate'; room: string; caps?: string[]; authToken?: string }
+  /**
+   * REPORT another driver in this room, by ROBOT ID.
+   *
+   * Never by user id: the client is not told who its opponents are, and this keeps it that
+   * way. The server maps the robot id onto its own roster, so a client can only report
+   * somebody actually in the match it is actually in.
+   */
+  | { t: 'report'; robotId: number; reason: string; detail?: string }
   | { t: 'update'; patch: PlayerPatch }
   | { t: 'start' } // host only: build + broadcast the match world
   | { t: 'restart' } // host only: re-author the match with a fresh seed
@@ -410,6 +418,9 @@ export type ServerMsg =
   // reply to a 'rejoin': ok ⇒ slot reclaimed (a snapshot follows); !ok ⇒ the
   // grace window lapsed / slot is gone, stop trying
   | { t: 'rejoined'; ok: boolean }
+  /** a `report` was accepted (or was a duplicate, which is reported the same way — the
+   *  reporter does not need to know which, and telling them would leak prior reports) */
+  | { t: 'reported'; ok: boolean }
   /**
    * A staged RANKED pairing died before it started, and this is what it cost.
    *

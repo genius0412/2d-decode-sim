@@ -9,6 +9,7 @@ import { verifyAuthToken } from './auth';
 import { initPhysics } from '../src/sim/physicsEngine';
 import { migrate } from './db/migrate';
 import { persistMatch, persistDodges } from './persist';
+import { isReportReason, REPORT_DETAIL_MAX } from '../src/report';
 import { handleApi } from './api';
 import { Matchmaker } from './matchmaking';
 import { MATCHMAKER_REGION } from './regions';
@@ -40,6 +41,11 @@ import {
   globalLiveRooms,
   adminPresence,
   recentMatches,
+  submitReport,
+  listReportedUsers,
+  listReportsFor,
+  setReportsStatus,
+  userRecentMatches,
   getMaintenance,
   setMaintenance,
   maintenanceBiting,
@@ -650,6 +656,51 @@ const httpServer = createServer((req, res) => {
         );
         res.writeHead(200, { ...cors, 'content-type': 'application/json' });
         res.end(JSON.stringify({ matches: rows }));
+        return;
+      }
+      /**
+       * MODERATION — the report queue, one player's reports, and their matches.
+       *
+       *   GET  /api/admin/reports                  the queue (one row per reported player)
+       *   GET  /api/admin/reports?user=<id>        that player's reports + recent matches
+       *   POST /api/admin/reports?user=<id>&status=reviewed|dismissed
+       *
+       * The per-user GET returns the MATCHES alongside the reports deliberately. A report
+       * for cheating or throwing cannot be judged from its text — the moderator has to
+       * watch the match — and a queue that makes them go and find the replay somewhere else
+       * is a queue that stops being worked. One request, everything needed to make a call.
+       */
+      if (u.pathname === '/api/admin/reports') {
+        if (!isAdmin) {
+          res.writeHead(403, cors);
+          res.end('forbidden');
+          return;
+        }
+        if (!dbEnabled) {
+          res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ users: [], reports: [], matches: [] }));
+          return;
+        }
+        // `target` — NOT `user`, which is the verified ADMIN in this scope. Shadowing it
+        // silently made the moderator id resolve to the reported player's.
+        const target = u.searchParams.get('user');
+        if (req.method === 'POST') {
+          const status = u.searchParams.get('status');
+          if (!target || (status !== 'reviewed' && status !== 'dismissed')) {
+            res.writeHead(400, cors);
+            res.end('bad request');
+            return;
+          }
+          const n = await setReportsStatus(target, status, user?.userId ?? 'admin');
+          res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, updated: n }));
+          return;
+        }
+        const body = target
+          ? { reports: await listReportsFor(target), matches: await userRecentMatches(target) }
+          : { users: await listReportedUsers() };
+        res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+        res.end(JSON.stringify(body));
         return;
       }
       /**
@@ -1538,6 +1589,29 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
         } else {
           send({ t: 'rejoined', ok: false });
         }
+      } else if (msg.t === 'report') {
+        /**
+         * A player reporting another driver in their room. The ROOM resolves the robot id
+         * onto an account (see `Room.resolveReport`) — this handler never sees a user id
+         * from the client, so a crafted message cannot report an arbitrary person.
+         *
+         * Always answered `ok`, including when nothing was written: a duplicate, an
+         * anonymous target and an unknown robot are all indistinguishable to the reporter
+         * by design. Telling them apart would turn the button into a probe for who is
+         * signed in and who has already been reported.
+         */
+        const r = room && isReportReason(msg.reason) ? room.resolveReport(id, msg.robotId) : null;
+        if (r && dbEnabled) {
+          void submitReport({
+            reportedId: r.reportedId,
+            reporterId: r.reporterId,
+            reason: msg.reason,
+            detail: typeof msg.detail === 'string' ? msg.detail.slice(0, REPORT_DETAIL_MAX) : null,
+            roomCode: room!.code,
+            game: room!.gameId,
+          }).catch((e) => console.error('[report] write failed:', e));
+        }
+        send({ t: 'reported', ok: true });
       } else if (msg.t === 'queue') {
         if (room) return; // already in a room/match
         // ranked REQUIRES a verified account (ELO/leaderboard only make sense with

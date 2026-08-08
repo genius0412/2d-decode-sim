@@ -4407,3 +4407,135 @@ button.ds-key:active {
    row, so the badge drops its bar and rides at the smaller size */
 .lb-standing-rank-badge { margin-right: 4px; }
 .lb-standing-rank-badge .ds-rank-bar { display: none; }
+
+/* REPORT a player — the post-match dialog. Lives inside the results panel, which is itself
+   a scroll container on a phone, so this only has to size itself sanely. */
+.results-report {
+  align-self: center;
+  font: 600 12px/1 var(--ds-font);
+  color: var(--ds-mut);
+}
+.ds-report {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  padding: 14px;
+  margin-top: 8px;
+  border-radius: var(--ds-round);
+  border: 1px solid var(--ds-line);
+  background: var(--ds-tile);
+}
+.ds-report-h {
+  font: 800 15px/1.2 var(--ds-font);
+  margin: 0;
+  color: var(--ds-ink);
+}
+.ds-report-cap {
+  font: 700 10px/1 var(--ds-font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ds-mut);
+}
+.ds-report .ds-input {
+  width: 100%;
+  resize: vertical;
+  font: 500 13px/1.4 var(--ds-font);
+}
+.ds-report-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* ---- Moderation: the report queue ------------------------------------ */
+.adm-sep {
+  border: none;
+  border-top: 1px solid var(--ds-line);
+  margin: 28px 0 24px;
+}
+.adm-reports {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.adm-report {
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-round);
+  background: var(--ds-panel);
+  overflow: hidden;
+}
+.adm-report.open {
+  border-color: color-mix(in srgb, var(--ds-accent) 45%, var(--ds-line));
+}
+/* the head is a grid, not a flex row: the four columns have to stay aligned DOWN the
+   queue, or scanning it for the worst offender means re-reading every line */
+.adm-report-head {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.4fr) auto minmax(0, 1.6fr) auto 16px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ds-ink);
+  font: inherit;
+}
+.adm-report-head:hover { background: var(--ds-tile); }
+.adm-report-counts { display: flex; gap: 5px; flex-wrap: wrap; }
+.adm-report-reasons,
+.adm-report-when {
+  font: 600 11px/1.3 var(--ds-font-mono);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.adm-report-caret { color: var(--ds-mut); }
+.adm-report-body {
+  padding: 4px 12px 14px;
+  border-top: 1px solid var(--ds-line);
+}
+.adm-report-list { display: flex; flex-direction: column; gap: 6px; }
+.adm-report-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--ds-tile);
+  border: 1px solid var(--ds-line);
+  font-size: 12px;
+}
+.adm-report-item.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.adm-report-by { font: 600 11px/1.4 var(--ds-font-mono); margin-left: 6px; }
+.adm-report-detail {
+  margin: 6px 0 0;
+  color: var(--ds-ink);
+  font-size: 12.5px;
+  line-height: 1.45;
+  /* a reporter's free text is UNTRUSTED input rendered in a moderator's browser. React
+     escapes it, and this stops a wall of characters from breaking the row's layout. */
+  overflow-wrap: anywhere;
+}
+.adm-report-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+/* phone: the queue head stacks rather than crushing five columns into 320px */
+@media (max-width: 560px) {
+  .adm-report-head {
+    grid-template-columns: 1fr auto;
+    grid-auto-rows: min-content;
+  }
+  .adm-report-reasons,
+  .adm-report-when { grid-column: 1 / -1; white-space: normal; }
+}

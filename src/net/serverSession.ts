@@ -170,6 +170,12 @@ export class ServerSession implements NetSession {
     this.restartCb = cb;
   }
 
+  /** report another driver in this match. The server maps `robotId` onto an account from
+   *  its OWN roster, so this can only ever name somebody actually in this match. */
+  sendReport(robotId: number, reason: string, detail: string): void {
+    this.transport.send(encodeMsg({ t: 'report', robotId, reason, detail }));
+  }
+
   sendInput(tick: number, cmd: RobotCommand): void {
     if (this.spectator) return; // a spectator controls nothing
     // Hot-path lane: inputs are sent every tick and the server holds-last, so a

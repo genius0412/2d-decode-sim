@@ -1395,6 +1395,192 @@ export async function recentDodgeCount(userId: string, hours: number): Promise<n
   return Number(rows[0]?.n ?? 0);
 }
 
+// ------------------------------------------------------- player reports ------
+
+/** File a report. Returns false when the same reporter has already filed this category
+ *  against this player from this room — the unique index, surfaced as a no-op rather than
+ *  an error, because a double-tap on the button is not a failure worth showing anyone. */
+export async function submitReport(r: {
+  reportedId: string;
+  reporterId: string;
+  reason: string;
+  detail?: string | null;
+  roomCode?: string;
+  game?: Game;
+}): Promise<boolean> {
+  const rows = await q<{ id: string }>(
+    `insert into player_reports (reported_id, reporter_id, reason, detail, room_code, game)
+     values ($1, $2, $3, $4, $5, $6)
+     on conflict do nothing
+     returning id`,
+    [r.reportedId, r.reporterId, r.reason, r.detail?.slice(0, 300) || null, r.roomCode ?? '', g(r.game)],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * The moderation QUEUE: one row per reported player, most recently reported first.
+ *
+ * Aggregated in SQL rather than by fetching every report and grouping in JS — the panel
+ * wants counts and a recency ordering, and a moderator on a busy day should not be paging
+ * thousands of rows to see twelve names. `reporters` is a DISTINCT count on purpose: four
+ * reports from four people and four from one are completely different signals, and the
+ * panel shows both numbers so a moderator can tell a pattern from a grudge.
+ */
+export async function listReportedUsers(limit = 60): Promise<ReportedUserRow[]> {
+  const n = Math.min(200, Math.max(1, Math.floor(limit)));
+  const rows = await q<{
+    reported_id: string;
+    handle: string;
+    username: string | null;
+    total: number;
+    open: number;
+    reporters: number;
+    latest: string;
+    reasons: { reason: string; n: number }[] | null;
+  }>(
+    `select r.reported_id,
+            p.handle, p.username,
+            count(*)::int as total,
+            count(*) filter (where r.status = 'open')::int as open,
+            count(distinct r.reporter_id)::int as reporters,
+            max(r.created_at) as latest,
+            (select json_agg(x) from (
+               select reason, count(*)::int as n
+                 from player_reports r2
+                where r2.reported_id = r.reported_id
+                group by reason
+                order by n desc
+             ) x) as reasons
+       from player_reports r
+       join profiles p on p.user_id = r.reported_id
+      group by r.reported_id, p.handle, p.username
+      order by max(r.created_at) desc
+      limit $1`,
+    [n],
+  );
+  return rows.map((x) => ({
+    userId: x.reported_id,
+    handle: x.handle,
+    username: x.username,
+    total: Number(x.total),
+    open: Number(x.open),
+    reporters: Number(x.reporters),
+    latest: x.latest,
+    reasons: (x.reasons ?? []).map((r) => ({ reason: r.reason, n: Number(r.n) })),
+  }));
+}
+
+export interface ReportedUserRow {
+  userId: string;
+  handle: string;
+  username: string | null;
+  total: number;
+  open: number;
+  reporters: number;
+  latest: string;
+  reasons: { reason: string; n: number }[];
+}
+
+export interface ReportDetailRow {
+  id: string;
+  reason: string;
+  detail: string | null;
+  roomCode: string;
+  game: string;
+  status: string;
+  createdAt: string;
+  reporterHandle: string;
+  reporterUsername: string | null;
+}
+
+/** every report filed against one player, newest first — the drill-down */
+export async function listReportsFor(userId: string, limit = 100): Promise<ReportDetailRow[]> {
+  const rows = await q<{
+    id: string; reason: string; detail: string | null; room_code: string; game: string;
+    status: string; created_at: string; handle: string; username: string | null;
+  }>(
+    `select r.id::text as id, r.reason, r.detail, r.room_code, r.game, r.status,
+            r.created_at, p.handle, p.username
+       from player_reports r
+       join profiles p on p.user_id = r.reporter_id
+      where r.reported_id = $1
+      order by r.created_at desc
+      limit $2`,
+    [userId, Math.min(300, Math.max(1, Math.floor(limit)))],
+  );
+  return rows.map((x) => ({
+    id: x.id,
+    reason: x.reason,
+    detail: x.detail,
+    roomCode: x.room_code,
+    game: x.game,
+    status: x.status,
+    createdAt: x.created_at,
+    reporterHandle: x.handle,
+    reporterUsername: x.username,
+  }));
+}
+
+/** triage: mark every open report against a player reviewed or dismissed. Per-user rather
+ *  than per-report because that is how the queue is actually worked — a moderator judges a
+ *  PLAYER after watching their matches, not each complaint in isolation. */
+export async function setReportsStatus(
+  userId: string,
+  status: 'reviewed' | 'dismissed',
+  moderatorId: string,
+): Promise<number> {
+  const rows = await q<{ id: string }>(
+    `update player_reports
+        set status = $2, reviewed_by = $3, reviewed_at = now()
+      where reported_id = $1 and status = 'open'
+      returning id`,
+    [userId, status, moderatorId],
+  );
+  return rows.length;
+}
+
+/**
+ * A reported player's recent matches WITH their replay ids — the whole point of the
+ * moderation drill-down. A cheating or throwing report is unjudgeable from text; the
+ * moderator has to watch the match, and making them go and find it elsewhere is how a
+ * report queue stops being worked.
+ */
+export async function userRecentMatches(userId: string, limit = 15): Promise<{
+  matchId: string;
+  replayId: string | null;
+  game: string;
+  mode: string;
+  ranked: boolean | null;
+  createdAt: string;
+  score: number;
+  won: boolean | null;
+}[]> {
+  const rows = await q<{
+    id: string; replay_id: string | null; game: string; mode: string;
+    ranked: boolean | null; created_at: string; score: number; won: boolean | null;
+  }>(
+    `select m.id::text as id, m.replay_id::text as replay_id, m.game, m.mode, m.ranked,
+            m.created_at, mp.score, mp.won
+       from match_participants mp
+       join matches m on m.id = mp.match_id
+      where mp.user_id = $1
+      order by m.created_at desc
+      limit $2`,
+    [userId, Math.min(50, Math.max(1, Math.floor(limit)))],
+  );
+  return rows.map((x) => ({
+    matchId: x.id,
+    replayId: x.replay_id,
+    game: x.game,
+    mode: x.mode,
+    ranked: x.ranked,
+    createdAt: x.created_at,
+    score: x.score,
+    won: x.won,
+  }));
+}
+
 /** one row of a ranked board. Same name-plus-badge shape as `BoardRow` — the two
  *  boards sit behind one segmented control and render through the same cell. */
 export interface EloBoardRow {
