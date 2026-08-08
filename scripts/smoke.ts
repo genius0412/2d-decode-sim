@@ -89,6 +89,7 @@ import {
   MAX_SAVED_STARTS_SUPPORTER,
   CHASSIS_COLORS,
   chassisFill,
+  PLACEMENT_GAMES,
 } from '../src/config';
 import { robotCorners, robotExtents, robotIntersectsRect, wheelContacts } from '../src/sim/physics';
 import { beamBlock, beamDrag, beamDragFactor, beamStrafeBlock, beamForwardness, beamRide, canCrossBeams, cogFactor, wheelsOnBeam, CHAIN_BEAMS } from '../src/games/chain/beams';
@@ -119,6 +120,8 @@ import { Matchmaker, radiusCeiling, type QueueEntry } from '../server/matchmakin
 import { bestHost } from '../server/regions';
 import type { PendingMatch } from '../server/matchTypes';
 import { computeGlicko, glicko2Update, eloMode, RD_PROVISIONAL, type EloParticipant } from '../server/ranked';
+import { RANK_TIERS, RANK_FLOOR, RANK_ENTRY_RATING, TIER_SPAN, DIVISION_SPAN, standingFor, tierFor, tierChange } from '../src/ranks';
+import { dodgePenalty, DODGE_PENALTIES } from '../src/dodge';
 import type { ServerMsg, QueueMode } from '../src/net/protocol';
 import { dsin, dcos, dtan, datan2, hyp, rot, wrapAngle } from '../src/math';
 import { initPhysics } from '../src/sim/physicsEngine';
@@ -4311,6 +4314,168 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
   const aT = team.find((u) => u.userId === 'a')!;
   check('favored winner gains modestly', aT.after - aT.before > 0 && aT.after - aT.before < 40, `+${aT.after - aT.before}`);
+}
+
+// ---- RANKED STANDINGS: the visible ladder over the Glicko rating ------------
+// Pure derivation, so these are exact. The boundaries were calibrated against the REAL
+// Glicko swing sizes, and the checks below re-derive that calibration rather than trusting
+// the constants — a boundary change that quietly makes a tier unclimbable fails here.
+{
+  // 1. the ladder is ordered, contiguous and total: every rating lands in exactly one tier
+  let bad = '';
+  for (let r = RANK_FLOOR; r <= 2200 && !bad; r += 7) {
+    const t = tierFor(r);
+    const i = RANK_TIERS.indexOf(t);
+    const next = RANK_TIERS[i + 1];
+    if (r < t.floor) bad = `${r} placed in ${t.name} below its floor`;
+    if (next && r >= next.floor) bad = `${r} placed in ${t.name} but ${next.name} starts at ${next.floor}`;
+  }
+  check('ranks: every rating lands in exactly one tier', !bad, bad);
+
+  // 2. the ladder is MONOTONIC — a higher rating is never a lower standing
+  let regress = '';
+  let prevIdx = -1;
+  for (let r = RANK_FLOOR; r <= 2200 && !regress; r += 3) {
+    const idx = RANK_TIERS.indexOf(tierFor(r));
+    if (idx < prevIdx) regress = `rating ${r} dropped a tier`;
+    prevIdx = idx;
+  }
+  check('ranks: a higher rating is never a lower tier', !regress, regress);
+
+  // 3. THE ENTRY RATING IS CENTRED. A new account enters at 1000 (getRatingFull's default,
+  //    NOT Glicko's 1500 centre) — the ladder has to be built around that number or every
+  //    real player sits at the bottom of their own ladder.
+  const entry = standingFor(RANK_ENTRY_RATING, PLACEMENT_GAMES);
+  const entryIdx = RANK_TIERS.indexOf(entry.tier);
+  check(
+    'ranks: the entry rating sits in the MIDDLE of the ladder, not the bottom',
+    entryIdx >= 1 && entryIdx <= RANK_TIERS.length - 2,
+    `${RANK_ENTRY_RATING} -> ${entry.label} (tier ${entryIdx + 1} of ${RANK_TIERS.length})`,
+  );
+
+  // 4. divisions run III (low) -> I (high) INSIDE a tier, and the label matches
+  const lo = standingFor(1000, 20);
+  const mid = standingFor(1050, 20);
+  const hi = standingFor(1100, 20);
+  check(
+    'ranks: divisions ascend III -> II -> I within a tier',
+    lo.division === 3 && mid.division === 2 && hi.division === 1 &&
+      lo.label === 'Regional III' && hi.label === 'Regional I',
+    `${lo.label} / ${mid.label} / ${hi.label}`,
+  );
+
+  // 5. progress fills 0..1 across a division and never leaves that range
+  let outOfRange = '';
+  for (let r = RANK_FLOOR; r <= 2200 && !outOfRange; r += 1) {
+    const st = standingFor(r, 20);
+    if (st.progress < 0 || st.progress > 1) outOfRange = `${r} -> ${st.progress}`;
+    if (st.toNext !== null && st.toNext < 0) outOfRange = `${r} -> toNext ${st.toNext}`;
+  }
+  check('ranks: progress stays in 0..1 and toNext never goes negative', !outOfRange, outOfRange);
+
+  // 6. PLACEMENTS hide the rating. Below PLACEMENT_GAMES the rating swings +-50..160 a match
+  //    (measured), so naming a tier from it would promote and demote a new player repeatedly.
+  let named = '';
+  for (let g = 0; g < PLACEMENT_GAMES; g++) {
+    for (const r of [400, 1000, 2000]) {
+      const st = standingFor(r, g);
+      if (!st.placement || st.tier.key !== 'rookie') named = `${g} games @${r} -> ${st.label}`;
+    }
+  }
+  check('ranks: a player in placements is ROOKIE whatever their rating', !named, named);
+  check(
+    'ranks: the placement bar tracks GAMES, not rating',
+    standingFor(400, 3).progress === standingFor(2000, 3).progress &&
+      Math.abs(standingFor(1000, 3).progress - 3 / PLACEMENT_GAMES) < 1e-9,
+  );
+  check('ranks: finishing placements reveals a real tier', !standingFor(1000, PLACEMENT_GAMES).placement);
+
+  // 7. CALIBRATION against the real Glicko: a division must be a session's progress and a
+  //    tier a milestone. Re-derived here so a boundary edit that makes the ladder
+  //    unclimbable (or trivial) fails instead of merely looking different.
+  const winsToClimb = (span: number): number => {
+    let g = { rating: 1000, rd: 80, vol: 0.06 };
+    let n = 0;
+    while (g.rating < 1000 + span && n < 500) { g = glicko2Update(g, g.rating, g.rd, 1); n++; }
+    return n;
+  };
+  const divWins = winsToClimb(DIVISION_SPAN);
+  const tierWins = winsToClimb(TIER_SPAN);
+  check(
+    'ranks: a DIVISION is a few settled wins (2-6), so progress is visible per session',
+    divWins >= 2 && divWins <= 6,
+    `${divWins} wins`,
+  );
+  check(
+    'ranks: a TIER is a milestone (6-20 settled wins), not a formality',
+    tierWins >= 6 && tierWins <= 20,
+    `${tierWins} wins`,
+  );
+  // and PLACEMENTS can genuinely place you: 5 perfect games must climb at least a tier
+  {
+    let g = { rating: RANK_ENTRY_RATING, rd: 350, vol: 0.06 };
+    for (let i = 0; i < PLACEMENT_GAMES; i++) g = glicko2Update(g, RANK_ENTRY_RATING, g.rd, 1);
+    const placed = standingFor(g.rating, PLACEMENT_GAMES);
+    check(
+      'ranks: perfect placements place you well above entry, but short of the apex',
+      RANK_TIERS.indexOf(placed.tier) > RANK_TIERS.indexOf(tierFor(RANK_ENTRY_RATING)) &&
+        placed.tier.key !== 'inspire',
+      `${Math.round(g.rating)} -> ${placed.label}`,
+    );
+  }
+
+  // 8. the apex has no divisions and no "next"
+  const apex = standingFor(9999, 20);
+  check(
+    'ranks: the apex tier has no division and no next step',
+    apex.tier.key === 'inspire' && apex.division === 0 && apex.toNext === null && apex.progress === 1,
+    apex.label,
+  );
+
+  // 9. the FLOOR holds — no rating, however broken, prints below it
+  for (const r of [-9999, 0, NaN, -Infinity]) {
+    check(`ranks: rating ${r} is floored, not printed raw`, standingFor(r, 20).rating >= RANK_FLOOR);
+  }
+
+  // 10. promotion/demotion fires on a crossing and ONLY on a crossing
+  check('ranks: crossing up is a promotion', tierChange(1149, 1151, 20) === 'promoted');
+  check('ranks: crossing down is a demotion', tierChange(1151, 1149, 20) === 'demoted');
+  check('ranks: moving within a tier is neither', tierChange(1000, 1100, 20) === null);
+  check(
+    'ranks: finishing placements is NOT reported as a promotion (there was no tier before)',
+    tierChange(1000, 1400, PLACEMENT_GAMES) === null,
+  );
+}
+
+// ---- DODGE PENALTIES --------------------------------------------------------
+{
+  // escalation is strictly increasing, and the FIRST dodge already costs more than losing
+  // the match would have (~17 for a settled player) — or dodging a bad matchup is rational
+  const settledLoss = Math.abs(
+    glicko2Update({ rating: 1000, rd: 80, vol: 0.06 }, 1000, 80, 0).rating - 1000,
+  );
+  check(
+    'dodge: the first dodge costs MORE than simply losing the match',
+    dodgePenalty(1) > settledLoss,
+    `${dodgePenalty(1)} vs a ${settledLoss.toFixed(0)} loss`,
+  );
+  check(
+    'dodge: repeats escalate strictly',
+    dodgePenalty(1) < dodgePenalty(2) && dodgePenalty(2) < dodgePenalty(3),
+    `${dodgePenalty(1)}/${dodgePenalty(2)}/${dodgePenalty(3)}`,
+  );
+  check(
+    'dodge: the second dodge more than doubles the first (a pattern, not an accident)',
+    dodgePenalty(2) > dodgePenalty(1) * 2,
+  );
+  check('dodge: the escalation saturates rather than growing without bound',
+    dodgePenalty(9) === dodgePenalty(DODGE_PENALTIES.length) && dodgePenalty(0) === 0);
+  // a habitual dodger cannot out-earn the penalty in the same session
+  check(
+    'dodge: the top penalty outweighs several settled wins',
+    dodgePenalty(3) > settledLoss * 4,
+    `${dodgePenalty(3)} vs ${(settledLoss * 4).toFixed(0)}`,
+  );
 }
 
 // ---- ranked results: server broadcasts eloResult, re-keyed to robot ids ------
