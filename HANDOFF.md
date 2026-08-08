@@ -1,3 +1,62 @@
+# HANDOFF — 2026-08-08d (account standing replaces the rank ladder) — alpha only
+
+Branch **alpha**, NOT merged. `npm test` · build · `contrast` 213 · `server:check` green.
+
+**NEEDS A DEPLOY, AND NOW CARRIES THREE MIGRATIONS**: `0025_ranked_dodges.sql`,
+`0026_player_reports.sql`, `0027_account_standing.sql`. All additive
+(create-if-not-exists). Still pending from 08-07: the spectating batch.
+
+## 0. READ THIS FIRST: "standings" meant INTEGRITY, not rank (`01f3418`)
+
+The 08-08b work read "ranked standings" as a RANK LADDER (Meet → Inspire tiers over the
+Glicko rating). That was the wrong reading. The user meant ACCOUNT STANDING in the
+Valorant / League sense: how good a person you are to play with. The ladder has been
+**ripped out** (`src/ranks.ts`, `RankBadge.tsx`, the `--ds-rank-*` tokens, their contrast
+pairs and the ladder smoke block are all gone; ratings print as the raw number again) and
+replaced by `src/standing.ts`.
+
+**The model** (all constants + rationale in `src/standing.ts`):
+- score 0–100, everyone starts at 100, spent only by doing something to other players
+- tiers: Good 80 · Warning 60 · Restricted 40 · Probation 20 · Suspended 0
+- consequence is read off the tier you LAND IN: no restriction above Restricted, then a
+  30-min queue lock, 2 h, 24 h — and rating is charged ONLY in the bottom two tiers
+- costs: report 3 (per distinct reporter, capped at 3/match, **non-escalating**) · dodge 5 ·
+  afk 12 · leave 15 · reportUpheld 25; repeats of the same kind inside 24 h ×1/1.5/2
+- recovery: +2 per clean finished ranked match, +3/day idle (lazy, on read — `healed_at` is
+  advanced and credited in ONE statement so two reads cannot double-credit)
+- **raw reports never restrict the queue or charge rating** — that is the anti-brigading
+  guarantee, and it is smoke-checked at every tier
+
+**Dodges no longer charge rating** (`src/dodge.ts` is now just kinds + the verdict shape;
+the penalty scale is gone). `DodgeVerdict.standing` carries the whole story to the client.
+
+**AFK / LEAVE are server-observed**, never reported: `Room.countParticipation` counts live
+ticks, per-robot ticks with any command, and ticks the driver was disconnected;
+`judgeParticipation` (pure, in standing.ts) classifies at finalize. Matches under 30 live
+seconds are NEVER judged — that is the check protecting innocent players.
+
+**Where things live**: `server/standing.ts` (the service: read → count repeats → verdict →
+write → optional rating charge, all catch-and-return-null), repo functions in
+`server/db/repo.ts` (`getStanding`/`writeStandingEvent`/`standingsFor`/`listStandingEvents`/
+`healStandingForCleanMatch`/`chargeRatingForBehaviour`/`lastRankedBoard`), the queue gate in
+`server/index.ts` at ENQUEUE (fails OPEN), `GET /api/standing` (self-only, no user param),
+`src/ui/StandingCard.tsx` on My Stats, the lock/dodge notices in `Matchmaking.tsx`, and the
+standing pill + ledger in `AdminReports.tsx`.
+
+**Protocol**: new `standingLock` ServerMsg + `standing` in `CLIENT_CAPS`. Server sends the
+message only to clients advertising the cap; older builds get a plain `error` sentence. The
+one Fly app serves every client version, so keep that gate.
+
+**Open / deliberately not done**
+- Queue restrictions are the only enforcement. No ban/mute/rename, still.
+- Dismissing reports does NOT refund the raw nudges they applied (would need a per-report
+  ledger to undo exactly; they heal off anyway).
+- A moderator upholding reports charges rating on the player's most recently played board
+  (`lastRankedBoard`) since the action has no board of its own. No board ⇒ charge dropped
+  and the verdict honestly says 0.
+- `.ds-muted` was used in 27 places and defined in NONE — every one inherited its parent's
+  ink. Now defined; it makes those asides actually read as asides.
+
 # HANDOFF — 2026-08-08c (mobile results fix · player reports + moderation) — alpha only
 
 Branch **alpha**, NOT merged. `npm test` · build · `contrast` 211 · `server:check` green.
