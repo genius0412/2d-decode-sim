@@ -770,29 +770,36 @@ export function Menu({ settings, onChange }: Props) {
                 {/* SWING is a property of the MECHANISM, not a place to put it. It used to be
                     the centre cell of this grid, which made "a swing" and "on the right"
                     mutually exclusive picks — so a fore-aft swing arm bolted to the right
-                    rail, an ordinary build, could not be expressed at all. Now it toggles,
-                    and the grid below says where the pivot goes. */}
+                    rail, an ordinary build, could not be expressed at all. The DIRECTION
+                    matters as much as the fact of it: which positions a pivot can use follows
+                    from which way it turns, so the grid below re-gates on this. */}
                 {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) !== 'rail' && (
-                  <button
-                    className={`ds-opt ${catalystSwingOf(spec) ? 'on' : ''}`}
-                    style={{ marginTop: 8 }}
-                    onClick={() => {
-                      const on = !catalystSwingOf(spec);
-                      // turning it ON from a mount a pivot cannot use (an end or a corner)
-                      // moves it to the nearest one that works, rather than refusing the click
-                      const m = catalystMountOf(spec);
-                      setSpec({
-                        catalystSwing: on,
-                        catalystMount: on && !isSwingMount(m) ? swingHomeFor(m) : m,
-                      });
-                    }}
-                  >
-                    <span className="ot">Swing arm{catalystSwingOf(spec) ? ' · ON' : ''}</span>
-                    <span className="od">
-                      One arm on a fore-aft pivot — it works whichever END of its side is nearer,
-                      so it covers two cones instead of one
-                    </span>
-                  </button>
+                  <div className="ds-opts three" style={{ marginTop: 8 }}>
+                    {([null, 'fb', 'lr'] as const).map((axis) => (
+                      <button
+                        key={axis ?? 'fixed'}
+                        className={`ds-opt mini ${catalystSwingOf(spec) === axis ? 'on' : ''}`}
+                        onClick={() => {
+                          // moving to a pivot from a mount it cannot use takes the nearest one
+                          // that works on THIS axis, rather than refusing the click
+                          const m = catalystMountOf(spec);
+                          setSpec({
+                            catalystSwing: axis ?? undefined,
+                            catalystMount: axis ? swingHomeFor(m, axis) : m === 'center' ? 'front' : m,
+                          });
+                        }}
+                        title={
+                          axis === null
+                            ? 'Bolted in one place, reaching from that one spot'
+                            : axis === 'fb'
+                              ? 'One arm on a pivot that swings FRONT to BACK — it works whichever end is nearer'
+                              : 'One arm on a pivot that swings LEFT to RIGHT — it works whichever flank is nearer'
+                        }
+                      >
+                        <span className="ot">{axis === null ? 'FIXED' : axis === 'fb' ? 'SWING ↕' : 'SWING ↔'}</span>
+                      </button>
+                    ))}
+                  </div>
                 )}
                 {/* Same 3x3 chassis map as the turret picker: where the mechanism is BOLTED. */}
                 <div className="ds-opts three" style={{ marginTop: 8 }}>
@@ -804,9 +811,10 @@ export function Menu({ settings, onChange }: Props) {
                     const railed = (spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'rail';
                     const swung = catalystSwingOf(spec);
                     const noTrack = railed && !isEdgePos(m);
-                    // a fore-aft pivot needs a front and a back to swing between; and with no
-                    // pivot at all, the middle of the chassis reaches nothing
-                    const noPivot = swung && !isSwingMount(m);
+                    // a pivot needs BOTH of its working ends reachable, which depends on the
+                    // axis: a fore-aft arm wants a front and a back, a lateral one wants two
+                    // flanks. And with no pivot at all, the middle reaches nothing.
+                    const noPivot = !!swung && !isSwingMount(m, swung);
                     const noReach = !swung && m === 'center';
                     const taken = mountsClash(
                       { pos: m, spansEdge: railed, swing: swung },
@@ -825,11 +833,13 @@ export function Menu({ settings, onChange }: Props) {
                             : taken
                               ? 'The shooter is mounted here'
                               : noPivot
-                                ? 'A fore-aft swing pivots between the ends of its side — bolt it to the centre line or a flank'
+                                ? swung === 'lr'
+                                  ? 'A left–right swing pivots between the flanks — bolt it to the centre line or an end'
+                                  : 'A front–back swing pivots between the ends — bolt it to the centre line or a flank'
                                 : noReach
                                   ? 'Nothing reaches from the middle of a chassis — turn on the swing arm to work from here'
                                   : swung
-                                    ? `Pivot on the ${CHAIN_CATALYST_MOUNT_LABELS[m]}, swinging front to back`
+                                    ? `Pivot on the ${CHAIN_CATALYST_MOUNT_LABELS[m]}, swinging ${swung === 'fb' ? 'front to back' : 'left to right'}`
                                     : `Claw mounted at the ${CHAIN_CATALYST_MOUNT_LABELS[m]} of the chassis`
                         }
                       >

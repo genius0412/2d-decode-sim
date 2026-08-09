@@ -191,7 +191,7 @@ import {
   chainMassFloorBump,
   chainStorageMax,
 } from '../src/games/chain/config';
-import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, MOUNT_ANGLE, RAIL_DIR, catalystMountOf, catalystMountPositions, catalystSwingOf, intakeMountOf, isEdgePos, isTurreted, mountsClash, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
+import { CHAIN_CATALYST_MOUNTS, CHAIN_INTAKE_MOUNTS, CHAIN_TURRET_POSITIONS, MOUNT_ANGLE, RAIL_DIR, catalystMountOf, catalystMountPositions, catalystSwingOf, isSwingMount, swingAxesFor, intakeMountOf, isEdgePos, isTurreted, mountsClash, shooterMountOf, turretLocal, turretRadius } from '../src/games/chain/mounts';
 
 // the sim now steps a Rapier physics world (robots) — load the WASM before any
 // step() runs. tsx runs this file as ESM, so top-level await is available.
@@ -5819,8 +5819,8 @@ const mkMM = () => {
         const legacy = build({ catalystMount: 'frontback' as RobotSpec['catalystMount'] });
         check(
           'chain swing: the legacy frontback mount migrates to a centre pivot',
-          catalystMountOf(legacy) === 'center' && catalystSwingOf(legacy) &&
-            JSON.stringify(catalystMountPositions(catalystMountOf(legacy), true)) === JSON.stringify(['front', 'back']),
+          catalystMountOf(legacy) === 'center' && catalystSwingOf(legacy) === 'fb' &&
+            JSON.stringify(catalystMountPositions(catalystMountOf(legacy), 'fb')) === JSON.stringify(['front', 'back']),
           `${catalystMountOf(legacy)} swing=${catalystSwingOf(legacy)}`,
         );
 
@@ -5837,13 +5837,49 @@ const mkMM = () => {
         );
         check(
           'chain swing: a LEFT swing mirrors it',
-          JSON.stringify(catalystMountPositions('left', true)) === JSON.stringify(['frontleft', 'backleft']),
+          JSON.stringify(catalystMountPositions('left', 'fb')) === JSON.stringify(['frontleft', 'backleft']),
+        );
+
+        /**
+         * THE OTHER AXIS. A swing arm can be turned 90°: same one arm on a pivot, reaching
+         * over the two FLANKS instead of the two ends. Which positions it can be bolted to
+         * follows from that — a lateral pivot needs a left and a right, so it lives on the
+         * centre line or an END, exactly mirroring the fore-aft rule.
+         */
+        const lat = build({ catalystMount: 'front', catalystSwing: 'lr' });
+        check(
+          'chain swing: a LEFT-RIGHT swing on the front works both flanks',
+          catalystSwingOf(lat) === 'lr' && catalystMountOf(lat) === 'front' &&
+            JSON.stringify(catalystMountPositions('front', 'lr')) === JSON.stringify(['frontleft', 'frontright']),
+          `${catalystMountOf(lat)} ${catalystSwingOf(lat)}`,
+        );
+        check(
+          'chain swing: a centre pivot swings over the ends or the flanks, by axis',
+          JSON.stringify(catalystMountPositions('center', 'fb')) === JSON.stringify(['front', 'back']) &&
+            JSON.stringify(catalystMountPositions('center', 'lr')) === JSON.stringify(['left', 'right']),
+        );
+        // ...and the legal positions are exactly mirrored between the two axes
+        for (const [axis, illegal] of [['fb', ['front', 'back']], ['lr', ['left', 'right']]] as const) {
+          for (const m of illegal) {
+            const bad = build({ catalystMount: m, catalystSwing: axis });
+            check(
+              `chain swing: a ${axis} pivot cannot be bolted to ${m} (its two ends are not both reachable)`,
+              !catalystSwingOf(bad) && catalystMountOf(bad) === m,
+              `${catalystMountOf(bad)} swing=${catalystSwingOf(bad)}`,
+            );
+          }
+        }
+        check(
+          'chain swing: the CENTRE is the one position both axes can use',
+          isSwingMount('center', 'fb') && isSwingMount('center', 'lr') &&
+            swingAxesFor('center').length === 2 && swingAxesFor('frontleft').length === 0,
+          swingAxesFor('center').join('+'),
         );
 
         // a pivot needs a front and a back to swing between, so an END or a CORNER is not a
         // place one can go — the SWING is dropped, the mount the player chose is kept
         for (const m of ['front', 'back', 'frontleft', 'backright'] as const) {
-          const bad = build({ catalystMount: m, catalystSwing: true });
+          const bad = build({ catalystMount: m, catalystSwing: 'fb' });
           check(
             `chain swing: a pivot cannot be bolted to ${m} (swing dropped, mount kept)`,
             !catalystSwingOf(bad) && catalystMountOf(bad) === m,
@@ -5851,10 +5887,10 @@ const mkMM = () => {
           );
         }
         // a RAIL is a track, not a pivot
-        const railSwing = build({ catalystType: 'rail', catalystMount: 'right', catalystSwing: true });
+        const railSwing = build({ catalystType: 'rail', catalystMount: 'right', catalystSwing: 'fb' });
         check('chain swing: a rail never swings', !catalystSwingOf(railSwing));
         // ...and nothing reaches from the middle of a chassis without one
-        const middle = build({ catalystMount: 'center', catalystSwing: false });
+        const middle = build({ catalystMount: 'center' });
         check(
           'chain swing: a centre mount with no pivot is moved to an edge',
           catalystMountOf(middle) !== 'center',
@@ -5867,7 +5903,7 @@ const mkMM = () => {
         // illegal and coerceSpec would silently move the claw somewhere else.
         const rocky = coerceSpec(
           { ...DEFAULT_SPEC, scoreMode: 'twinturret', shooterMount: 'center',
-            catalystType: 'turret', catalystMount: 'center', catalystSwing: true },
+            catalystType: 'turret', catalystMount: 'center', catalystSwing: 'fb' },
           DEFAULT_SPEC, 'chain',
         );
         check(

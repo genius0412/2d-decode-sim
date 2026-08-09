@@ -4,6 +4,7 @@ import type {
   ChainMountPos,
   ChainScoreMode,
   ChainShooterMount,
+  ChainSwingAxis,
   RobotSpec,
 } from '../../types';
 
@@ -53,16 +54,26 @@ export const CHAIN_CATALYST_MOUNTS = [
 ] as const;
 
 /**
- * Where a SWING's pivot can be bolted.
+ * Where a SWING's pivot can be bolted — WHICH DEPENDS ON WHICH WAY IT SWINGS.
  *
- * A swing rotates FORE AND AFT, so the pivot has to sit somewhere that has a front and a back
- * to reach: the chassis centre line, or either flank. Bolting one to the front edge would be
- * a front mount with extra steps — there is no second end for it to swing to.
+ * A pivot has to sit somewhere with both of its working ends available. A FRONT↔BACK arm
+ * therefore lives on the centre line or a flank: bolt one to the front edge and there is no
+ * second end for it to swing to, so it is a front mount with extra steps. A LEFT↔RIGHT arm is
+ * the same statement turned 90° — centre line, or either end.
+ *
+ * The centre is legal for both, and is the only position that is: it is the one place with a
+ * front, a back, a left and a right all within reach.
  */
-export const CHAIN_SWING_MOUNTS = ['center', 'left', 'right'] as const;
-export type ChainSwingMount = (typeof CHAIN_SWING_MOUNTS)[number];
-export const isSwingMount = (m: string): m is ChainSwingMount =>
-  (CHAIN_SWING_MOUNTS as readonly string[]).includes(m);
+export const SWING_MOUNTS: Record<ChainSwingAxis, readonly ChainMountPos[]> = {
+  fb: ['center', 'left', 'right'],
+  lr: ['center', 'front', 'back'],
+};
+export const CHAIN_SWING_AXES = ['fb', 'lr'] as const;
+export const isSwingMount = (m: string, axis: ChainSwingAxis): boolean =>
+  (SWING_MOUNTS[axis] as readonly string[]).includes(m);
+/** the axes a given position could swing on (empty ⇒ a pivot cannot go there at all) */
+export const swingAxesFor = (m: string): ChainSwingAxis[] =>
+  CHAIN_SWING_AXES.filter((a) => isSwingMount(m, a));
 export const CHAIN_DEFAULT_INTAKE_MOUNT: ChainIntakeMount = 'front';
 /** default FIRING EDGE for a turretless launcher */
 export const CHAIN_DEFAULT_SHOOTER_MOUNT: ChainShooterMount = 'front';
@@ -101,7 +112,11 @@ export function isEdgePos(pos: string): pos is ChainEdge {
  * `center` is deliberately included for a turret bolted mid-chassis: it blocks a catalyst
  * that wanted the middle, and nothing else.
  */
-export function occupiedCells(pos: string, spansEdge: boolean, swing = false): ChainMountPos[] {
+export function occupiedCells(
+  pos: string,
+  spansEdge: boolean,
+  swing: ChainSwingAxis | null = null,
+): ChainMountPos[] {
   if (pos === 'frontback') return ['front', 'frontleft', 'frontright', 'back', 'backleft', 'backright'];
   /**
    * A SWING claims the two ENDS it sweeps over, NOT the cell its pivot is bolted to.
@@ -112,8 +127,8 @@ export function occupiedCells(pos: string, spansEdge: boolean, swing = false): C
    * what two shipped presets are). The old `'frontback'` value had exactly this behaviour —
    * it is preserved here rather than re-derived.
    */
-  if (swing && isSwingMount(pos)) {
-    return catalystMountPositions(pos as ChainCatalystMount, true) as ChainMountPos[];
+  if (swing && isSwingMount(pos, swing)) {
+    return catalystMountPositions(pos as ChainCatalystMount, swing) as ChainMountPos[];
   }
   if (pos === 'side') return ['left', 'frontleft', 'backleft', 'right', 'frontright', 'backright'];
   if (spansEdge && isEdgePos(pos)) {
@@ -138,8 +153,8 @@ export function railEdgeOf(pos: string): ChainEdge {
 
 /** do two mounted mechanisms want the same piece of frame? */
 export function mountsClash(
-  a: { pos: string; spansEdge: boolean; swing?: boolean },
-  b: { pos: string; spansEdge: boolean; swing?: boolean },
+  a: { pos: string; spansEdge: boolean; swing?: ChainSwingAxis | null },
+  b: { pos: string; spansEdge: boolean; swing?: ChainSwingAxis | null },
 ): boolean {
   const cells = new Set(occupiedCells(a.pos, a.spansEdge, a.swing));
   return occupiedCells(b.pos, b.spansEdge, b.swing).some((c) => cells.has(c));
@@ -180,14 +195,20 @@ export function catalystMountOf(spec: Pick<RobotSpec, 'catalystMount'>): ChainCa
   return 'front';
 }
 
-/** is this build's catalyst on a fore-aft swing? Pure — safe on a raw (un-coerced) spec, and
- *  it still reads the legacy `'frontback'` mount as the swing it used to mean. */
+/**
+ * Which way this build's catalyst swings, or null if it does not. Pure — safe on a raw
+ * (un-coerced) spec, and it still reads BOTH legacy shapes: the `'frontback'` mount that used
+ * to mean the swing, and the boolean this field was for one commit before it grew an axis.
+ */
 export function catalystSwingOf(
   spec: Pick<RobotSpec, 'catalystSwing' | 'catalystMount' | 'catalystType'>,
-): boolean {
-  if ((spec.catalystType ?? 'turret') === 'rail') return false; // a track is not a pivot
-  if (spec.catalystMount === 'frontback') return true; // legacy value, pre-migration
-  return !!spec.catalystSwing && isSwingMount(catalystMountOf(spec));
+): ChainSwingAxis | null {
+  if ((spec.catalystType ?? 'turret') === 'rail') return null; // a track is not a pivot
+  if (spec.catalystMount === 'frontback') return 'fb'; // legacy mount value
+  const raw = spec.catalystSwing as ChainSwingAxis | boolean | undefined;
+  const axis: ChainSwingAxis | null = raw === true ? 'fb' : raw === 'fb' || raw === 'lr' ? raw : null;
+  if (!axis) return null;
+  return isSwingMount(catalystMountOf(spec), axis) ? axis : null;
 }
 
 /**
@@ -201,13 +222,18 @@ export function catalystSwingOf(
  */
 export function catalystMountPositions(
   mount: ChainCatalystMount,
-  swing = false,
+  swing: ChainSwingAxis | null = null,
 ): Exclude<ChainMountPos, 'center'>[] {
   if (mount === 'frontback') return ['front', 'back']; // legacy value
   if (!swing) return mount === 'center' ? ['front'] : [mount as Exclude<ChainMountPos, 'center'>];
-  if (mount === 'left') return ['frontleft', 'backleft'];
-  if (mount === 'right') return ['frontright', 'backright'];
-  return ['front', 'back']; // centre pivot
+  if (swing === 'fb') {
+    if (mount === 'left') return ['frontleft', 'backleft'];
+    if (mount === 'right') return ['frontright', 'backright'];
+    return ['front', 'back']; // centre pivot, swinging over both ends
+  }
+  if (mount === 'front') return ['frontleft', 'frontright'];
+  if (mount === 'back') return ['backleft', 'backright'];
+  return ['left', 'right']; // centre pivot, swinging over both flanks
 }
 
 /**
@@ -218,9 +244,15 @@ export function catalystMountPositions(
  * covers both ends equally. Moving the choice is better than refusing the click here: the
  * player asked for a swing, and there is always a sensible place to put one.
  */
-export function swingHomeFor(mount: ChainCatalystMount): ChainSwingMount {
-  if (mount === 'left' || mount === 'frontleft' || mount === 'backleft') return 'left';
-  if (mount === 'right' || mount === 'frontright' || mount === 'backright') return 'right';
+export function swingHomeFor(mount: ChainCatalystMount, axis: ChainSwingAxis): ChainMountPos {
+  if (isSwingMount(mount, axis)) return mount as ChainMountPos;
+  if (axis === 'fb') {
+    if (mount === 'frontleft' || mount === 'backleft') return 'left';
+    if (mount === 'frontright' || mount === 'backright') return 'right';
+  } else {
+    if (mount === 'frontleft' || mount === 'frontright') return 'front';
+    if (mount === 'backleft' || mount === 'backright') return 'back';
+  }
   return 'center';
 }
 
@@ -231,9 +263,14 @@ export function swingHomeFor(mount: ChainCatalystMount): ChainSwingMount {
  * at a working END instead would read as two arms for a centre swing, and would float a side
  * swing's body off the corner it merely reaches.
  */
-export function catalystDrawPos(mount: ChainCatalystMount, swing = false): ChainMountPos {
+export function catalystDrawPos(
+  mount: ChainCatalystMount,
+  swing: ChainSwingAxis | null = null,
+): ChainMountPos {
   if (mount === 'frontback') return 'front'; // legacy: the swing stows at the front
-  if (swing && mount === 'center') return 'front'; // ...as does a centre pivot
+  // a CENTRE pivot has nothing at the middle to draw against, so it stows at the first end
+  // it swings to — the front for a fore-aft arm, the left flank for a lateral one
+  if (swing && mount === 'center') return catalystMountPositions(mount, swing)[0];
   return mount;
 }
 

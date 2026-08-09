@@ -52,7 +52,7 @@ import {
   CHAIN_CATALYST_MOUNTS,
   CHAIN_RAIL_MOUNTS,
   intakeMountOf,
-  CHAIN_SWING_MOUNTS,
+  SWING_MOUNTS,
   isEdgePos,
   isSwingMount,
   isTurreted,
@@ -284,8 +284,16 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
     sp.catalystMount === 'frontback'
       ? (sp.catalystMount as RobotSpec['catalystMount'])
       : (base.catalystMount ?? CHAIN_DEFAULT_CATALYST_MOUNT);
+  // the axis, accepting BOTH legacy shapes: the boolean this field briefly was (⇒ fore-aft,
+  // the only kind that existed then) and the `'frontback'` mount before that
   out.catalystSwing =
-    typeof sp.catalystSwing === 'boolean' ? sp.catalystSwing : !!base.catalystSwing;
+    sp.catalystSwing === true || sp.catalystSwing === 'fb'
+      ? 'fb'
+      : sp.catalystSwing === 'lr'
+        ? 'lr'
+        : sp.catalystSwing === false
+          ? undefined
+          : base.catalystSwing;
   // CATAPULT build: range (in) and the fixed mounting yaw (deg, 15° steps). Only meaningful
   // on the launcher, but kept on the spec unconditionally so switching mechanism back and
   // forth doesn't silently discard the build.
@@ -367,9 +375,13 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
      */
     if (out.catalystMount === ('frontback' as RobotSpec['catalystMount'])) {
       out.catalystMount = 'center';
-      out.catalystSwing = true;
+      out.catalystSwing = 'fb';
     }
-    out.catalystSwing = !railed && !!out.catalystSwing && isSwingMount(out.catalystMount as string);
+    // a track is not a pivot, and a pivot only works where BOTH of its ends are reachable —
+    // which depends on the axis, so the two are checked together
+    if (railed || (out.catalystSwing && !isSwingMount(out.catalystMount as string, out.catalystSwing))) {
+      out.catalystSwing = undefined;
+    }
     // ...and the middle of a chassis reaches nothing without one, so a centre mount that is
     // not a pivot falls to the front edge.
     if (out.catalystMount === 'center' && !out.catalystSwing) out.catalystMount = 'front';
@@ -386,7 +398,7 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
     // which is a strong hint the rule is about the deck rather than about the edge.
     const blockers = [{ pos: out.shooterMount as string, spansEdge: !isTurreted(out.scoreMode) }];
     const clashes = (m: string): boolean =>
-      blockers.some((b) => mountsClash({ pos: m, spansEdge: railed, swing: !!out.catalystSwing }, b));
+      blockers.some((b) => mountsClash({ pos: m, spansEdge: railed, swing: out.catalystSwing ?? null }, b));
     if (clashes(out.catalystMount as string)) {
       // The fallback set has to be places THIS mechanism can legally live, or the relocation
       // silently produces a build the next pass has to fix again — which is exactly how this
@@ -395,7 +407,7 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
       const options = railed
         ? (CHAIN_RAIL_MOUNTS as readonly string[])
         : out.catalystSwing
-          ? (CHAIN_SWING_MOUNTS as readonly string[])
+          ? (SWING_MOUNTS[out.catalystSwing] as readonly string[])
           : (CHAIN_CATALYST_MOUNTS as readonly string[]).filter((m) => m !== 'center');
       const free = options.find((m) => !clashes(m));
       // if EVERY position clashes the build is over-stuffed; leave the mount alone rather

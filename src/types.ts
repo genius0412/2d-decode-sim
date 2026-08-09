@@ -122,16 +122,21 @@ export interface RobotSpec {
   /** Chain Reaction: where on the chassis the catalyst mechanism is BOLTED. Optional
    * (defaulted in coerceSpec). */
   catalystMount?: ChainCatalystMount;
-  /** Chain Reaction: is the mechanism on a fore-aft SWING — one arm on a pivot that rotates
-   * between the front and the back, so it works whichever end is nearer?
+  /**
+   * Chain Reaction: the mechanism is on a SWING — one arm on a pivot that rotates between
+   * two working ends, so it serves both without turning the chassis — and WHICH WAY it
+   * swings. Absent ⇒ it does not swing.
+   *
+   *   'fb' — front↔back: the classic swing, reaching over both ends
+   *   'lr' — left↔right: the same arm turned 90°, reaching over both flanks
    *
    * SEPARATE from the mount on purpose. The swing used to BE a mount (`'frontback'`, welded
    * to the centre cell), which made "a swing" and "on the right" mutually exclusive choices
-   * in one picker — so a fore-aft swing arm bolted to the right rail, a real and common
-   * build, could not be expressed at all. Now the mount says where the pivot is (centre,
-   * left or right) and this says whether it swings. Optional (defaulted in coerceSpec, which
-   * also migrates the legacy `'frontback'` mount). */
-  catalystSwing?: boolean;
+   * in one picker — so a fore-aft swing arm bolted to the right rail, a real build, could not
+   * be expressed at all. The mount now says where the pivot IS and this says how it MOVES,
+   * which is also what makes the two axes possible: which positions a pivot can use follows
+   * from the direction it swings (see `SWING_MOUNTS`). Legacy `true` reads as 'fb'. */
+  catalystSwing?: ChainSwingAxis;
   /** Chain Reaction, LAUNCHER archetype only: the fixed YAW the catapult is bolted at,
    * in DEGREES relative to chassis forward (−180..180, 15° steps). The catapult is NOT on
    * a turret — it throws wherever the chassis is pointed plus this offset — so which way
@@ -228,6 +233,9 @@ export type ChainCatalystType = 'arm' | 'launcher' | 'turret' | 'rail';
  * `'frontback'` is the LEGACY value for what is now `{ mount: 'center', swing: true }`. It is
  * still accepted on the wire and from old saves; `coerceSpec` migrates it. */
 export type ChainCatalystMount = ChainMountPos | 'frontback';
+
+/** which way a swing arm rotates: front↔back, or left↔right */
+export type ChainSwingAxis = 'fb' | 'lr';
 
 export type BallState =
   | { kind: 'ground' }

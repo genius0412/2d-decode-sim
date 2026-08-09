@@ -1022,7 +1022,7 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
     driveRpm: 435, tankRpm: 340, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'twinturret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'center', catalystType: 'turret',
-    catalystMount: 'center', catalystSwing: true,
+    catalystMount: 'center', catalystSwing: 'fb',
     assists: CR_PRESET_ASSISTS,
   },
   {
@@ -1035,7 +1035,7 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
     driveRpm: 340, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'turret', chainIntake: 'sweeper',
     intakeMount: 'frontback', shooterMount: 'center', catalystType: 'arm',
-    catalystMount: 'right', catalystSwing: true,
+    catalystMount: 'right', catalystSwing: 'fb',
     assists: CR_PRESET_ASSISTS,
   },
   // ── ARCHETYPE DEMOS ───────────────────────────────────────────────────────────────────
