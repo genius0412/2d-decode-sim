@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReplay } from '../net/api';
-import { ReplayPlayer, REPLAY_FORMAT, replayViewpoint, type Replay } from '../sim/replay';
+import { ReplayPlayer, replayPlayable, replayViewpoint, type Replay } from '../sim/replay';
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
@@ -55,14 +55,11 @@ export function ReplayView({
     const use = (r: Replay): void => {
       replay.current = r;
       // A replay is a deterministic INPUT log — it only re-simulates to its original
-      // outcome under the exact sim build that recorded it. After a physics/balance
-      // update (BALANCE_VERSION bump) or a replay-container change (REPLAY_FORMAT),
-      // re-running it here would diverge, so refuse playback and say why instead of
-      // showing a silently-wrong game.
-      // `sim` is the SIM-BEHAVIOUR version (see config.ts SIM_VERSION) — bumped by
-      // determinism/physics fixes that are not balance decisions and so must not
-      // reset the competitive season. Absent ⇒ 0 ⇒ recorded before it existed.
-      if (r.format !== REPLAY_FORMAT || r.balanceVersion !== BALANCE_VERSION || (r.sim ?? 0) !== SIM_VERSION) {
+      // outcome under the exact sim build that recorded it. `replayPlayable` owns the whole
+      // decision (see it for the container-vs-behaviour split): an OLDER container is still
+      // readable and still plays, a mismatched balance/sim version cannot, and a format-1
+      // replay of a tank robot is refused because its drive input was never stored.
+      if (!replayPlayable(r, BALANCE_VERSION, SIM_VERSION)) {
         setStaleVersion(r.balanceVersion ?? null);
         setStatus('stale');
         return;

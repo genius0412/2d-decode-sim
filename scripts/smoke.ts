@@ -108,6 +108,9 @@ import {
   recordScore,
   maxMatchTicks,
   REPLAY_FORMAT,
+  replayPlayable,
+  runRecordMatch,
+  trackStride,
   type CommandSource,
   replayViewpoint,
   type Replay,
@@ -3296,6 +3299,96 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   // an OLD client's ld/rd-less packet still decodes (missing ⇒ 0, the old behavior)
   const legacy = dequantizeCommand({ dx: 0, dy: 64, rot: 0, buttons: 0 });
   check('dequantize tolerates a legacy ld/rd-less packet', legacy.leftDrive === 0 && legacy.rightDrive === 0);
+}
+
+// ---- RECORD -> REPLAY round-trip, per DRIVETRAIN ----------------------------
+// The gap that shipped a broken feature: replays were only ever exercised through the
+// determinism helpers, never by driving a robot and watching the recording drive it back.
+// TANK (and BUTTERFLY, half of whose life is tank mode) is commanded EXCLUSIVELY through
+// leftDrive/rightDrive, and the format-1 container had nowhere to store them — so those
+// replays played back with a dead drivetrain while every existing test stayed green.
+{
+  for (const drivetrain of ['tank', 'butterfly', 'mecanum', 'swerve', 'xdrive'] as const) {
+    const setup: RobotSetup = {
+      id: 0,
+      alliance: 'blue',
+      spec: coerceSpec({ ...DEFAULT_SPEC, drivetrain }, DEFAULT_SPEC, 'decode'),
+      assists: { ...DEFAULT_ASSISTS, autoIntake: false, autoFire: false },
+      startIndex: 0,
+    };
+    // drive it like a person would: every drivetrain gets BOTH command shapes, because the
+    // sim reads different fields per drivetrain and a replay has to carry all of them
+    const src: CommandSource = (tick) => {
+      const t = tick / 60;
+      // Phase 1 drives STRAIGHT in both command shapes at once (dx for the holonomic
+      // drivetrains, ld/rd for tank), so every drivetrain actually translates; phase 2 turns
+      // in place, again in both shapes. A replay has to carry whichever pair its drivetrain
+      // reads, so both are exercised on every build.
+      return new Map([[0, cmd({
+        driveX: t < 2.5 ? -1 : 0, // AWAY from the wall it starts against
+        driveY: 0,
+        rotate: t < 2.5 ? 0 : 0.6,
+        leftDrive: t < 2.5 ? -1 : -0.6,
+        rightDrive: t < 2.5 ? -1 : 0.6,
+      })]]);
+    };
+    // FREE drive: no countdown or phase gating, so the whole window is drivable
+    const run = runRecordMatch(11, [setup], src, { mode: 'free', stopTick: 300 });
+    const live = run.world.robots[0];
+    // sanity: the ROBOT ACTUALLY MOVED in the live run, or this proves nothing
+    const moved = hyp(live.pos.x - startPose('blue', 0).pos.x, live.pos.y - startPose('blue', 0).pos.y);
+    check(`replay/${drivetrain}: the recorded run actually drove somewhere`, moved > 4, `${moved.toFixed(1)}in`);
+
+    const back = simulateReplay(run.replay);
+    const rb = back.robots[0];
+    check(
+      `replay/${drivetrain}: re-simulating the replay reproduces the run exactly`,
+      worldHash(back) === worldHash(run.world),
+      `live (${live.pos.x.toFixed(2)},${live.pos.y.toFixed(2)}) vs replay (${rb.pos.x.toFixed(2)},${rb.pos.y.toFixed(2)})`,
+    );
+  }
+
+  // the container itself: entries carry the tank axes, and a format-1 track still reads
+  {
+    const setup: RobotSetup = {
+      id: 0, alliance: 'blue',
+      spec: coerceSpec({ ...DEFAULT_SPEC, drivetrain: 'tank' }, DEFAULT_SPEC, 'decode'),
+      assists: { ...DEFAULT_ASSISTS }, startIndex: 0,
+    };
+    const r = runRecordMatch(3, [setup], (tick) =>
+      new Map([[0, cmd({ leftDrive: tick < 60 ? 1 : -1, rightDrive: 1 })]]), { stopTick: 120 }).replay;
+    check('replay: the container records at the tank-aware stride', r.format === REPLAY_FORMAT && trackStride(r.format) === 7);
+    const track = r.tracks[0] ?? [];
+    check(
+      'replay: a tank robot records MORE than one entry (its input is only ld/rd)',
+      track.length / trackStride(r.format) >= 2,
+      `${track.length / trackStride(r.format)} entries`,
+    );
+    check(
+      'replay: the stored entries carry non-zero tank axes',
+      track.some((_v, i) => i % 7 === 5 && track[i] !== 0),
+      track.slice(0, 14).join(','),
+    );
+    // OLD containers stay readable — the reader takes the stride from the replay, not from
+    // this build — but a format-1 TANK replay is refused rather than played back dead
+    const legacy: Replay = { ...r, format: 1, tracks: { 0: [1, 0, 0, 0, 0] } };
+    check('replay: a format-1 container still parses', simulateReplay(legacy).robots.length === 1);
+    check(
+      'replay: a format-1 TANK replay is refused, not played back with a dead drivetrain',
+      !replayPlayable(legacy, legacy.balanceVersion, legacy.sim ?? 0),
+    );
+    check(
+      'replay: a format-1 MECANUM replay still plays',
+      replayPlayable(
+        { ...legacy, setups: [{ ...setup, spec: { ...setup.spec, drivetrain: 'mecanum' } }] },
+        legacy.balanceVersion, legacy.sim ?? 0,
+      ),
+    );
+    check(
+      'replay: a container from a NEWER build is refused',
+      !replayPlayable({ ...r, format: REPLAY_FORMAT + 1 }, r.balanceVersion, r.sim ?? 0),
+    );
+  }
 }
 
 // ---- worldHash: replay determinism + sensitivity ---------------------------
