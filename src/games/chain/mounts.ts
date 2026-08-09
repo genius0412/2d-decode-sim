@@ -257,20 +257,22 @@ export function swingHomeFor(mount: ChainCatalystMount, axis: ChainSwingAxis): C
 }
 
 /**
- * Where the mechanism's BODY is drawn: the pivot for a swing, the mount itself otherwise.
+ * Where the mechanism's BODY is drawn, and — because the drawing frame points +x outward —
+ * WHICH WAY IT POINTS.
  *
- * A swing is one arm on a pivot, so the pivot is the thing bolted to the frame — drawing it
- * at a working END instead would read as two arms for a centre swing, and would float a side
- * swing's body off the corner it merely reaches.
+ * A SWING is drawn at the END IT STOWS AT, not at the cell its pivot is bolted to. Drawing it
+ * at the pivot points the arm out of that face, and for a swing that is a direction it
+ * physically cannot reach: a front–back arm on the RIGHT RAIL was drawn pointing out of the
+ * right flank, 90° away from the front-right and back-right corners that are the only places
+ * it works. Stowed at its first working end, it points along the arc it actually swings
+ * through — which is also what makes the two axes read differently at a glance.
  */
 export function catalystDrawPos(
   mount: ChainCatalystMount,
   swing: ChainSwingAxis | null = null,
 ): ChainMountPos {
-  if (mount === 'frontback') return 'front'; // legacy: the swing stows at the front
-  // a CENTRE pivot has nothing at the middle to draw against, so it stows at the first end
-  // it swings to — the front for a fore-aft arm, the left flank for a lateral one
-  if (swing && mount === 'center') return catalystMountPositions(mount, swing)[0];
+  if (mount === 'frontback') return 'front'; // legacy: the centre swing stows at the front
+  if (swing) return catalystMountPositions(mount, swing)[0];
   return mount;
 }
 
