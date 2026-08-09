@@ -1014,14 +1014,14 @@ const CHAIN_PRESET_BUILDS: readonly RobotSpec[] = [
   },
   {
     // Rocky: everything omnidirectional. Butterfly base, front+back sweepers, twin turret in
-    // the middle, and the claw on a CENTRE SWING — one arm on a pivot in the middle of the
-    // chassis, working front or back. Nothing on this robot needs the chassis pointed
+    // the middle, and the claw on a CENTRE SWING — one ARM on a pivot in the middle of the
+    // chassis, working front or back (only the arm swings; a turret claw already aims itself). Nothing on this robot needs the chassis pointed
     // anywhere. It pays for the second sweeper in HOPPER volume, not in chassis size.
     name: 'Rocky', teamName: 'Estimate', teamNumber: 5050,
     length: 15, width: 17, intake: 'sloped', massLb: 30, drivetrain: 'butterfly',
     driveRpm: 435, tankRpm: 340, flywheelInertia: 0.3, canSort: false,
     groundClearance: 1.0, scoreMode: 'twinturret', chainIntake: 'sweeper',
-    intakeMount: 'frontback', shooterMount: 'center', catalystType: 'turret',
+    intakeMount: 'frontback', shooterMount: 'center', catalystType: 'arm',
     catalystMount: 'center', catalystSwing: 'fb',
     assists: CR_PRESET_ASSISTS,
   },

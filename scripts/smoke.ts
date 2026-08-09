@@ -5886,9 +5886,13 @@ const mkMM = () => {
             `${catalystMountOf(bad)} swing=${catalystSwingOf(bad)}`,
           );
         }
-        // a RAIL is a track, not a pivot
-        const railSwing = build({ catalystType: 'rail', catalystMount: 'right', catalystSwing: 'fb' });
-        check('chain swing: a rail never swings', !catalystSwingOf(railSwing));
+        // ONLY THE ARM SWINGS: a turret claw already aims through a full circle and a rail
+        // already traverses its side, so a pivot buys neither anything — and offering it
+        // would be a control that changes nothing
+        for (const t of ['rail', 'turret', 'launcher'] as const) {
+          const other = build({ catalystType: t, catalystMount: 'center', catalystSwing: 'fb' });
+          check(`chain swing: a ${t} never swings`, !catalystSwingOf(other), `${catalystMountOf(other)} swing=${catalystSwingOf(other)}`);
+        }
         // ...and nothing reaches from the middle of a chassis without one
         const middle = build({ catalystMount: 'center' });
         check(
@@ -5903,7 +5907,7 @@ const mkMM = () => {
         // illegal and coerceSpec would silently move the claw somewhere else.
         const rocky = coerceSpec(
           { ...DEFAULT_SPEC, scoreMode: 'twinturret', shooterMount: 'center',
-            catalystType: 'turret', catalystMount: 'center', catalystSwing: 'fb' },
+            catalystType: 'arm', catalystMount: 'center', catalystSwing: 'fb' },
           DEFAULT_SPEC, 'chain',
         );
         check(

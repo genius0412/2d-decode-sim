@@ -203,7 +203,10 @@ export function catalystMountOf(spec: Pick<RobotSpec, 'catalystMount'>): ChainCa
 export function catalystSwingOf(
   spec: Pick<RobotSpec, 'catalystSwing' | 'catalystMount' | 'catalystType'>,
 ): ChainSwingAxis | null {
-  if ((spec.catalystType ?? 'turret') === 'rail') return null; // a track is not a pivot
+  // ARM ONLY. A turret claw already aims through a full circle and a rail already traverses
+  // its whole side, so a pivot buys neither of them anything; the fixed arm is the one
+  // mechanism that has to be POINTED at its work, which is what makes swinging a decision.
+  if ((spec.catalystType ?? 'turret') !== 'arm') return null;
   if (spec.catalystMount === 'frontback') return 'fb'; // legacy mount value
   const raw = spec.catalystSwing as ChainSwingAxis | boolean | undefined;
   const axis: ChainSwingAxis | null = raw === true ? 'fb' : raw === 'fb' || raw === 'lr' ? raw : null;

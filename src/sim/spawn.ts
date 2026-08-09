@@ -377,9 +377,13 @@ export function coerceSpec(raw: unknown, base: RobotSpec = DEFAULT_SPEC, game?: 
       out.catalystMount = 'center';
       out.catalystSwing = 'fb';
     }
-    // a track is not a pivot, and a pivot only works where BOTH of its ends are reachable —
-    // which depends on the axis, so the two are checked together
-    if (railed || (out.catalystSwing && !isSwingMount(out.catalystMount as string, out.catalystSwing))) {
+    // Only the ARM swings (a turret aims itself, a rail traverses), and a pivot only works
+    // where BOTH of its ends are reachable — which depends on the axis, so the mechanism and
+    // the position are checked together.
+    if (
+      out.catalystType !== 'arm' ||
+      (out.catalystSwing && !isSwingMount(out.catalystMount as string, out.catalystSwing))
+    ) {
       out.catalystSwing = undefined;
     }
     // ...and the middle of a chassis reaches nothing without one, so a centre mount that is

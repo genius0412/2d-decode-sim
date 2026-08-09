@@ -228,6 +228,24 @@ function ChassisColorRow({
  * identity stay in Account. Matches start from `ModeSelect` — there is
  * deliberately no "start match" here.
  */
+/**
+ * The eight directions a bolted catapult can be aimed, laid out as the 3x3 chassis map every
+ * other mount picker uses. YAW IS CCW FROM CHASSIS FORWARD and the robot frame has +y to the
+ * LEFT, so left is +90 and right is −90 — the sign nobody should have to work out from a
+ * slider. The middle cell is dead: a catapult throws outward, and there is no "into itself".
+ */
+const CATAPULT_DIRS: { label: string; yaw: number | null; title: string }[] = [
+  { label: 'F·LEFT', yaw: 45, title: 'forward-left' },
+  { label: 'FRONT', yaw: 0, title: 'straight ahead' },
+  { label: 'F·RIGHT', yaw: -45, title: 'forward-right' },
+  { label: 'LEFT', yaw: 90, title: 'out the left flank' },
+  { label: '·', yaw: null, title: '' },
+  { label: 'RIGHT', yaw: -90, title: 'out the right flank' },
+  { label: 'B·LEFT', yaw: 135, title: 'back-left' },
+  { label: 'BACK', yaw: 180, title: 'straight backward' },
+  { label: 'B·RIGHT', yaw: -135, title: 'back-right' },
+];
+
 export function Menu({ settings, onChange }: Props) {
   const [sentinelRef, stuck] = useStuck();
   const set = (patch: Partial<GameSettings>) => onChange({ ...settings, ...patch });
@@ -790,7 +808,12 @@ export function Menu({ settings, onChange }: Props) {
                     rail, an ordinary build, could not be expressed at all. The DIRECTION
                     matters as much as the fact of it: which positions a pivot can use follows
                     from which way it turns, so the grid below re-gates on this. */}
-                {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) !== 'rail' && (
+                {/* ARM ONLY. A turret claw already aims through a full circle and a rail
+                    already traverses, so a pivot adds nothing to either — it is the fixed
+                    arm, the one mechanism that has to be pointed at its work, for which
+                    swinging is a real build decision. `coerceSpec` drops a swing on anything
+                    else, so this is a gate on an offer, not on a capability the sim keeps. */}
+                {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'arm' && (
                   <div className="ds-opts three" style={{ marginTop: 8 }}>
                     {([null, 'fb', 'lr'] as const).map((axis) => (
                       <button
@@ -882,6 +905,25 @@ export function Menu({ settings, onChange }: Props) {
                         onChange={(e) => setSpec({ catapultRange: Number(e.target.value) })}
                       />
                     </label>
+                    {/* WHICH WAY IT THROWS. The catapult is bolted, not turreted — it fires
+                        along the chassis plus this offset — so the direction is a build
+                        decision, and picking it off a slider means doing trigonometry to
+                        answer "out of the back". Eight compass points on the same 3x3 map as
+                        every other mount picker; the slider under it stays for the angles
+                        between them. */}
+                    <div className="ds-opts three" style={{ gridColumn: '1 / -1' }}>
+                      {CATAPULT_DIRS.map((d) => (
+                        <button
+                          key={d.label}
+                          className={`ds-opt mini ${(spec.catapultYaw ?? 0) === d.yaw ? 'on' : ''}${d.yaw === null ? ' off' : ''}`}
+                          disabled={d.yaw === null}
+                          onClick={() => d.yaw !== null && setSpec({ catapultYaw: d.yaw })}
+                          title={d.yaw === null ? 'A catapult throws outward, not into itself' : `Throws ${d.title} (${d.yaw}°)`}
+                        >
+                          <span className="ot">{d.label}</span>
+                        </button>
+                      ))}
+                    </div>
                     <label className="ds-field">
                       <span className="cap">
                         Catapult yaw <span className="val">{spec.catapultYaw ?? 0}°</span>
