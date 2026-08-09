@@ -117,6 +117,7 @@ import {
   type ReplayResult,
 } from '../src/sim/replay';
 import { EMPTY_ACTIVITY, averageMatch, playtimeLong, playtimeText } from '../src/playtime';
+import { routeTarget } from '../server/routing';
 import { Room, type Client, type DodgeReport } from '../server/room';
 import { maintenanceBiting } from '../server/db/repo';
 import { maintenanceLine } from '../src/ui/MaintenanceBanner';
@@ -3300,6 +3301,35 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   // an OLD client's ld/rd-less packet still decodes (missing ⇒ 0, the old behavior)
   const legacy = dequantizeCommand({ dx: 0, dy: 64, rot: 0, buttons: 0 });
   check('dequantize tolerates a legacy ld/rd-less packet', legacy.leftDrive === 0 && legacy.rightDrive === 0);
+}
+
+// ---- CROSS-REGION ROOM ROUTING ----------------------------------------------
+// One app, several regions: a socket is replayed to the region these hints name. The case
+// that mattered is the LAST one — a bare custom room code says nothing about where its room
+// lives, so a friend joining an invite without the host's region landed on whichever machine
+// was nearest to THEM and opened an empty room with the same code. Two lobbies of one
+// person, no error anywhere.
+{
+  const target = (qs: string): string | null => routeTarget(new URL(`http://x/?${qs}`), 'iad');
+
+  check('routing: ranked queueing always meets on the matchmaker', target('mm=1') === 'iad');
+  check('routing: a region-coded room routes on its own prefix', target('room=lhr-abc123') === 'lhr');
+  check(
+    'routing: a BARE custom code has nothing to route on',
+    target('room=abc123') === null,
+    `${target('room=abc123')}`,
+  );
+  // ...which is exactly why the region travels beside it — on an invite, or from the
+  // spectate lookup. This is the line that fixes a cross-region invite.
+  check('routing: an explicit region routes a bare code', target('room=abc123&region=syd') === 'syd');
+  check(
+    'routing: an explicit region wins over a code prefix (a looked-up room beats a guess)',
+    target('room=iad-abc123&region=lhr') === 'lhr',
+  );
+  check('routing: no hints at all stays on this machine', target('') === null && target('x=1') === null);
+  // the matchmaker hint outranks everything: a challenge accepted from another region still
+  // has to queue in the one pool, or the two halves never see each other
+  check('routing: mm beats an explicit region', target('mm=1&region=lhr') === 'iad');
 }
 
 // ---- PLAYTIME + GAMES PLAYED ------------------------------------------------

@@ -3089,7 +3089,7 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
      ),
      inv as (
        select ri.id, ri.from_user_id, p.handle, p.username, ${badgeCols('p.')},
-              ri.room, ri.game, ri.kind, ri.record, ri.format, ri.created_at
+              ri.room, ri.game, ri.kind, ri.record, ri.format, ri.region, ri.created_at
          from room_invites ri join profiles p on p.user_id = ri.from_user_id
         -- a DECLINED challenge is gone for its recipient the instant they decline;
         -- the row lingers only so the SENDER can be told (see the snt CTE below)
@@ -3098,7 +3098,7 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
      ),
      snt as (
        select ri.id, ri.to_user_id, p.handle, p.username, ${badgeCols('p.')},
-              ri.room, ri.game, ri.kind, ri.record, ri.format, ri.declined, ri.created_at
+              ri.room, ri.game, ri.kind, ri.record, ri.format, ri.region, ri.declined, ri.created_at
          from room_invites ri join profiles p on p.user_id = ri.to_user_id
         where ri.from_user_id = $1 and ri.created_at > now() - $2::interval
      )
@@ -3124,14 +3124,14 @@ export async function listFriends(userId: string): Promise<FriendsPayload> {
          'id', inv.id, 'from_user_id', inv.from_user_id, 'handle', inv.handle,
          'username', inv.username, 'role', inv.role, 'supporter', inv.supporter,
          'room', inv.room, 'game', inv.game,
-         'kind', inv.kind, 'record', inv.record, 'format', inv.format,
+         'kind', inv.kind, 'record', inv.record, 'format', inv.format, 'region', inv.region,
          'created_at', to_char(inv.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
          order by inv.created_at desc) from inv), '[]'::json) as invites,
        coalesce((select json_agg(json_build_object(
          'id', snt.id, 'to_user_id', snt.to_user_id, 'handle', snt.handle,
          'username', snt.username, 'role', snt.role, 'supporter', snt.supporter,
          'room', snt.room, 'game', snt.game,
-         'kind', snt.kind, 'record', snt.record, 'format', snt.format,
+         'kind', snt.kind, 'record', snt.record, 'format', snt.format, 'region', snt.region,
          'declined', snt.declined,
          'created_at', to_char(snt.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
          order by snt.created_at desc) from snt), '[]'::json) as sent,
@@ -3225,6 +3225,7 @@ interface InviteCols {
   kind: string;
   record: string | null;
   format: string | null;
+  region: string | null;
   created_at: string;
 }
 const shapeInvite = (r: InviteCols): RoomInvite => ({
@@ -3241,6 +3242,7 @@ const shapeInvite = (r: InviteCols): RoomInvite => ({
   kind: r.kind,
   record: r.record,
   format: r.format,
+  region: r.region,
   createdAt: r.created_at,
 });
 
@@ -3265,6 +3267,7 @@ const shapeSent = (r: SentCols): SentInvite => ({
   kind: r.kind,
   record: r.record,
   format: r.format,
+  region: r.region,
   declined: !!r.declined,
   createdAt: r.created_at,
 });
@@ -3425,6 +3428,10 @@ export interface RoomInvite {
    * 'duorecord'. Null on rows written before challenges carried a format, which
    * the client reads as the historical casual-versus meaning. */
   format: string | null;
+  /** the REGION the room is hosted in. A custom code carries no region for the proxy to
+   *  route on, so the recipient needs this to reach the machine the room is actually on;
+   *  null on rows from a client older than the field. */
+  region?: string | null;
   createdAt: string;
 }
 
@@ -3450,6 +3457,11 @@ export async function inviteToRoom(
   kind: string,
   record: string | null,
   format: string | null = null,
+  /** the REGION the sender is hosting the room in. A custom room code is bare, so without
+   *  this the recipient's socket routes to whichever machine is nearest to THEM — a
+   *  different one, if the two players picked different servers, holding a different room
+   *  with the same code. Empty ⇒ an older client; the recipient falls back to its own. */
+  region: string | null = null,
 ): Promise<InviteOutcome> {
   const [low, high] = fromId < toId ? [fromId, toId] : [toId, fromId];
   const friend = await q(
@@ -3464,9 +3476,9 @@ export async function inviteToRoom(
   // different token. Replacing keeps exactly one token in play.
   await q(`delete from room_invites where from_user_id = $1 and to_user_id = $2`, [fromId, toId]);
   await q(
-    `insert into room_invites (from_user_id, to_user_id, room, game, kind, record, format)
-     values ($1, $2, $3, $4, $5, $6, $7)`,
-    [fromId, toId, room, game, kind, record, format],
+    `insert into room_invites (from_user_id, to_user_id, room, game, kind, record, format, region)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [fromId, toId, room, game, kind, record, format, region || null],
   );
   return 'sent';
 }
@@ -3540,10 +3552,11 @@ export async function listRoomInvites(userId: string): Promise<RoomInvite[]> {
     kind: string;
     record: string | null;
     format: string | null;
+    region: string | null;
     created_at: string;
   }>(
     `select ri.id, ri.from_user_id, p.handle, p.username, ${badgeCols('p.')},
-            ri.room, ri.game, ri.kind, ri.record, ri.format, ri.created_at
+            ri.room, ri.game, ri.kind, ri.record, ri.format, ri.region, ri.created_at
        from room_invites ri
        join profiles p on p.user_id = ri.from_user_id
       where ri.to_user_id = $1 and not ri.declined

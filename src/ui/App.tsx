@@ -43,7 +43,7 @@ import { Profile } from './Profile';
 import { UsernameGate } from './UsernameGate';
 import { Account } from './Account';
 import { authEnabled } from '../lib/authClient';
-import { gameServerConfigured, setSelectedServer, selectedServerId, gameServerUrlWith } from '../net/env';
+import { gameServerConfigured, setSelectedServer, selectedServer, selectedServerId, gameServerUrlWith } from '../net/env';
 import { ServerMenu } from './ServerMenu';
 import type { NetSession } from '../net/session';
 import { ServerSession } from '../net/serverSession';
@@ -381,9 +381,9 @@ export function App() {
   // navigates to. One-shot: Lobby clears it once its mount effect consumes it
   // (see `onAutoJoinConsumed`), so a later NORMAL visit to the same screen never
   // re-triggers the join.
-  const [pendingAutoJoin, setPendingAutoJoin] = useState<{ room: string; config: RoomConfig } | null>(
-    null,
-  );
+  const [pendingAutoJoin, setPendingAutoJoin] = useState<
+    { room: string; config: RoomConfig; region?: string } | null
+  >(null);
   // a RATED challenge waiting to be queued under its party token. Same one-shot
   // shape as pendingAutoJoin and for the same reason: the Matchmaking screen
   // consumes it on mount, so a later ordinary visit to /ranked is an ordinary
@@ -419,7 +419,11 @@ export function App() {
     selectGame(invite.game);
     const config: RoomConfig = { kind: invite.kind, game: invite.game };
     if (invite.kind === 'record' && invite.record) config.record = invite.record;
-    setPendingAutoJoin({ room: invite.room, config });
+    // GO WHERE THE ROOM IS. A custom code is bare, so a socket opened without the host's
+    // region lands on whichever machine is nearest to US — and if the two of us picked
+    // different servers, that machine has no such room and cheerfully makes an empty one
+    // with the same code. Older invites carry no region and fall back to the old behaviour.
+    setPendingAutoJoin({ room: invite.room, config, region: invite.region ?? undefined });
     navigate(invite.kind === 'record' ? 'duorecord' : 'lobby');
   };
 
@@ -429,11 +433,14 @@ export function App() {
   // destination: a `record` challenge is a duo co-op run, everything else is a
   // custom versus match — mirroring `onJoinInvite`'s routing for the recipient.
   const hostForChallenge = (code: string, game: GameId, kind: RoomKind): void => {
+    // the HOST's own region — the same one stamped on the invite that just went out, so
+    // both sides are aimed at one machine by construction rather than by agreement
+    const region = selectedServer()?.region || undefined;
     if (kind === 'record') {
-      setPendingAutoJoin({ room: code, config: { kind: 'record', record: 'duo', game } });
+      setPendingAutoJoin({ room: code, config: { kind: 'record', record: 'duo', game }, region });
       navigate('duorecord');
     } else {
-      setPendingAutoJoin({ room: code, config: { kind: 'versus', game } });
+      setPendingAutoJoin({ room: code, config: { kind: 'versus', game }, region });
       navigate('lobby');
     }
   };
@@ -859,6 +866,7 @@ export function App() {
         config={auto?.config}
         signedIn={signedIn}
         autoJoin={auto?.room}
+        autoJoinRegion={auto?.region}
         onAutoJoinConsumed={() => setPendingAutoJoin(null)}
         onAcceptChallenge={onJoinInvite}
       />
@@ -885,6 +893,7 @@ export function App() {
         onCancel={() => navigate('modes')}
         signedIn={signedIn}
         autoJoin={auto?.room}
+        autoJoinRegion={auto?.region}
         onAutoJoinConsumed={() => setPendingAutoJoin(null)}
         onAcceptChallenge={onJoinInvite}
       />

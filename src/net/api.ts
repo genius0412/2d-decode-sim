@@ -1090,6 +1090,17 @@ export interface RoomInvite {
   /** what was offered (see ChallengeFormat). Null on challenges sent by a client
    * older than formats — read as the historical casual-versus meaning. */
   format: string | null;
+  /**
+   * WHICH MACHINE the room is on — the sender's region.
+   *
+   * One app runs in several regions and a custom room code is BARE: unlike a
+   * matchmaker-staged `iad-abc123`, there is nothing in it for the proxy to route on. So a
+   * recipient who connects without this lands on whichever machine is nearest to THEM, and
+   * if the two players picked different servers they each end up alone in a different room
+   * that happens to share a code. Null ⇒ an older sender; the client falls back to its own
+   * region, which is the behaviour that produced the split in the first place.
+   */
+  region?: string | null;
   createdAt: string;
 }
 
@@ -1210,10 +1221,15 @@ export function inviteToRoom(
   kind: 'versus' | 'record',
   record?: 'solo' | 'duo' | null,
   format?: string | null,
+  /** the region the sender will HOST the room in — see `RoomInvite.region` */
+  region?: string | null,
 ): Promise<unknown> {
   return authedJson('/api/friends/invite', {
     method: 'POST',
-    body: JSON.stringify({ username, room, game, kind, record: record ?? null, format: format ?? null }),
+    body: JSON.stringify({
+      username, room, game, kind,
+      record: record ?? null, format: format ?? null, region: region ?? null,
+    }),
   });
 }
 

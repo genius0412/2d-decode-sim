@@ -632,7 +632,13 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
           const format = (CHALLENGE_FORMATS as readonly string[]).includes(body.format as string)
             ? (body.format as string)
             : null;
-          const outcome = await inviteToRoom(user.userId, other, room, game, kind, record, format);
+          // WHERE the sender is hosting. A custom room code carries no region for the
+          // proxy to route on, so without this the recipient's socket lands on whichever
+          // machine is nearest to them — a different room with the same code. Validated as
+          // a region code rather than trusted verbatim: it goes into a routing hint.
+          const region =
+            typeof body.region === 'string' && /^[a-z]{2,4}$/.test(body.region) ? body.region : null;
+          const outcome = await inviteToRoom(user.userId, other, room, game, kind, record, format, region);
           if (outcome === 'not-friends') return json(409, { error: 'Not friends with that player.' }), true;
           return json(200, { ok: true }), true;
         }

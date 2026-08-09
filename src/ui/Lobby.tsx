@@ -38,6 +38,16 @@ interface Props {
    * from elsewhere in the app) — calls the exact same `join()` a manual code
    * entry does, just triggered once at mount instead of by a button click. */
   autoJoin?: string;
+  /**
+   * WHICH MACHINE that room is on (the host's region).
+   *
+   * A custom room code is bare — no `<region>-` prefix for the proxy to route on — so
+   * connecting without this lands on whichever machine is nearest to US. When the two
+   * players had picked different servers that machine had no such room and made an empty
+   * one with the same code: two lobbies, one code, and no error anywhere. Absent ⇒ an older
+   * invite, which falls back to our own pick.
+   */
+  autoJoinRegion?: string;
   /** fired once `autoJoin` has been consumed, so the caller can clear its
    * one-shot pending state and a later normal visit doesn't re-trigger it */
   onAutoJoinConsumed?: () => void;
@@ -65,6 +75,7 @@ export function Lobby({
   config = { kind: 'versus' },
   signedIn = false,
   autoJoin,
+  autoJoinRegion,
   onAutoJoinConsumed,
   onAcceptChallenge,
 }: Props) {
@@ -75,9 +86,11 @@ export function Lobby({
   // entry sub-mode: pick whether you're creating a fresh room or joining a code
   const [entryMode, setEntryMode] = useState<'create' | 'join'>('create');
   const [copied, setCopied] = useState(false);
-  // one-app multi-region: friends must meet on the SAME region for a cross-region
-  // room to land them on the same machine. Defaults to the account's picked region.
-  const [region, setRegion] = useState(selectedServer()?.region ?? '');
+  // One app, several regions: a shared room code only lands two people on the same machine
+  // if they connect to the same one. JOINING an invite, that is not a choice — it is
+  // wherever the host already is (`autoJoinRegion`), and offering a picker there was the
+  // bug. Creating a room, it is our own pick.
+  const [region, setRegion] = useState(autoJoinRegion || selectedServer()?.region || '');
   const [name, setName] = useState(settings.spec.teamName || 'Player');
   const [players, setPlayers] = useState<LobbyPlayer[]>([]);
   const [hostId, setHostId] = useState('');
@@ -343,8 +356,11 @@ export function Lobby({
                 </button>
               )}
             </div>
-            {multiServer() && (
-              <p className="ds-hint">Both players must pick the same region.</p>
+            {multiServer() && !autoJoinRegion && (
+              <p className="ds-hint">
+                Both players must pick the same region — a friend joining your invite is sent
+                here automatically.
+              </p>
             )}
           </div>
         </div>

@@ -5,6 +5,7 @@ import type { RoomKind } from '../net/protocol';
 import { RATED_FORMATS } from '../net/protocol';
 import type { Activity, PublicProfile, RoomInvite } from '../net/api';
 import { generateRoomCode } from '../net/roomCode';
+import { selectedServer } from '../net/env';
 import { useFriends, type FriendsApi } from './useFriends';
 import { ChallengePicker, type ChallengeFormat } from './ChallengePicker';
 import { challengeLine, formatLabel, type PendingChallenge } from './challenge';
@@ -164,7 +165,14 @@ export function FriendsProvider({
       // format this ordering is load-bearing rather than tidy: the server verifies
       // the party token against the challenge ROW, so queueing before the row
       // exists would be rejected.
-      await api.inviteToRoom(username, code, game, kind, record ? 'duo' : null, format);
+      // WHERE this room will live. The sender hosts it on their own selected server, and a
+      // custom code has no region in it for the proxy to route on — so the invite has to
+      // carry it or the recipient opens a different room with the same code on their own
+      // machine. Harmless on a single-region deploy (every hint resolves to the one machine).
+      await api.inviteToRoom(
+        username, code, game, kind, record ? 'duo' : null, format,
+        selectedServer()?.region ?? null,
+      );
       if (rated) {
         onQueueChallenge({
           token: code,

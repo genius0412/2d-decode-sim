@@ -9,6 +9,7 @@ import { verifyAuthToken } from './auth';
 import { initPhysics } from '../src/sim/physicsEngine';
 import { migrate } from './db/migrate';
 import { persistMatch, persistDodges } from './persist';
+import { routeTarget } from './routing';
 import { chargeStanding, rankedLock } from './standing';
 import { lockRemaining, tierOf } from '../src/standing';
 import { isReportReason, REPORT_DETAIL_MAX } from '../src/report';
@@ -1380,22 +1381,11 @@ function replaySrcRegion(req: IncomingMessage): string {
   return m ? m[1].toLowerCase() : '';
 }
 
-function routeTarget(url: URL): string | null {
-  if (url.searchParams.get('mm') === '1') return MATCHMAKER_REGION;
-  const region = url.searchParams.get('region');
-  if (region) return region;
-  const room = url.searchParams.get('room');
-  if (room) {
-    const dash = room.indexOf('-');
-    if (dash > 0) return room.slice(0, dash); // region-coded `<region>-<code>`
-  }
-  return null;
-}
 
 httpServer.on('upgrade', (req, socket, head) => {
   try {
     const url = new URL(req.url ?? '/', 'http://x');
-    const target = routeTarget(url);
+    const target = routeTarget(url, MATCHMAKER_REGION);
     // `fly-replay-src` is set by Fly after it has already replayed once — never
     // replay again (loop guard); accept locally as a graceful fallback.
     const alreadyReplayed = !!req.headers['fly-replay-src'];

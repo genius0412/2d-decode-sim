@@ -85,6 +85,8 @@ export interface FriendsApi {
     kind: 'versus' | 'record',
     record?: 'solo' | 'duo' | null,
     format?: string | null,
+    /** the region the room is hosted in — see `RoomInvite.region` */
+    region?: string | null,
   ) => Promise<void>;
   /** dismiss (or consume, on accept) an invite addressed to me */
   dismissInvite: (id: string) => Promise<void>;
@@ -402,11 +404,12 @@ export function useFriends({
       kind: 'versus' | 'record',
       record?: 'solo' | 'duo' | null,
       format?: string | null,
+      region?: string | null,
     ): Promise<void> => {
       setError(null);
       mutSeq.current += 1;
       try {
-        await inviteToRoom(username, room, game, kind, record, format);
+        await inviteToRoom(username, room, game, kind, record, format, region);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Something went wrong.');
         throw e;
