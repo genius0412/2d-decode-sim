@@ -116,6 +116,7 @@ import {
   type Replay,
   type ReplayResult,
 } from '../src/sim/replay';
+import { EMPTY_ACTIVITY, averageMatch, playtimeLong, playtimeText } from '../src/playtime';
 import { Room, type Client, type DodgeReport } from '../server/room';
 import { maintenanceBiting } from '../server/db/repo';
 import { maintenanceLine } from '../src/ui/MaintenanceBanner';
@@ -3299,6 +3300,48 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   // an OLD client's ld/rd-less packet still decodes (missing ⇒ 0, the old behavior)
   const legacy = dequantizeCommand({ dx: 0, dy: 64, rot: 0, buttons: 0 });
   check('dequantize tolerates a legacy ld/rd-less packet', legacy.leftDrive === 0 && legacy.rightDrive === 0);
+}
+
+// ---- PLAYTIME + GAMES PLAYED ------------------------------------------------
+// Pure formatting + the arithmetic behind the two tiles. The interesting cases are the
+// boring ones: a fresh account (no games, no division by zero) and a big total (a number
+// that has to stay readable rather than becoming a stopwatch).
+{
+  check('playtime: under a minute reads in seconds', playtimeText(0) === '0s' && playtimeText(47) === '47s');
+  check('playtime: minutes, then hours, then days — never three units',
+    playtimeText(60) === '1m' && playtimeText(3599) === '59m' &&
+    playtimeText(3600) === '1h' && playtimeText(3600 * 3 + 60 * 24) === '3h 24m' &&
+    playtimeText(3600 * 49) === '2d 1h',
+    [playtimeText(60), playtimeText(3599), playtimeText(3600), playtimeText(3600 * 3 + 60 * 24), playtimeText(3600 * 49)].join(' · '));
+  check('playtime: a whole unit drops the empty smaller one', playtimeText(7200) === '2h' && playtimeText(86400 * 2) === '2d');
+  check('playtime: broken input reads as zero, not NaN',
+    playtimeText(NaN) === '0s' && playtimeText(-5) === '0s' && playtimeText(Infinity) === '0s');
+
+  // a fresh account: every derived number has to be defined
+  check('playtime: a fresh account averages 0, not NaN', averageMatch(EMPTY_ACTIVITY) === 0);
+  check('playtime: the average is the total over the count',
+    Math.abs(averageMatch({ games: 4, seconds: 600 }) - 150) < 1e-9);
+  check('playtime: the long form pluralises and counts matches',
+    playtimeLong({ games: 1, seconds: 60 }) === '1 minute across 1 match' &&
+      playtimeLong({ games: 128, seconds: 3600 * 3 + 60 * 24 }) === '3 hours 24 minutes across 128 matches',
+    playtimeLong({ games: 1, seconds: 60 }));
+
+  // AND the number that feeds it: a match's credited time is its real length, from the tick
+  // count the server recorded — not a wall clock and not anything a client claimed
+  {
+    const setup: RobotSetup = {
+      id: 0, alliance: 'blue',
+      spec: coerceSpec({ ...DEFAULT_SPEC }, DEFAULT_SPEC, 'decode'),
+      assists: { ...DEFAULT_ASSISTS }, startIndex: 0,
+    };
+    const run = runRecordMatch(5, [setup], () => new Map(), { mode: 'free', stopTick: 900 });
+    const secs = run.replay.ticks * SIM_DT;
+    check(
+      'playtime: a match credits its REAL duration (ticks x SIM_DT)',
+      Math.abs(secs - 15) < 1e-9 && playtimeText(secs) === '15s',
+      `${run.replay.ticks} ticks -> ${secs}s`,
+    );
+  }
 }
 
 // ---- RECORD -> REPLAY round-trip, per DRIVETRAIN ----------------------------

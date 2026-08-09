@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { type UserStats } from '../net/api';
 import { SupporterBadge } from './SupporterBadge';
+import { averageMatch, playtimeLong, playtimeText } from '../playtime';
 
 /**
  * The competitive-stats panel shared by "My Stats" (own account) and the public
@@ -67,6 +68,32 @@ export function CareerPanel({
 
       {status === 'ok' && stats && (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* PLAYTIME + GAMES PLAYED. Lifetime, not season-scoped like the tiles below —
+              "how much have I played" is a question about the account, and an answer that
+              reset every season would be meaningless exactly when it got interesting. Hidden
+              entirely on a server that doesn't track it yet, rather than printing zeros. */}
+          {stats.activity && (
+            <div className="ds-stats">
+              <div className="ds-stat">
+                <span className="sv">{stats.activity.games}</span>
+                <span className="sl">GAMES PLAYED</span>
+                <span className="sl" title={playtimeLong({ games: stats.activity.allGames, seconds: stats.activity.allSeconds })}>
+                  {stats.activity.allGames !== stats.activity.games
+                    ? `${stats.activity.allGames} across all games`
+                    : 'all time'}
+                </span>
+              </div>
+              <div className="ds-stat">
+                <span className="sv">{playtimeText(stats.activity.seconds)}</span>
+                <span className="sl">PLAYTIME</span>
+                <span className="sl" title="Solo practice off the server isn’t counted — there is nothing authoritative to count it from">
+                  {stats.activity.games > 0
+                    ? `~${playtimeText(averageMatch({ games: stats.activity.games, seconds: stats.activity.seconds }))} a match`
+                    : 'in matches'}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="ds-stats">
             <div className="ds-stat">
               <span className="sv">{elo1?.rating ?? 1000}</span>

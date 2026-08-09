@@ -148,6 +148,9 @@ export interface UserStats {
   records: UserRecordStat[];
   match: { played: number; wins: number; losses: number };
   recent: UserMatchRow[];
+  /** LIFETIME playtime + games played: this game, and the total across all of them.
+   *  Absent from a server older than the tracker, which renders as nothing at all. */
+  activity?: { games: number; seconds: number; allGames: number; allSeconds: number };
 }
 
 /** One round-trip: a user's whole competitive profile for the current season

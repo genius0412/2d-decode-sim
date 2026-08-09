@@ -1,5 +1,6 @@
 import { dbEnabled } from './db/pool';
 import {
+  addActivity,
   currentSeasonNumber,
   ensureProfile,
   ensureSeason,
@@ -16,6 +17,7 @@ import { simModuleFor } from '../src/games/sim';
 import type { BehaviourReport, DodgeReport, MatchOutcome, PersistOutcome } from './room';
 import { type DodgeVerdict } from '../src/dodge';
 import { WINDOW_HOURS } from '../src/standing';
+import * as C from '../src/config';
 
 /**
  * Persist a finished match (off the hot path — called at phase 'post'). The
@@ -62,6 +64,24 @@ export async function persistMatch(o: MatchOutcome): Promise<PersistOutcome> {
     await ensureSeason(bv, game, game === 'chain' ? 1 : 0);
     for (const p of authed) await ensureProfile(p.userId!, p.handle ?? 'Player');
     const replayId = await saveReplay(o.replay, bv, game);
+
+    /**
+     * PLAYTIME + GAMES PLAYED, credited to everyone who was in it.
+     *
+     * Measured from the REPLAY's tick count, which is the authoritative length of the match
+     * the server just ran — not a wall clock, and not anything the client said. A match that
+     * ended early (an abandon, a cancelled room) credits the time it actually lasted.
+     *
+     * Counted for EVERY kind of match, record runs included: they are as much "playing the
+     * game" as a ranked match, and a playtime that ignored score attack would read as broken
+     * to the players who mostly do that. Departed players are in `authed` too — they played
+     * the part they were there for.
+     */
+    await addActivity(
+      authed.map((p) => p.userId!),
+      o.replay.ticks * C.SIM_DT,
+      game,
+    ).catch((e: unknown) => console.error('[persist] activity write failed:', e));
 
     if (o.config.kind === 'record') {
       const primary = authed[0];

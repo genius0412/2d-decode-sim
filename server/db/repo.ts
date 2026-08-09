@@ -1973,6 +1973,13 @@ export interface UserStats {
   records: UserRecordStat[];
   match: { played: number; wins: number; losses: number };
   recent: UserMatchRow[];
+  /**
+   * LIFETIME playtime and games played — for THIS game, plus the combined total across
+   * every game. Deliberately not season-scoped like everything above it: "how much have I
+   * played" is a question about the account, not about the current act, and resetting it
+   * every season would make the number meaningless the moment it got interesting.
+   */
+  activity?: { games: number; seconds: number; allGames: number; allSeconds: number };
 }
 
 /**
@@ -2070,6 +2077,8 @@ export async function getUserStats(
   });
   const played = Number(match[0]?.played ?? 0);
   const wins = Number(match[0]?.wins ?? 0);
+  const activity = await getActivity(userId);
+  const mine = activity.byGame[gm] ?? { games: 0, seconds: 0 };
 
   return {
     userId,
@@ -2082,7 +2091,65 @@ export async function getUserStats(
     records,
     match: { played, wins, losses: played - wins },
     recent,
+    activity: {
+      games: mine.games,
+      seconds: mine.seconds,
+      allGames: activity.total.games,
+      allSeconds: activity.total.seconds,
+    },
   };
+}
+
+// ------------------------------------------------------- playtime + games ---
+
+/**
+ * Credit one finished match to every account that played it.
+ *
+ * ONE STATEMENT for the whole roster, not a query per player: this runs at match end
+ * alongside the other writes, and a four-player match should not be four round-trips to add
+ * four integers. `unnest` turns the id list into rows the upsert can join against.
+ *
+ * Seconds are ROUNDED here rather than stored as a float. The input is a tick count, the
+ * output is read in hours, and a column that accumulates 0.7333-second fragments for years
+ * is a column that will eventually be explained to somebody.
+ */
+export async function addActivity(
+  userIds: string[],
+  seconds: number,
+  game?: Game,
+): Promise<void> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return;
+  const secs = Math.max(0, Math.round(seconds));
+  await q(
+    `insert into user_activity (user_id, game, games, seconds)
+     select id, $2, 1, $3 from unnest($1::text[]) as id
+     on conflict (user_id, game) do update
+       set games = user_activity.games + 1,
+           seconds = user_activity.seconds + excluded.seconds,
+           updated_at = now()`,
+    [ids, g(game), secs],
+  );
+}
+
+/** what this account has played, per game plus the combined total */
+export async function getActivity(userId: string): Promise<{
+  total: { games: number; seconds: number };
+  byGame: Record<string, { games: number; seconds: number }>;
+}> {
+  const rows = await q<{ game: string; games: number; seconds: number }>(
+    `select game, games, seconds from user_activity where user_id = $1`,
+    [userId],
+  );
+  const byGame: Record<string, { games: number; seconds: number }> = {};
+  let games = 0;
+  let seconds = 0;
+  for (const r of rows) {
+    byGame[r.game] = { games: Number(r.games), seconds: Number(r.seconds) };
+    games += Number(r.games);
+    seconds += Number(r.seconds);
+  }
+  return { total: { games, seconds }, byGame };
 }
 
 // ------------------------------------------------------ PvP match history ---
