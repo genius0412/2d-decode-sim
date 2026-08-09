@@ -398,12 +398,29 @@ export function Menu({ settings, onChange }: Props) {
                   <span className="sl">intake</span>
                 </div>
               ) : (
-                <div className="ds-stat">
-                  <span className="sv" style={{ fontSize: 13 }}>
-                    {CHAIN_MODE_LABELS[spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]}
-                  </span>
-                  <span className="sl">scoring</span>
-                </div>
+                <>
+                  <div className="ds-stat">
+                    <span className="sv" style={{ fontSize: 13 }}>
+                      {CHAIN_MODE_LABELS[spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]}
+                    </span>
+                    <span className="sl">scoring</span>
+                  </div>
+                  {/* THE CATALYST, which this summary never mentioned. It is half the build
+                      in CR — a whole mechanism with a type, a place on the chassis and, now,
+                      a direction it swings — and changing any of that left every tile on the
+                      card reading exactly the same, which looks like the picker did nothing. */}
+                  <div className="ds-stat">
+                    <span className="sv" style={{ fontSize: 13 }}>
+                      {CHAIN_CATALYST_LABELS[spec.catalystType ?? CHAIN_DEFAULT_CATALYST]}
+                    </span>
+                    <span className="sl">catalyst</span>
+                    <span className="sl">
+                      {catalystSwingOf(spec)
+                        ? `swing ${catalystSwingOf(spec) === 'fb' ? '↕' : '↔'} · ${CHAIN_CATALYST_MOUNT_LABELS[catalystMountOf(spec)]}`
+                        : CHAIN_CATALYST_MOUNT_LABELS[catalystMountOf(spec)]}
+                    </span>
+                  </div>
+                </>
               )}
             </div>
           </div>
