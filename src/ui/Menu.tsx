@@ -60,6 +60,7 @@ import {
 } from '../sim/drivetrain';
 import { coerceSpec, coerceAssists, PLAYER_ASSISTS } from '../sim/spawn';
 import { RobotPreview } from './RobotPreview';
+import { ChainRobotPreview } from '../games/chain/RobotPreview';
 import { DRIVETRAIN_LABELS, INTAKE_SHORT } from './robotLabels';
 import { rangeFill } from './rangeFill';
 
@@ -358,7 +359,14 @@ export function Menu({ settings, onChange }: Props) {
         <div ref={sentinelRef} aria-hidden style={{ height: 1, marginBottom: -1 }} />
         <div className={`ds-hero${stuck ? ' stuck' : ''}`}>
           <div className="ds-hero-view">
-            <RobotPreview spec={spec} size={stuck ? 96 : 160} chain={!isDecode} />
+            {/* TWO components, not one with a `chain` flag: DECODE's schematic is
+                main's, untouched, and Chain Reaction's is its own — so work on one
+                game's mechanisms can never change how the other's robot looks. */}
+            {isDecode ? (
+              <RobotPreview spec={spec} size={stuck ? 96 : 160} />
+            ) : (
+              <ChainRobotPreview spec={spec} size={stuck ? 96 : 160} />
+            )}
           </div>
           <div className="ds-hero-info">
             <div>

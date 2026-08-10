@@ -1,6 +1,7 @@
 import type { Artifact, RobotState, Vec2, World } from '../../types';
 import * as C from '../../config';
-import { drawChassisBody, drawWheels, roundRect } from '../../render/drawRobot';
+import { roundRect } from '../../render/drawRobot';
+import { drawChassisBody, drawWheels } from './parts';
 import {
   CHAIN_DEFAULT_SCORE_MODE,
   chainHopperCap,

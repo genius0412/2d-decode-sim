@@ -10,6 +10,7 @@ import { RoleSwapBar } from './RoleSwapBar';
 import type { LobbyClient } from '../net/lobbyClient';
 import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { RobotPreview } from './RobotPreview';
+import { ChainRobotPreview } from '../games/chain/RobotPreview';
 import { DRIVETRAIN_LABELS, INTAKE_SHORT } from './robotLabels';
 import { Menu } from './Menu';
 import { MatchAudio } from '../audio';
@@ -257,7 +258,11 @@ export function MatchStrategy({
               return (
                 <div key={pl.clientId} className={`ds-strat-card ${pl.alliance}`}>
                   <div className="ds-strat-prev">
-                    <RobotPreview spec={spec} size={132} chain={settings.game === 'chain'} />
+                    {settings.game === 'chain' ? (
+                      <ChainRobotPreview spec={spec} size={132} />
+                    ) : (
+                      <RobotPreview spec={spec} size={132} />
+                    )}
                   </div>
                   <div className="ds-strat-meta">
                     <span className="pnm">

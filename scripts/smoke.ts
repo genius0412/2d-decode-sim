@@ -5,7 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceAssists, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
-import { drawWheels } from '../src/render/drawRobot';
+import { drawWheels } from '../src/games/chain/parts';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
 import { queuedModes, queuedGames, queuesFor, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';

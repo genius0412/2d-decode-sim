@@ -19,6 +19,36 @@ import { CHAIN_CATALYST_NEAR, CHAIN_DEFAULT_CATALYST, CHAIN_TRACK_APPROACH, chai
 import { datan2, dcos, dsin, hyp, rot, wrapAngle } from '../../math';
 
 /**
+ * LEGACY, for the frozen DECODE preview only.
+ *
+ * `src/ui/RobotPreview.tsx` is held byte-identical to what `main` ships (the DECODE robot's
+ * look is not ours to change), and that file still carries a Chain Reaction branch which
+ * calls this. The branch never runs — CR renders `ChainRobotPreview` instead — but the file
+ * has to compile. CR's real intake geometry is `chainIntakeMouths` below.
+ */
+export type ChainIntakeBand =
+  | { side: false; back: number; front: number; half: number }
+  | { side: true; halfLen: number; inner: number; outer: number };
+
+export function chainIntakeBand(spec: RobotSpec): ChainIntakeBand {
+  const it = CHAIN_INTAKES[spec.chainIntake ?? CHAIN_DEFAULT_INTAKE];
+  const hl = spec.length / 2;
+  const hw = spec.width / 2;
+  // SIDE mount: the sweeper sits on the left+right edges instead of the front. `outer` uses the
+  // SAME intake reach as the front tip, so the capture band == the collision hitbox side extent
+  // (footprintExtents) — the intake is part of the non-ball collision footprint.
+  if (spec.intakeSide) {
+    return { side: true, halfLen: hl, inner: Math.max(0.5, hw - it.depth), outer: hw + INTAKE_PRESETS[spec.intake].reach };
+  }
+  return {
+    side: false,
+    back: hl - it.depth,
+    front: hl + INTAKE_PRESETS[spec.intake].reach, // = robotExtents().front (the intake tip)
+    half: hw * it.widthFrac + it.overhang,
+  };
+}
+
+/**
  * The CR intake MOUTHS in the robot-local frame — the ONE source of truth shared by the capture
  * logic (`interact`) and the renderers (`drawChainIntake`, `RobotPreview`) so the grab area IS
  * the drawn intake. One entry per mounted edge (`intakeMountEdges`), each an axis-aligned rect
@@ -32,7 +62,8 @@ import { datan2, dcos, dsin, hyp, rot, wrapAngle } from '../../math';
  */
 export interface ChainIntakeMouth {
   edge: ChainEdge;
-  /** robot-local axis-aligned bounds, x0 < x1 and y0 < y1 */
+  
+/** robot-local axis-aligned bounds, x0 < x1 and y0 < y1 */
   x0: number;
   x1: number;
   y0: number;
