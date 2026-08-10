@@ -1,3 +1,42 @@
+# HANDOFF — 2026-08-10 (alpha has its own server + database) — alpha only
+
+Branch **alpha**. `npm test` · build · `contrast` 213 · `server:check` green.
+
+## THE PREVIEW IS LIVE — and production no longer needs a deploy for alpha work
+
+| | production | alpha preview |
+| --- | --- | --- |
+| Fly app | `dohun-sim-decode` | **`dsim-alpha`** (iad, shared-cpu-2x, idles to zero) |
+| client | www.playdsim.com (`main`) | **alpha.playdsim.com** (`alpha` branch, Vercel SSO-protected) |
+| database | Neon `production` branch | Neon **`alpha` branch** (copy-on-write off production) |
+| alpha results persist | never | **yes** |
+
+Deploy the preview with `./scripts/fly-deploy.sh --alpha`; production is still
+`./scripts/fly-deploy.sh`. Never a bare `fly deploy` for either — without `-c` it reads
+fly.toml and would push production's config under whichever app name it was given.
+
+**ONE MACHINE, on purpose.** Fly's default deploy adds a second for HA; here that is a SPLIT,
+not redundancy — rooms live in process memory and routing resolves to a REGION, not a
+machine, so two machines in one region put two players in two different rooms with the same
+code. `--ha=false` is in the alpha deploy path. If `fly machine list -a dsim-alpha` ever
+shows two, destroy one.
+
+**The boot line is the safety check.** `fly logs -a dsim-alpha` prints
+`channel=alpha db=ep-shiny-frog-…(alpha results PERSIST here)`. Production's host is
+`ep-lingering-pine-…`. If those ever match, the preview is writing to production.
+
+**Vercel** (branch-scoped to `alpha`, so production is untouched): `VITE_GAME_SERVER_URL`,
+`VITE_GAME_SERVERS`, `VITE_APP_CHANNEL=alpha`. `VITE_GAME_SERVERS` is the one that matters —
+`src/net/env.ts` reads it FIRST, so setting only the single URL leaves the preview talking to
+production's servers. Note `VITE_APP_CHANNEL` did NOT exist before this: the alpha site had
+been reporting itself as `stable`, and was only kept out of production's pool by the
+build-sha bucket.
+
+**The five pending migrations are applied on alpha** (0025 dodges · 0026 reports · 0027
+standing · 0028 activity · 0029 invite region) — they ran at first boot. PRODUCTION STILL HAS
+NONE OF THEM: it is still on 0024, and still needs the 08-07 spectating batch plus everything
+since. That deploy is unchanged and still pending.
+
 # HANDOFF — 2026-08-08d (account standing replaces the rank ladder) — alpha only
 
 Branch **alpha**, NOT merged. `npm test` · build · `contrast` 213 · `server:check` green.
