@@ -31,13 +31,18 @@ done
 set -- ${ARGS+"${ARGS[@]}"}
 
 if [ "$ALPHA" -eq 1 ]; then
-  APP="${FLY_ALPHA_APP:-dohun-sim-decode-alpha}"
+  APP="${FLY_ALPHA_APP:-dsim-alpha}"
   CONFIG=fly.alpha.toml
   echo "==> ALPHA preview deploy ($APP) — production is untouched"
   # -c pins the config: without it `fly deploy` reads fly.toml and would deploy PRODUCTION
   # under an alpha app name, quietly giving the preview production's multi-region VM block.
   deploy_rc=0
-  fly deploy --remote-only -c "$CONFIG" -a "$APP" "$@" || deploy_rc=$?
+  # --ha=false: Fly's default launches a SECOND machine for high availability, and for this
+  # server that is not redundancy, it is a SPLIT. Rooms live in the process's memory and the
+  # routing hints resolve to a REGION, not a machine — so two machines in one region means
+  # two players can land on different ones and sit in different rooms with the same code,
+  # which is exactly the cross-region bug this app just fixed, one level down.
+  fly deploy --remote-only --ha=false -c "$CONFIG" -a "$APP" "$@" || deploy_rc=$?
   if [ "$deploy_rc" -ne 0 ]; then
     echo "!! fly deploy exited $deploy_rc — CHECK THE DEPLOY (fly machine list -a $APP)"
     exit "$deploy_rc"

@@ -23,7 +23,7 @@
 # Deploy with:  ./scripts/fly-deploy.sh --alpha
 # NEVER a bare `fly deploy` here either — it would pick up fly.toml and redeploy PRODUCTION.
 
-app = 'dohun-sim-decode-alpha'
+app = 'dsim-alpha'
 primary_region = 'iad'
 
 [build]

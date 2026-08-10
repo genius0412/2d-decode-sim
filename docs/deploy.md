@@ -27,8 +27,14 @@ stable server still refuses to persist an alpha build's results.
 
 **1. Create the app** (name must match `fly.alpha.toml`'s `app =`):
 ```bash
-fly apps create dohun-sim-decode-alpha
+fly apps create dsim-alpha
 ```
+
+> ONE MACHINE, always. `./scripts/fly-deploy.sh --alpha` passes `--ha=false` because Fly's
+> default launches a second machine for high availability — and for this server that is not
+> redundancy, it is a SPLIT. Rooms live in the process's memory and the routing hints resolve
+> to a REGION, not a machine, so two machines in one region put two players in two different
+> rooms with the same code. If you ever see two machines in `fly machine list`, destroy one.
 
 **2. Make a Neon branch for it.** In the Neon console → your project → **Branches** →
 **New branch** off `main`, name it `alpha`. Copy its pooled connection string. A branch is
@@ -37,7 +43,7 @@ which is what you want: real profiles to test standing and reports against.
 
 **3. Set the secrets** (the same ones production has, with the alpha database):
 ```bash
-fly secrets set -a dohun-sim-decode-alpha \
+fly secrets set -a dsim-alpha \
   DATABASE_URL='postgresql://…the ALPHA branch…' \
   NEON_AUTH_URL='…same as production…' \
   ADMIN_USER_IDS='…your uuid…' \
@@ -51,15 +57,23 @@ alpha branch self-migrates on the first start.
 ```bash
 ./scripts/fly-deploy.sh --alpha
 ```
-Then verify: `curl https://dohun-sim-decode-alpha.fly.dev/health`
+Then verify: `curl https://dsim-alpha.fly.dev/health`
 
 **5. Point the alpha site at it.** In Vercel → Project → **Settings → Environment
 Variables**, scoped to the **Preview** environment (or the `alpha` branch specifically):
 
 | Variable | Value |
 | --- | --- |
-| `VITE_GAME_SERVER_URL` | `wss://dohun-sim-decode-alpha.fly.dev` |
+| `VITE_GAME_SERVER_URL` | `wss://dsim-alpha.fly.dev` |
+| `VITE_GAME_SERVERS` | `[{"id":"alpha","label":"Alpha preview","region":"iad","url":"wss://dsim-alpha.fly.dev"}]` |
 | `VITE_APP_CHANNEL` | `alpha` |
+
+Scope them to the **`alpha` git branch** (`vercel env add NAME preview alpha`), not to Preview
+as a whole — Preview covers every branch, and production must keep pointing at production.
+
+`VITE_GAME_SERVERS` is the one that is easy to miss: it is the multi-region list, and
+`src/net/env.ts` reads it FIRST — a `VITE_GAME_SERVER_URL` set beside it is ignored. Setting
+only the single URL leaves the preview talking to the production servers.
 
 These are baked in at build time, so redeploy the branch after changing them.
 

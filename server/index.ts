@@ -10,6 +10,7 @@ import { initPhysics } from '../src/sim/physicsEngine';
 import { migrate } from './db/migrate';
 import { persistMatch, persistDodges } from './persist';
 import { routeTarget } from './routing';
+import { SERVER_CHANNEL, isAlphaServer } from './channel';
 import { chargeStanding, rankedLock } from './standing';
 import { lockRemaining, tierOf } from '../src/standing';
 import { isReportReason, REPORT_DETAIL_MAX } from '../src/report';
@@ -1819,6 +1820,20 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
 // in room.ts), so serving /health ahead of physics is safe.
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[server] DECODE game server listening on 0.0.0.0:${PORT}`);
+/**
+ * WHICH DEPLOYMENT, AND WHICH DATABASE. One line, at boot, because the single most
+ * expensive mistake available here is an ALPHA server pointed at the PRODUCTION database:
+ * everything would work, and test matches, test ratings and test standing charges would
+ * quietly land in real boards. The host is printed (never the credentials) so the answer is
+ * visible in `fly logs` instead of being inferred from behaviour.
+ */
+console.log(
+  `[server] channel=${SERVER_CHANNEL} db=${
+    process.env.DATABASE_URL
+      ? (process.env.DATABASE_URL.match(/@([^/?]+)/)?.[1] ?? 'set')
+      : 'none'
+  }${isAlphaServer() ? ' (alpha results PERSIST here)' : ''}`,
+);
 });
 initPhysics()
   .then(() => console.log('[server] Rapier physics ready - matches enabled'))
