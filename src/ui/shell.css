@@ -4241,59 +4241,73 @@ button.ds-key:active {
 .ds-standing {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px;
+  gap: 14px;
+  padding: 16px;
   border-radius: var(--ds-round);
   border: 1px solid var(--ds-line);
   background: var(--ds-tile);
 }
+/* the CLEAN state is one row: a small gauge and a single line of text */
 .ds-standing.good {
   flex-direction: row;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 14px;
+  padding: 12px 16px;
 }
+.ds-standing.good .ds-standing-cap { display: block; margin-bottom: 2px; }
+
+/* HEAD: the gauge leads, the words sit beside it. `align-items: center` rather than
+   baseline — the gauge is a shape, and aligning type to a shape's baseline leaves it
+   floating a few pixels high. */
 .ds-standing-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 18px;
 }
-.ds-standing-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.ds-standing-headtext {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0; /* let the blurb wrap instead of forcing the row wider than the card */
+}
+
+/* THE GAUGE. A semicircle, so its box is half as tall as it is wide; `flex: none` keeps it
+   from being squeezed when the blurb beside it is long. */
+.ds-gauge {
   flex: none;
-  /* the -ink sibling, not the fill: `--ds-red` is tuned to carry dark type ON it, and at
-     10px on the tile it lands at 2.8:1 — under the 3:1 a non-text indicator has to clear */
-  background: var(--ds-red-ink);
+  overflow: visible;
+  /* the box is a semicircle plus its stroke: 91 x 51 user units, so height is 0.56 of width */
+  width: var(--gauge-w, 132px);
+  height: calc(var(--gauge-w, 132px) * 0.5604);
 }
-.ds-standing-dot[data-tier='good'] { background: var(--ds-ok-ink); }
-.ds-standing-dot[data-tier='warning'] { background: var(--ds-warn); }
+@media (max-width: 460px) {
+  /* on a phone the full-size gauge eats half the card; the numbers inside scale with it and
+     stay legible because they are drawn in the viewBox, not in pixels */
+  .ds-standing-head .ds-gauge { --gauge-w: 104px; }
+}
+.ds-gauge-track { stroke: color-mix(in srgb, var(--ds-mut) 24%, transparent); }
+.ds-gauge-fill {
+  stroke: var(--ds-red-ink);
+  /* the sweep animates when the score changes; `stroke-dashoffset` is the one property that
+     can do it without recomputing the arc */
+  transition: stroke-dashoffset 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ds-standing[data-tier='good'] .ds-gauge-fill { stroke: var(--ds-ok-ink); }
+.ds-standing[data-tier='warning'] .ds-gauge-fill { stroke: var(--ds-warn); }
+.ds-gauge-num {
+  fill: var(--ds-ink);
+  font: 750 26px/1 var(--ds-font);
+}
+.ds-gauge-max {
+  fill: var(--ds-mut);
+  font: 700 10px/1 var(--ds-font-mono);
+}
+
 .ds-standing-name {
-  font: 750 15px/1 var(--ds-font);
+  font: 750 17px/1.15 var(--ds-font);
   color: var(--ds-ink);
 }
-.ds-standing-score {
-  margin-left: auto;
-  font: 700 13px/1 var(--ds-font-mono);
-  color: var(--ds-ink);
-}
-.ds-standing-line { font: 600 13px/1.4 var(--ds-font); color: var(--ds-ink); }
-.ds-standing-bar {
-  display: block;
-  height: 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--ds-mut) 25%, transparent);
-  overflow: hidden;
-}
-.ds-standing-fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--ds-red-ink);
-}
-.ds-standing[data-tier='good'] .ds-standing-fill { background: var(--ds-ok); }
-.ds-standing[data-tier='warning'] .ds-standing-fill { background: var(--ds-warn); }
+.ds-standing-line { font: 600 13px/1.45 var(--ds-font); color: var(--ds-ink); }
 .ds-standing-blurb {
   margin: 0;
   font: 600 12px/1.45 var(--ds-font);
@@ -4301,7 +4315,7 @@ button.ds-key:active {
 }
 .ds-standing-lock {
   margin: 0;
-  padding: 8px 10px;
+  padding: 9px 11px;
   border-radius: var(--ds-round);
   font: 600 12px/1.4 var(--ds-font);
   color: var(--ds-red-ink);
@@ -4315,11 +4329,14 @@ button.ds-key:active {
 }
 .ds-standing-log {
   list-style: none;
-  margin: 0;
+  /* the caption above each list is its label, so it sits CLOSE to it — the 14px card gap
+     would otherwise put the same space above a heading as below it, which reads as two
+     unrelated blocks */
+  margin: -8px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 .ds-standing-log li {
   display: flex;

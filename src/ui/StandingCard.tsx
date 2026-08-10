@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type React from 'react';
 import { fetchStanding, type StandingEvent, type StandingInfo } from '../net/api';
 import {
   HEAL_PER_CLEAN_MATCH,
@@ -24,6 +25,80 @@ import {
  * actually spent some. Showing a full bar and an empty offence list to everyone would turn a
  * penalty system into a permanent accusation.
  */
+
+/**
+ * The standing METER — a semicircular gauge, the shape a player already reads as "how full
+ * is this" from every mobile game that has one.
+ *
+ * It replaces a coloured dot. A dot can only ever say WHICH tier, never how far into it you
+ * are or how close the next one is, so the number beside it was doing all the work and the
+ * dot was decoration. An arc answers both at a glance, and it is the one element on the card
+ * that has to survive being looked at for half a second.
+ *
+ * Geometry: a 180° arc of radius `R` centred on the baseline, drawn twice — the track, then
+ * the fill, whose length is set by `stroke-dasharray` rather than by a computed path, so the
+ * sweep is one interpolated number and nothing has to re-derive an arc endpoint. Round caps,
+ * because a square end at 1% reads as a rendering artefact.
+ */
+const GAUGE_R = 40;
+const GAUGE_W = 11;
+const ARC = Math.PI * GAUGE_R; // length of a half-circle
+
+function StandingGauge({ score, size = 132 }: { score: number; size?: number }) {
+  const pct = Math.max(0, Math.min(1, score / STANDING_MAX));
+  // the box hugs the arc: full width, half height, plus the stroke that overhangs each end
+  const w = 2 * GAUGE_R + GAUGE_W;
+  const h = GAUGE_R + GAUGE_W;
+  const cx = w / 2;
+  const cy = h - GAUGE_W / 2;
+  const d = `M ${cx - GAUGE_R} ${cy} A ${GAUGE_R} ${GAUGE_R} 0 0 1 ${cx + GAUGE_R} ${cy}`;
+  return (
+    <svg
+      className="ds-gauge"
+      viewBox={`0 0 ${w} ${h}`}
+      // the WIDTH is a custom property rather than a fixed style so CSS keeps ownership of
+      // it — an inline width would beat any media query, and the gauge has to shrink on a
+      // phone where it would otherwise eat half the card
+      style={{ ['--gauge-w' as string]: `${size}px` } as React.CSSProperties}
+      role="img"
+      aria-label={`${score} out of ${STANDING_MAX}`}
+    >
+      <path className="ds-gauge-track" d={d} strokeWidth={GAUGE_W} fill="none" strokeLinecap="round" />
+      <path
+        className="ds-gauge-fill"
+        d={d}
+        strokeWidth={GAUGE_W}
+        fill="none"
+        strokeLinecap="round"
+        strokeDasharray={ARC}
+        strokeDashoffset={ARC * (1 - pct)}
+      />
+      {/* centred in the BOWL, not on the baseline. `dominant-baseline` does the vertical
+          centring so the pair reads as one block sitting inside the arc, rather than two
+          lines hanging off its flat edge — the offsets are fractions of the radius, so they
+          stay right at any size the card asks for. */}
+      <text
+        className="ds-gauge-num"
+        x={cx}
+        y={cy - GAUGE_R * 0.44}
+        textAnchor="middle"
+        dominantBaseline="middle"
+      >
+        {score}
+      </text>
+      <text
+        className="ds-gauge-max"
+        x={cx}
+        y={cy - GAUGE_R * 0.08}
+        textAnchor="middle"
+        dominantBaseline="middle"
+      >
+        / {STANDING_MAX}
+      </text>
+    </svg>
+  );
+}
+
 export function StandingCard({ compact = false }: { compact?: boolean }) {
   const [data, setData] = useState<{ standing: StandingInfo | null; events: StandingEvent[] } | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -53,10 +128,16 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
   const clean = tier.key === 'good' && data.events.length === 0;
 
   if (clean) {
+    // NAMED, even when there is nothing to report. The quiet state was one unlabelled line
+    // among a page of stat tiles, so a player going looking for their standing could not
+    // find it and reasonably concluded the feature was missing. It stays a single line —
+    // a full meter and an empty offence list for everyone would read as an accusation —
+    // but it now says what it IS.
     return (
-      <div className="ds-standing good">
-        <span className="ds-standing-dot" data-tier={tier.key} aria-hidden />
+      <div className="ds-standing good" data-tier={tier.key}>
+        <StandingGauge score={score} size={64} />
         <span className="ds-standing-line">
+          <span className="ds-standing-cap">Account standing</span>
           <b>Good standing.</b> <span className="ds-muted">Nothing on your account.</span>
         </span>
       </div>
@@ -66,19 +147,13 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`ds-standing ${compact ? 'compact' : ''}`} data-tier={tier.key}>
       <div className="ds-standing-head">
-        <span className="ds-standing-dot" data-tier={tier.key} aria-hidden />
-        <span className="ds-standing-name">{tier.name}</span>
-        <span className="ds-standing-score">
-          {score}
-          <span className="ds-muted">/{STANDING_MAX}</span>
-        </span>
+        <StandingGauge score={score} />
+        <div className="ds-standing-headtext">
+          <span className="ds-standing-cap">Account standing</span>
+          <span className="ds-standing-name">{tier.name}</span>
+          <p className="ds-standing-blurb">{tier.blurb}</p>
+        </div>
       </div>
-
-      <span className="ds-standing-bar" aria-hidden>
-        <span className="ds-standing-fill" style={{ width: `${Math.round((score / STANDING_MAX) * 100)}%` }} />
-      </span>
-
-      <p className="ds-standing-blurb">{tier.blurb}</p>
 
       {locked && (
         <p className="ds-standing-lock">

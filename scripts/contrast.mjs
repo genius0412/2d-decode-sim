@@ -303,9 +303,14 @@ const serverPairs = (t) => {
        and the meter fill need checking against THAT ground (1.4.11 non-text), and the lock
        notice paints red ink on a red tint like the option rows above. The tier NAME is plain
        ink beside the dot, deliberately, so colour is never the only carrier. */
-    ['.ds-standing-dot good on tile (1.4.11)', t('--ds-ok-ink'), tile, NON_TEXT],
-    ['.ds-standing-dot warning on tile (1.4.11)', t('--ds-warn'), tile, NON_TEXT],
-    ['.ds-standing-dot restricted on tile (1.4.11)', t('--ds-red-ink'), tile, NON_TEXT],
+    // the GAUGE arc — a non-text indicator carrying the tier, so 1.4.11's 3:1 against the
+    // card it sits on. Same tokens the dot used, since the meaning did not change; the arc
+    // simply says how FAR through the tier you are, which a dot never could.
+    ['.ds-gauge-fill good on tile (1.4.11)', t('--ds-ok-ink'), tile, NON_TEXT],
+    ['.ds-gauge-fill warning on tile (1.4.11)', t('--ds-warn'), tile, NON_TEXT],
+    ['.ds-gauge-fill restricted on tile (1.4.11)', t('--ds-red-ink'), tile, NON_TEXT],
+    ['.ds-gauge-num on tile', t('--ds-ink'), tile, AA],
+    ['.ds-gauge-max on tile', t('--ds-mut'), tile, AA],
     ['.ds-standing-blurb on tile', t('--ds-mut'), tile, AA],
     ['.ds-standing-name on tile', t('--ds-ink'), tile, AA],
     ['.ds-standing-lock', t('--ds-red-ink'), composite(t('--ds-red'), 0.12, panel), AA],
