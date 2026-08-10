@@ -388,35 +388,13 @@ export function applyStandingEvent(
 }
 
 /**
- * What the NEXT offence of a kind would cost, given how many are already inside its window
- * and where the score sits. Publishing the next rung is the point of an escalating ladder —
- * a penalty a player cannot see coming does not deter anything, it just arrives.
- */
-export function nextPenalty(
-  kind: StandingEventKind,
-  priorSameKind: number,
-  score: number,
-): { cooldownMin: number; ratingCharge: number } {
-  if (kind === 'report') return { cooldownMin: 0, ratingCharge: 0 };
-  // The tier used is the one the offence would LAND in — and the landing point has to be
-  // computed with the SAME repeat multiplier the charge will use, or the preview quietly
-  // under-promises on a repeat (it would price a third abandon off the second's tier).
-  const prior = Math.max(0, Math.floor(priorSameKind));
-  const points = Math.round(STANDING_COST[kind] * repeatMult(prior + 1));
-  const landed = tierOf(clampScore(clampScore(score) - points));
-  const cools = COOLDOWN_LADDER[kind];
-  const rung = ladderRung(prior, landed.bump, cools.length);
-  return { cooldownMin: rungValue(cools, rung), ratingCharge: rungValue(RATING_LADDER[kind], rung) };
-}
-
-/**
- * The next rung DOWN and how much room is left before it — the "you have N points of slack"
- * the card prints beside the dial.
+ * The next rung DOWN and how much room is left before it — the "N to go" the card prints
+ * beside the dial.
  *
  * THE THRESHOLD IS THIS TIER'S FLOOR, not the next tier's. `tierOf` is `score >= floor`, so
  * a Restricted player (floor 40) drops to Probation at 39 — reading the threshold off the
- * tier below says "next step: suspended at 0", which is both wrong and alarming. Exported
- * and tested because it is arithmetic a UI should never be doing inline.
+ * tier below says "next step: suspended at 0", which is both wrong and alarming. Lives here
+ * and is tested because it is arithmetic a UI should never be doing inline.
  */
 export function nextStepDown(
   score: number,

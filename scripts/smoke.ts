@@ -129,7 +129,7 @@ import { computeGlicko, glicko2Update, eloMode, RD_PROVISIONAL, type EloParticip
 import { isReportReason, REPORT_REASONS } from '../src/report';
 import {
   STANDING_MAX, STANDING_COST, STANDING_TIERS, REPORT_CAP, HEAL_PER_DAY, HEAL_PER_CLEAN_MATCH,
-  COOLDOWN_LADDER, RATING_LADDER, WINDOW_HOURS, ladderRung, nextPenalty,
+  COOLDOWN_LADDER, RATING_LADDER, WINDOW_HOURS, ladderRung,
   tierOf, nextStepDown, healed, clampScore, repeatMult, applyStandingEvent, queueLocked, lockRemaining,
   judgeParticipation, MIN_JUDGED_TICKS, AFK_DRIVE_FRACTION, LEAVE_AWAY_FRACTION,
   type StandingEventKind, type StandingState,
@@ -4823,26 +4823,6 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
         !queueLocked({ score: 5, restrictedUntil: null }, T0));
     check('standing: the remaining lock reads in human units',
       lockRemaining(T0 + 30 * 60_000, T0) === '30 minutes' && lockRemaining(T0 + 7_200_000, T0) === '2 hours');
-  }
-
-  // 14. THE NEXT RUNG IS PUBLISHED, and it is the one that actually lands. A preview that
-  //     disagreed with the charge would be worse than no preview at all.
-  {
-    let mismatch = '';
-    for (const k of enforcedKinds) {
-      for (const sc of [100, 75, 45, 22]) {
-        for (const n of [0, 1, 2, 5]) {
-          const preview = nextPenalty(k, n, sc);
-          const real = applyStandingEvent({ score: sc, restrictedUntil: null }, k, { now: T0, priorSameKind: n });
-          if (preview.cooldownMin !== real.cooldownMin || preview.ratingCharge !== real.ratingCharge) {
-            mismatch = `${k} @${sc} #${n + 1}: preview ${preview.cooldownMin}/${preview.ratingCharge} vs real ${real.cooldownMin}/${real.ratingCharge}`;
-          }
-        }
-      }
-    }
-    check('standing: the published "next one costs" is exactly what the next one costs', !mismatch, mismatch);
-    check('standing: a report preview promises nothing, because a report enforces nothing',
-      nextPenalty('report', 5, 30).cooldownMin === 0 && nextPenalty('report', 5, 30).ratingCharge === 0);
   }
 
   // 15. WHO SAT IT OUT vs WHO WALKED AWAY, judged from what the server actually counted.

@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react';
 import { fetchStanding, type StandingEvent, type StandingInfo } from '../net/api';
 import {
-  HEAL_PER_CLEAN_MATCH,
   STANDING_EVENT_LABEL,
   STANDING_MAX,
   STANDING_TIERS,
-  WINDOW_HOURS,
   lockRemaining,
-  nextPenalty,
   nextStepDown,
   tierOf,
   type StandingEventKind,
@@ -186,9 +183,7 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
           <div className="ds-standing-headtext">
             <span className="ds-standing-cap">Account standing</span>
             <span className="ds-standing-name">Good standing</span>
-            <p className="ds-standing-blurb">
-              Nothing on your account. The marks on the dial are where the penalties step up.
-            </p>
+            <p className="ds-standing-blurb">Nothing on your account.</p>
           </div>
         </div>
       </div>
@@ -202,7 +197,6 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
         <div className="ds-standing-headtext">
           <span className="ds-standing-cap">Account standing</span>
           <span className="ds-standing-name">{tier.name}</span>
-          <p className="ds-standing-blurb">{tier.blurb}</p>
           {step && (
             <p className="ds-standing-next">
               Next step down: <b>{step.tier.name.toLowerCase()}</b> below {step.below}
@@ -240,51 +234,10 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
         </>
       )}
 
-      {/* WHAT THE NEXT ONE COSTS. Both systems this is patterned on publish the next rung
-          rather than letting a player find it by hitting it — an escalating ladder only
-          deters anything if it can be seen coming. Counted from the ledger the player is
-          already looking at, per kind, inside that kind's own window. */}
-      {!compact && (
-        <>
-          <span className="ds-standing-cap">If it happens again</span>
-          <ul className="ds-standing-log">
-            {(['dodge', 'leave'] as const).map((k) => {
-              const prior = data.events.filter(
-                (e) => e.kind === k && Date.now() - new Date(e.at).getTime() < WINDOW_HOURS[k] * 3_600_000,
-              ).length;
-              const p = nextPenalty(k, prior, score);
-              return (
-                <li key={k}>
-                  <span className="ds-standing-what">{STANDING_EVENT_LABEL[k]}</span>
-                  <span className="ds-standing-cost ds-muted">
-                    {p.cooldownMin > 0 ? lockText(p.cooldownMin) : 'no queue lock'}
-                    {p.ratingCharge > 0 && ` · −${p.ratingCharge} rating`}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
-
-      {score < STANDING_MAX && (
-        <p className="ds-hint" style={{ margin: 0 }}>
-          {/* THE WAY BACK, always. A score that only ever falls is one players stop trying to
-              repair — and finishing your matches is exactly the behaviour being asked for. */}
-          Finishing a ranked match without leaving it earns <b>+{HEAL_PER_CLEAN_MATCH}</b> back, and
-          standing recovers slowly on its own.
-        </p>
-      )}
     </div>
   );
 }
 
-/** a lock length in the biggest unit that stays exact */
-function lockText(min: number): string {
-  if (min < 60) return `${min}min queue lock`;
-  if (min < 60 * 24) return `${Math.round(min / 60)}h queue lock`;
-  return `${Math.round(min / (60 * 24))}-day queue lock`;
-}
 
 function ago(iso: string): string {
   const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
