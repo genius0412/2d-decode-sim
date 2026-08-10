@@ -13,7 +13,40 @@
 # credits and throttle the 60Hz loop (the flap risk fly.toml warns about). They rarely
 # host a match and auto-stop when idle, so the cost win outweighs it; bump back to a
 # performance-* size if a far region starts flapping under real matches. Tune below.
+#
+# ALPHA: `./scripts/fly-deploy.sh --alpha` deploys the PREVIEW app from fly.alpha.toml
+# instead — one region, its own database, and no satellites to re-shrink. The two are kept
+# in one script on purpose: a second script is a second thing to forget to update, and the
+# only real difference is which config file and which app name.
 set -euo pipefail
+
+ALPHA=0
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --alpha) ALPHA=1 ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+set -- ${ARGS+"${ARGS[@]}"}
+
+if [ "$ALPHA" -eq 1 ]; then
+  APP="${FLY_ALPHA_APP:-dohun-sim-decode-alpha}"
+  CONFIG=fly.alpha.toml
+  echo "==> ALPHA preview deploy ($APP) — production is untouched"
+  # -c pins the config: without it `fly deploy` reads fly.toml and would deploy PRODUCTION
+  # under an alpha app name, quietly giving the preview production's multi-region VM block.
+  deploy_rc=0
+  fly deploy --remote-only -c "$CONFIG" -a "$APP" "$@" || deploy_rc=$?
+  if [ "$deploy_rc" -ne 0 ]; then
+    echo "!! fly deploy exited $deploy_rc — CHECK THE DEPLOY (fly machine list -a $APP)"
+    exit "$deploy_rc"
+  fi
+  # no satellites here: the preview is single-region, so there is nothing to re-shrink
+  echo "==> done. verify: fly machine list -a $APP"
+  echo "    health: curl https://$APP.fly.dev/health"
+  exit 0
+fi
 
 APP="${FLY_APP:-dohun-sim-decode}"
 # EVERY region except the always-warm primary (iad) runs the cheap shared size.

@@ -118,6 +118,7 @@ import {
 } from '../src/sim/replay';
 import { EMPTY_ACTIVITY, averageMatch, playtimeLong, playtimeText } from '../src/playtime';
 import { routeTarget } from '../server/routing';
+import { roomPersists } from '../server/channel';
 import { Room, type Client, type DodgeReport } from '../server/room';
 import { maintenanceBiting } from '../server/db/repo';
 import { maintenanceLine } from '../src/ui/MaintenanceBanner';
@@ -3301,6 +3302,34 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   // an OLD client's ld/rd-less packet still decodes (missing ⇒ 0, the old behavior)
   const legacy = dequantizeCommand({ dx: 0, dy: 64, rot: 0, buttons: 0 });
   check('dequantize tolerates a legacy ld/rd-less packet', legacy.leftDrive === 0 && legacy.rightDrive === 0);
+}
+
+// ---- WHICH RESULTS GET WRITTEN, AND WHERE -----------------------------------
+// The alpha build used to be walled off inside ONE server: its results were never persisted,
+// because they would have landed in production boards. That is also why the preview could
+// not test the features that exist BY writing (standing, dodge penalties, reports, playtime,
+// ranked) — they silently no-opped. With a separate alpha app on its own database the
+// protection comes from the deployment instead, and the rule is about the PAIRING.
+{
+  check(
+    'deploy: an alpha build on the STABLE server never persists (production stays clean)',
+    !roomPersists('alpha', 'stable'),
+  );
+  check(
+    'deploy: an alpha build on the ALPHA server DOES persist (that is the preview\'s point)',
+    roomPersists('alpha', 'alpha'),
+  );
+  check(
+    'deploy: a stable build persists on either server',
+    roomPersists('stable', 'stable') && roomPersists('stable', 'alpha'),
+  );
+  check(
+    'deploy: a room with no channel at all persists (old clients predate the field)',
+    roomPersists(undefined, 'stable') && roomPersists(undefined, 'alpha'),
+  );
+  // an unknown future channel is NOT special-cased into silence: only 'alpha' is held back,
+  // so a new channel name cannot accidentally make results vanish
+  check('deploy: an unknown channel persists rather than silently vanishing', roomPersists('beta', 'stable'));
 }
 
 // ---- CROSS-REGION ROOM ROUTING ----------------------------------------------

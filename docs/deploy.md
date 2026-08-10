@@ -6,6 +6,94 @@ together by one env var, `VITE_GAME_SERVER_URL`.
 
 ---
 
+## The ALPHA preview server (a second Fly app)
+
+The `alpha` branch's Vercel deployment talks to its **own** game server and its **own**
+database, so preview features can be tested for real instead of being walled off.
+
+**Why a separate app rather than another region.** One app served every client version, and
+an in-development build had to be quarantined inside it: the matchmaker keeps alpha entries
+in their own pool, and alpha results were *never written to the database*. That second rule
+is what made the preview only half-usable — standing, dodge penalties, reports, playtime and
+ranked all exist BY writing to Postgres, so on the shared server they silently no-op and
+there is nothing to look at. With its own app and its own database, the alpha server
+persists normally (`SERVER_CHANNEL=alpha`, see `server/channel.ts`) and production cannot
+see any of it, because it is not connected to that database.
+
+The client-channel segregation stays regardless — a browser tab can point anywhere, so the
+stable server still refuses to persist an alpha build's results.
+
+### One-time setup
+
+**1. Create the app** (name must match `fly.alpha.toml`'s `app =`):
+```bash
+fly apps create dohun-sim-decode-alpha
+```
+
+**2. Make a Neon branch for it.** In the Neon console → your project → **Branches** →
+**New branch** off `main`, name it `alpha`. Copy its pooled connection string. A branch is
+copy-on-write, so this costs approximately nothing and starts as a snapshot of production —
+which is what you want: real profiles to test standing and reports against.
+
+**3. Set the secrets** (the same ones production has, with the alpha database):
+```bash
+fly secrets set -a dohun-sim-decode-alpha \
+  DATABASE_URL='postgresql://…the ALPHA branch…' \
+  NEON_AUTH_URL='…same as production…' \
+  ADMIN_USER_IDS='…your uuid…' \
+  ADMIN_SECRET='…any long random string…'
+```
+Double-check `DATABASE_URL` before the first deploy: it is the one setting that decides
+whether alpha writes land in the preview or in production. Migrations run at boot, so the
+alpha branch self-migrates on the first start.
+
+**4. Deploy:**
+```bash
+./scripts/fly-deploy.sh --alpha
+```
+Then verify: `curl https://dohun-sim-decode-alpha.fly.dev/health`
+
+**5. Point the alpha site at it.** In Vercel → Project → **Settings → Environment
+Variables**, scoped to the **Preview** environment (or the `alpha` branch specifically):
+
+| Variable | Value |
+| --- | --- |
+| `VITE_GAME_SERVER_URL` | `wss://dohun-sim-decode-alpha.fly.dev` |
+| `VITE_APP_CHANNEL` | `alpha` |
+
+These are baked in at build time, so redeploy the branch after changing them.
+
+### Deploying afterwards
+
+```bash
+./scripts/fly-deploy.sh --alpha     # preview  (fly.alpha.toml, one region)
+./scripts/fly-deploy.sh             # production (fly.toml, re-shrinks satellites)
+```
+Never a bare `fly deploy` for either: without `-c` it reads `fly.toml`, which would deploy
+the production config under whichever app name it was given.
+
+### What is different about it
+
+| | production | alpha preview |
+| --- | --- | --- |
+| regions | iad + sjc/lhr/syd/nrt | iad only |
+| always-warm machine | yes (the matchmaker) | no — idles to zero, wakes on connect |
+| VM | shared-cpu-4x (iad) | shared-cpu-2x |
+| database | production Neon | the `alpha` Neon branch |
+| alpha results persist | never | yes |
+
+Cost is close to zero while nobody is testing: the machine stops when idle and Fly bills
+only the rootfs.
+
+### Protocol compatibility still matters, just less
+
+Two apps means the preview no longer has to prove its protocol changes against production
+traffic. But `main` and `alpha` still share a database *schema lineage* and the same client
+code paths, so keep new fields additive and keep feature-gating on `caps` — a merge to main
+should not need a coordinated redeploy.
+
+---
+
 ## Beginner quickstart — Fly.io game server (≈10 min)
 
 Fly is CLI-driven; its **website** handles the account, billing, and dashboards, and a

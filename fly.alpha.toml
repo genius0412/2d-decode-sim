@@ -1,0 +1,54 @@
+# ALPHA (preview) game server — the deployment the `alpha` branch's Vercel build talks to.
+#
+# A SEPARATE APP rather than another region of the production one, because the two things
+# that make a preview useful are exactly the two things a shared app cannot give it:
+#
+#   · its OWN DATABASE. Standing, dodge penalties, reports, playtime and ranked all exist by
+#     writing to Postgres. On the shared server those writes are suppressed for alpha builds
+#     (they would land in production boards), so the features could not actually be tested —
+#     they silently no-opped. Here `SERVER_CHANNEL=alpha` lets them persist, into the alpha
+#     database and nowhere else.
+#   · its OWN CODE. `src/sim` differs between branches; one app serving both means every
+#     protocol change has to stay backward-compatible with whatever main is running. It still
+#     should — see the deploy notes — but the preview no longer has to prove it on production.
+#
+# DIFFERENCES FROM fly.toml, all deliberate and all about cost:
+#   · ONE region. The multi-region layout exists to put a match near its players; a preview
+#     has one or two testers, and the matchmaker has to live somewhere anyway.
+#   · min_machines_running = 0. Production keeps the matchmaker warm because a cold boot in
+#     front of a real player is a bad first impression. A preview can eat the ~7s wake.
+#   · shared-cpu-2x. Enough headroom for a couple of concurrent rooms without the
+#     shared-cpu-1x throttle-flap fly.toml warns about, at a fraction of the primary's size.
+#
+# Deploy with:  ./scripts/fly-deploy.sh --alpha
+# NEVER a bare `fly deploy` here either — it would pick up fly.toml and redeploy PRODUCTION.
+
+app = 'dohun-sim-decode-alpha'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  # what makes this deployment persist alpha results to its own database (server/channel.ts).
+  # NOT a secret — it changes behaviour, not access.
+  SERVER_CHANNEL = 'alpha'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # idle to zero: a preview is used in bursts, and the first connection wakes it
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = '15s'
+    timeout = '10s'
+    grace_period = '30s'
+    method = 'GET'
+    path = '/health'
+
+[[vm]]
+  size = 'shared-cpu-2x'
+  memory = '1024mb'

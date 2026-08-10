@@ -35,6 +35,7 @@ import {
 import { sanitizePlayerPatch } from '../src/net/sanitize';
 import type { DodgeKind, DodgeVerdict } from '../src/dodge';
 import { judgeParticipation } from '../src/standing';
+import { roomPersists } from './channel';
 import { eloMode, type EloOutcome } from './ranked';
 import type { PendingMatch } from './matchTypes';
 
@@ -366,10 +367,11 @@ export class Room {
     this.broadcastRoster();
   }
 
-  /** true when this room's results must NOT be written to the leaderboard/ELO DB
-   * (in-development alpha builds) */
+  /** true when this room's results must NOT be written to the leaderboard/ELO DB — an
+   *  in-development build talking to the PRODUCTION server. On the alpha deployment, whose
+   *  database is its own, alpha results persist normally (see server/channel.ts). */
   private get unpersisted(): boolean {
-    return this.channel === 'alpha';
+    return !roomPersists(this.channel);
   }
 
   /** add a read-only SPECTATOR. It receives the current `matchStart` (with a sentinel
