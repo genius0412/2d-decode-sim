@@ -5,7 +5,6 @@ import {
   STANDING_MAX,
   STANDING_TIERS,
   lockRemaining,
-  nextStepDown,
   tierOf,
   type StandingEventKind,
 } from '../standing';
@@ -164,9 +163,6 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
   if (!data?.standing) return null;
   const { score } = data.standing;
   const tier = tierOf(score);
-  // the notches on the dial say WHERE the steps are; this says what the next one is and how
-  // much room is left before it (see `nextStepDown` — the arithmetic is not obvious)
-  const step = nextStepDown(score);
   const locked = until !== null && until > now;
   const clean = tier.key === 'good' && data.events.length === 0;
 
@@ -197,12 +193,6 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
         <div className="ds-standing-headtext">
           <span className="ds-standing-cap">Account standing</span>
           <span className="ds-standing-name">{tier.name}</span>
-          {step && (
-            <p className="ds-standing-next">
-              Next step down: <b>{step.tier.name.toLowerCase()}</b> below {step.below}
-              <span className="ds-muted"> — {step.toGo} to go</span>
-            </p>
-          )}
         </div>
       </div>
 

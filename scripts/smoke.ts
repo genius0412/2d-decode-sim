@@ -130,7 +130,7 @@ import { isReportReason, REPORT_REASONS } from '../src/report';
 import {
   STANDING_MAX, STANDING_COST, STANDING_TIERS, REPORT_CAP, HEAL_PER_DAY, HEAL_PER_CLEAN_MATCH,
   COOLDOWN_LADDER, RATING_LADDER, WINDOW_HOURS, ladderRung,
-  tierOf, nextStepDown, healed, clampScore, repeatMult, applyStandingEvent, queueLocked, lockRemaining,
+  tierOf, healed, clampScore, repeatMult, applyStandingEvent, queueLocked, lockRemaining,
   judgeParticipation, MIN_JUDGED_TICKS, AFK_DRIVE_FRACTION, LEAVE_AWAY_FRACTION,
   type StandingEventKind, type StandingState,
 } from '../src/standing';
@@ -4747,29 +4747,6 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       WINDOW_HOURS.reportUpheld >= WINDOW_HOURS.leave,
     `dodge ${WINDOW_HOURS.dodge}h · leave ${WINDOW_HOURS.leave}h · upheld ${WINDOW_HOURS.reportUpheld}h`,
   );
-
-  // 10b. THE NEXT STEP DOWN, which the card prints beside the dial. The threshold is THIS
-  //      tier's floor, not the next tier's — an easy inversion, and one that told a
-  //      Restricted player their next step was Suspended at 0. So: losing exactly `toGo`
-  //      must land you in exactly the tier named, from every score on the ladder.
-  {
-    let wrong = '';
-    for (let sc = 0; sc <= STANDING_MAX; sc++) {
-      const step = nextStepDown(sc);
-      if (!step) {
-        if (tierOf(sc).key !== 'suspended') wrong = `${sc} has no next step but is ${tierOf(sc).key}`;
-        continue;
-      }
-      if (step.toGo < 1) wrong = `${sc} claims ${step.toGo} to go`;
-      const landed = tierOf(sc - step.toGo);
-      if (landed.key !== step.tier.key) wrong = `${sc}: promised ${step.tier.key}, losing ${step.toGo} gave ${landed.key}`;
-      // and one point LESS must NOT have dropped you yet
-      if (step.toGo > 1 && tierOf(sc - step.toGo + 1).key !== tierOf(sc).key) {
-        wrong = `${sc}: dropped early, ${step.toGo - 1} was enough`;
-      }
-    }
-    check('standing: "N to go" lands you in exactly the tier it names, from every score', !wrong, wrong);
-  }
 
   // 11. RECOVERY. The debt has to be workable off, both by playing and by time — but waiting
   //     must never beat playing, or the system teaches players to stop playing.

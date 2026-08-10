@@ -4334,11 +4334,6 @@ button.ds-key:active {
   font: 600 12px/1.45 var(--ds-font);
   color: var(--ds-mut);
 }
-.ds-standing-next {
-  margin: 2px 0 0;
-  font: 600 12px/1.4 var(--ds-font);
-  color: var(--ds-ink);
-}
 .ds-standing-lock {
   margin: 0;
   padding: 9px 11px;
