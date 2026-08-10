@@ -10,7 +10,7 @@ import {
   CHAIN_CORNER_BODY_INSET,
 } from './config';
 import { catalystRailHalf, chainIntakeMouths } from './state';
-import { EDGE_ANGLE, MOUNT_ANGLE, catalystDrawPos, catalystMountOf, catalystSwingOf, edgeGeom, isEdgePos, isEndEdge, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from './mounts';
+import { EDGE_ANGLE, MOUNT_ANGLE, catalystDrawPos, catalystMountOf, catalystSwingOf, edgeGeom, intakeMouthFrame, isEdgePos, mountOrigin, shooterEdgeOf, turretLocal, turretRadius } from './mounts';
 import { footprintExtents } from '../../sim/field';
 
 /** dimension-label type size, in the viewBox's inch units */
@@ -93,27 +93,70 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
   const ROBOT_FRAME = 'matrix(0,-1,-1,0,0,0)';
   const deg = (rad: number): number => (rad * 180) / Math.PI;
 
-  // one roller bar + a row of lip ticks per MOUNTED edge (front / back / both flanks / both ends)
+  /**
+   * INTAKE — the same sweeper the match renderer draws (`drawChainIntake`), in SVG: two side
+   * plates bolted at the frame line, a roller across the tip, and a transfer roller at the
+   * frame when the mouth is deep enough. Authored through `intakeMouthFrame`, so the preview
+   * and the sprite are the same mechanism drawn twice rather than two drawings that have to
+   * be kept in sync by hand.
+   */
+  const roller = (cx: number, spanHalf: number, dia: number, key: string) => {
+    const flaps = Math.max(3, Math.round((spanHalf * 2) / 2.3));
+    return (
+      <g key={key}>
+        <rect
+          x={cx - dia / 2}
+          y={-spanHalf}
+          width={dia}
+          height={spanHalf * 2}
+          rx={dia * 0.42}
+          fill="var(--ds-bg)"
+          stroke={stroke}
+          strokeWidth={0.22}
+        />
+        {Array.from({ length: flaps }, (_, i) => {
+          const y = -spanHalf + 0.45 + ((i + 0.5) * (spanHalf * 2 - 0.9)) / flaps;
+          return (
+            <line
+              key={i}
+              x1={cx - dia * 0.3}
+              y1={y - 0.3}
+              x2={cx + dia * 0.3}
+              y2={y + 0.3}
+              stroke={stroke}
+              strokeWidth={0.18}
+              opacity={0.9}
+            />
+          );
+        })}
+      </g>
+    );
+  };
   const cIntakeEl = cMouths.length ? (
     <g transform={ROBOT_FRAME}>
       {cMouths.map((m) => {
-        const end = isEndEdge(m.edge); // ends run across y, flanks along x
-        const half = end ? (m.y1 - m.y0) / 2 : (m.x1 - m.x0) / 2;
-        const lip = 1.3; // tick depth, drawn just inside the outer edge
+        const f = intakeMouthFrame(m, len / 2, w / 2);
+        const outer = f.depth - 0.95;
+        const inner = f.rail - 0.2;
+        const deep = f.depth - f.rail > 2.2;
         return (
-          <g key={m.edge}>
-            <rect x={m.x0} y={m.y0} width={m.x1 - m.x0} height={m.y1 - m.y0} fill={accent} opacity={0.4} />
-            {[-3, -2, -1, 0, 1, 2, 3].map((i) => {
-              const t = (i * half) / 3.4; // position along the edge
-              const op = Math.abs(i) <= 1 ? 0.95 : 0.6;
-              const outer =
-                m.edge === 'front' ? m.x1 - lip : m.edge === 'back' ? m.x0 : m.edge === 'left' ? m.y1 - lip : m.y0;
-              return end ? (
-                <rect key={i} x={outer} y={t - 0.5} width={lip} height={1} rx={0.3} fill={accent} opacity={op} />
-              ) : (
-                <rect key={i} x={t - 0.5} y={outer} width={1} height={lip} rx={0.3} fill={accent} opacity={op} />
-              );
-            })}
+          <g key={m.edge} transform={`translate(${f.ox},${f.oy}) rotate(${deg(f.rot)})`}>
+            {/* the open throat, neutral: the builder has no run/idle state to colour */}
+            <rect x={f.rail} y={-f.half} width={f.depth - f.rail} height={f.half * 2} fill={stroke} opacity={0.14} />
+            {[1, -1].map((sg) => (
+              <rect
+                key={sg}
+                x={f.rail - 0.6}
+                y={sg > 0 ? f.half - 0.55 : -f.half}
+                width={f.depth - f.rail + 0.6}
+                height={0.55}
+                rx={0.2}
+                fill={stroke}
+                opacity={0.75}
+              />
+            ))}
+            {deep ? roller(inner, f.half - 1.35, 0.8, 'in') : null}
+            {roller(outer, f.half - 0.75, 1.5, 'out')}
           </g>
         );
       })}
@@ -202,29 +245,94 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
   // where a TURRET is bolted (it aims itself, so the mount is a position, not a facing)
   const tOrigin = turretLocal(spec); // the SAME point the sim launches from
   const cTurretR = turretRadius(spec); // ...and the same ring size
-  const drumHalf = sGeom.span * 0.96; // spans (nearly) the whole mounted edge
-  const drumN = Math.max(5, Math.round((drumHalf * 2) / 2.6));
-  const lineHalf = sGeom.span * CHAIN_LAUNCH_LINE_FRAC; // catapult bucket width
-  const drumX = sGeom.dist - 3.9; // roller bar, just inside the edge
+  const teeth = Math.max(14, Math.round(cTurretR * 6)); // slew-ring teeth, as in the sprite
+  // THE DRUM is ONE CYLINDER across (almost) the whole mounted edge on a single shaft — not
+  // a row of separate wheels, which is a different machine. Bearing blocks at both ends, and
+  // traction bands wrapped along its length.
+  const drumHalf = sGeom.span * 0.9;
+  const drumDia = 3.3;
+  const drumX = sGeom.dist - drumDia / 2 - 0.55; // its axis, just inside the frame line
+  const drumRings = Math.max(4, Math.round((drumHalf * 2) / 2.1));
+  const lineHalf = sGeom.span * CHAIN_LAUNCH_LINE_FRAC; // catapult tray width
+  const dumpPivot = sGeom.dist - 7.4;
+  const dumpLip = sGeom.dist - 0.9;
   const cLauncherEl =
     cMode === 'drum' ? (
       <g transform={`${ROBOT_FRAME} rotate(${deg(EDGE_ANGLE[sEdge])})`}>
-        {/* full-edge row of compliant flywheel rollers (not channels) */}
-        <rect x={drumX} y={-drumHalf} width={3.4} height={drumHalf * 2} rx={0.8} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
-        {Array.from({ length: drumN }, (_, k) => k).map((i) => {
-          const y = -drumHalf + ((i + 0.5) * drumHalf * 2) / drumN;
-          return <rect key={i} x={drumX + 0.5} y={y - 0.55} width={2.4} height={1.1} rx={0.4} fill={accent} opacity={0.85} />;
+        <rect
+          x={drumX - drumDia / 2 - 1.15}
+          y={-drumHalf - 0.5}
+          width={1.15}
+          height={(drumHalf + 0.5) * 2}
+          rx={0.35}
+          fill={stroke}
+          opacity={0.55}
+        />
+        <rect
+          x={drumX - drumDia / 2}
+          y={-drumHalf}
+          width={drumDia}
+          height={drumHalf * 2}
+          rx={drumDia * 0.34}
+          fill="var(--ds-bg)"
+          stroke={stroke}
+          strokeWidth={0.3}
+        />
+        {Array.from({ length: drumRings - 1 }, (_, i) => {
+          const y = -drumHalf + ((i + 1) * (drumHalf * 2)) / drumRings;
+          return (
+            <line
+              key={i}
+              x1={drumX - drumDia / 2 + 0.22}
+              y1={y}
+              x2={drumX + drumDia / 2 - 0.22}
+              y2={y}
+              stroke={stroke}
+              strokeWidth={0.16}
+              opacity={0.85}
+            />
+          );
         })}
+        {[1, -1].map((sg) => (
+          <g key={sg}>
+            <rect
+              x={drumX - 0.95}
+              y={sg > 0 ? drumHalf : -drumHalf - 1.5}
+              width={1.9}
+              height={1.5}
+              rx={0.3}
+              fill={stroke}
+              opacity={0.8}
+            />
+            <circle cx={drumX} cy={sg * (drumHalf + 0.72)} r={0.42} fill={stroke} />
+          </g>
+        ))}
       </g>
     ) : cMode === 'dumper' ? (
+      // a TRAY on a pivot: the shaft it swings about, two throwing arms, and the release lip
       <g transform={`${ROBOT_FRAME} rotate(${deg(EDGE_ANGLE[sEdge])})`}>
         <polygon
-          points={`${sGeom.dist - 6},${-lineHalf * 0.7} ${sGeom.dist - 1},${-lineHalf} ${sGeom.dist - 1},${lineHalf} ${sGeom.dist - 6},${lineHalf * 0.7}`}
-          fill="var(--ds-bg)"
-          stroke={accent}
-          strokeWidth={0.5}
+          points={`${dumpPivot},${-lineHalf * 0.72} ${dumpLip},${-lineHalf} ${dumpLip},${lineHalf} ${dumpPivot},${lineHalf * 0.72}`}
+          fill={accent}
+          opacity={0.12}
         />
-        <line x1={sGeom.dist - 1} y1={-lineHalf} x2={sGeom.dist - 1} y2={lineHalf} stroke={accent} strokeWidth={1} />
+        {[1, -1].map((sg) => (
+          <line
+            key={sg}
+            x1={dumpPivot}
+            y1={sg * lineHalf * 0.72}
+            x2={dumpLip}
+            y2={sg * lineHalf}
+            stroke={stroke}
+            strokeWidth={0.62}
+            strokeLinecap="round"
+          />
+        ))}
+        <line x1={dumpPivot} y1={-lineHalf * 0.72} x2={dumpPivot} y2={lineHalf * 0.72} stroke={stroke} strokeWidth={0.7} />
+        {[1, -1].map((sg) => (
+          <circle key={sg} cx={dumpPivot} cy={sg * lineHalf * 0.72} r={0.45} fill={stroke} />
+        ))}
+        <rect x={dumpLip - 0.45} y={-lineHalf} width={0.9} height={lineHalf * 2} rx={0.3} fill={accent} opacity={0.8} />
       </g>
     ) : (
       // The turret sits where it is BOLTED. Authored in SCREEN space (unlike the chassis-frame
@@ -235,20 +343,59 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
       // real position meant a DOUBLE offset and a mismatched size — a corner turret hung off the
       // chassis in the preview while the sim had it comfortably inboard.
       <g transform={`translate(${-tOrigin.y},${-tOrigin.x})`}>
-        <circle cx={0} cy={0} r={cTurretR} fill="var(--ds-bg)" stroke={accent} strokeWidth={0.5} />
-        {/* a TWIN draws both barrels at the offset the sim actually launches from */}
-        {(cMode === 'twinturret' ? [CHAIN_TWIN_BARREL_OFFSET, -CHAIN_TWIN_BARREL_OFFSET] : [0]).map((o) => (
-          <line
-            key={o}
-            x1={o}
-            y1={0}
-            x2={o}
-            y2={-cTurretR - 1.2}
-            stroke={accent}
-            strokeWidth={0.7}
-            strokeLinecap="round"
-          />
-        ))}
+        {/* the SLEW RING it turns on, toothed like the sprite's */}
+        <circle cx={0} cy={0} r={cTurretR} fill="var(--ds-bg)" stroke={stroke} strokeWidth={0.35} />
+        {Array.from({ length: teeth }, (_, i) => {
+          const a = (i / teeth) * Math.PI * 2;
+          return (
+            <line
+              key={i}
+              x1={Math.cos(a) * (cTurretR - 0.32)}
+              y1={Math.sin(a) * (cTurretR - 0.32)}
+              x2={Math.cos(a) * cTurretR}
+              y2={Math.sin(a) * cTurretR}
+              stroke={stroke}
+              strokeWidth={0.2}
+              opacity={0.8}
+            />
+          );
+        })}
+        {/* the SHOOTER HEAD: a body with the Particle channel cut through it and a pair of
+            flywheels at the muzzle. A TWIN draws both, at the offsets the sim launches from —
+            the preview shows it stowed forward, so the head points up. */}
+        {(cMode === 'twinturret' ? [CHAIN_TWIN_BARREL_OFFSET, -CHAIN_TWIN_BARREL_OFFSET] : [0]).map((o) => {
+          const halfW = cMode === 'twinturret' ? 0.85 : 1.1;
+          const muzzle = -(cTurretR + 1.9);
+          return (
+            <g key={o}>
+              {/* shooter body, from just behind the ring out to the muzzle */}
+              <rect
+                x={o - halfW}
+                y={muzzle}
+                width={halfW * 2}
+                height={cTurretR * 0.4 - muzzle}
+                rx={0.3}
+                fill="var(--ds-bg)"
+                stroke={stroke}
+                strokeWidth={0.25}
+              />
+              {/* the pair of flywheels that pinch the Particle on its way out */}
+              {[1, -1].map((sg) => (
+                <rect
+                  key={sg}
+                  x={o + sg * halfW * 0.5 - (sg > 0 ? 0 : halfW * 0.5)}
+                  y={muzzle + 0.5}
+                  width={halfW * 0.5}
+                  height={1.5}
+                  rx={0.2}
+                  fill={stroke}
+                  opacity={0.85}
+                />
+              ))}
+              <line x1={o - halfW * 0.55} y1={muzzle + 0.25} x2={o + halfW * 0.55} y2={muzzle + 0.25} stroke={accent} strokeWidth={0.3} />
+            </g>
+          );
+        })}
       </g>
     );
 

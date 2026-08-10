@@ -293,6 +293,38 @@ export function intakeMountEdges(mount: ChainIntakeMount): ChainEdge[] {
   }
 }
 
+/**
+ * Put a local frame on one intake MOUTH: origin at the mouth's INNER edge, +x pointing
+ * OUTWARD, +y along the edge.
+ *
+ * Both renderers (the canvas sprite and the builder's SVG preview) draw the intake through
+ * this, so each of them authors ONE mouth in ONE orientation instead of four sign-juggling
+ * branches, and neither can drift off the capture rect the sim grabs with.
+ *
+ * `rail` is where the CHASSIS EDGE falls in that frame — the mouth bites a couple of inches
+ * back inside the frame (that is what lets it catch a Particle before the frame plows it),
+ * so anything drawn across the full depth would be drawn over the chassis.
+ */
+export function intakeMouthFrame(
+  m: { edge: ChainEdge; x0: number; x1: number; y0: number; y1: number },
+  hl: number,
+  hw: number,
+): { ox: number; oy: number; rot: number; depth: number; half: number; rail: number } {
+  const end = isEndEdge(m.edge);
+  const depth = end ? m.x1 - m.x0 : m.y1 - m.y0;
+  const half = (end ? m.y1 - m.y0 : m.x1 - m.x0) / 2;
+  switch (m.edge) {
+    case 'front':
+      return { ox: m.x0, oy: 0, rot: 0, depth, half, rail: hl - m.x0 };
+    case 'back':
+      return { ox: m.x1, oy: 0, rot: Math.PI, depth, half, rail: m.x1 + hl };
+    case 'left':
+      return { ox: 0, oy: m.y0, rot: Math.PI / 2, depth, half, rail: hw - m.y0 };
+    default: // right
+      return { ox: 0, oy: m.y1, rot: -Math.PI / 2, depth, half, rail: m.y1 + hw };
+  }
+}
+
 /** the robot-local angle (radians) a mechanism on `edge` points OUTWARD along: the direction a
  * launcher on that edge fires, and the outward normal of that edge's intake mouth. */
 export const EDGE_ANGLE: Record<ChainEdge, number> = {
