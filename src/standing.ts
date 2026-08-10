@@ -409,6 +409,24 @@ export function nextPenalty(
   return { cooldownMin: rungValue(cools, rung), ratingCharge: rungValue(RATING_LADDER[kind], rung) };
 }
 
+/**
+ * The next rung DOWN and how much room is left before it — the "you have N points of slack"
+ * the card prints beside the dial.
+ *
+ * THE THRESHOLD IS THIS TIER'S FLOOR, not the next tier's. `tierOf` is `score >= floor`, so
+ * a Restricted player (floor 40) drops to Probation at 39 — reading the threshold off the
+ * tier below says "next step: suspended at 0", which is both wrong and alarming. Exported
+ * and tested because it is arithmetic a UI should never be doing inline.
+ */
+export function nextStepDown(
+  score: number,
+): { tier: StandingTier; below: number; toGo: number } | null {
+  const here = tierOf(score);
+  const next = STANDING_TIERS[STANDING_TIERS.indexOf(here) + 1];
+  if (!next) return null; // the bottom tier has nothing below it
+  return { tier: next, below: here.floor, toGo: clampScore(score) - here.floor + 1 };
+}
+
 /** is the ranked queue closed to this account right now? */
 export const queueLocked = (state: StandingState, now: number): boolean =>
   state.restrictedUntil !== null && state.restrictedUntil > now;

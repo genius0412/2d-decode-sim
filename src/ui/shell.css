@@ -4246,14 +4246,13 @@ button.ds-key:active {
   border-radius: var(--ds-round);
   border: 1px solid var(--ds-line);
   background: var(--ds-tile);
+  /* it renders into a page HEAD slot, directly above a period picker and a wall of stat
+     tiles, with NOTHING between them — a card flush against the next control reads as part
+     of that control rather than as its own thing */
+  margin-bottom: 28px;
 }
 /* the CLEAN state is one row: a small gauge and a single line of text */
-.ds-standing.good {
-  flex-direction: row;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
-}
+.ds-standing.good { gap: 0; }
 .ds-standing.good .ds-standing-cap { display: block; margin-bottom: 2px; }
 
 /* HEAD: the gauge leads, the words sit beside it. `align-items: center` rather than
@@ -4276,14 +4275,36 @@ button.ds-key:active {
 .ds-gauge {
   flex: none;
   overflow: visible;
-  /* the box is a semicircle plus its stroke: 91 x 51 user units, so height is 0.56 of width */
-  width: var(--gauge-w, 132px);
-  height: calc(var(--gauge-w, 132px) * 0.5604);
+  /* the viewBox is 121 x 60.5 user units (arc + stroke + label margin), so the height is
+     0.5 of the width — one ratio, kept here so the size is a single number everywhere */
+  width: var(--gauge-w, 200px);
+  height: calc(var(--gauge-w, 200px) * 0.5);
+}
+@media (max-width: 560px) {
+  /* on a phone it still has to be the first thing you see, just not the only thing —
+     everything inside is drawn in the viewBox, so it scales without losing legibility */
+  .ds-standing { --gauge-w: 164px; }
 }
 @media (max-width: 460px) {
-  /* on a phone the full-size gauge eats half the card; the numbers inside scale with it and
-     stay legible because they are drawn in the viewBox, not in pixels */
-  .ds-standing-head .ds-gauge { --gauge-w: 104px; }
+  /* STACK it. Side by side, the words get whatever is left of ~340px after the dial —
+     about 160px, which turns one sentence into five lines. Above the text, the same
+     sentence gets the full card. */
+  .ds-standing-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}
+/* the threshold notches: cut in the CARD's colour so they read as gaps in the band, over
+   the track and the fill alike without either knowing about the other */
+.ds-gauge-tick {
+  stroke: var(--ds-tile);
+  stroke-width: 2.4;
+  stroke-linecap: butt;
+}
+.ds-gauge-mark {
+  fill: var(--ds-mut);
+  font: 700 8px/1 var(--ds-font-mono);
 }
 .ds-gauge-track { stroke: color-mix(in srgb, var(--ds-mut) 24%, transparent); }
 .ds-gauge-fill {
@@ -4312,6 +4333,11 @@ button.ds-key:active {
   margin: 0;
   font: 600 12px/1.45 var(--ds-font);
   color: var(--ds-mut);
+}
+.ds-standing-next {
+  margin: 2px 0 0;
+  font: 600 12px/1.4 var(--ds-font);
+  color: var(--ds-ink);
 }
 .ds-standing-lock {
   margin: 0;

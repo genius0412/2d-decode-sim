@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
-import type React from 'react';
 import { fetchStanding, type StandingEvent, type StandingInfo } from '../net/api';
 import {
   HEAL_PER_CLEAN_MATCH,
   STANDING_EVENT_LABEL,
   STANDING_MAX,
+  STANDING_TIERS,
   WINDOW_HOURS,
   lockRemaining,
   nextPenalty,
+  nextStepDown,
   tierOf,
   type StandingEventKind,
 } from '../standing';
@@ -41,25 +42,44 @@ import {
  * because a square end at 1% reads as a rendering artefact.
  */
 const GAUGE_R = 40;
-const GAUGE_W = 11;
+const GAUGE_W = 13;
+/** room outside the arc for the threshold labels — they are the point of the gauge */
+const GAUGE_PAD = 16;
 const ARC = Math.PI * GAUGE_R; // length of a half-circle
 
-function StandingGauge({ score, size = 132 }: { score: number; size?: number }) {
+/** a point on the arc for a 0..1 fraction (0 = left end, 1 = right end) */
+function arcPoint(cx: number, cy: number, r: number, f: number): { x: number; y: number } {
+  const a = Math.PI - f * Math.PI;
+  return { x: cx + r * Math.cos(a), y: cy - r * Math.sin(a) };
+}
+
+function StandingGauge({ score }: { score: number }) {
   const pct = Math.max(0, Math.min(1, score / STANDING_MAX));
-  // the box hugs the arc: full width, half height, plus the stroke that overhangs each end
-  const w = 2 * GAUGE_R + GAUGE_W;
-  const h = GAUGE_R + GAUGE_W;
+  const w = 2 * GAUGE_R + GAUGE_W + 2 * GAUGE_PAD;
+  const h = GAUGE_R + GAUGE_W / 2 + GAUGE_PAD;
   const cx = w / 2;
-  const cy = h - GAUGE_W / 2;
+  const cy = GAUGE_PAD + GAUGE_R;
   const d = `M ${cx - GAUGE_R} ${cy} A ${GAUGE_R} ${GAUGE_R} 0 0 1 ${cx + GAUGE_R} ${cy}`;
+  /**
+   * THE THRESHOLDS, marked on the arc.
+   *
+   * Without them the gauge says "you are at 52" and leaves the reader to wonder 52 out of
+   * what, and how much further before something changes. The whole system is a LADDER of
+   * consequences, so the rungs belong on the dial: a notch cut through the band at each tier
+   * floor, and the number beside it. Now the distance to the next penalty step is something
+   * you SEE rather than something you compute.
+   *
+   * The bottom tier's floor is 0 — that is the end of the dial, not a step within it — so it
+   * is dropped.
+   */
+  const marks = STANDING_TIERS.map((t) => t.floor).filter((f) => f > 0 && f < STANDING_MAX);
   return (
     <svg
       className="ds-gauge"
       viewBox={`0 0 ${w} ${h}`}
-      // the WIDTH is a custom property rather than a fixed style so CSS keeps ownership of
-      // it — an inline width would beat any media query, and the gauge has to shrink on a
-      // phone where it would otherwise eat half the card
-      style={{ ['--gauge-w' as string]: `${size}px` } as React.CSSProperties}
+      // NO inline sizing, not even a custom property: an inline declaration wins over any
+      // stylesheet rule for the same element, so setting `--gauge-w` here silently defeated
+      // the media query meant to shrink it on a phone. CSS owns the size outright.
       role="img"
       aria-label={`${score} out of ${STANDING_MAX}`}
     >
@@ -73,6 +93,29 @@ function StandingGauge({ score, size = 132 }: { score: number; size?: number }) 
         strokeDasharray={ARC}
         strokeDashoffset={ARC * (1 - pct)}
       />
+      {marks.map((v) => {
+        const f = v / STANDING_MAX;
+        const a = arcPoint(cx, cy, GAUGE_R - GAUGE_W / 2 - 0.5, f);
+        const b = arcPoint(cx, cy, GAUGE_R + GAUGE_W / 2 + 0.5, f);
+        const label = arcPoint(cx, cy, GAUGE_R + GAUGE_W / 2 + 8, f);
+        return (
+          <g key={v}>
+            {/* drawn in the CARD's colour, so it reads as a notch cut through the band
+                rather than as a line laid over it — and it works over the track and the
+                fill without knowing which is underneath */}
+            <line className="ds-gauge-tick" x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
+            <text
+              className="ds-gauge-mark"
+              x={label.x}
+              y={label.y}
+              textAnchor="middle"
+              dominantBaseline="middle"
+            >
+              {v}
+            </text>
+          </g>
+        );
+      })}
       {/* centred in the BOWL, not on the baseline. `dominant-baseline` does the vertical
           centring so the pair reads as one block sitting inside the arc, rather than two
           lines hanging off its flat edge — the offsets are fractions of the radius, so they
@@ -80,7 +123,7 @@ function StandingGauge({ score, size = 132 }: { score: number; size?: number }) 
       <text
         className="ds-gauge-num"
         x={cx}
-        y={cy - GAUGE_R * 0.44}
+        y={cy - GAUGE_R * 0.40}
         textAnchor="middle"
         dominantBaseline="middle"
       >
@@ -89,7 +132,7 @@ function StandingGauge({ score, size = 132 }: { score: number; size?: number }) 
       <text
         className="ds-gauge-max"
         x={cx}
-        y={cy - GAUGE_R * 0.08}
+        y={cy - GAUGE_R * 0.04}
         textAnchor="middle"
         dominantBaseline="middle"
       >
@@ -124,6 +167,9 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
   if (!data?.standing) return null;
   const { score } = data.standing;
   const tier = tierOf(score);
+  // the notches on the dial say WHERE the steps are; this says what the next one is and how
+  // much room is left before it (see `nextStepDown` — the arithmetic is not obvious)
+  const step = nextStepDown(score);
   const locked = until !== null && until > now;
   const clean = tier.key === 'good' && data.events.length === 0;
 
@@ -135,11 +181,16 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
     // but it now says what it IS.
     return (
       <div className="ds-standing good" data-tier={tier.key}>
-        <StandingGauge score={score} size={64} />
-        <span className="ds-standing-line">
-          <span className="ds-standing-cap">Account standing</span>
-          <b>Good standing.</b> <span className="ds-muted">Nothing on your account.</span>
-        </span>
+        <div className="ds-standing-head">
+          <StandingGauge score={score} />
+          <div className="ds-standing-headtext">
+            <span className="ds-standing-cap">Account standing</span>
+            <span className="ds-standing-name">Good standing</span>
+            <p className="ds-standing-blurb">
+              Nothing on your account. The marks on the dial are where the penalties step up.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -152,6 +203,12 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
           <span className="ds-standing-cap">Account standing</span>
           <span className="ds-standing-name">{tier.name}</span>
           <p className="ds-standing-blurb">{tier.blurb}</p>
+          {step && (
+            <p className="ds-standing-next">
+              Next step down: <b>{step.tier.name.toLowerCase()}</b> below {step.below}
+              <span className="ds-muted"> — {step.toGo} to go</span>
+            </p>
+          )}
         </div>
       </div>
 
