@@ -68,9 +68,11 @@ export const BALANCE_VERSION = 3; // 2: real-motor drivetrain retune (torque–s
  *
  * 1: sim-reachable Math.hypot -> hyp (engine-independent; see src/math.ts)
  * 2: the alpha batch — CR butterfly drivetrain / twin turret / catalyst mechanisms /
- *    corner geometry / start legality, and DECODE's G418.B fix (a gate tap no longer
- *    bills the standing ramp column, so a match with gate contact re-sims to a
- *    different foul total). All of it moves `step()` output.
+ *    corner geometry / start legality, DECODE's G418.B fix (a gate tap no longer
+ *    bills the standing ramp column), and the G408/G422 retune (a lenient plowing
+ *    test + a pin count that survives its own flicker and recognises goal/classifier
+ *    traps), so any match with contact re-sims to a different foul total. All of it
+ *    moves `step()` output.
  */
 export const SIM_VERSION = 2;
 
@@ -102,35 +104,59 @@ export const PTS_BASE_FULL = 10;
 /** Section 11 penalties, awarded TO the OPPOSING (victim) alliance */
 export const PTS_FOUL_MINOR = 5;
 export const PTS_FOUL_MAJOR = 15;
-/** G422 pinning: hold an opponent for this long (s) while it is trying to move
- * and hasn't escaped PIN_ESCAPE_DIST from where the pin began -> foul */
+/** G422 pinning: hold an opponent trapped for this long (s) while it is trying
+ * to move and cannot get away -> foul */
 export const PIN_SECONDS = 3;
-export const PIN_ESCAPE_DIST = 24; // in — getting this far away ends the pin
-/** pinned robot counts as "prevented from moving" below this actual speed */
+export const PIN_ESCAPE_DIST = 24; // in — getting this far from the pin, once free, ends it
+/** The pinned robot counts as "prevented from moving" while it is not gaining
+ * ground AWAY from the pinner faster than this.
+ *
+ * Deliberately measured along the ESCAPE direction rather than as raw speed: a
+ * robot being bulldozed sideways along a wall is moving fast and is still just as
+ * pinned, and pausing the 3-count every time it slid was one reason real pins
+ * almost never reached the threshold. */
 export const PIN_STUCK_SPEED = 8; // in/s
-/** the PINNED robot must be trapped against a field boundary with the pinner on
- * the open-field side: its leading corner (straight away from the pinner) sits
- * within this slop of the perimeter. This breaks the symmetry of a wall shove —
- * without it BOTH robots look "slow + commanding" and the victim was wrongly
- * fouled too. */
+/** the PINNED robot must be trapped against a SOLID with the pinner on the open-
+ * field side: its leading corner (straight away from the pinner) sits within this
+ * slop of the perimeter, a goal wedge or a classifier channel. This breaks the
+ * symmetry of a shove — without it BOTH robots look "slow + commanding" and the
+ * victim was wrongly fouled too. */
 export const PIN_WALL_SLOP = 3; // in
+/** How long the hold may LAPSE before a pin is considered over.
+ *
+ * The 3-count needs ~180 consecutive ticks, and every input to it flickers: the SAT
+ * contact list drops a tick when the bumpers unload, the victim's stick crosses the
+ * dead zone as they saw at it, the wall probe slips past the slop as the pair rocks.
+ * Resetting the accumulator on any single-tick lapse meant a genuine 5-second pin
+ * routinely counted to 0.6 s and started over, which is why the foul "never
+ * happened". The clock now PAUSES on a lapse and only resets once the victim has
+ * really been let go for this long (or has separated and driven off). */
+export const PIN_BREAK_S = 0.6; // s
 /** G408 over-possession / plowing: a ROBOT may CONTROL at most this many
  * ARTIFACTS at once — held in the hopper PLUS any loose ground balls it is
- * actively herding (plowing). The hopper caps at HOPPER_CAPACITY, so the foul
- * bites when a full robot keeps shoving extra loose balls, or when a clump of
- * more than this many is driven around. */
+ * actively PLOWING (herding along in front of it). The hopper caps at
+ * HOPPER_CAPACITY, so the foul bites when a full robot bulldozes extra loose
+ * balls around, or when a clump of more than this many is driven downfield. */
 export const POSSESSION_LIMIT = 3; // == HOPPER_CAPACITY
-/** a loose ground ball counts as CONTROLLED (plowed) when its surface is within
- * this many inches of the robot's collision footprint. */
-export const POSSESSION_CONTROL_MARGIN = 0.9; // in
+/** a loose ground ball counts as plowed only when its surface is within this many
+ * inches of the robot's collision footprint — i.e. actually in contact, not
+ * merely nearby. */
+export const POSSESSION_CONTROL_MARGIN = 0.4; // in
 /** herding requires motion — a parked robot merely resting against loose balls
  * is not controlling them (they can roll free), so ignore control below this. */
 export const POSSESSION_MOVE_SPEED = 9; // in/s
-/** grace before over-possession is fouled — just long enough to forgive an
- * incidental brush-by (a normal intake capture is < 0.2 s, so driving through a
- * clump to collect it never trips the foul), but short enough that sustained
- * plowing/hoarding bites quickly. */
-export const POSSESSION_GRACE = 0.7; // s
+/** ...and the ball must be going WITH the robot at least this fast: a plowed ball
+ * is one being carried along, while a ball the robot merely clips in passing (or
+ * squirts out sideways) is not under anyone's control. */
+export const POSSESSION_CARRY_SPEED = 5; // in/s, along the robot's heading of travel
+/** grace before over-possession is fouled.
+ *
+ * Long on purpose. The rule is meant to catch a robot BULLDOZING a load around the
+ * field, not the ordinary business of driving into a clump to collect it, nudging
+ * a ball out of the way, or carrying a full hopper past loose artifacts — all of
+ * which used to trip it inside a second. Sustained plowing still bites well inside
+ * a single cycle. */
+export const POSSESSION_GRACE = 2; // s
 /** A foul fires on the rising edge of its condition and does NOT re-fire while
  * the condition holds — continuous contact in a foul zone is ONE foul, not a
  * stream. It re-arms only after the condition has been CLEAR for this long, so

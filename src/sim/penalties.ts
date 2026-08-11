@@ -2,8 +2,10 @@ import type { Alliance, RobotCommand, RobotState, World } from '../types';
 import * as C from '../config';
 import {
   baseZone,
+  classifierRect,
   gateArmRect,
   gateZone,
+  goalLineValue,
   loadZone,
   other,
   tunnelStrip,
@@ -222,19 +224,38 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
   }
 }
 
-/** how many artifacts robot r is CONTROLLING: its stored hopper balls plus the
- * loose GROUND balls it is herding (surface within POSSESSION_CONTROL_MARGIN of
- * its footprint while it is moving). Balls in flight/basin/rail/held-by-others
- * are not "loose" and never count here. */
+/**
+ * How many artifacts robot r is CONTROLLING: its stored hopper balls plus the loose
+ * GROUND balls it is PLOWING. Balls in flight/basin/rail/held-by-others are not
+ * loose and never count here.
+ *
+ * "Plowing" is deliberately narrow, because the wide version of this test fouled
+ * ordinary driving. Three things must ALL hold:
+ *   1. the robot is MOVING (a parked robot resting on balls controls nothing — they
+ *      are free to roll away),
+ *   2. the ball is IN CONTACT with the footprint (POSSESSION_CONTROL_MARGIN is a
+ *      touch tolerance, not a catchment radius), and
+ *   3. the ball is AHEAD of the robot along its direction of travel AND is itself
+ *      moving that way at POSSESSION_CARRY_SPEED — it is being CARRIED, not clipped.
+ *
+ * Condition 3 is what separates a bulldozer from a driver: a ball brushed in passing,
+ * or one squirting sideways off a bumper, fails it immediately, while a load being
+ * shepherded downfield satisfies it for exactly as long as it is being shepherded.
+ */
 function controlledArtifacts(world: World, r: RobotState): number {
   let count = r.hopper.length; // stored possession
-  const moving = hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED;
-  if (!moving) return count; // no herding without motion — balls can roll free
+  const speed = hyp(r.vel.x, r.vel.y);
+  if (speed < C.POSSESSION_MOVE_SPEED) return count; // no herding without motion
+  const dx = r.vel.x / speed; // direction of travel
+  const dy = r.vel.y / speed;
   const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN;
   for (const b of world.balls) {
     if (b.state.kind !== 'ground') continue;
     const cp = closestPointOnRobot(r, b.pos);
-    if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach) count++;
+    if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) > reach) continue; // not touching
+    if ((b.pos.x - r.pos.x) * dx + (b.pos.y - r.pos.y) * dy <= 0) continue; // not in front
+    if (b.vel.x * dx + b.vel.y * dy < C.POSSESSION_CARRY_SPEED) continue; // not being carried
+    count++;
   }
   return count;
 }
@@ -318,25 +339,49 @@ function touchingOpponent(world: World, r: RobotState): boolean {
   return false;
 }
 
-/** Is `pinned` trapped against a field boundary with `pinner` on the open-field
- * side? True when the pinned robot's leading corner (straight AWAY from the
- * pinner) sits within PIN_WALL_SLOP of the perimeter — i.e. it cannot retreat
- * from the pinner without hitting a wall. This distinguishes the aggressor from
- * the victim in a shove where both robots are slow and commanding motion. */
-function pinnedAgainstWall(pinner: RobotState, pinned: RobotState): boolean {
+/** the ESCAPE direction for a pin: the unit vector from the pinner to the pinned
+ * robot, i.e. the way the victim would have to go to get out. Null when the two are
+ * coincident, where "away" is undefined. */
+function escapeDir(pinner: RobotState, pinned: RobotState): { x: number; y: number } | null {
   const dx = pinned.pos.x - pinner.pos.x;
   const dy = pinned.pos.y - pinner.pos.y;
   const d = hyp(dx, dy);
-  if (d < 1e-3) return false; // coincident — can't tell which way "away" is
-  const ex = dx / d;
-  const ey = dy / d; // escape direction: from the pinner toward (and past) the pinned
+  if (d < 1e-3) return null;
+  return { x: dx / d, y: dy / d };
+}
+
+/**
+ * Is `pinned` trapped against a SOLID with `pinner` on the open-field side?
+ *
+ * True when the pinned robot's leading corner (straight AWAY from the pinner) sits
+ * within PIN_WALL_SLOP of something it cannot drive through — i.e. it cannot retreat
+ * from the pinner. This is what distinguishes the aggressor from the victim in a
+ * shove where both robots are slow and both are commanding motion.
+ *
+ * "Solid" means every solid, not just the perimeter. The old test accepted the field
+ * wall alone, so a robot held against a GOAL WEDGE or a CLASSIFIER CHANNEL — the two
+ * corners of the field where pinning actually happens, since that is where everyone
+ * is trying to score — was never recognised as pinned at all.
+ */
+function pinnedAgainstWall(pinner: RobotState, pinned: RobotState): boolean {
+  const e = escapeDir(pinner, pinned);
+  if (!e) return false;
   let reach = 0;
   for (const c of robotCorners(pinned)) {
-    reach = Math.max(reach, (c.x - pinned.pos.x) * ex + (c.y - pinned.pos.y) * ey);
+    reach = Math.max(reach, (c.x - pinned.pos.x) * e.x + (c.y - pinned.pos.y) * e.y);
   }
-  const px = pinned.pos.x + ex * (reach + C.PIN_WALL_SLOP);
-  const py = pinned.pos.y + ey * (reach + C.PIN_WALL_SLOP);
-  return Math.abs(px) >= C.FIELD_HALF || Math.abs(py) >= C.FIELD_HALF;
+  const p = {
+    x: pinned.pos.x + e.x * (reach + C.PIN_WALL_SLOP),
+    y: pinned.pos.y + e.y * (reach + C.PIN_WALL_SLOP),
+  };
+  if (Math.abs(p.x) >= C.FIELD_HALF || Math.abs(p.y) >= C.FIELD_HALF) return true; // perimeter
+  for (const a of ['red', 'blue'] as Alliance[]) {
+    // goalLineValue > 0 is BEHIND the goal face — inside the wedge. The probe point
+    // is inside the field by the test above, so that alone places it in the footprint.
+    if (goalLineValue(p, a) > 0) return true;
+    if (inRect(p, classifierRect(a))) return true;
+  }
+  return false;
 }
 
 function updatePins(world: World, dt: number, commands: Map<number, RobotCommand>): void {
@@ -354,32 +399,55 @@ function updatePins(world: World, dt: number, commands: Map<number, RobotCommand
       const commandingMove =
         !!cmd && (hyp(cmd.driveX, cmd.driveY) > 0.1 || Math.abs(cmd.rotate) > 0.1);
 
-      // Only the ACTUAL pinner is fouled: the pinned robot must be trapped
-      // against a field boundary with the pinner on the open-field side. Without
-      // this, a wall shove satisfies BOTH orderings (each robot is slow and
-      // commanding), and the victim's alliance was wrongly fouled too.
-      if (!inContact(pinner.id, pinned.id) || !commandingMove || !pinnedAgainstWall(pinner, pinned)) {
-        delete pen.pins[key]; // condition broken — reset the accumulator
+      // Only the ACTUAL pinner is fouled: the pinned robot must be trapped against
+      // a solid with the pinner on the open-field side. Without this, a wall shove
+      // satisfies BOTH orderings (each robot is slow and commanding), and the
+      // victim's alliance was wrongly fouled too.
+      const contact = inContact(pinner.id, pinned.id);
+      const held = contact && commandingMove && pinnedAgainstWall(pinner, pinned);
+
+      const existing = pen.pins[key];
+      if (!held) {
+        // THE CLOCK PAUSES, IT DOES NOT RESET. Every input here flickers — the SAT
+        // contact list drops a tick as bumpers unload, the victim's stick crosses
+        // the dead zone, the wall probe slips past the slop as the pair rocks — and
+        // wiping the accumulator on any one-tick lapse is why a genuine five-second
+        // pin used to count to half a second over and over and never foul.
+        if (!existing) continue;
+        existing.free = (existing.free ?? 0) + dt;
+        // ESCAPED = out of contact AND clear: either the pair is now far apart (the
+        // pinner backed off, which frees the victim just as much as the victim
+        // driving away does) or the victim has left where the pin began.
+        const gone =
+          !contact &&
+          (hyp(pinned.pos.x - pinner.pos.x, pinned.pos.y - pinner.pos.y) > C.PIN_ESCAPE_DIST ||
+            hyp(pinned.pos.x - existing.ox, pinned.pos.y - existing.oy) > C.PIN_ESCAPE_DIST);
+        if (gone || existing.free >= C.PIN_BREAK_S) delete pen.pins[key]; // really let go
         continue;
       }
 
-      let st = pen.pins[key];
+      let st = existing;
       if (!st) {
         st = { seconds: 0, ox: pinned.pos.x, oy: pinned.pos.y, px: pinned.pos.x, py: pinned.pos.y };
         pen.pins[key] = st;
       }
+      st.free = 0; // the hold is on again
       if (st.fired) continue; // already fouled this pin — hold until it breaks
 
-      // actual (post-solver) speed from the position delta — robust whether or
-      // not a blocked robot's velocity has been zeroed
-      const speed = hyp(pinned.pos.x - st.px, pinned.pos.y - st.py) / dt;
-      const disp = hyp(pinned.pos.x - st.ox, pinned.pos.y - st.oy);
+      // Progress AWAY from the pinner, from the actual (post-solver) position delta
+      // — robust whether or not a blocked robot's velocity has been zeroed.
+      //
+      // Measured along the ESCAPE direction, not as raw speed: a victim being
+      // bulldozed sideways along a wall is moving quickly and is no less pinned, and
+      // pausing the count every time it slid was the other reason real pins never
+      // reached three seconds. Only actually GAINING GROUND on the pinner counts.
+      const e = escapeDir(pinner, pinned);
+      const moved = { x: pinned.pos.x - st.px, y: pinned.pos.y - st.py };
+      const escapeSpeed = e ? (moved.x * e.x + moved.y * e.y) / dt : 0;
       st.px = pinned.pos.x;
       st.py = pinned.pos.y;
 
-      if (disp > C.PIN_ESCAPE_DIST) {
-        delete pen.pins[key]; // got away — no pin
-      } else if (speed < C.PIN_STUCK_SPEED) {
+      if (escapeSpeed < C.PIN_STUCK_SPEED) {
         st.seconds += dt;
         if (st.seconds >= C.PIN_SECONDS) {
           const prior = pen.pinFouls[pinner.id] ?? 0;
@@ -390,7 +458,7 @@ function updatePins(world: World, dt: number, commands: Map<number, RobotCommand
           st.fired = true;
         }
       } else {
-        st.seconds = 0; // moving freely though not yet escaped — pause the clock
+        st.seconds = 0; // breaking away under its own power — pause the clock
       }
     }
   }

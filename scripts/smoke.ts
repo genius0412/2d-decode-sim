@@ -28,6 +28,7 @@ import {
   goalCenter,
   goalTriangle,
   goalFaceNormal,
+  goalFacePoints,
   goalLineValue,
   basinFunnelTarget,
   railPos,
@@ -2861,8 +2862,9 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r.heading = 0;
   r.hopper = ['green', 'green', 'green']; // full hopper = 3 stored (at the limit)
   r.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 }; // driving = herding
-  // a loose ground ball plowed against the robot -> 4 controlled, over the limit
-  w.balls.push({ id: 9001, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
+  // a loose ground ball being BULLDOZED: touching, ahead along the direction of
+  // travel, and carried along at the robot's own speed -> 4 controlled, over the limit
+  w.balls.push({ id: 9001, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_MOVE_SPEED + 4, y: 0 }, z: 0, vz: 0 });
   // hold the over-possession just past the grace window
   for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 2; i++) {
     w.time = i / 60;
@@ -2915,7 +2917,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r4.heading = 0;
   r4.hopper = ['green', 'green', 'green'];
   r4.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
-  w4.balls.push({ id: 9003, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
+  w4.balls.push({ id: 9003, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_MOVE_SPEED + 4, y: 0 }, z: 0, vz: 0 });
   for (let i = 0; i < Math.floor((POSSESSION_GRACE / 2) / (1 / 60)); i++) { // < grace
     w4.time = i / 60;
     updatePenalties(w4, 1 / 60, new Map());
@@ -3240,6 +3242,94 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     'a repeat pin (after separating) escalates to MAJOR',
     w.match.fouls.blue.major === 1,
     `blueMinor=${w.match.fouls.blue.minor} blueMajor=${w.match.fouls.blue.major}`,
+  );
+}
+
+// ---- G422 pinning: the 3-count SURVIVES the flicker in its own inputs -------
+// Every input to the pin test drops out for the odd tick in a real match — the SAT
+// contact list unloads as bumpers rock, the victim's stick crosses the dead zone.
+// The count PAUSES on a lapse instead of resetting, so a pin held through those
+// gaps still reaches 3 s; wiping it on any one-tick lapse is why the foul used to
+// almost never fire.
+{
+  const w = pinWorld();
+  const idle = new Map([[0, cmd({ driveY: 1 })], [1, cmd({})]]); // victim's stick at rest
+  for (let i = 0; i < 12; i++) {
+    runCmds(w, PIN_CMDS, 0.28);
+    runCmds(w, idle, 0.05); // a lapse well under PIN_BREAK_S
+  }
+  check(
+    'a pin held through repeated brief lapses still draws the foul',
+    w.match.fouls.blue.minor + w.match.fouls.blue.major >= 1,
+    `blueMinor=${w.match.fouls.blue.minor} blueMajor=${w.match.fouls.blue.major}`,
+  );
+}
+
+// ---- G422 pinning: a GOAL WEDGE traps just like the perimeter ---------------
+// The old wall test accepted only the field PERIMETER, so a robot held against a
+// goal or the classifier — the corners where everyone is trying to score, and so
+// where pinning actually happens — was never recognised as pinned at all. This
+// exact scenario drew zero fouls before.
+{
+  const w = foulWorld();
+  const n = goalFaceNormal('red'); // unit normal, INTO the field off the goal face
+  const face = goalFacePoints('red');
+  const mid = { x: (face[0].x + face[1].x) / 2, y: (face[0].y + face[1].y) / 2 };
+  const vict = w.robots[1]; // red, backed onto its own goal face
+  const pinr = w.robots[0]; // blue, pressing it there from the field side
+  vict.heading = Math.atan2(-n.y, -n.x); // both face the goal (foulWorld is robot-centric)
+  pinr.heading = vict.heading;
+  vict.pos = { x: mid.x + n.x * 13.5, y: mid.y + n.y * 13.5 };
+  pinr.pos = { x: mid.x + n.x * 32, y: mid.y + n.y * 32 };
+  const drive = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]); // both push at the face
+  runCmds(w, drive, 4.2);
+  check(
+    'pinning a robot against the GOAL face fouls the pinner (not just the perimeter)',
+    w.match.fouls.blue.minor + w.match.fouls.blue.major >= 1 &&
+      w.match.fouls.red.minor + w.match.fouls.red.major === 0,
+    `blue=${w.match.fouls.blue.minor}/${w.match.fouls.blue.major} red=${w.match.fouls.red.minor}/${w.match.fouls.red.major}`,
+  );
+}
+
+// ---- G408: the plow test is CONTACT + CARRIED, not proximity ----------------
+// The lenient model only counts a loose ball the robot is genuinely bulldozing:
+// touching, ahead along the direction of travel, and moving WITH the robot. A ball
+// clipped in passing, or squirting out sideways, is not possession.
+{
+  const w = foulWorld();
+  const r = w.robots[0];
+  r.pos = { x: 0, y: -8 };
+  r.heading = 0;
+  r.hopper = ['green', 'green', 'green'];
+  r.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
+  // touching and in front, but NOT being carried — it is rolling away sideways
+  w.balls.push({ id: 9101, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: 0, y: 20 }, z: 0, vz: 0 });
+  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 30; i++) {
+    w.time = i / 60;
+    updatePenalties(w, 1 / 60, new Map());
+  }
+  check(
+    'a ball squirting sideways off the bumper is not plowed (no G408)',
+    w.match.fouls.blue.minor === 0,
+    `blueMinor=${w.match.fouls.blue.minor}`,
+  );
+
+  // ...and a ball BEHIND the robot is something it drove past, not something it herds
+  const w2 = foulWorld();
+  const r2 = w2.robots[0];
+  r2.pos = { x: 0, y: -8 };
+  r2.heading = 0;
+  r2.hopper = ['green', 'green', 'green'];
+  r2.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
+  w2.balls.push({ id: 9102, color: 'purple', state: { kind: 'ground' }, pos: { x: -2, y: 0 }, vel: { x: POSSESSION_MOVE_SPEED + 4, y: 0 }, z: 0, vz: 0 });
+  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 30; i++) {
+    w2.time = i / 60;
+    updatePenalties(w2, 1 / 60, new Map());
+  }
+  check(
+    'a ball trailing BEHIND the robot is not plowed (no G408)',
+    w2.match.fouls.blue.minor === 0,
+    `blueMinor=${w2.match.fouls.blue.minor}`,
   );
 }
 

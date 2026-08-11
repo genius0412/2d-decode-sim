@@ -426,6 +426,12 @@ export interface PinState {
   /** this pin already drew a foul — don't re-fire until the pair separates
    * (a genuine repeat pin), so a sustained push isn't a foul every 3 s */
   fired?: boolean;
+  /** seconds the hold has been LAPSED. Every input to the pin test flickers tick
+   * to tick (the SAT contact drops as bumpers unload, the victim's stick crosses
+   * the dead zone), so a lapse PAUSES the count instead of wiping it; the pin is
+   * over only once this passes PIN_BREAK_S, or the victim separates and drives
+   * PIN_ESCAPE_DIST away. */
+  free?: number;
 }
 
 /** deterministic penalty-engine state (all plain JSON — serializable) */
