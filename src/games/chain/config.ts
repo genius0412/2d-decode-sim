@@ -356,12 +356,14 @@ export const CHAIN_TWIN_BARREL_OFFSET = 1.65; // in — lateral spacing of the t
  *
  * `GAP` is the clear width between the plates: a `CHAIN_PARTICLE_R * 2` = 3" ball plus running
  * clearance either side. Anything narrower is a channel the game piece cannot fit down.
- * `LEN` is how far the plates run: long enough to carry the wheel and guide the piece off it,
- * and no longer — the plates are a launcher, not a rifle, and a long pair reads as a barrel,
- * which is exactly the wrong thing.
+ * `OVERHANG` is how far the plates run PAST the slew ring at each end. The assembly is
+ * CENTRED on the ring — the Particle is fed up the hole in the middle of it, so the plates
+ * have to straddle that axis to receive it — and the overhang is all the length they get
+ * beyond it: enough to carry the wheel and guide the piece off it, and no more. The plates
+ * are a launcher, not a rifle, and a long pair reads as a barrel.
  */
 export const CHAIN_LAUNCH_PLATE_GAP = 3.3; // in — clear channel width (3" Particle + clearance)
-export const CHAIN_LAUNCH_PLATE_LEN = 5; // in — plate length along the shot
+export const CHAIN_LAUNCH_PLATE_OVERHANG = 1.2; // in — plate reach past the ring, each end
 
 export const CHAIN_DEFAULT_SCORE_MODE: ChainScoreMode = 'turret';
 

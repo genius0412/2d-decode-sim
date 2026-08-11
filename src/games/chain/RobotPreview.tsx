@@ -6,7 +6,8 @@ import {
   CHAIN_LAUNCH_LINE_FRAC,
   CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_LAUNCH_PLATE_GAP,
-  CHAIN_LAUNCH_PLATE_LEN,
+  CHAIN_LAUNCH_PLATE_OVERHANG,
+  CHAIN_PARTICLE_R,
   CHAIN_DEFAULT_CATALYST,
   CHAIN_ARM_DRAW,
   CHAIN_CORNER_BODY_INSET,
@@ -362,6 +363,9 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
             />
           );
         })}
+        {/* the FEED HOLE the Particle rises through, dead centre on the turret axis — the
+            reason the launcher straddles the ring instead of hanging off one side of it */}
+        <circle cx={0} cy={0} r={CHAIN_PARTICLE_R + 0.15} fill="var(--ds-bg)" stroke={stroke} strokeWidth={0.2} />
         {/* the SHOOTER HEAD: a body with the Particle channel cut through it and a pair of
             flywheels at the muzzle. A TWIN draws both, at the offsets the sim launches from —
             the preview shows it stowed forward, so the head points up. */}
@@ -372,9 +376,11 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
           // geometry as `launcher` in the match sprite (drawRobot.ts).
           const gap = CHAIN_LAUNCH_PLATE_GAP;
           const plate = 0.42;
-          const wheelY = -(cTurretR + 0.9); // the flywheel, just outboard of the slew ring
-          const y0 = wheelY + CHAIN_LAUNCH_PLATE_LEN * 0.62; // plate rear (toward the ring)
-          const y1 = y0 - CHAIN_LAUNCH_PLATE_LEN; // ...and the muzzle end
+          // CENTRED on the ring: the Particle is fed up the hole in the MIDDLE of the turret,
+          // so the plates straddle that axis. Front is up here, so the muzzle is −y.
+          const y0 = cTurretR + CHAIN_LAUNCH_PLATE_OVERHANG; // plate rear
+          const y1 = -y0; // ...and the muzzle end
+          const wheelY = -cTurretR * 0.6; // the flywheel: past the feed hole, before the muzzle
           return (
             <g key={o}>
               {[1, -1].map((sg) => (

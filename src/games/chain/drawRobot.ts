@@ -10,7 +10,8 @@ import {
   CHAIN_BEAM_RUMBLE,
   CHAIN_TWIN_BARREL_OFFSET,
   CHAIN_LAUNCH_PLATE_GAP,
-  CHAIN_LAUNCH_PLATE_LEN,
+  CHAIN_LAUNCH_PLATE_OVERHANG,
+  CHAIN_PARTICLE_R,
   CHAIN_DEFAULT_CATALYST,
   CHAIN_CATAPULT_RANGE_MIN,
   CHAIN_CATAPULT_RANGE_MAX,
@@ -466,6 +467,16 @@ function drawTurret(
     ctx.lineTo(Math.cos(a) * ring, Math.sin(a) * ring);
     ctx.stroke();
   }
+  // THE FEED HOLE, dead centre: the Particle comes UP through the middle of the ring, which
+  // is why the shooter straddles the ring rather than hanging off one side of it. Drawn on
+  // the (non-rotating) ring, since a hole on the axis looks the same at every heading.
+  ctx.fillStyle = 'rgba(6,9,13,0.85)';
+  ctx.beginPath();
+  ctx.arc(0, 0, CHAIN_PARTICLE_R + 0.15, 0, TAU);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(200,214,230,0.28)';
+  ctx.lineWidth = 0.18;
+  ctx.stroke();
 
   // THE HEAD — everything below turns with `turretHeading`
   ctx.rotate(r.turretHeading);
@@ -488,12 +499,15 @@ function drawTurret(
   const chans = twin ? [-CHAIN_TWIN_BARREL_OFFSET, CHAIN_TWIN_BARREL_OFFSET] : [0];
   const gap = CHAIN_LAUNCH_PLATE_GAP; // a Particle has to fit down it — same for one or two
   const plate = 0.42; // plate thickness
-  // The plates are a LAUNCHER, not a rifle: they carry the wheel and guide the piece off it,
-  // and stop. They used to run from behind the ring all the way to the chassis edge — half the
-  // robot long — which is what made the assembly read as a barrel however it was detailed.
-  const wheelX = ring + 0.9; // the flywheel sits just outboard of the slew ring
-  const x0 = wheelX - CHAIN_LAUNCH_PLATE_LEN * 0.62;
-  const x1 = x0 + CHAIN_LAUNCH_PLATE_LEN;
+  // CENTRED ON THE RING, because the Particle comes up the hole in the MIDDLE of it: the feed
+  // is on the turret axis, so the plates have to straddle that axis to receive it. They used
+  // to start outboard of the ring, which put the hole BEHIND the assembly — the ball would
+  // have had to appear out of the ring and then find its way into a launcher parked in front
+  // of it. Each end clears the rim by CHAIN_LAUNCH_PLATE_OVERHANG and no more; the plates are
+  // a launcher, not a rifle.
+  const x1 = ring + CHAIN_LAUNCH_PLATE_OVERHANG; // muzzle, just past the rim
+  const x0 = -x1; // ...and the same again behind the axis
+  const wheelX = ring * 0.6; // the flywheel: past the feed hole, before the muzzle
 
   // THE PLATES — one per distinct channel wall, so a twin draws three, not four
   const edges = [...new Set(chans.flatMap((c) => [c - gap / 2, c + gap / 2]))];
@@ -535,11 +549,15 @@ function drawTurret(
     ctx.stroke();
   }
 
-  // the indexer boss at the breech — where a Particle is fed up into the shooter
-  ctx.fillStyle = loaded ? GREEN : ALU_DK;
-  ctx.beginPath();
-  ctx.arc(-ring * 0.28, 0, 0.52, 0, TAU);
-  ctx.fill();
+  // LOADED reads as a Particle sitting IN the feed hole, waiting to be fed up between the
+  // plates — which is both where it actually is and a better cue than a status pip, since it
+  // is the same green ball the field is covered in.
+  if (loaded) {
+    ctx.fillStyle = GREEN;
+    ctx.beginPath();
+    ctx.arc(0, 0, CHAIN_PARTICLE_R * 0.78, 0, TAU);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
