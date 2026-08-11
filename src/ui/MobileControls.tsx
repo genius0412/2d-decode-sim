@@ -132,11 +132,20 @@ export function MobileControls({
   game,
   layout,
   editing = false,
+  autoIntake = false,
+  autoFire = false,
+  hasFling = false,
   onLayoutChange,
 }: {
   inputManager: InputManager;
-  /** the active game — the catalyst button only applies to Chain Reaction */
+  /** the active game — the catalyst buttons only apply to Chain Reaction */
   game?: GameId;
+  /** the local robot's live assists: a button for an action the ROBOT is doing for you is
+   * dead weight on a screen this small, so it is not drawn while its assist is on. */
+  autoIntake?: boolean;
+  autoFire?: boolean;
+  /** Chain Reaction: this build's catalyst has a CATAPULT, so the THROW button applies */
+  hasFling?: boolean;
   /** editable touch-control layout (centres as viewport fractions) */
   layout: MobileLayout;
   /** edit mode: drag controls to reposition instead of driving */
@@ -266,13 +275,34 @@ export function MobileControls({
   };
 
   const btnSize = (primary: boolean): number => (primary ? 82 : 62) * scale;
-  const buttons: { name: keyof MobileLayout; label: string; glyph: string; cls: string; primary: boolean; field: 'intake' | 'fire' | 'catalyst' }[] = [
-    { name: 'intake', label: 'INTAKE', glyph: '▼', cls: 'intake', primary: false, field: 'intake' },
-    ...(game === 'chain'
-      ? [{ name: 'catalyst' as const, label: 'CATALYST', glyph: '⬡', cls: 'catalyst', primary: false, field: 'catalyst' as const }]
-      : []),
-    { name: 'shoot', label: 'SHOOT', glyph: '◎', cls: 'shoot', primary: true, field: 'fire' },
-  ];
+  const chain = game === 'chain';
+  /**
+   * The action buttons.
+   *
+   * `auto` marks one the ROBOT is currently handling itself. Those are HIDDEN in play —
+   * a button that does nothing is worse than no button on a screen this size, where the
+   * pad is competing with the field for room — but still drawn (ghosted) in EDIT mode, so
+   * the layout stays fully arrangeable whatever the assists happen to be set to right now.
+   *
+   * `absent` marks one this build simply does not have — a DECODE robot has no catalyst,
+   * a claw-only catalyst has nothing to throw — and those are never drawn at all.
+   */
+  interface ActionSpec {
+    name: keyof MobileLayout;
+    label: string;
+    glyph: string;
+    cls: string;
+    primary: boolean;
+    field: 'intake' | 'fire' | 'catalyst' | 'fling';
+    absent?: boolean;
+    auto?: boolean;
+  }
+  const buttons: ActionSpec[] = ([
+    { name: 'intake', label: 'INTAKE', glyph: '▼', cls: 'intake', primary: false, field: 'intake', auto: autoIntake },
+    { name: 'catalyst', label: 'CATALYST', glyph: '⬡', cls: 'catalyst', primary: false, field: 'catalyst', absent: !chain },
+    { name: 'fling', label: 'THROW', glyph: '⤴', cls: 'fling', primary: false, field: 'fling', absent: !chain || !hasFling },
+    { name: 'shoot', label: 'SHOOT', glyph: '◎', cls: 'shoot', primary: true, field: 'fire', auto: autoFire },
+  ] as ActionSpec[]).filter((b) => !b.absent && (editing || !b.auto));
 
   return (
     <>
@@ -297,9 +327,9 @@ export function MobileControls({
           return (
             <ActionButton
               key={b.name}
-              label={b.label}
+              label={b.auto ? `${b.label} (automatic)` : b.label}
               glyph={b.glyph}
-              cls={b.cls}
+              cls={`${b.cls}${b.auto ? ' auto' : ''}`}
               size={size}
               left={p.x}
               top={p.y}

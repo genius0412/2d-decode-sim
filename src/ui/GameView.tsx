@@ -338,6 +338,9 @@ export function GameView({
           game={hud?.game}
           layout={settings.mobileLayout}
           editing={editingLayout}
+          autoIntake={hud?.autoIntake ?? false}
+          autoFire={hud?.autoFire ?? false}
+          hasFling={hud?.catalystFling ?? false}
           onLayoutChange={(l) => onSettingsChange?.({ ...settings, mobileLayout: l })}
         />
       )}

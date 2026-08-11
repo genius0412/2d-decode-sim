@@ -724,25 +724,30 @@ export const CHAIN_CLAW_SLEW = 9;
  *  tracking, and the carriage stows centred rather than parking against an end stop. */
 export const CHAIN_TRACK_APPROACH = 12;
 
+// CYCLE times were cut 25% across the board (2026-08): back-to-back catalyst actions —
+// grab, drive, place — were reading as a beat of dead air between each one. This is a
+// uniform softening, NOT a rebalance: every mechanism keeps its ORDER and its relative
+// gaps (turret < rail < arm < launcher), which is what the cooldown is actually for —
+// stopping the reach-heavy archetypes from also being the fastest.
 export const CHAIN_CATALYSTS: Record<ChainCatalystType, ChainCatalystGeom> = {
   // ARM: `reach` here is only the FLOOR (what a maxed-out 18" chassis gets). The real value
   // is per-chassis — see `chainArmReach`, which `chainCatalystGeom` substitutes in. The arm
   // is the one mechanism that EXTENDS, so it is the one that gets to spend the leftover
   // prism; the launcher's scoop and the turret's rail don't telescope and stay fixed.
-  arm: { reach: CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2, cone: 0.87, cycle: 0.9, massLb: 1.4, fling: false },
+  arm: { reach: CHAIN_EXPANSION + CHAIN_CATALYST_OD / 2, cone: 0.87, cycle: 0.68, massLb: 1.4, fling: false },
   // LAUNCHER raised 8 → 11. The 8" scoop was priced back when the catapult was (wrongly)
   // the long-range PLACER, so the claw was taxed to compensate. Now that the claw does the
   // grabbing and placing like everyone else's, that tax made it needlessly awkward — its
   // real costs are the weight, the slow cycle, and the narrow cone. Still the shortest of
   // the three, just no longer punishing.
-  launcher: { reach: 5, cone: 0.61, cycle: 1.0, massLb: 2.0, fling: true },
+  launcher: { reach: 5, cone: 0.61, cycle: 0.75, massLb: 2.0, fling: true },
   // TURRET: a claw that AIMS anywhere but stays bolted where it is.
-  turret: { reach: 7, cone: Math.PI, cycle: 0.55, massLb: 2.6, fling: false },
+  turret: { reach: 7, cone: Math.PI, cycle: 0.41, massLb: 2.6, fling: false },
   // RAIL: the same turret claw on a linear track that also TRAVERSES the mounted side, so
   // the claw can be positioned as well as aimed. It buys effective reach without extending
   // (the carriage covers the span) and pays for it in weight and a slower cycle — a track,
   // its carriage and a second actuator are real hardware bolted along a whole side.
-  rail: { reach: 7, cone: Math.PI, cycle: 0.7, massLb: 3.4, fling: false },
+  rail: { reach: 7, cone: Math.PI, cycle: 0.53, massLb: 3.4, fling: false },
 };
 
 /**

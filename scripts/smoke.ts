@@ -8368,13 +8368,15 @@ const mkMM = () => {
       }
       return n;
     };
-    const nTurret = actionsIn('turret', 4);
-    const nArm = actionsIn('arm', 4);
-    const nLauncher = actionsIn('launcher', 4);
+    // 12 s, not 4: the cycles are close enough now (0.41 / 0.68 / 0.75) that a short window
+    // rounds two of them to the same action count and the check stops measuring anything.
+    const nTurret = actionsIn('turret', 12);
+    const nArm = actionsIn('arm', 12);
+    const nLauncher = actionsIn('launcher', 12);
     check(
       'catalyst: cycle rate turret > arm > catapult (reach and range cost tempo)',
       nTurret > nArm && nArm > nLauncher,
-      `turret ${nTurret} arm ${nArm} launcher ${nLauncher} actions / 4s`,
+      `turret ${nTurret} arm ${nArm} launcher ${nLauncher} actions / 12s`,
     );
 
     // WEIGHT: ordered arm < launcher < turret, and ALL modest in absolute terms — these

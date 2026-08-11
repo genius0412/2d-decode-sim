@@ -29,6 +29,7 @@ export const DEFAULT_MOBILE_LAYOUT: GameSettings['mobileLayout'] = {
   shoot: { x: 0.9, y: 0.44 },
   intake: { x: 0.74, y: 0.44 },
   catalyst: { x: 0.82, y: 0.29 },
+  fling: { x: 0.66, y: 0.29 },
   scale: 1,
 };
 
@@ -70,6 +71,7 @@ function cloneMobileLayout(l: GameSettings['mobileLayout']): GameSettings['mobil
     shoot: { ...l.shoot },
     intake: { ...l.intake },
     catalyst: { ...l.catalyst },
+    fling: { ...l.fling },
     scale: l.scale,
   };
 }
@@ -320,6 +322,8 @@ export function coerceSettings(raw: unknown): GameSettings {
         shoot: pos(ml.shoot, DEFAULT_MOBILE_LAYOUT.shoot),
         intake: pos(ml.intake, DEFAULT_MOBILE_LAYOUT.intake),
         catalyst: pos(ml.catalyst, DEFAULT_MOBILE_LAYOUT.catalyst),
+        // absent in layouts saved before the throw had its own button — defaulted, not dropped
+        fling: pos(ml.fling, DEFAULT_MOBILE_LAYOUT.fling),
         scale: typeof ml.scale === 'number' ? clamp(ml.scale, 0.7, 1.5) : 1,
       };
     }

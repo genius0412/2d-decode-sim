@@ -637,13 +637,17 @@ export interface MobilePos {
   x: number;
   y: number;
 }
-/** editable positions for the two joysticks + the three action buttons. */
+/** editable positions for the two joysticks + the action buttons. */
 export interface MobileLayout {
   drive: MobilePos;
   turn: MobilePos;
   shoot: MobilePos;
   intake: MobilePos;
   catalyst: MobilePos;
+  /** Chain Reaction, LAUNCHER catalyst only: the CATAPULT throw. Its own button for the
+   * same reason it has its own keybind — a throw is not the claw's grab/place, and a
+   * driver must never have to guess which one a press means. */
+  fling: MobilePos;
   /** overall control size multiplier (0.7..1.5). */
   scale: number;
 }

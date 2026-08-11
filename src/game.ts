@@ -18,7 +18,7 @@ import { DEFAULT_ASSISTS, DEFAULT_SPEC, type RobotSetup } from './sim/spawn';
 import { moduleFor, gameOf } from './games';
 import type { GameModule } from './games';
 import { accelMultiplier as chainAccelMultiplier, type EndgameState } from './games/chain/state';
-import { chainHopperCap } from './games/chain/config';
+import { chainCatalystGeom, chainHopperCap } from './games/chain/config';
 import { chainCatalystPrompt } from './games/chain/play';
 import { beamRide } from './games/chain/beams';
 import { startMatch, robotsEnabled } from './sim/match';
@@ -145,6 +145,10 @@ export interface HudSnapshot {
   aimAssist: boolean;
   autoIntake: boolean;
   autoFire: boolean;
+  /** Chain Reaction: does the local robot's catalyst have a CATAPULT to throw with? The
+   * throw is its own action, so the touch pad only shows its button on a build that
+   * actually has one. False for DECODE and for claw-only catalysts. */
+  catalystFling: boolean;
   hopper: ArtifactColor[];
   /** local robot's current drive power draw (0..POWER_DRAW_MAX) — flywheel
    * spin-up + intake pulling current off the drive motors; shown as the HUD gauge */
@@ -308,12 +312,12 @@ export class GameController {
     this.audio.voiceVolume = settings.audio.volume.voice;
     this.input = new InputManager(settings.bindings);
 
-    // Mobile Mode: enable assists by default if touch-capable. Aim assist is not
-    // listed — it is unconditionally on for everyone now (see coerceAssists).
-    if (window.matchMedia('(pointer: coarse)').matches) {
-      this.settings.assists.autoFire = true;
-      this.settings.assists.autoIntake = true;
-    }
+    // NO mobile assist override. A touch device used to have autoFire/autoIntake FORCED on
+    // here, which dates from before every assist defaulted on and before they lived on the
+    // robot — it silently threw away a preference the player had set. It also made the touch
+    // pad's INTAKE and SHOOT buttons unreachable, since those are hidden precisely when the
+    // robot is doing that job itself: a mobile player could never get either button back.
+    // Mobile still STARTS with the assists on, because everyone does (`PLAYER_ASSISTS`).
 
     this.world = this.makeWorld();
     this.prevPhase = this.world.match.phase;
@@ -1130,6 +1134,7 @@ export class GameController {
       aimAssist: r.aimAssist,
       autoIntake: r.autoIntake,
       autoFire: r.autoFire,
+      catalystFling: w.game === 'chain' && chainCatalystGeom(r.spec).fling,
       hopper: [...r.hopper],
       powerDraw: r.powerDraw,
       inLaunchZone: w.mode === 'free' || robotInLaunchZone(r),

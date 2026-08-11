@@ -1586,6 +1586,16 @@ button {
   border-color: var(--ds-on-field-accent);
   cursor: grab;
 }
+/* the CATAPULT throw — a different action from the claw, so a different colour */
+.mobile-btn.fling {
+  border-color: var(--ds-on-field-dim);
+  color: var(--ds-on-field-dim);
+}
+/* an action the ROBOT is doing for you: never drawn in play, ghosted while laying the
+   pad out so the layout stays arrangeable whatever the assists are set to today */
+.mobile-btn.auto {
+  opacity: 0.45;
+}
 
 /* edit-layout bar (mobile control customization) */
 .mobile-edit-bar {
