@@ -341,7 +341,28 @@ export const CHAIN_SCORE_MODES = ['turret', 'twinturret', 'drum', 'dumper'] as c
 export const CHAIN_TWIN_FIRE_MULT = 1.15;
 export const CHAIN_STORE_TWIN_MULT = 0.42;
 export const CHAIN_TWIN_MASS_FLOOR = 2.5; // lb added to the chassis mass floor
-export const CHAIN_TWIN_BARREL_OFFSET = 1.5; // in — lateral spacing of the two muzzles
+/**
+ * Lateral spacing of a TWIN's two muzzles from the turret centreline.
+ *
+ * = `CHAIN_LAUNCH_PLATE_GAP / 2`, and that is not a coincidence: the two channels sit side by
+ * side sharing a centre plate, so the muzzles are exactly one channel-width apart. It used to
+ * be 1.5", which is narrower than a Particle — two channels 3" apart could not each pass a 3"
+ * ball, and drawing the launcher honestly is what surfaced it.
+ */
+export const CHAIN_TWIN_BARREL_OFFSET = 1.65; // in — lateral spacing of the two muzzles
+/**
+ * LAUNCHER PLATE GEOMETRY — a flywheel launcher is two parallel plates with a wheel between
+ * them, so these are the two numbers that describe one.
+ *
+ * `GAP` is the clear width between the plates: a `CHAIN_PARTICLE_R * 2` = 3" ball plus running
+ * clearance either side. Anything narrower is a channel the game piece cannot fit down.
+ * `LEN` is how far the plates run: long enough to carry the wheel and guide the piece off it,
+ * and no longer — the plates are a launcher, not a rifle, and a long pair reads as a barrel,
+ * which is exactly the wrong thing.
+ */
+export const CHAIN_LAUNCH_PLATE_GAP = 3.3; // in — clear channel width (3" Particle + clearance)
+export const CHAIN_LAUNCH_PLATE_LEN = 5; // in — plate length along the shot
+
 export const CHAIN_DEFAULT_SCORE_MODE: ChainScoreMode = 'turret';
 
 /**

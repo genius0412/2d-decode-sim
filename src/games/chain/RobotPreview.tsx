@@ -5,6 +5,8 @@ import {
   CHAIN_DEFAULT_SCORE_MODE,
   CHAIN_LAUNCH_LINE_FRAC,
   CHAIN_TWIN_BARREL_OFFSET,
+  CHAIN_LAUNCH_PLATE_GAP,
+  CHAIN_LAUNCH_PLATE_LEN,
   CHAIN_DEFAULT_CATALYST,
   CHAIN_ARM_DRAW,
   CHAIN_CORNER_BODY_INSET,
@@ -364,14 +366,15 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
             flywheels at the muzzle. A TWIN draws both, at the offsets the sim launches from —
             the preview shows it stowed forward, so the head points up. */}
         {(cMode === 'twinturret' ? [CHAIN_TWIN_BARREL_OFFSET, -CHAIN_TWIN_BARREL_OFFSET] : [0]).map((o) => {
-          // A FLYWHEEL LAUNCHER: two parallel PLATES with a wheel between them. No
-          // barrel — the gap between the plates is left empty, because that gap is
-          // what reads as the path the Particle takes. Matches `launcher` in the
-          // match sprite (drawRobot.ts).
-          const gap = cMode === 'twinturret' ? 2.1 : 2.7;
+          // A FLYWHEEL LAUNCHER: two parallel PLATES with a wheel between them. No barrel —
+          // the gap is left empty, because that gap is what reads as the Particle's path, and
+          // it is CHAIN_LAUNCH_PLATE_GAP wide because a 3" Particle has to fit down it. Same
+          // geometry as `launcher` in the match sprite (drawRobot.ts).
+          const gap = CHAIN_LAUNCH_PLATE_GAP;
           const plate = 0.42;
-          const y0 = cTurretR * 0.5; // plates start just behind the ring's centre
-          const y1 = -(cTurretR + 2.2); // ...and run out past the wheel to the exit
+          const wheelY = -(cTurretR + 0.9); // the flywheel, just outboard of the slew ring
+          const y0 = wheelY + CHAIN_LAUNCH_PLATE_LEN * 0.62; // plate rear (toward the ring)
+          const y1 = y0 - CHAIN_LAUNCH_PLATE_LEN; // ...and the muzzle end
           return (
             <g key={o}>
               {[1, -1].map((sg) => (
@@ -396,7 +399,7 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
               {/* the flywheel on its axle, spanning the gap */}
               <rect
                 x={o - gap / 2 + 0.1}
-                y={-(cTurretR + 1.3)}
+                y={wheelY - 0.75}
                 width={gap - 0.2}
                 height={1.5}
                 rx={0.4}

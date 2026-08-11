@@ -9,6 +9,8 @@ import {
   CHAIN_BEAM_RENDER_H,
   CHAIN_BEAM_RUMBLE,
   CHAIN_TWIN_BARREL_OFFSET,
+  CHAIN_LAUNCH_PLATE_GAP,
+  CHAIN_LAUNCH_PLATE_LEN,
   CHAIN_DEFAULT_CATALYST,
   CHAIN_CATAPULT_RANGE_MIN,
   CHAIN_CATAPULT_RANGE_MAX,
@@ -434,10 +436,7 @@ function drawTurret(
   oy = 0,
   twin = false,
 ): void {
-  const hl = r.spec.length / 2;
-  const hw = r.spec.width / 2;
   const ring = turretRadius(r.spec);
-  const reach = Math.min(Math.min(hl, hw) - 0.5, ring + 2.4);
   // WHERE IT IS BOLTED — the same `turretLocal` the sim launches from, so the ring is drawn
   // exactly where the Particle is born (see mounts.ts). A back/corner mount really does sit
   // back there rather than at a fixed rear-of-centre nudge.
@@ -482,15 +481,19 @@ function drawTurret(
    * two open rails and the wheel, with the gap between the plates left EMPTY, because
    * the empty gap is the part a top-down viewer reads as "the piece goes through here".
    */
-  // The channels, at the offsets the sim actually launches from. A TWIN's two channels
-  // are ADJACENT and SHARE a centre plate — which is exactly why its muzzles sit only
-  // CHAIN_TWIN_BARREL_OFFSET·2 apart — so its gap is set to that spacing and the shared
-  // plate falls out of the de-duplicated edge list below.
+  // The channels, at the offsets the sim actually launches from. A TWIN's two channels are
+  // ADJACENT and SHARE a centre plate, which is precisely why its muzzles sit one channel-width
+  // apart (CHAIN_TWIN_BARREL_OFFSET = GAP/2) — the shared plate then falls out of the
+  // de-duplicated edge list below.
   const chans = twin ? [-CHAIN_TWIN_BARREL_OFFSET, CHAIN_TWIN_BARREL_OFFSET] : [0];
-  const gap = twin ? CHAIN_TWIN_BARREL_OFFSET * 2 : 2.7;
+  const gap = CHAIN_LAUNCH_PLATE_GAP; // a Particle has to fit down it — same for one or two
   const plate = 0.42; // plate thickness
-  const x0 = -ring * 0.5; // plates start just behind the ring's centre
-  const x1 = reach + 0.6; // ...and run out past the wheel to the exit
+  // The plates are a LAUNCHER, not a rifle: they carry the wheel and guide the piece off it,
+  // and stop. They used to run from behind the ring all the way to the chassis edge — half the
+  // robot long — which is what made the assembly read as a barrel however it was detailed.
+  const wheelX = ring + 0.9; // the flywheel sits just outboard of the slew ring
+  const x0 = wheelX - CHAIN_LAUNCH_PLATE_LEN * 0.62;
+  const x1 = x0 + CHAIN_LAUNCH_PLATE_LEN;
 
   // THE PLATES — one per distinct channel wall, so a twin draws three, not four
   const edges = [...new Set(chans.flatMap((c) => [c - gap / 2, c + gap / 2]))];
@@ -518,7 +521,7 @@ function drawTurret(
     // THE FLYWHEEL, spanning the channel on its axle: the Particle is pinched between
     // it and the opposite plate, so it sits ON the centreline — not in a pair.
     ctx.save();
-    ctx.translate(reach * 0.52, off);
+    ctx.translate(wheelX, off);
     ctx.rotate(Math.PI / 2); // drawRoller lays its barrel along local y; the axle runs across
     drawRoller(ctx, 0, gap / 2 - 0.35, 1.5, loaded, 1.2);
     ctx.restore();
