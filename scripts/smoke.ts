@@ -7765,6 +7765,33 @@ const mkMM = () => {
       beamDrag(w, SIM_DT);
       check('chain beams: a forward wheel pair on the ridge is counted and dragged', up >= 1 && r.vel.y < 50, `up=${up} vy=${r.vel.y.toFixed(1)}`);
     }
+    // BEAM YAW: the drag acts at the WHEELS on the ridge, so an off-centre load is a TORQUE.
+    // A SQUARE crossing loads both sides evenly and cannot turn the robot (the reward for
+    // lining it up); a CROOKED one loads one corner first and slews the chassis. Terrain used
+    // to scale the across-speed and nothing else, so a robot came off a beam pointing exactly
+    // where it went on.
+    {
+      const cross = (headingDeg: number): number => {
+        const w = createChainWorld('free', 13, [chainSetup(0, 'blue')]);
+        const r = w.robots[0];
+        r.spec = { ...DEFAULT_SPEC, drivetrain: 'mecanum', width: 18, length: 18, groundClearance: 1 };
+        r.heading = (headingDeg * Math.PI) / 180;
+        r.pos = { x: 44, y: 6.4 };
+        const h0 = r.heading;
+        let peak = 0;
+        for (let i = 0; i < 12; i++) {
+          r.vel = { x: 0, y: 50 }; // held across the beam, so the only yaw source is the ridge
+          beamDrag(w, SIM_DT);
+          r.pos.y -= r.vel.y * SIM_DT;
+          peak = Math.max(peak, Math.abs(r.heading - h0));
+        }
+        return (peak * 180) / Math.PI;
+      };
+      const square = cross(90);
+      const crooked = cross(60);
+      check('chain beams: a SQUARE crossing applies no yaw (both sides load evenly)', square < 0.01, `${square.toFixed(3)}deg`);
+      check('chain beams: a CROOKED crossing slews the chassis (terrain torque)', crooked > 1, `${crooked.toFixed(2)}deg`);
+    }
     // TERRAIN RIDE (render/audio read-only): off any beam ⇒ flat (lift 0, onCount 0); a wheel pair
     // ON a beam ⇒ raised (lift > 0, onCount 2). Drives the beam-height bob + crossing SFX.
     {

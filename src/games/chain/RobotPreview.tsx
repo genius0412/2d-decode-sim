@@ -364,35 +364,47 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
             flywheels at the muzzle. A TWIN draws both, at the offsets the sim launches from —
             the preview shows it stowed forward, so the head points up. */}
         {(cMode === 'twinturret' ? [CHAIN_TWIN_BARREL_OFFSET, -CHAIN_TWIN_BARREL_OFFSET] : [0]).map((o) => {
-          const halfW = cMode === 'twinturret' ? 0.85 : 1.1;
-          const muzzle = -(cTurretR + 1.9);
+          // A FLYWHEEL LAUNCHER: two parallel PLATES with a wheel between them. No
+          // barrel — the gap between the plates is left empty, because that gap is
+          // what reads as the path the Particle takes. Matches `launcher` in the
+          // match sprite (drawRobot.ts).
+          const gap = cMode === 'twinturret' ? 2.1 : 2.7;
+          const plate = 0.42;
+          const y0 = cTurretR * 0.5; // plates start just behind the ring's centre
+          const y1 = -(cTurretR + 2.2); // ...and run out past the wheel to the exit
           return (
             <g key={o}>
-              {/* shooter body, from just behind the ring out to the muzzle */}
-              <rect
-                x={o - halfW}
-                y={muzzle}
-                width={halfW * 2}
-                height={cTurretR * 0.4 - muzzle}
-                rx={0.3}
-                fill="var(--ds-bg)"
-                stroke={stroke}
-                strokeWidth={0.25}
-              />
-              {/* the pair of flywheels that pinch the Particle on its way out */}
               {[1, -1].map((sg) => (
                 <rect
                   key={sg}
-                  x={o + sg * halfW * 0.5 - (sg > 0 ? 0 : halfW * 0.5)}
-                  y={muzzle + 0.5}
-                  width={halfW * 0.5}
-                  height={1.5}
-                  rx={0.2}
+                  x={o + sg * (gap / 2) - (sg > 0 ? 0 : plate)}
+                  y={y1}
+                  width={plate}
+                  height={y0 - y1}
+                  rx={0.16}
                   fill={stroke}
                   opacity={0.85}
                 />
               ))}
-              <line x1={o - halfW * 0.55} y1={muzzle + 0.25} x2={o + halfW * 0.55} y2={muzzle + 0.25} stroke={accent} strokeWidth={0.3} />
+              {/* standoffs: what says "two plates and a gap", not one solid block */}
+              {[0.12, 0.92].map((f) => {
+                const y = y0 + (y1 - y0) * f;
+                return (
+                  <line key={f} x1={o - gap / 2} y1={y} x2={o + gap / 2} y2={y} stroke={stroke} strokeWidth={0.2} opacity={0.7} />
+                );
+              })}
+              {/* the flywheel on its axle, spanning the gap */}
+              <rect
+                x={o - gap / 2 + 0.1}
+                y={-(cTurretR + 1.3)}
+                width={gap - 0.2}
+                height={1.5}
+                rx={0.4}
+                fill="var(--ds-bg)"
+                stroke={stroke}
+                strokeWidth={0.22}
+              />
+              <line x1={o - gap / 2 + 0.15} y1={y1 + 0.3} x2={o + gap / 2 - 0.15} y2={y1 + 0.3} stroke={accent} strokeWidth={0.3} />
             </g>
           );
         })}

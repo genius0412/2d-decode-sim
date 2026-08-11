@@ -1,7 +1,7 @@
 import type { DrivetrainType, RobotSpec, RobotState, Vec2, World } from '../../types';
 import type { Rect } from '../../sim/field';
 import { robotExtents, robotIntersectsRect, wheelContacts } from '../../sim/physics';
-import { clamp, dcos, dsin } from '../../math';
+import { clamp, dcos, dsin, hyp, wrapAngle } from '../../math';
 import {
   CHAIN_BEAM_HEIGHT,
   CHAIN_BEAM_MOMENTUM_REF,
@@ -10,6 +10,9 @@ import {
   CHAIN_BEAM_STRAFE_BLOCK_FWD,
   CHAIN_BEAM_WHEEL_R,
   CHAIN_BEAM_GROUND_FLOOR,
+  CHAIN_BEAM_YAW_GAIN,
+  CHAIN_BEAM_YAW_MAX_KICK,
+  CHAIN_BEAM_YAW_CARRY,
   CHAIN_CLEARANCE_DEFAULT,
   CHAIN_CLEARANCE_MAX,
   CHAIN_CLEARANCE_MIN,
@@ -135,6 +138,59 @@ export function wheelsOnBeam(r: RobotState, rect: Rect): number {
   return n;
 }
 
+/** WHERE a beam's drag acts: the mean contact point of the wheels currently on the ridge, as an
+ * offset from the robot's centre (`n` = how many are up). That offset is the LEVER ARM the drag
+ * pulls on — zero when the loaded wheels straddle the centre evenly, which is exactly the
+ * square-on crossing that should not turn anybody. */
+function beamDragArm(r: RobotState, rect: Rect): { x: number; y: number; n: number } {
+  const R = CHAIN_BEAM_WHEEL_R;
+  let x = 0;
+  let y = 0;
+  let n = 0;
+  for (const w of wheelContacts(r)) {
+    if (w.x < rect.x0 - R || w.x > rect.x1 + R || w.y < rect.y0 - R || w.y > rect.y1 + R) continue;
+    x += w.x - r.pos.x;
+    y += w.y - r.pos.y;
+    n++;
+  }
+  return n ? { x: x / n, y: y / n, n } : { x: 0, y: 0, n: 0 };
+}
+
+/**
+ * The YAW that comes with a terrain velocity change — the torque a beam was never applying.
+ *
+ * A beam used to scale the across-beam speed and do nothing else, so a robot that took a ridge
+ * at an angle came off it pointing exactly where it went on. Terrain does not work that way:
+ * the drag acts at the WHEELS that are on the ridge, and when those sit to one side of centre
+ * the retarding force has a lever arm — the loaded side lags and the chassis slews toward it.
+ *
+ * `dv` is the velocity the terrain just took off the robot (world frame) and `arm` is where it
+ * was taken. τ = arm × Δv, normalised by the chassis half-diagonal squared so a bigger robot is
+ * proportionally harder to slew, and capped per tick. Hit a beam square and the two sides cancel
+ * to nothing — which is the reward for lining it up; clip it with one corner and it turns you.
+ *
+ * Applied to the HEADING, exactly like DECODE's contact torque (`pushRobotAt`), and for the
+ * same reason: `angVel` alone does nothing here, because the drivetrain's `motorStep` drags it
+ * back to the commanded turn rate within a tick or two and a straight-driving robot commands
+ * zero. The terrain has to rotate the chassis itself. A fraction is also left in `angVel`
+ * (`CHAIN_BEAM_YAW_CARRY`) so the slew carries a moment past the ridge instead of stopping dead
+ * — that residue is what the driver actually has to catch.
+ */
+function applyBeamYaw(
+  r: RobotState,
+  dt: number,
+  arm: { x: number; y: number },
+  dvx: number,
+  dvy: number,
+): void {
+  const half = Math.max(1, hyp(r.spec.length, r.spec.width) / 2);
+  const tau = (arm.x * dvy - arm.y * dvx) / (half * half);
+  const rate = clamp(CHAIN_BEAM_YAW_GAIN * tau, -CHAIN_BEAM_YAW_MAX_KICK, CHAIN_BEAM_YAW_MAX_KICK);
+  if (rate === 0) return;
+  r.heading = wrapAngle(r.heading + rate * dt);
+  r.angVel += rate * CHAIN_BEAM_YAW_CARRY;
+}
+
 /** RENDER/AUDIO read-only. A wheel's terrain elevation 0..1: 1 while its contact sits over a beam's
  * 1" core, easing smoothly to 0 by `CHAIN_BEAM_WHEEL_R` past the edge — so as a wheel rolls across a
  * beam its z rises then falls (a real up-and-over bump). Max over the four beams. */
@@ -200,18 +256,36 @@ export function beamDrag(world: World, dt: number): void {
         const inward = -curb.side * vAcross; // speed toward the beam (>0 = approaching)
         if (inward > allowIn) {
           const capped = -curb.side * allowIn; // clamp the across velocity to the permitted inward speed
-          if (beam.axis === 'y') r.vel.y = capped;
-          else r.vel.x = capped;
+          // ...and the stop is taken at the WHEELS that hit the face, so an off-centre hit
+          // slews the robot. Clipping a curb with one corner turns you; that is the point.
+          const arm = beamDragArm(r, beam.rect);
+          if (beam.axis === 'y') {
+            const dv = capped - r.vel.y;
+            r.vel.y = capped;
+            if (arm.n) applyBeamYaw(r, dt, arm, 0, dv);
+          } else {
+            const dv = capped - r.vel.x;
+            r.vel.x = capped;
+            if (arm.n) applyBeamYaw(r, dt, arm, dv, 0);
+          }
         }
         continue; // walled, not dragged
       }
       // PER-WHEEL gate: only drag while a wheel is actually up on the ridge. A robot straddling
       // the beam (all wheels on the floor, tube under the belly) rolls free even though its OBB
       // overlaps — so this is `wheelsOnBeam`, not `robotIntersectsRect`.
-      const up = wheelsOnBeam(r, beam.rect);
-      if (up === 0) continue;
-      if (beam.axis === 'y') r.vel.y *= beamDragFactor(r.spec, r.vel.y, up);
-      else r.vel.x *= beamDragFactor(r.spec, r.vel.x, up);
+      const arm = beamDragArm(r, beam.rect);
+      if (arm.n === 0) continue;
+      const retain = beamDragFactor(r.spec, beam.axis === 'y' ? r.vel.y : r.vel.x, arm.n);
+      if (beam.axis === 'y') {
+        const dv = r.vel.y * (retain - 1); // the across-speed the ridge just took off
+        r.vel.y += dv;
+        applyBeamYaw(r, dt, arm, 0, dv);
+      } else {
+        const dv = r.vel.x * (retain - 1);
+        r.vel.x += dv;
+        applyBeamYaw(r, dt, arm, dv, 0);
+      }
     }
   }
 }

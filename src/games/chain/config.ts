@@ -193,6 +193,25 @@ export const CHAIN_CLEARANCE_DEFAULT = 1;
  * = barely any grip). */
 export const CHAIN_BEAM_WHEEL_R = 2.5; // in — a wheel this close to the beam line is up on the ridge
 export const CHAIN_BEAM_GROUND_FLOOR = 0.86; // forward traction kept with wheels lifted (never 0 — grounded wheels still push; raised 2026-08 alongside TRACTION so terrain bites less)
+/**
+ * BEAM YAW — the KICK a beam gives a robot crossing it CROOKED.
+ *
+ * A beam did not turn a robot at all: it scaled the across-beam speed and nothing else, so a
+ * robot that took the ridge at an angle came off it pointing exactly where it went on. That is
+ * not what terrain does. The drag is applied at the WHEELS that are actually on the ridge, and
+ * when those sit to one side of centre the retarding force has a lever arm — the loaded side
+ * lags and the chassis yaws toward it. Hit a beam square and the two sides cancel (no kick,
+ * which is the reward for lining it up); clip it with one corner and it slews you.
+ *
+ * `GAIN` converts that lever-arm impulse into angular velocity (the arm is normalised by the
+ * chassis half-diagonal, so a big robot is proportionally harder to spin); `MAX_KICK` caps a
+ * single tick so a numerical spike can never pirouette anyone.
+ */
+export const CHAIN_BEAM_YAW_GAIN = 10;
+export const CHAIN_BEAM_YAW_MAX_KICK = 1.2; // rad/s — cap on a single tick's slew rate
+/** how much of the slew is left in `angVel` so it carries past the ridge (the part the
+ * driver has to catch) rather than stopping the instant the wheel drops off */
+export const CHAIN_BEAM_YAW_CARRY = 0.15;
 /** MECANUM STRAFE-INTO-BEAM is a WALL, not a drag. Real mecanum wheels climb a bump they DRIVE
  * straight at — the full-diameter wheel rolls over it and the suspension keeps all four loaded
  * (exactly why mecanum has the BEST forward beam traction). But STRAFING is a different mechanism:

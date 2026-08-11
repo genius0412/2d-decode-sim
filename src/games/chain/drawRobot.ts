@@ -471,51 +471,66 @@ function drawTurret(
   // THE HEAD — everything below turns with `turretHeading`
   ctx.rotate(r.turretHeading);
 
-  /** one shooter: a body, a pair of flywheels straddling the channel, and a hood */
-  const barrel = (off: number): void => {
-    const halfW = twin ? 1.05 : 1.35;
-    // body / gearbox, from the ring out to the wheels
-    ctx.fillStyle = ALU_MID;
-    roundRect(ctx, -ring * 0.55, off - halfW, reach * 0.72 + ring * 0.55, halfW * 2, 0.35);
+  /**
+   * ONE SHOOTER — a FLYWHEEL LAUNCHER, which is two PARALLEL PLATES with a wheel
+   * spinning between them, and nothing else.
+   *
+   * There is no barrel. A closed body with a channel bored through it reads as a gun
+   * and is not what anyone builds: an FTC launcher is a pair of side plates cut from
+   * polycarb or aluminium, standoffs between them, and a compliant wheel that pinches
+   * the game piece against the far plate on its way out. So that is what is drawn —
+   * two open rails and the wheel, with the gap between the plates left EMPTY, because
+   * the empty gap is the part a top-down viewer reads as "the piece goes through here".
+   */
+  // The channels, at the offsets the sim actually launches from. A TWIN's two channels
+  // are ADJACENT and SHARE a centre plate — which is exactly why its muzzles sit only
+  // CHAIN_TWIN_BARREL_OFFSET·2 apart — so its gap is set to that spacing and the shared
+  // plate falls out of the de-duplicated edge list below.
+  const chans = twin ? [-CHAIN_TWIN_BARREL_OFFSET, CHAIN_TWIN_BARREL_OFFSET] : [0];
+  const gap = twin ? CHAIN_TWIN_BARREL_OFFSET * 2 : 2.7;
+  const plate = 0.42; // plate thickness
+  const x0 = -ring * 0.5; // plates start just behind the ring's centre
+  const x1 = reach + 0.6; // ...and run out past the wheel to the exit
+
+  // THE PLATES — one per distinct channel wall, so a twin draws three, not four
+  const edges = [...new Set(chans.flatMap((c) => [c - gap / 2, c + gap / 2]))];
+  ctx.fillStyle = ALU_MID;
+  ctx.strokeStyle = 'rgba(210,224,240,0.38)';
+  ctx.lineWidth = 0.16;
+  for (const y of edges) {
+    roundRect(ctx, x0, y - plate / 2, x1 - x0, plate, 0.16);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(210,224,240,0.30)';
-    ctx.lineWidth = 0.16;
     ctx.stroke();
-    // the CHANNEL the Particle runs down, cut through the body
-    ctx.fillStyle = 'rgba(8,11,16,0.75)';
-    ctx.fillRect(-ring * 0.2, off - halfW * 0.42, reach * 0.9, halfW * 0.84);
-    // FLYWHEELS: a pair pinching the channel at the muzzle, drawn as the cylinders they are
-    for (const s of [1, -1] as const) {
-      const g = ctx.createLinearGradient(0, off + s * halfW * 0.45, 0, off + s * halfW * 1.15);
-      g.addColorStop(0, RUBBER_HI);
-      g.addColorStop(1, RUBBER_LO);
-      ctx.fillStyle = g;
-      roundRect(ctx, reach * 0.5, off + s * halfW * 0.45 - (s > 0 ? 0 : halfW * 0.7), 1.7, halfW * 0.7, 0.25);
-      ctx.fill();
-    }
-    // MUZZLE: the two hood plates the Particle leaves between. An arc here read as a
-    // claw — a pair of short plates reads as a barrel end, which is what it is.
-    ctx.strokeStyle = 'rgba(210,224,240,0.45)';
-    ctx.lineWidth = 0.26;
-    for (const s of [1, -1] as const) {
-      ctx.beginPath();
-      ctx.moveTo(reach * 0.45, off + s * halfW * 0.9);
-      ctx.lineTo(reach + 0.5, off + s * halfW * 0.62);
-      ctx.stroke();
-    }
-    // the loaded accent sits AT the exit, one short bar across the channel
+  }
+  // STANDOFFS tying the plates together — the giveaway that this is plates and a gap
+  // rather than one solid block
+  ctx.strokeStyle = 'rgba(190,205,220,0.30)';
+  ctx.lineWidth = 0.2;
+  for (const f of [0.12, 0.92] as const) {
+    const x = x0 + (x1 - x0) * f;
+    ctx.beginPath();
+    ctx.moveTo(x, Math.min(...edges));
+    ctx.lineTo(x, Math.max(...edges));
+    ctx.stroke();
+  }
+
+  for (const off of chans) {
+    // THE FLYWHEEL, spanning the channel on its axle: the Particle is pinched between
+    // it and the opposite plate, so it sits ON the centreline — not in a pair.
+    ctx.save();
+    ctx.translate(reach * 0.52, off);
+    ctx.rotate(Math.PI / 2); // drawRoller lays its barrel along local y; the axle runs across
+    drawRoller(ctx, 0, gap / 2 - 0.35, 1.5, loaded, 1.2);
+    ctx.restore();
+
+    // the exit, and the only accent: a short bar across the channel at the muzzle line
     ctx.strokeStyle = live(loaded, 0.95);
     ctx.lineWidth = 0.3;
     ctx.beginPath();
-    ctx.moveTo(reach + 0.42, off - halfW * 0.5);
-    ctx.lineTo(reach + 0.42, off + halfW * 0.5);
+    ctx.moveTo(x1 - 0.3, off - gap / 2 + 0.3);
+    ctx.lineTo(x1 - 0.3, off + gap / 2 - 0.3);
     ctx.stroke();
-  };
-
-  // a TWIN straddles the centreline at the same offsets the sim launches from, so what you
-  // see is where the Particles actually come out
-  if (twin) for (const s of [1, -1] as const) barrel(s * CHAIN_TWIN_BARREL_OFFSET);
-  else barrel(0);
+  }
 
   // the indexer boss at the breech — where a Particle is fed up into the shooter
   ctx.fillStyle = loaded ? GREEN : ALU_DK;
