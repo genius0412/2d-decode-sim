@@ -1,3 +1,93 @@
+# HANDOFF — 2026-08-12 (Fly health check + the lag/connect fixes it turned up) — alpha only
+
+Branch **alpha**, commit `b164d52`. `npm test` ALL PASS · build · `server:check` green
+(verified in a CLEAN worktree at that commit — the live tree also carries an unrelated
+in-progress **yellow/red card** change from a concurrent session; see the warning below).
+**Deployed to the alpha preview** (`./scripts/fly-deploy.sh --alpha`); production
+(`dohun-sim-decode`) is UNTOUCHED and still needs its own deploy — see "Still pending".
+
+## ⚠ A concurrent session was editing this worktree
+
+While this session ran, another one was building a card system in the SAME worktree
+(`types.ts` `CardColor`/`voided`/`cards`, `config.ts`, `penalties.ts`, `scoring.ts`, both
+`spawn.ts`, `CLAUDE.md`). That work is UNCOMMITTED and was left exactly as found — this
+session staged only its own five files. **A `git stash` was briefly used here and it swept
+up their files too** (restored immediately, nothing lost, `tsc` green after). Don't stash in
+a shared worktree; `git diff -- <paths>` or a scratch worktree instead.
+
+## Fly status (both apps healthy — no outage, no crash loop)
+
+| | production `dohun-sim-decode` | preview `dsim-alpha` |
+| --- | --- | --- |
+| machines | 5 regions, all on version 94 | 1 (iad) — correct, do not let it become 2 |
+| state | iad always-warm, satellites idle→stopped | idles to zero |
+| restarts / OOM | **none** (iad up since Aug 4) | n/a |
+
+No infrastructure fault was found. The complaints trace to CLIENT-side timing and to a
+server metric that could not see the problem. All four fixes are in `b164d52`.
+
+## What was actually wrong
+
+1. **The lag metric was measuring itself.** `/api/perf`'s histogram ran at
+   `resolution: 10`, which is also its noise floor — an IDLE machine reported mean
+   10.18 ms, and iad (shared-cpu-4x) and nrt (shared-cpu-1x) returned *identical* numbers.
+   The tuning rule the code documents ("p99 approaching the 16.67 ms budget means the loop
+   is late") was unusable with the floor already at 60% of the budget. Now `resolution: 1`:
+   **the same idle machine reads mean 1.11 / p99 1.38**, so there is real headroom to
+   observe. Added `heapMb{used,total,limit}` (RSS alone can't separate "V8 hasn't returned
+   pages" from "live set near the cap", and the latter's GC pauses ARE the felt stutter)
+   and `windowS` so `max` is no longer a since-boot figure reporting the startup JIT stall
+   forever. Sample with `?reset=1`, then re-read during a real match.
+2. **Interpolation converged at a frame-rate-dependent rate.** `displayWorld`'s render
+   clock eased toward its target by a flat `* 0.1` EVERY FRAME, so a 144 Hz player pulled
+   ~2.4x harder than a 60 Hz player on the identical connection — chasing snapshot jitter
+   instead of absorbing it. **High-refresh players saw more remote stutter and nothing in
+   the network explained it.** Now a half-life (`INTERP_EASE_HALFLIFE`, the convention
+   `SMOOTH_HALFLIFE` already set two lines up), tuned so 60 fps behaviour is unchanged.
+3. **The region probe timed out before a waking region could answer.** Regions auto-stop
+   when idle; a cold boot was **measured at 6–8 s** (8.08 s on the alpha app this session).
+   `probeHome` gave every sample 3 s, so the probe that WAKES a region always aborted and a
+   healthy server was reported to the player as unreachable. First sample now gets 12 s;
+   later samples keep the short timeout, and since `accessMs` is a MIN the slow wake-up
+   can't inflate the reported ping. If that generous first attempt still fails it bails
+   rather than making the player wait out two more.
+4. **A stuck connect parked the retry loop.** A WebSocket to a black-holed host (dropped
+   wifi, captive portal, machine mid-boot) fires neither `onopen` nor `onclose`, so the
+   transport sat on the first dead socket for the OS TCP timeout (75 s+) while the player
+   watched "reconnecting" do nothing — never reaching the retry that would have worked.
+   Attempts are capped at 8 s (`CONNECT_TIMEOUT_MS`, above the measured cold boot so a
+   waking machine is never cut off); a socket-identity check stops an abandoned zombie from
+   double-scheduling. Retries also gained jitter — every client of a room drops on the same
+   instant (restart / deploy / autostop→start) and a fixed 1 s delay marched them all back
+   in lockstep onto a still-booting server.
+
+Also: `[auth] verify OK` no longer logs. The friends read doubles as the presence
+heartbeat, so every open tab logged a success line ~2x/minute forever — the bulk of the log
+volume, and it buried the failures that explain a player being silently signed out.
+
+## Measured, and deliberately NOT changed
+
+- **`broadcastSnapshot`'s per-ball `JSON.stringify` change-detection was benchmarked before
+  touching it: 30 balls, 0.0176 ms/snapshot = 0.53 ms/s/room ≈ 0.05% of a core.** It looks
+  hot and is not. Left alone — don't "optimise" it without a fresh measurement.
+
+## Still pending / next steps
+
+- **Production has NOT been deployed.** `dohun-sim-decode` still runs the old build, so
+  fixes 1 and the auth-log change are not live for real players (2, 3 and 4 are CLIENT-side
+  and ship with Vercel's `alpha` build; production clients get them at the next merge).
+  Production also still owes the migration backlog noted in the 08-10 handoff below.
+- **Production iad: RSS 538 MB while idle with 0 rooms, vs 81 MB on a freshly booted
+  machine, uptime 8.8 days.** No OOM and no restarts, so it is not breaking anything today,
+  but the alpha deploy now reports `heapMb.limit` = **493 MB** — worth reading `heapMb.used`
+  on production right after it deploys. Suspected cause is the fresh Rapier world rebuilt
+  every `step()` (WASM linear memory never returns to the OS), which is load-bearing for
+  determinism — measure before touching.
+- Historical Fly metrics need a token with org-read scope; the flyctl macaroon in
+  `~/.fly/config.yml` is rejected by `api.fly.io/prometheus` ("not authorized for org").
+  Note that flyctl here also needs `FLY_API_TOKEN` exported from that file explicitly — it
+  does not pick the token up on its own.
+
 # HANDOFF — 2026-08-10 (alpha has its own server + database) — alpha only
 
 Branch **alpha**. `npm test` · build · `contrast` 213 · `server:check` green.
