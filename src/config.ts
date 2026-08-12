@@ -132,15 +132,17 @@ export const PIN_WALL_SLOP = 3; // in
  * happened". The clock now PAUSES on a lapse and only resets once the victim has
  * really been let go for this long (or has separated and driven off). */
 export const PIN_BREAK_S = 0.6; // s
-/** G408 over-possession / plowing: a ROBOT may CONTROL at most this many
- * ARTIFACTS at once — held in the hopper PLUS any loose ground balls it is
- * actively PLOWING (herding along in front of it). The hopper caps at
- * HOPPER_CAPACITY, so the foul bites when a full robot bulldozes extra loose
- * balls around, or when a clump of more than this many is driven downfield. */
+/** G408: "No more than 3 at a time. A ROBOT may not simultaneously CONTROL more
+ * than 3 ARTIFACTS" — the hopper PLUS any loose ground artifacts it is HERDING.
+ * The manual's violation is a MINOR FOUL **per ARTIFACT over the limit** (plus a
+ * YELLOW CARD if excessive, which this sim has no card model for). The hopper caps
+ * at HOPPER_CAPACITY, so the foul bites when a full robot bulldozes loose balls
+ * around, or when a pile bigger than this is driven downfield. */
 export const POSSESSION_LIMIT = 3; // == HOPPER_CAPACITY
-/** a loose ground ball counts as plowed only when its surface is within this many
- * inches of the robot's collision footprint — i.e. actually in contact, not
- * merely nearby. */
+/** contact tolerance for CONTROL — a loose artifact counts only when its surface is
+ * within this many inches of the robot's footprint (or of an artifact already
+ * controlled, since the manual's CONTROL is transitive through scoring elements).
+ * A touch tolerance, not a catchment radius. */
 export const POSSESSION_CONTROL_MARGIN = 0.4; // in
 /** herding requires motion — a parked robot merely resting against loose balls is not
  * controlling them (they can roll free), so ignore control below this.
@@ -151,9 +153,11 @@ export const POSSESSION_CONTROL_MARGIN = 0.4; // in
  * all). Left high, it was a loophole in its own right: herd a pile at 8 in/s and the rule
  * simply did not look. */
 export const POSSESSION_MOVE_SPEED = 6; // in/s
-/** ...and the ball must be going WITH the robot at least this fast: a plowed ball
- * is one being carried along, while a ball the robot merely clips in passing (or
- * squirts out sideways) is not under anyone's control. */
+/** ...and the artifact must be going WITH the robot at least this fast. This is the
+ * manual's POSSESSION test — the artifact "remains in approximately the same position
+ * relative to the ROBOT" as it moves — and so the line between HERDING a load (a foul)
+ * and PLOWING through one, which the manual defines as INADVERTENT contact with no
+ * advantage beyond mobility and explicitly does NOT count as control. */
 export const POSSESSION_CARRY_SPEED = 5; // in/s, along the robot's heading of travel
 /** grace before over-possession is fouled.
  *

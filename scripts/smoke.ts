@@ -3353,6 +3353,41 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     w3.match.fouls.blue.minor === 1,
     `blueMinor=${w3.match.fouls.blue.minor}`,
   );
+
+  // PER ARTIFACT OVER THE LIMIT, and TRANSITIVELY. The manual's violation line is "MINOR
+  // FOUL per SCORING ELEMENT over the limit", and CONTROL "requires contact with a ROBOT,
+  // either directly or transitively through other SCORING ELEMENTS" — so a robot shoving a
+  // WEDGE controls the whole wedge, not just the artifacts against its bumper, and pays per
+  // artifact. One flat MINOR however far over you were made a bulldozer cost the same as a
+  // robot with one ball stuck to it.
+  const w4 = foulWorld();
+  const r4 = w4.robots[0];
+  r4.pos = { x: 0, y: -8 };
+  r4.heading = 0;
+  r4.hopper = ['green', 'green', 'green']; // 3 stored = at the limit
+  const push = POSSESSION_MOVE_SPEED + 4;
+  r4.vel = { x: push, y: 0 };
+  // a CHAIN of four: only the first touches the bumper, the rest touch each other
+  for (let i = 0; i < 4; i++) {
+    w4.balls.push({
+      id: 9200 + i,
+      color: 'purple',
+      state: { kind: 'ground' },
+      pos: { x: 2 + i * (BALL_RADIUS * 2), y: 0 },
+      vel: { x: push, y: 0 },
+      z: 0,
+      vz: 0,
+    });
+  }
+  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 4; i++) {
+    w4.time = i / 60;
+    updatePenalties(w4, 1 / 60, new Map());
+  }
+  check(
+    'a shoved WEDGE counts transitively and costs a MINOR per artifact over the limit',
+    w4.match.fouls.blue.minor === 4 && w4.match.scores.red.foulPoints === 20,
+    `blueMinor=${w4.match.fouls.blue.minor} redFoulPts=${w4.match.scores.red.foulPoints}`,
+  );
 }
 
 // ---- penalty state stays deterministic -------------------------------------

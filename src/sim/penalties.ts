@@ -201,22 +201,31 @@ export function updatePenalties(
   updatePins(world, dt, commands);
 }
 
-/** G408 — a ROBOT may CONTROL at most POSSESSION_LIMIT artifacts. "Control" =
- * artifacts stored in the hopper PLUS loose ground balls the robot is actively
- * herding (touching its footprint while it drives). The hopper is capped at
- * HOPPER_CAPACITY, so this catches a full robot that keeps plowing extra loose
- * balls, or a robot shepherding a clump bigger than the limit. Momentary contact
- * is forgiven by POSSESSION_GRACE (well over a normal intake capture), and a
- * parked robot merely resting against balls isn't controlling them. */
+/**
+ * G408 — "No more than 3 at a time. A ROBOT may not simultaneously CONTROL more than 3
+ * ARTIFACTS." Violation: MINOR FOUL **per ARTIFACT over the limit**.
+ *
+ * The per-artifact part is the manual's, and it matters: it is what makes shoving a wall of
+ * nine artifacts down the field cost six times what carrying one extra does. This used to
+ * award a single MINOR however far over you were, so a bulldozer paid the same as a robot
+ * with one ball stuck to its bumper.
+ *
+ * (The manual also escalates to a YELLOW CARD "if excessive". The sim has no card model at
+ * all, so that part is unimplemented — a deliberate gap, not an oversight.)
+ *
+ * `controlledArtifacts` decides the count; POSSESSION_GRACE is how long it has to hold.
+ */
 function updatePossession(world: World, dt: number, fire: FireFn): void {
   const pen = world.penalties;
   for (const r of world.robots) {
-    const controlled = controlledArtifacts(world, r);
-    if (controlled > C.POSSESSION_LIMIT) {
+    const over = controlledArtifacts(world, r) - C.POSSESSION_LIMIT;
+    if (over > 0) {
       const t = (pen.possession[r.id] ?? 0) + dt;
       pen.possession[r.id] = t;
-      if (t >= C.POSSESSION_GRACE) {
-        fire(`G408:${r.id}`, r.alliance, 'minor', 'G408 over-possession');
+      // ONE episode, but N fouls — `fire` owns the edge-debounce (a held violation is one
+      // episode, not a stream), and the count it fires with is the manual's per-artifact tariff.
+      if (t >= C.POSSESSION_GRACE && fire(`G408:${r.id}`, r.alliance, 'minor', 'G408 over-possession')) {
+        for (let i = 1; i < over; i++) awardFoul(world, r.alliance, 'minor', 'G408 over-possession');
       }
     } else {
       pen.possession[r.id] = 0; // back within the limit — reset the grace clock
@@ -225,39 +234,68 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
 }
 
 /**
- * How many artifacts robot r is CONTROLLING: its stored hopper balls plus the loose
- * GROUND balls it is PLOWING. Balls in flight/basin/rail/held-by-others are not
- * loose and never count here.
+ * How many artifacts robot r is CONTROLLING, per the manual's own vocabulary:
  *
- * "Plowing" is deliberately narrow, because the wide version of this test fouled
- * ordinary driving. Three things must ALL hold:
- *   1. the robot is MOVING (a parked robot resting on balls controls nothing — they
- *      are free to roll away),
- *   2. the ball is IN CONTACT with the footprint (POSSESSION_CONTROL_MARGIN is a
- *      touch tolerance, not a catchment radius), and
- *   3. the ball is AHEAD of the robot along its direction of travel AND is itself
- *      moving that way at POSSESSION_CARRY_SPEED — it is being CARRIED, not clipped.
+ *   CONTROL   — "requires contact with a ROBOT, either directly or TRANSITIVELY through
+ *               other SCORING ELEMENTS."
+ *   POSSESSION— the artifact "remains in approximately the same position relative to the
+ *               ROBOT" as it moves, turns, backs up or spins. Possessed ⇒ controlled.
+ *   HERDING   — pushing artifacts somewhere "that gains a strategic advantage beyond moving
+ *               the ROBOT around the FIELD." This is the thing G408 is aimed at.
+ *   PLOWING   — "INADVERTENT contact ... that provides no additional advantages beyond field
+ *               mobility." Explicitly NOT control, and so never a foul.
  *
- * Condition 3 is what separates a bulldozer from a driver: a ball brushed in passing,
- * or one squirting sideways off a bumper, fails it immediately, while a load being
- * shepherded downfield satisfies it for exactly as long as it is being shepherded.
+ * Hopper balls are possession outright. A loose GROUND ball counts when all three hold:
+ *   1. the robot is MOVING (a parked robot controls nothing — the balls can roll free),
+ *   2. it is AHEAD along the DIRECTION OF TRAVEL (so a rear-bumper hoard driven in reverse
+ *      is the same violation as pushing with the nose — travel, not chassis front), and
+ *   3. it is moving WITH the robot at POSSESSION_CARRY_SPEED — staying in about the same
+ *      place relative to it, which is the manual's possession test, and the line between
+ *      HERDING a load and PLOWING through one.
+ *
+ * TRANSITIVE, per the definition above: the seed set is the balls touching the footprint,
+ * and the chain then grows ball-to-ball. A robot shoving a wedge controls the WHOLE wedge,
+ * not just the two artifacts against its bumper — which is exactly the case the rule exists
+ * for, and was being undercounted by the width of the pile.
+ *
+ * Balls in flight / basin / rail / held by another robot are not loose and never count.
  */
 function controlledArtifacts(world: World, r: RobotState): number {
-  let count = r.hopper.length; // stored possession
   const speed = hyp(r.vel.x, r.vel.y);
-  if (speed < C.POSSESSION_MOVE_SPEED) return count; // no herding without motion
+  if (speed < C.POSSESSION_MOVE_SPEED) return r.hopper.length; // parked: no herding
   const dx = r.vel.x / speed; // direction of travel
   const dy = r.vel.y / speed;
-  const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN;
-  for (const b of world.balls) {
-    if (b.state.kind !== 'ground') continue;
+  const ground = world.balls.filter((b) => b.state.kind === 'ground');
+
+  /** is this ball being carried along by the robot (vs clipped, or squirting away)? */
+  const carried = (b: (typeof ground)[number]): boolean =>
+    (b.pos.x - r.pos.x) * dx + (b.pos.y - r.pos.y) * dy > 0 && // ahead along travel
+    b.vel.x * dx + b.vel.y * dy >= C.POSSESSION_CARRY_SPEED; // ...and coming with it
+
+  const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN; // touching the footprint
+  const chain = C.BALL_RADIUS * 2 + C.POSSESSION_CONTROL_MARGIN; // ...or touching a ball that is
+  const held = new Set<number>();
+  for (const b of ground) {
+    if (!carried(b)) continue;
     const cp = closestPointOnRobot(r, b.pos);
-    if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) > reach) continue; // not touching
-    if ((b.pos.x - r.pos.x) * dx + (b.pos.y - r.pos.y) * dy <= 0) continue; // not in front
-    if (b.vel.x * dx + b.vel.y * dy < C.POSSESSION_CARRY_SPEED) continue; // not being carried
-    count++;
+    if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach) held.add(b.id);
   }
-  return count;
+  // grow the contact chain outward until it stops finding anything (a pile is small, and
+  // the pass is order-independent, so this stays deterministic)
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const b of ground) {
+      if (held.has(b.id) || !carried(b)) continue;
+      for (const c of ground) {
+        if (!held.has(c.id)) continue;
+        if (hyp(b.pos.x - c.pos.x, b.pos.y - c.pos.y) > chain) continue;
+        held.add(b.id);
+        grew = true;
+        break;
+      }
+    }
+  }
+  return r.hopper.length + held.size;
 }
 
 type FireFn = (key: string, offender: Alliance, severity: 'minor' | 'major', rule: string) => boolean;
