@@ -673,6 +673,23 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
 - **G402 auto interference** (MAJOR): an alliance BELONGS on its **goalSide** (blue −x, red +x
   — NOT driverSide, which was inverted and fouled the alliance sitting on its own side); fires
   when fully on the opponent's side + contact during AUTO, on the CROSSER.
+- **G408 over-possession** (MINOR **per ARTIFACT over the limit**, + a **YELLOW CARD** when
+  excessive). CONTROL is the manual's — contact "either directly or TRANSITIVELY through other
+  SCORING ELEMENTS" — so `controlledArtifacts` seeds on the artifacts touching the footprint
+  and grows the contact chain ball-to-ball: a shoved wedge counts WHOLE. An artifact counts
+  only while the robot is MOVING, is AHEAD along the DIRECTION OF TRAVEL (not the chassis nose
+  — a rear-bumper hoard driven in reverse is the same violation), and is coming along at
+  `POSSESSION_CARRY_SPEED`. That last test is the line G408 itself draws: it lists "BULLDOZING
+  (inadvertent contact ... while in the path of the ROBOT moving about the FIELD)" and
+  "DEFLECTING" as explicitly NOT control. EXCESSIVE is defined by the rule, not by taste:
+  5+ at once (clause A) or 3+ separate stretches of greater-than-MOMENTARY (glossary: "fewer
+  than approximately 3 seconds", `MOMENTARY_S`) control of 4+ (clause B). G408 cards a robot at
+  most ONCE per match, per its own "REPEATED excessive violations ... do not result in
+  additional YELLOW CARDS".
+- **CARDS** (`awardCard` in scoring.ts) attach to a ROBOT (a team). A second card from ANY rule
+  ESCALATES to a RED, and a RED sets `ScoreBreakdown.voided` so that alliance's `total` reads 0
+  while the breakdown still shows everything earned — the loss the card is meant to be. Shown
+  as a HUD chip on the carded team and a forfeit line on the results screen.
 - **G422 pinning** (MINOR → MAJOR on a repeat by the same pinner): 3 s of contact while the
   pinned robot commands motion, stays < 8 in/s, and hasn't escaped 24". Pinner-vs-pinned is
   disambiguated by `pinnedAgainstWall` — the VICTIM must be trapped against a boundary with the
