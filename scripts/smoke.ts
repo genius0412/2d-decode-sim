@@ -3331,6 +3331,28 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     w2.match.fouls.blue.minor === 0,
     `blueMinor=${w2.match.fouls.blue.minor}`,
   );
+
+  // REVERSE PLOWING is still plowing. "In front" is measured along the DIRECTION OF TRAVEL,
+  // not along the chassis front, so hoarding a pile against the BACK bumper and reversing
+  // it downfield is the same foul as pushing it with the nose. (Without that, the obvious
+  // dodge would be to gather with the rear, then turn around and fire.)
+  const w3 = foulWorld();
+  const r3 = w3.robots[0];
+  r3.pos = { x: 0, y: -8 };
+  r3.heading = 0; // facing +x...
+  r3.hopper = ['green', 'green', 'green'];
+  r3.vel = { x: -(POSSESSION_MOVE_SPEED + 4), y: 0 }; // ...but DRIVING in reverse, toward −x
+  // the ball is behind the chassis and ahead along the direction of travel, carried along
+  w3.balls.push({ id: 9103, color: 'purple', state: { kind: 'ground' }, pos: { x: -2, y: 0 }, vel: { x: -(POSSESSION_MOVE_SPEED + 4), y: 0 }, z: 0, vz: 0 });
+  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 4; i++) {
+    w3.time = i / 60;
+    updatePenalties(w3, 1 / 60, new Map());
+  }
+  check(
+    'plowing a load with the REAR bumper in reverse is the same foul (no back-door hoarding)',
+    w3.match.fouls.blue.minor === 1,
+    `blueMinor=${w3.match.fouls.blue.minor}`,
+  );
 }
 
 // ---- penalty state stays deterministic -------------------------------------

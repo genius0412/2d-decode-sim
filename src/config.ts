@@ -142,21 +142,32 @@ export const POSSESSION_LIMIT = 3; // == HOPPER_CAPACITY
  * inches of the robot's collision footprint — i.e. actually in contact, not
  * merely nearby. */
 export const POSSESSION_CONTROL_MARGIN = 0.4; // in
-/** herding requires motion — a parked robot merely resting against loose balls
- * is not controlling them (they can roll free), so ignore control below this. */
-export const POSSESSION_MOVE_SPEED = 9; // in/s
+/** herding requires motion — a parked robot merely resting against loose balls is not
+ * controlling them (they can roll free), so ignore control below this.
+ *
+ * Lowered 9 → 6 once POSSESSION_CARRY_SPEED existed. This gate used to be the only thing
+ * excusing a parked robot, so it had to sit well clear of a standstill; the carry test now
+ * does that job directly and better (a stationary robot's balls are not moving with it at
+ * all). Left high, it was a loophole in its own right: herd a pile at 8 in/s and the rule
+ * simply did not look. */
+export const POSSESSION_MOVE_SPEED = 6; // in/s
 /** ...and the ball must be going WITH the robot at least this fast: a plowed ball
  * is one being carried along, while a ball the robot merely clips in passing (or
  * squirts out sideways) is not under anyone's control. */
 export const POSSESSION_CARRY_SPEED = 5; // in/s, along the robot's heading of travel
 /** grace before over-possession is fouled.
  *
- * Long on purpose. The rule is meant to catch a robot BULLDOZING a load around the
- * field, not the ordinary business of driving into a clump to collect it, nudging
- * a ball out of the way, or carrying a full hopper past loose artifacts — all of
- * which used to trip it inside a second. Sustained plowing still bites well inside
- * a single cycle. */
-export const POSSESSION_GRACE = 2; // s
+ * The rule is meant to catch a robot BULLDOZING a load around the field, not the ordinary
+ * business of driving into a clump to collect it, nudging a ball out of the way, or
+ * carrying a full hopper past loose artifacts.
+ *
+ * It was briefly set to 2 s, which was over-corrected: that number was chosen to soften a
+ * test that no longer exists. With control now meaning touching AND ahead along the
+ * direction of travel AND being carried, incidental contact fails on the tick it happens
+ * and the grace is not what protects it — so a long one only delays a real foul. One
+ * second is a deliberate hold, not an accident, and still forgives a normal intake pass
+ * (a capture is < 0.2 s). */
+export const POSSESSION_GRACE = 1; // s
 /** A foul fires on the rising edge of its condition and does NOT re-fire while
  * the condition holds — continuous contact in a foul zone is ONE foul, not a
  * stream. It re-arms only after the condition has been CLEAR for this long, so
