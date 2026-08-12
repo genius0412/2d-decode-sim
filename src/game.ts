@@ -1,6 +1,7 @@
 import type {
   Alliance,
   ArtifactColor,
+  CardColor,
   ChainScoreMode,
   DrivetrainType,
   GameId,
@@ -145,6 +146,12 @@ export interface HudSnapshot {
   provisionalPattern: number;
   /** fouls committed BY each alliance (counts, for the HUD chip) */
   fouls: Record<Alliance, { minor: number; major: number }>;
+  /** the CARD the local robot's team currently holds, or null. A card is issued to a TEAM
+   * and a RED voids its alliance's match points, so the driver has to be able to see it. */
+  card: CardColor | null;
+  /** ...and whether the local alliance's score has been VOIDED by a red card, which is
+   * what the score bar and the results screen have to say rather than a number. */
+  voided: boolean;
   fieldCentric: boolean;
   aimAssist: boolean;
   autoIntake: boolean;
@@ -1140,6 +1147,8 @@ export class GameController {
       oppScore: w.match.scores[opp],
       provisionalPattern: w.match.provisionalPattern[a],
       fouls: { red: { ...w.match.fouls.red }, blue: { ...w.match.fouls.blue } },
+      card: w.penalties.carded[r.id] ?? null,
+      voided: w.match.scores[a].voided ?? false,
       fieldCentric: r.fieldCentric,
       aimAssist: r.aimAssist,
       autoIntake: r.autoIntake,

@@ -50,7 +50,7 @@ import {
   activeStartLegal,
   footprintExtents,
 } from '../src/sim/field';
-import { addClassified, addOverflow, assessMatchEnd } from '../src/sim/scoring';
+import { addClassified, addOverflow, assessMatchEnd, awardCard, awardFoul } from '../src/sim/scoring';
 import type { Alliance, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
 import {
   SIM_DT,
@@ -3387,6 +3387,44 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     'a shoved WEDGE counts transitively and costs a MINOR per artifact over the limit',
     w4.match.fouls.blue.minor === 4 && w4.match.scores.red.foulPoints === 20,
     `blueMinor=${w4.match.fouls.blue.minor} redFoulPts=${w4.match.scores.red.foulPoints}`,
+  );
+
+  // YELLOW CARD, clause A: "simultaneous CONTROL of 5 or more ARTIFACTS" is excessive on
+  // its own. w4 above is controlling 7 (3 hopper + a 4-wedge), so the card comes with the
+  // fouls — and the rule caps itself ("REPEATED excessive violations ... do not result in
+  // additional YELLOW CARDS"), so holding it does not escalate to a red.
+  check(
+    'controlling 5+ at once draws a YELLOW CARD (G408 clause A)',
+    w4.match.cards?.blue.yellow === 1 && w4.match.cards?.blue.red === 0,
+    `cards=${JSON.stringify(w4.match.cards?.blue)}`,
+  );
+  const beforeHold = w4.match.cards?.blue.yellow;
+  for (let i = 0; i < 600; i++) {
+    w4.time = 10 + i / 60;
+    updatePenalties(w4, 1 / 60, new Map());
+  }
+  check(
+    'a held excessive violation does not stack a second card (one per match)',
+    w4.match.cards?.blue.yellow === beforeHold && w4.match.cards?.blue.red === 0,
+    `cards=${JSON.stringify(w4.match.cards?.blue)}`,
+  );
+
+  // A RED CARD voids the alliance's match points: the breakdown still shows what was
+  // earned, the total counts zero.
+  const w5 = foulWorld();
+  awardFoul(w5, 'red', 'minor', 'test'); // gives BLUE points (and recomputes its total)
+  const earned = w5.match.scores.blue.total;
+  awardCard(w5, w5.robots[0], 'test'); // yellow
+  awardCard(w5, w5.robots[0], 'test'); // ...escalates to red
+  check(
+    'a second card becomes a RED, which voids that alliance total',
+    w5.penalties.carded[w5.robots[0].id] === 'red' &&
+      earned > 0 &&
+      w5.match.scores.blue.total === 0 &&
+      w5.match.scores.blue.foulPoints === 5 && // the breakdown still shows what was earned
+      w5.match.cards?.blue.red === 1 &&
+      w5.match.cards?.blue.yellow === 0,
+    `earned=${earned} total=${w5.match.scores.blue.total} cards=${JSON.stringify(w5.match.cards?.blue)}`,
   );
 }
 

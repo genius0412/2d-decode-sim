@@ -14,7 +14,7 @@ import {
 import type { Rect } from './field';
 import { closestPointOnRobot, robotCorners, robotIntersectsRect } from './physics';
 import { pushingGate, ZERO_CMD } from './goal';
-import { awardFoul } from './scoring';
+import { awardCard, awardFoul } from './scoring';
 import { hyp } from '../math';
 
 /**
@@ -210,15 +210,38 @@ export function updatePenalties(
  * award a single MINOR however far over you were, so a bulldozer paid the same as a robot
  * with one ball stuck to its bumper.
  *
- * (The manual also escalates to a YELLOW CARD "if excessive". The sim has no card model at
- * all, so that part is unimplemented — a deliberate gap, not an oversight.)
+ * ...and "YELLOW CARD if excessive", where the rule DEFINES excessive rather than leaving
+ * it to taste:
+ *   A. "simultaneous CONTROL of 5 or more ARTIFACTS", or
+ *   B. "frequent (i.e., 3 or more separate [instances] in a MATCH), greater-than-MOMENTARY
+ *      CONTROL of 4 or more ARTIFACTS" — MOMENTARY being "fewer than approximately 3
+ *      seconds" per the glossary.
+ * It also caps itself: "REPEATED excessive violations of this rule do not result in
+ * additional YELLOW CARDS", so G408 cards a robot at most once per match. (A second card
+ * from ANOTHER rule would escalate it to a red — that is `awardCard`'s job, not this one's.)
  *
  * `controlledArtifacts` decides the count; POSSESSION_GRACE is how long it has to hold.
  */
 function updatePossession(world: World, dt: number, fire: FireFn): void {
   const pen = world.penalties;
   for (const r of world.robots) {
-    const over = controlledArtifacts(world, r) - C.POSSESSION_LIMIT;
+    const controlled = controlledArtifacts(world, r);
+    const over = controlled - C.POSSESSION_LIMIT;
+
+    // CLAUSE B's clock: one continuous stretch of controlling 4+. The INSTANCE is counted
+    // on the tick the stretch crosses MOMENTARY, so a single long hold counts once however
+    // long it runs, and the count only grows by letting go and doing it again.
+    if (controlled >= C.CARD_CONTROL_FREQUENT) {
+      const prev = pen.controlHeld[r.id] ?? 0;
+      const now = prev + dt;
+      pen.controlHeld[r.id] = now;
+      if (prev < C.MOMENTARY_S && now >= C.MOMENTARY_S) {
+        pen.controlInstances[r.id] = (pen.controlInstances[r.id] ?? 0) + 1;
+      }
+    } else {
+      pen.controlHeld[r.id] = 0;
+    }
+
     if (over > 0) {
       const t = (pen.possession[r.id] ?? 0) + dt;
       pen.possession[r.id] = t;
@@ -226,6 +249,13 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
       // episode, not a stream), and the count it fires with is the manual's per-artifact tariff.
       if (t >= C.POSSESSION_GRACE && fire(`G408:${r.id}`, r.alliance, 'minor', 'G408 over-possession')) {
         for (let i = 1; i < over; i++) awardFoul(world, r.alliance, 'minor', 'G408 over-possession');
+        // ...and the card, if this violation is one of the two the rule calls excessive.
+        // Gated on the same episode as the foul: the grace is what makes the contact test
+        // trustworthy, and a card should never rest on a reading the foul itself wouldn't.
+        const excessive =
+          controlled >= C.CARD_CONTROL_SIMULTANEOUS ||
+          (pen.controlInstances[r.id] ?? 0) >= C.CARD_CONTROL_INSTANCES;
+        if (excessive && !pen.carded[r.id]) awardCard(world, r, 'G408 excessive control');
       }
     } else {
       pen.possession[r.id] = 0; // back within the limit — reset the grace clock

@@ -647,6 +647,14 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
                   FOULS {hud.fouls[hud.alliance].minor}m {hud.fouls[hud.alliance].major}M
                 </span>
               )}
+            {/* A CARD is issued to the TEAM, and a RED voids the alliance's match points —
+                the single most consequential thing that can happen to a score, so it is not
+                allowed to live only in the event log. */}
+            {hud.card && (
+              <span className={`chip ${hud.card === 'red' ? 'bad' : 'warn'}`}>
+                {hud.card === 'red' ? '\u25A0 RED CARD' : '\u25A0 YELLOW CARD'}
+              </span>
+            )}
             {hud.frontFlipped && <span className="chip warn">REVERSED</span>}
             {/* BUTTERFLY: name the set that is DOWN. It changes handling AND whether strafe
                 exists at all, so it can't be invisible state. */}
@@ -1030,6 +1038,14 @@ function Results({
             <strong>{revealed ? blueTotal : '-'}</strong>
           </div>
         </div>
+        {/* A VOIDED total is 0 with a full breakdown above it, which reads as a bug unless
+            the reason is stated. Say it plainly, next to the score it explains. */}
+        {revealed && (red.voided || blue.voided) && (
+          <p className="results-void">
+            RED CARD — {red.voided && blue.voided ? 'both alliances have' : `${red.voided ? 'RED' : 'BLUE'} has`}{' '}
+            forfeited the match. Points earned are shown below but do not count.
+          </p>
+        )}
         {!revealed && <p className="ds-hint results-wait">Tallying the score…</p>}
         {revealed && (
           <>

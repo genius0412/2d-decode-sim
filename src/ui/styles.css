@@ -369,6 +369,28 @@ button {
   border-color: var(--ds-warn);
 }
 
+/* a RED CARD — the alliance's match points are VOIDED, which is the worst thing that can
+   happen to a score, so it is filled rather than outlined like the softer states. Fixed
+   ink on a fixed fill (category 2 in the theming note): it does not invert. */
+/* a forfeited match on the results screen — states why a total reads 0 above a full
+   breakdown, which would otherwise look like a scoring bug */
+.results-void {
+  margin: 6px 0 0;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  /* --ds-red-ink, not the --ds-red FILL: the fill is 4.20:1 on the panel in dark, i.e.
+     it misses AA as text. The -ink sibling exists for exactly this (see the theming note). */
+  color: var(--ds-red-ink);
+}
+
+.chip.bad {
+  color: #2b0b0b;
+  background: var(--ds-red);
+  border-color: var(--ds-red);
+  font-weight: 700;
+}
+
 /* an ACTION prompt (Chain Reaction ring pick-up / place is available NOW) — a filled,
    attention-grabbing call-to-action so it's unmistakable the player can act. */
 .chip.prompt {

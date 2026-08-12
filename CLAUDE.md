@@ -642,7 +642,9 @@ Free-Drive has a "practice dummies" toggle (3 idle robots as obstacles).
 
 ## Penalty engine (`src/sim/penalties.ts`)
 
-**MINOR = 5 pts, MAJOR = 15 pts** (user-set, NOT the manual's 10/30), awarded to the OPPOSING
+**MINOR = 5 pts, MAJOR = 15 pts** (these ARE DECODE's values — Section 16 glossary: a MINOR
+FOUL is "a credit of 5 points", a MAJOR "a credit of 15 points", towards the MATCH point
+total. An older note here claimed the manual said 10/30; that was a PREVIOUS season), awarded to the OPPOSING
 (victim) alliance via `awardFoul` → the victim's `ScoreBreakdown.foulPoints`;
 `match.fouls[offender]` tallies committed counts for the HUD.
 

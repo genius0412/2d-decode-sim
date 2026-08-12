@@ -101,9 +101,15 @@ export const PTS_BASE_PARTIAL = 5;
 export const PTS_BASE_FULL = 10;
 
 // --------------------------------------------------------------- fouls -----
-/** Section 11 penalties, awarded TO the OPPOSING (victim) alliance */
+/** Section 11 penalties, awarded TO the OPPOSING (victim) alliance. Straight from the
+ * DECODE glossary (Section 16): a MINOR FOUL is "a credit of 5 points", a MAJOR FOUL "a
+ * credit of 15 points", towards the MATCH point total. */
 export const PTS_FOUL_MINOR = 5;
 export const PTS_FOUL_MAJOR = 15;
+/** MOMENTARY, per the same glossary: "durations that are fewer than approximately 3
+ * seconds". Used by G408's excessive-violation test, which turns on whether CONTROL of 4+
+ * artifacts was greater-than-MOMENTARY. */
+export const MOMENTARY_S = 3;
 /** G422 pinning: hold an opponent trapped for this long (s) while it is trying
  * to move and cannot get away -> foul */
 export const PIN_SECONDS = 3;
@@ -132,12 +138,10 @@ export const PIN_WALL_SLOP = 3; // in
  * happened". The clock now PAUSES on a lapse and only resets once the victim has
  * really been let go for this long (or has separated and driven off). */
 export const PIN_BREAK_S = 0.6; // s
-/** G408: "No more than 3 at a time. A ROBOT may not simultaneously CONTROL more
- * than 3 ARTIFACTS" — the hopper PLUS any loose ground artifacts it is HERDING.
- * The manual's violation is a MINOR FOUL **per ARTIFACT over the limit** (plus a
- * YELLOW CARD if excessive, which this sim has no card model for). The hopper caps
- * at HOPPER_CAPACITY, so the foul bites when a full robot bulldozes loose balls
- * around, or when a pile bigger than this is driven downfield. */
+/** G408: "No more than 3 at a time. A ROBOT may not simultaneously CONTROL more than 3
+ * ARTIFACTS." Violation: "MINOR FOUL per SCORING ELEMENT over the limit. YELLOW CARD if
+ * excessive." The hopper caps at HOPPER_CAPACITY, so the foul bites when a full robot
+ * takes loose artifacts along with it, or when a pile bigger than this is driven around. */
 export const POSSESSION_LIMIT = 3; // == HOPPER_CAPACITY
 /** contact tolerance for CONTROL — a loose artifact counts only when its surface is
  * within this many inches of the robot's footprint (or of an artifact already
@@ -153,11 +157,13 @@ export const POSSESSION_CONTROL_MARGIN = 0.4; // in
  * all). Left high, it was a loophole in its own right: herd a pile at 8 in/s and the rule
  * simply did not look. */
 export const POSSESSION_MOVE_SPEED = 6; // in/s
-/** ...and the artifact must be going WITH the robot at least this fast. This is the
- * manual's POSSESSION test — the artifact "remains in approximately the same position
- * relative to the ROBOT" as it moves — and so the line between HERDING a load (a foul)
- * and PLOWING through one, which the manual defines as INADVERTENT contact with no
- * advantage beyond mobility and explicitly does NOT count as control. */
+/** ...and the artifact must be going WITH the robot at least this fast.
+ *
+ * This is the line G408 draws. The rule lists what is NOT control, first item: "BULLDOZING
+ * (inadvertent contact with a SCORING ELEMENT while in the path of the ROBOT moving about
+ * the FIELD)", second: "DEFLECTING (being hit by a SCORING ELEMENT that bounces into or off
+ * a ROBOT)". An artifact that keeps pace with the robot is neither — it is being taken
+ * along, which is the thing the limit exists to bound. */
 export const POSSESSION_CARRY_SPEED = 5; // in/s, along the robot's heading of travel
 /** grace before over-possession is fouled.
  *
@@ -172,6 +178,25 @@ export const POSSESSION_CARRY_SPEED = 5; // in/s, along the robot's heading of t
  * second is a deliberate hold, not an accident, and still forgives a normal intake pass
  * (a capture is < 0.2 s). */
 export const POSSESSION_GRACE = 1; // s
+
+/**
+ * G408's YELLOW CARD, and the manual defines "excessive" rather than leaving it to taste:
+ *   A. "simultaneous CONTROL of 5 or more ARTIFACTS", or
+ *   B. "frequent (i.e., 3 or more separate MATCHES in a MATCH), greater-than-MOMENTARY
+ *      CONTROL of 4 or more ARTIFACTS."
+ * (B reads oddly because of a typo in the manual — "3 or more separate MATCHES in a MATCH"
+ * is plainly 3 or more separate INSTANCES in a match, which is how it is implemented.)
+ *
+ * MOMENTARY is itself defined, in the glossary: "fewer than approximately 3 seconds"
+ * (MOMENTARY_S). So B is three separate stretches of holding 4+ for longer than that.
+ *
+ * The rule also caps itself: "REPEATED excessive violations of this rule do not result in
+ * additional YELLOW CARDS unless the violation reaches the level of egregious to trigger a
+ * G211 violation" — so G408 issues at most ONE card per robot per match.
+ */
+export const CARD_CONTROL_SIMULTANEOUS = 5; // clause A: this many at once is excessive
+export const CARD_CONTROL_FREQUENT = 4; // clause B: this many, held longer than MOMENTARY...
+export const CARD_CONTROL_INSTANCES = 3; // ...on this many separate occasions
 /** A foul fires on the rising edge of its condition and does NOT re-fire while
  * the condition holds — continuous contact in a foul zone is ONE foul, not a
  * stream. It re-arms only after the condition has been CLEAR for this long, so

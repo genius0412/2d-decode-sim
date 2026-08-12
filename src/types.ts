@@ -383,8 +383,18 @@ export interface ScoreBreakdown {
   base: number;
   /** points awarded to THIS alliance from the opponent's fouls */
   foulPoints: number;
+  /** a RED CARD was issued to one of this alliance's ROBOTS, so its MATCH points are
+   * VOIDED — `total` reads 0 however much was earned. Optional so old snapshots and
+   * replays (which have no card model) stay valid. */
+  voided?: boolean;
   total: number;
 }
+
+/** A card issued by the Head REFEREE — per the DECODE glossary, "a warning issued by the
+ * Head REFEREE for egregious ROBOT or team member behavior or rule violations". Cards
+ * attach to a TEAM (a ROBOT here); a second yellow becomes a RED, and a RED voids that
+ * robot's ALLIANCE score for the MATCH. */
+export type CardColor = 'yellow' | 'red';
 
 export interface MatchState {
   phase: MatchPhase;
@@ -396,6 +406,10 @@ export interface MatchState {
   /** fouls COMMITTED BY each alliance (counts, for the HUD); the resulting
    * points land on the OTHER alliance's ScoreBreakdown.foulPoints */
   fouls: Record<Alliance, { minor: number; major: number }>;
+  /** how many of each alliance's ROBOTS are carded (for the HUD and the results screen).
+   * A red is not also counted as a yellow — a carded robot appears once, at its current
+   * colour. Optional for back-compat with snapshots/replays predating cards. */
+  cards?: Record<Alliance, { yellow: number; red: number }>;
   /** seconds left in a sim-driven pre-match countdown (multiplayer: the
    * pre→auto transition runs INSIDE step() so every peer fires it on the same
    * tick). undefined ⇒ no auto-countdown (solo waits for a keypress instead). */
@@ -448,6 +462,13 @@ export interface PenaltyState {
    * more than POSSESSION_LIMIT artifacts. Fires once past POSSESSION_GRACE;
    * resets to 0 the moment control drops back to the limit. */
   possession: Record<number, number>;
+  /** G408 card bookkeeping. `controlHeld` = seconds a robot has continuously controlled
+   * CARD_CONTROL_FREQUENT or more artifacts (the clause-B stretch); `controlInstances` =
+   * how many such stretches have run longer than MOMENTARY this match; `carded` = the
+   * colour each robot currently holds, since a second yellow becomes a red. */
+  controlHeld: Record<number, number>;
+  controlInstances: Record<number, number>;
+  carded: Record<number, CardColor>;
   /** which OPPONENT alliance (if any) is responsible for each goal's gate being
    * open — set when an opponent operates the gate, held through the drain, and
    * cleared once the gate shuts. Artifacts leaving that ramp meanwhile are billed

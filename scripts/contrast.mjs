@@ -219,6 +219,11 @@ const hudPairs = (t) => {
     ['HUD .chip.on / GATE OPEN', t('--ds-ok-ink'), card, AA],
     ['HUD .chip.off / GATE CLOSED', t('--ds-mut'), t('--ds-tile'), AA],
     ['HUD .chip.warn', t('--ds-warn'), card, AA],
+    // .chip.bad is a FILLED red-card chip: fixed ink on --ds-red, so it is audited
+    // against its own fill rather than against the HUD card behind it.
+    ['HUD .chip.bad (red card)', '#2b0b0b', t('--ds-red'), AA],
+    // the forfeit line on the results screen: --ds-red as TEXT on the overlay panel
+    ['Results forfeit notice', t('--ds-red-ink'), panel, AA],
     ['HUD .timer-panel.urgent', t('--ds-red-ink'), card, AA],
     ['HUD .robot-status ink', t('--ds-ink-dim'), card, AA],
     ['HUD .game-btn ink', t('--ds-ink-dim'), card, AA],

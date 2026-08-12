@@ -1,4 +1,4 @@
-import type { Alliance, GoalState, ScoreBreakdown, World } from '../types';
+import type { Alliance, CardColor, GoalState, RobotState, ScoreBreakdown, World } from '../types';
 import * as C from '../config';
 import { baseZone, inDepot, inRect, launchSegments, other } from './field';
 import { robotCorners, wheelContacts } from './physics';
@@ -21,6 +21,12 @@ export function emptyScore(): ScoreBreakdown {
 }
 
 function recomputeTotal(s: ScoreBreakdown): void {
+  // A RED CARD voids the MATCH — the breakdown still shows everything that was earned,
+  // because that is what happened on the field, but the total it counts for is zero.
+  if (s.voided) {
+    s.total = 0;
+    return;
+  }
   s.total =
     s.leave +
     s.autoClassified +
@@ -50,6 +56,39 @@ export function awardFoul(
   if (severity === 'major') tally.major += 1;
   else tally.minor += 1;
   world.events.push(`${severity === 'major' ? 'MAJOR' : 'MINOR'} FOUL - ${victim.toUpperCase()} +${pts} (${rule})`);
+}
+
+/**
+ * Issue a CARD to a ROBOT — "a warning issued by the Head REFEREE for egregious ROBOT or
+ * team member behavior or rule violations" (DECODE glossary).
+ *
+ * Cards attach to a TEAM, which here is a robot, and ESCALATE: a team that already holds a
+ * yellow gets a RED instead. A red VOIDS its ALLIANCE's match points — the breakdown still
+ * lists everything earned, since that is what happened on the field, but the total counts
+ * zero, which in a 1v1 or 2v2 is the loss the card is supposed to be.
+ *
+ * Returns the colour actually issued, or null if the robot was already red.
+ */
+export function awardCard(world: World, robot: RobotState, rule: string): CardColor | null {
+  const pen = world.penalties;
+  const held = pen.carded[robot.id];
+  if (held === 'red') return null; // already the worst there is
+  const colour: CardColor = held === 'yellow' ? 'red' : 'yellow';
+  pen.carded[robot.id] = colour;
+
+  const cards = (world.match.cards ??= { red: { yellow: 0, red: 0 }, blue: { yellow: 0, red: 0 } });
+  const tally = cards[robot.alliance];
+  if (colour === 'red') {
+    if (held === 'yellow') tally.yellow -= 1; // one carded robot, now shown at its new colour
+    tally.red += 1;
+    world.match.scores[robot.alliance].voided = true;
+    recomputeTotal(world.match.scores[robot.alliance]);
+  } else {
+    tally.yellow += 1;
+  }
+  const who = robot.spec.teamNumber ? `#${robot.spec.teamNumber}` : robot.spec.name || `robot ${robot.id}`;
+  world.events.push(`${colour.toUpperCase()} CARD - ${robot.alliance.toUpperCase()} ${who} (${rule})`);
+  return colour;
 }
 
 /** Rule A: assessment of CLASSIFIED/OVERFLOW happens throughout the match and
