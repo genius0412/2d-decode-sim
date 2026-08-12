@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, type IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
+import v8 from 'node:v8';
 import { Room, type Client } from './room';
 import { decodeClientMsg, encodeMsg, DEFAULT_ROOM_CONFIG, RATED_FORMATS, SERVER_CAPS, type ClientMsg, type LiveRoom, type RoomConfig, type ServerMsg } from '../src/net/protocol';
 import { sanitizePlayer } from '../src/net/sanitize';
@@ -288,8 +289,19 @@ const REGION = process.env.FLY_REGION ?? process.env.SERVER_REGION ?? '';
 // So measure the thing that actually predicts that: EVENT LOOP DELAY, alongside
 // cpu-seconds-per-second (= cores in use) and how many rooms produced that load.
 // Read it repeatedly during real matches before changing any machine's cpu kind.
-const loopDelay = monitorEventLoopDelay({ resolution: 10 });
+//
+// RESOLUTION MUST STAY WELL UNDER THE 16.67ms STEP BUDGET. This was `resolution: 10`,
+// which is the histogram's sampling period AND therefore its noise floor: a completely
+// idle machine reported mean 10.18 / p99 11.2ms, and two machines in different regions
+// on different CPU sizes returned identical numbers because the figure was measuring the
+// timer, not the loop. That made the tuning rule this comment states — "p99 approaching
+// 16.67ms means the loop is late" — impossible to apply: the floor was already 60% of
+// the budget, so real lag and idle were indistinguishable. At 1ms an idle loop reads
+// ~1ms and the number means what it claims to.
+const loopDelay = monitorEventLoopDelay({ resolution: 1 });
 loopDelay.enable();
+/** ms epoch of the last `?reset=1` (or boot) — `max` is only meaningful relative to it */
+let loopDelaySince = Date.now();
 let cpuMark = process.cpuUsage();
 let cpuMarkAt = process.hrtime.bigint();
 /** cores in use since the previous call — sampling resets the window */
@@ -1203,6 +1215,8 @@ const httpServer = createServer((req, res) => {
   if (req.method === 'GET' && req.url?.startsWith('/api/perf')) {
     const live = localLive();
     const ms = (n: number): number => Math.round((n / 1e6) * 100) / 100; // ns → ms
+    const heap = v8.getHeapStatistics();
+    const mb = (n: number): number => Math.round(n / 1048576);
     const body = {
       region: REGION,
       machine: MACHINE,
@@ -1211,8 +1225,25 @@ const httpServer = createServer((req, res) => {
       rooms: live.length,
       players: onlineCount,
       rssMb: Math.round(process.memoryUsage().rss / 1048576),
+      // HEAP, not just RSS. RSS alone cannot distinguish "V8 is holding freed pages it
+      // hasn't returned to the OS" (harmless) from "the live set is near the heap cap"
+      // (pathological: every allocation triggers a full GC, and those pauses ARE the
+      // stutter players report). `usedMb` against `limitMb` is the ratio that tells them
+      // apart — a long-lived machine sitting at a high fraction of the limit while idle
+      // is the one to restart or profile.
+      heapMb: {
+        used: mb(heap.used_heap_size),
+        total: mb(heap.total_heap_size),
+        limit: mb(heap.heap_size_limit),
+      },
       // the decisive numbers: a p99 approaching the 16.67ms step budget means the
       // loop is already late, and a max past the /health timeout means a flap.
+      // `windowS` is how long these have been accumulating: without it `max` is a
+      // since-BOOT figure, so a week-old machine reports the one-off JIT/WASM stall
+      // from its own startup forever and every reading looks alarming. Sample with
+      // `?reset=1` to start a fresh window, then read it again during a real match —
+      // that pair is the only way to attribute a stall to current load.
+      windowS: Math.round((Date.now() - loopDelaySince) / 1000),
       loopLagMs: {
         mean: ms(loopDelay.mean),
         p50: ms(loopDelay.percentile(50)),
@@ -1220,7 +1251,10 @@ const httpServer = createServer((req, res) => {
         max: ms(loopDelay.max),
       },
     };
-    if (new URL(req.url, 'http://x').searchParams.get('reset')) loopDelay.reset();
+    if (new URL(req.url, 'http://x').searchParams.get('reset')) {
+      loopDelay.reset();
+      loopDelaySince = Date.now();
+    }
     res.writeHead(200, {
       'content-type': 'application/json',
       'cache-control': 'no-store',

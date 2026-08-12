@@ -48,6 +48,10 @@ const INTERP_DELAY_TICKS = 5; // render remotes ~5 ticks (~83ms) behind latest: 
 // extra tick of cushion over the old 4 so a single 30 Hz snapshot gap (33ms) no
 // longer drains the interpolation buffer and freezes/warps remotes (a stutter source)
 const INTERP_BUFFER = 8; // authoritative snapshots kept for interpolation
+// how fast the render clock converges on (latest - INTERP_DELAY_TICKS). Expressed as
+// a HALF-LIFE so the convergence is identical at 30/60/144/240 fps; 0.11s reproduces
+// what the old per-frame `* 0.1` did at exactly 60 fps, so 60 Hz feel is unchanged.
+const INTERP_EASE_HALFLIFE = 0.11; // s
 
 // PREDICTION LEAD CAP. During a snapshot stall (a ping spike / a dropped burst) the
 // client keeps predicting and buffering its own inputs. Without a bound, the input
@@ -854,11 +858,17 @@ export class GameController {
     }
 
     // advance the interpolation clock at real-time rate, then gently pull it toward
-    // (latest - delay) to absorb clock drift + snapshot jitter; clamp to the buffer
+    // (latest - delay) to absorb clock drift + snapshot jitter; clamp to the buffer.
+    // The pull is a HALF-LIFE, not a per-frame fraction: a bare `* 0.1` each frame
+    // converges at a rate that scales with the player's FPS, so the same network fed
+    // a 144 Hz machine a clock yanked ~2.4x harder than a 60 Hz one — it chased jitter
+    // instead of absorbing it, and high-refresh players saw MORE remote stutter than
+    // everyone else on the identical connection. Matches SMOOTH_HALFLIFE's convention.
     const latest = buf[buf.length - 1].tick;
     const oldest = buf[0].tick;
-    this.renderTick += Math.min(dtMs / 1000, 0.1) / C.SIM_DT;
-    this.renderTick += (latest - INTERP_DELAY_TICKS - this.renderTick) * 0.1;
+    const dtSec = Math.min(dtMs / 1000, 0.1);
+    this.renderTick += dtSec / C.SIM_DT;
+    this.renderTick += (latest - INTERP_DELAY_TICKS - this.renderTick) * (1 - Math.pow(2, -dtSec / INTERP_EASE_HALFLIFE));
     this.renderTick = Math.max(oldest, Math.min(this.renderTick, latest));
 
     // find the pair of snapshots bracketing the render clock

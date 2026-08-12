@@ -65,7 +65,13 @@ export async function verifyAuthToken(token: string | undefined): Promise<Authed
       return null;
     }
     const name = payload.name ?? payload.email ?? undefined;
-    console.log(`[auth] verify OK: user=${userId}`);
+    // Deliberately NOT logged. The friends read doubles as the presence heartbeat, so
+    // every signed-in browser tab re-verifies roughly twice a minute for as long as it
+    // is open — a success line here meant an idle server with two users online emitted
+    // thousands of identical lines a day, which is both the bulk of the log bill and the
+    // noise that buries the failures below (the ones that actually explain a player being
+    // silently signed out). Failures and misconfiguration still log; success is the
+    // uninteresting case and is now silent.
     return { userId, handle: typeof name === 'string' && name ? name : 'Player' };
   } catch (e) {
     // expired / bad signature / unreachable-or-wrong JWKS ⇒ anonymous. Log why.

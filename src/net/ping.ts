@@ -20,22 +20,39 @@ export interface HomeProbe {
 }
 
 /** probe the connected server (over HTTP) for our home region + access latency.
- * `httpBase` is `gameServerHttpUrl()`. Returns null if the server is unreachable. */
+ * `httpBase` is `gameServerHttpUrl()`. Returns null if the server is unreachable.
+ *
+ * The FIRST sample gets a much longer budget than the rest (`coldTimeoutMs`). Regions
+ * auto-stop when idle, so the first request of a session is routinely the one that
+ * WAKES the machine — measured at ~6 s from stopped to serving. Under the old flat 3 s
+ * timeout every sample aborted before a waking region could answer, `probeHome` returned
+ * null, and a perfectly healthy server was reported to the player as unreachable (the
+ * region list greys out / multiplayer looks down) — a self-inflicted outage on exactly
+ * the players whose region is least busy. Later samples keep the short timeout because
+ * by then the machine is warm and they are measuring real latency; `best` takes the
+ * MINIMUM, so the slow wake-up sample can never inflate the reported ping. If that first
+ * generous attempt still times out, the server really is down — bail rather than making
+ * the player wait out two more.
+ */
 export async function probeHome(
   httpBase: string,
   samples = 3,
   timeoutMs = 3000,
+  coldTimeoutMs = 12000,
 ): Promise<HomeProbe | null> {
   const url = httpBase + '/health';
   let best: number | null = null;
   let region = '';
   for (let i = 0; i < samples; i++) {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    const budget = i === 0 ? coldTimeoutMs : timeoutMs;
+    const timer = setTimeout(() => ctl.abort(), budget);
     const t0 = performance.now();
+    let ok = false;
     try {
       const res = await fetch(url, { cache: 'no-store', signal: ctl.signal });
       if (res.ok) {
+        ok = true;
         await res.text().catch(() => {});
         const rtt = performance.now() - t0;
         if (best === null || rtt < best) {
@@ -48,6 +65,7 @@ export async function probeHome(
     } finally {
       clearTimeout(timer);
     }
+    if (i === 0 && !ok) return null; // nothing answered the generous probe ⇒ genuinely down
   }
   return best === null ? null : { region, accessMs: best };
 }

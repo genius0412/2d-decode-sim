@@ -52,10 +52,25 @@ export interface Transport {
 }
 
 const RECONNECT_DELAY_MS = 1000;
-/** ~40 s of auto-retries before giving up — roughly matches the server-side reconnect
- * grace (45 s) so a transient outage recovers on its own; a longer absence falls back
- * to the manual "rejoin your match" flow from Home. */
+/** ~48 s of auto-retries before giving up (40 tries at ~1.2 s average once jittered) —
+ * covers the server-side reconnect grace (45 s) so a transient outage recovers on its
+ * own; a longer absence falls back to the manual "rejoin your match" flow from Home.
+ * An attempt that hangs is capped by CONNECT_TIMEOUT_MS, so a black-holed host burns
+ * the budget in bounded 8 s steps rather than parking on a single dead socket. */
 const MAX_RECONNECT_ATTEMPTS = 40;
+/** Random extra delay (0..this) added to every retry. Every client of a room drops at
+ * the SAME instant (server restart / deploy / Fly autostop→start), so an unjittered
+ * fixed delay marched them all back in lockstep — each wave hitting a server that is
+ * still cold-booting, exactly when it can least afford a synchronised herd. The spread
+ * is small enough to be invisible against a ~1 s delay. */
+const RECONNECT_JITTER_MS = 400;
+/** Give up on a single connect ATTEMPT after this and retry. A WebSocket to a black-holed
+ * host (dropped wifi, captive portal, a machine mid-boot that never completes the upgrade)
+ * fires NEITHER `onopen` NOR `onclose` — the browser sits on the OS TCP timeout, which can
+ * run 75 s+. Without this the retry loop stalls on attempt one and the player watches
+ * "reconnecting" do nothing, never reaching the second attempt that would have worked.
+ * Comfortably above a measured Fly cold boot (~6 s) so a waking machine is never cut off. */
+const CONNECT_TIMEOUT_MS = 8000;
 
 export class WebSocketTransport implements Transport {
   private ws: WebSocket | null = null;
@@ -68,9 +83,16 @@ export class WebSocketTransport implements Transport {
   private disposed = false;
   private attempts = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** fires if the in-flight connect neither opens nor closes (see CONNECT_TIMEOUT_MS) */
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly url: string) {
     this.connect();
+  }
+
+  private clearConnectTimer(): void {
+    if (this.connectTimer) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
   }
 
   private connect(): void {
@@ -83,10 +105,29 @@ export class WebSocketTransport implements Transport {
       return;
     }
     this.ws = ws;
+    // A stuck connect never reaches onopen/onclose, so nothing below would ever run.
+    // Abandon it ourselves: close() the zombie (its onclose is neutered by the identity
+    // check, so it cannot double-schedule) and go straight to the next attempt.
+    this.clearConnectTimer();
+    this.connectTimer = setTimeout(() => {
+      this.connectTimer = null;
+      if (this.disposed || this.ws !== ws) return;
+      if (ws.readyState === WebSocket.OPEN) return; // opened in the same turn; nothing to do
+      ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+      try {
+        ws.close();
+      } catch {
+        /* already tearing down */
+      }
+      this.downCb?.();
+      this.scheduleReconnect();
+    }, CONNECT_TIMEOUT_MS);
     ws.onmessage = (e) => {
       if (typeof e.data === 'string') this.messageCb?.(e.data);
     };
     ws.onopen = () => {
+      if (this.ws !== ws) return; // superseded by a newer attempt
+      this.clearConnectTimer();
       this.attempts = 0;
       if (!this.opened) {
         this.opened = true;
@@ -96,7 +137,8 @@ export class WebSocketTransport implements Transport {
       }
     };
     ws.onclose = () => {
-      if (this.disposed) return;
+      if (this.disposed || this.ws !== ws) return; // superseded/abandoned socket
+      this.clearConnectTimer();
       this.downCb?.();
       this.scheduleReconnect();
     };
@@ -111,7 +153,10 @@ export class WebSocketTransport implements Transport {
     }
     this.attempts++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
+    this.timer = setTimeout(
+      () => this.connect(),
+      RECONNECT_DELAY_MS + Math.random() * RECONNECT_JITTER_MS,
+    );
   }
 
   /** The lane hint is intentionally ignored: a WebSocket is a single ordered TCP
@@ -145,6 +190,7 @@ export class WebSocketTransport implements Transport {
   close(): void {
     this.disposed = true;
     if (this.timer) clearTimeout(this.timer);
+    this.clearConnectTimer();
     this.ws?.close();
   }
 
