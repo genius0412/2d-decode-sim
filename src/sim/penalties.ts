@@ -220,12 +220,13 @@ export function updatePenalties(
  * additional YELLOW CARDS", so G408 cards a robot at most once per match. (A second card
  * from ANOTHER rule would escalate it to a red — that is `awardCard`'s job, not this one's.)
  *
- * `controlledArtifacts` decides the count; POSSESSION_GRACE is how long it has to hold.
+ * `controlledArtifacts` decides the count; POSSESSION_GRACE is how much control has to
+ * ACCUMULATE on the leaky clock below.
  */
 function updatePossession(world: World, dt: number, fire: FireFn): void {
   const pen = world.penalties;
   for (const r of world.robots) {
-    const controlled = controlledArtifacts(world, r);
+    const controlled = controlledArtifacts(world, r, dt);
     const over = controlled - C.POSSESSION_LIMIT;
 
     // CLAUSE B's clock: one continuous stretch of controlling 4+. The INSTANCE is counted
@@ -242,36 +243,50 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
       pen.controlHeld[r.id] = 0;
     }
 
+    // A LEAKY CLOCK, not a resetting one. It fills while over the limit and DRAINS at
+    // POSSESSION_LEAK while under, so a violation chopped into repeated FLICKS — bump the
+    // pile, back off, bump again — still climbs to the grace.
+    //
+    // With a resetting clock that technique was free AND better: measured in the sim, a
+    // flick-shuttle moved a six-artifact pile twice as far as a sustained shove (18" vs 9")
+    // for zero fouls, where the shove drew three and a card. A penalty the evasive version
+    // of the same act dodges is worse than no penalty — it does not deter the behaviour, it
+    // just selects for the technique.
+    let t = pen.possession[r.id] ?? 0;
     if (over > 0) {
-      const t = (pen.possession[r.id] ?? 0) + dt;
-      pen.possession[r.id] = t;
-      if (t >= C.POSSESSION_GRACE) {
-        // ONE episode, but N fouls — `fire` owns the edge-debounce (a held violation is one
-        // episode, not a stream) and bills the first artifact over the limit.
-        if (fire(`G408:${r.id}`, r.alliance, 'minor', 'G408 over-possession')) {
-          pen.possessionBilled[r.id] = 1;
-        }
-        // ...and the rest of the tariff TOPS UP as the pile grows. Billing only at the
-        // episode edge meant scooping up more while already over was free: a robot that
-        // opened the violation at 4 could grow to 9 inside the same hold and still pay for
-        // one. It is a MINOR "per SCORING ELEMENT over the limit" — all of them.
-        const billed = pen.possessionBilled[r.id] ?? 0;
-        for (let i = billed; i < over; i++) {
-          awardFoul(world, r.alliance, 'minor', 'G408 over-possession');
-        }
-        if (over > billed) pen.possessionBilled[r.id] = over;
-
-        // The CARD is likewise re-checked every tick the violation is live, not once at the
-        // edge — clause A is about what is controlled AT THE MOMENT, and a pile that grows
-        // past 5 after the episode opened is exactly the case it exists for.
-        const excessive =
-          controlled >= C.CARD_CONTROL_SIMULTANEOUS ||
-          (pen.controlInstances[r.id] ?? 0) >= C.CARD_CONTROL_INSTANCES;
-        if (excessive && !pen.carded[r.id]) awardCard(world, r, 'G408 excessive control');
-      }
+      t += dt;
     } else {
-      pen.possession[r.id] = 0; // back within the limit — reset the grace clock
-      pen.possessionBilled[r.id] = 0; // ...and the next episode bills from scratch
+      t = Math.max(0, t - dt * C.POSSESSION_LEAK);
+      if (t === 0) pen.possessionBilled[r.id] = 0; // fully drained — the next episode bills fresh
+    }
+    pen.possession[r.id] = t;
+
+    // The foul only OPENS on a tick that is actually over the limit, so the first MINOR
+    // always corresponds to a real overage; the clock decides WHEN a violation stops being
+    // incidental, not what it is billed for.
+    if (over > 0 && t >= C.POSSESSION_GRACE) {
+      // ONE episode, but N fouls — `fire` owns the edge-debounce (a held violation is one
+      // episode, not a stream) and bills the first artifact over the limit.
+      if (fire(`G408:${r.id}`, r.alliance, 'minor', 'G408 over-possession')) {
+        pen.possessionBilled[r.id] = 1;
+      }
+      // ...and the rest of the tariff TOPS UP as the pile grows. Billing only at the
+      // episode edge meant scooping up more while already over was free: a robot that
+      // opened the violation at 4 could grow to 9 inside the same hold and still pay for
+      // one. It is a MINOR "per SCORING ELEMENT over the limit" — all of them.
+      const billed = pen.possessionBilled[r.id] ?? 0;
+      for (let i = billed; i < over; i++) {
+        awardFoul(world, r.alliance, 'minor', 'G408 over-possession');
+      }
+      if (over > billed) pen.possessionBilled[r.id] = over;
+
+      // The CARD is likewise re-checked every tick the violation is live, not once at the
+      // edge — clause A is about what is controlled AT THE MOMENT, and a pile that grows
+      // past 5 after the episode opened is exactly the case it exists for.
+      const excessive =
+        controlled >= C.CARD_CONTROL_SIMULTANEOUS ||
+        (pen.controlInstances[r.id] ?? 0) >= C.CARD_CONTROL_INSTANCES;
+      if (excessive && !pen.carded[r.id]) awardCard(world, r, 'G408 excessive control');
     }
   }
 }
@@ -308,13 +323,14 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
  *
  * Artifacts in flight / basin / rail / held by another robot are not loose and never count.
  */
-function controlledArtifacts(world: World, r: RobotState): number {
+function controlledArtifacts(world: World, r: RobotState, dt: number): number {
   // the possession test only asks what happens "as the ROBOT moves or changes ORIENTATION"
   const active =
     hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED || Math.abs(r.angVel) >= C.POSSESSION_TURN_RATE;
-  if (!active) return r.hopper.length;
   const home = loadZone(r.alliance);
-  const ground = world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home));
+  const ground = active
+    ? world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home))
+    : [];
 
   /** does this artifact hold station relative to the robot — the possession test itself? */
   const carried = (b: (typeof ground)[number]): boolean => {
@@ -345,7 +361,37 @@ function controlledArtifacts(world: World, r: RobotState): number {
       }
     }
   }
-  return r.hopper.length + held.size;
+  /**
+   * THE CONFIRM GATE — an artifact counts only once IT has been with this robot long enough.
+   *
+   * The per-tick tests above answer "is this artifact possessed right now"; they cannot
+   * answer "is this robot HERDING or just driving through", because a single frame of a
+   * crossing and a single frame of a shove look identical. Identity over time is the signal,
+   * and it has to be tracked per ARTIFACT rather than per robot: crossing a littered field
+   * touches a dozen artifacts briefly and confirms none of them, while shoving or repeatedly
+   * flicking the same six accumulates on those six.
+   *
+   * Leaky, like the episode clock, which is what makes FLICKING add up: each contact is far
+   * too short to confirm on its own, but the artifact's own clock only drains at
+   * POSSESSION_LEAK between strikes, so re-hitting the same pile climbs. A robot that leaves
+   * an artifact behind drains it to nothing and the entry is deleted.
+   */
+  const pen = world.penalties;
+  let confirmed = 0;
+  for (const b of world.balls) {
+    const key = `${r.id}:${b.id}`;
+    const prev = pen.ballHold[key];
+    if (held.has(b.id)) {
+      const t = (prev ?? 0) + dt;
+      pen.ballHold[key] = t;
+      if (t >= C.POSSESSION_CONFIRM) confirmed++;
+    } else if (prev !== undefined) {
+      const t = prev - dt * C.POSSESSION_LEAK;
+      if (t <= 0) delete pen.ballHold[key];
+      else pen.ballHold[key] = t;
+    }
+  }
+  return r.hopper.length + confirmed;
 }
 
 type FireFn = (key: string, offender: Alliance, severity: 'minor' | 'major', rule: string) => boolean;

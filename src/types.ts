@@ -458,9 +458,10 @@ export interface PenaltyState {
   /** how many pin fouls a given pinner (by id) has already committed, for the
    * MINOR -> MAJOR escalation on a repeat pin */
   pinFouls: Record<number, number>;
-  /** G408 over-possession: seconds a robot (by id) has continuously CONTROLLED
-   * more than POSSESSION_LIMIT artifacts. Fires once past POSSESSION_GRACE;
-   * resets to 0 the moment control drops back to the limit. */
+  /** G408 over-possession: an ACCUMULATED, leaky clock of seconds a robot (by id) has
+   * controlled more than POSSESSION_LIMIT artifacts. It fills while over the limit and
+   * drains at POSSESSION_LEAK while under, so a violation broken into repeated flicks
+   * still reaches POSSESSION_GRACE. Reset to 0 when the foul fires. */
   possession: Record<number, number>;
   /** G408 card bookkeeping. `controlHeld` = seconds a robot has continuously controlled
    * CARD_CONTROL_FREQUENT or more artifacts (the clause-B stretch); `controlInstances` =
@@ -471,6 +472,12 @@ export interface PenaltyState {
    * than riding free on the first assessment */
   possessionBilled: Record<number, number>;
   controlHeld: Record<number, number>;
+  /** PER-ARTIFACT hold: `"<robotId>:<ballId>"` -> seconds this robot has had this artifact,
+   * filling while it is possessed and draining at POSSESSION_LEAK when it is not. An
+   * artifact only counts toward the limit once its own clock passes POSSESSION_CONFIRM,
+   * which is what separates HERDING (the same artifacts, over and over) from crossing a
+   * littered field (a different artifact each moment). Entries are deleted at 0. */
+  ballHold: Record<string, number>;
   controlInstances: Record<number, number>;
   carded: Record<number, CardColor>;
   /** which OPPONENT alliance (if any) is responsible for each goal's gate being

@@ -177,19 +177,43 @@ export const POSSESSION_TURN_RATE = 0.15; // rad/s — ...or changing orientatio
  * and one DEFLECTING off a bumper leaves at its own. Neither holds station; a possessed one
  * does. */
 export const POSSESSION_SLIP = 5; // in/s of drift relative to the robot
-/** grace before over-possession is fouled.
+/** grace before over-possession is fouled — seconds of control that have to ACCUMULATE.
  *
- * The rule is meant to catch a robot BULLDOZING a load around the field, not the ordinary
- * business of driving into a clump to collect it, nudging a ball out of the way, or
- * carrying a full hopper past loose artifacts.
- *
- * It was briefly set to 2 s, which was over-corrected: that number was chosen to soften a
- * test that no longer exists. With control now meaning touching AND ahead along the
- * direction of travel AND being carried, incidental contact fails on the tick it happens
- * and the grace is not what protects it — so a long one only delays a real foul. One
- * second is a deliberate hold, not an accident, and still forgives a normal intake pass
- * (a capture is < 0.2 s). */
+ * The rule is meant to catch a robot taking a load around the field, not the ordinary
+ * business of driving into a clump to collect it, nudging a ball aside, or carrying a full
+ * hopper past loose artifacts. One second is a deliberate hold, not an accident, and still
+ * forgives a normal intake pass (a capture is < 0.2 s). */
 export const POSSESSION_GRACE = 1; // s
+/**
+ * ...and how fast that clock DRAINS while control is back within the limit, as a fraction
+ * of real time. This is the difference between a clock that accumulates and one that resets,
+ * and it is load-bearing.
+ *
+ * A reset clock is trivially defeated by FLICKING: bump the pile, back off, bump again. Each
+ * contact is well under the grace, so the clock never got anywhere — and measured in the sim,
+ * a flick-shuttle moved a six-artifact pile FURTHER than a sustained shove did (18" vs 9")
+ * while drawing zero fouls, where the shove drew three and a card. A penalty that the evasive
+ * version of the same act dodges is worse than no penalty: it does not deter the behaviour,
+ * it just selects for the technique.
+ *
+ * Draining at HALF the fill rate means a repeated violation still climbs (any duty cycle over
+ * a third of the time nets upward) while one genuine pass through a clump drains away in about
+ * twice the time it lasted. Intent shows up in the aggregate, which is where it actually lives.
+ */
+export const POSSESSION_LEAK = 0.5;
+/**
+ * How long ONE artifact has to stay with a robot before it counts toward the limit.
+ *
+ * This is the test that separates the two things a single frame cannot: HERDING (the same
+ * artifacts, held or repeatedly re-struck) from BULLDOZING — "inadvertent contact with a
+ * SCORING ELEMENT while in the path of the ROBOT moving about the FIELD", which G408
+ * explicitly excuses. Crossing a littered field touches a dozen artifacts for a fifth of a
+ * second each and none of them ever confirms; shoving a pile holds the same six for as long
+ * as you shove; flicking re-strikes the same six every cycle, and because each artifact's
+ * clock is LEAKY rather than resetting, those repeated touches add up on the artifacts
+ * themselves. Identity is the signal — which artifacts, not how many.
+ */
+export const POSSESSION_CONFIRM = 0.35; // s, per artifact
 
 /**
  * G408's YELLOW CARD, and the manual defines "excessive" rather than leaving it to taste:

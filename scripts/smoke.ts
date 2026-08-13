@@ -84,6 +84,7 @@ import {
   BASE_DRIVE_ACCEL,
   POWER_DRAW_SWERVE,
   POSSESSION_MOVE_SPEED,
+  POSSESSION_CONFIRM,
   POSSESSION_GRACE,
   PTS_FOUL_MAJOR,
   MAX_SAVED_STARTS,
@@ -2866,7 +2867,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   // travel, and carried along at the robot's own speed -> 4 controlled, over the limit
   w.balls.push({ id: 9001, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_MOVE_SPEED + 4, y: 0 }, z: 0, vz: 0 });
   // hold the over-possession just past the grace window
-  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 2; i++) {
+  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 2; i++) {
     w.time = i / 60;
     updatePenalties(w, 1 / 60, new Map());
   }
@@ -2884,7 +2885,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r2.hopper = ['green', 'green', 'green'];
   r2.vel = { x: 0, y: 0 }; // stationary
   w2.balls.push({ id: 9002, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
-  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 2; i++) {
+  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 2; i++) {
     w2.time = i / 60;
     updatePenalties(w2, 1 / 60, new Map());
   }
@@ -2900,7 +2901,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r3.pos = { x: 0, y: -8 };
   r3.hopper = ['green', 'green', 'green'];
   r3.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
-  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 2; i++) {
+  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 2; i++) {
     w3.time = i / 60;
     updatePenalties(w3, 1 / 60, new Map());
   }
@@ -2918,7 +2919,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r4.hopper = ['green', 'green', 'green'];
   r4.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
   w4.balls.push({ id: 9003, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_MOVE_SPEED + 4, y: 0 }, z: 0, vz: 0 });
-  for (let i = 0; i < Math.floor((POSSESSION_GRACE / 2) / (1 / 60)); i++) { // < grace
+  for (let i = 0; i < Math.floor((POSSESSION_GRACE / 2) / (1 / 60)); i++) { // well under confirm+grace
     w4.time = i / 60;
     updatePenalties(w4, 1 / 60, new Map());
   }
@@ -3304,7 +3305,7 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   r.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
   // touching and in front, but NOT being carried — it is rolling away sideways
   w.balls.push({ id: 9101, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: 0, y: 20 }, z: 0, vz: 0 });
-  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 30; i++) {
+  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 30; i++) {
     w.time = i / 60;
     updatePenalties(w, 1 / 60, new Map());
   }
@@ -3326,7 +3327,7 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   for (let i = 0; i < 5; i++) {
     w2.balls.push({ id: 9110 + i, color: 'purple', state: { kind: 'ground' }, pos: { x: 2 + i * 5, y: 0 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
   }
-  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 30; i++) {
+  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 30; i++) {
     w2.time = i / 60;
     updatePenalties(w2, 1 / 60, new Map());
   }
@@ -3348,7 +3349,7 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   r3.vel = { x: -(POSSESSION_MOVE_SPEED + 4), y: 0 }; // ...but DRIVING in reverse, toward −x
   // the ball is behind the chassis and ahead along the direction of travel, carried along
   w3.balls.push({ id: 9103, color: 'purple', state: { kind: 'ground' }, pos: { x: -2, y: 0 }, vel: { x: -(POSSESSION_MOVE_SPEED + 4), y: 0 }, z: 0, vz: 0 });
-  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 4; i++) {
+  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 4; i++) {
     w3.time = i / 60;
     updatePenalties(w3, 1 / 60, new Map());
   }
@@ -3383,7 +3384,7 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       vz: 0,
     });
   }
-  for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 4; i++) {
+  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 4; i++) {
     w4.time = i / 60;
     updatePenalties(w4, 1 / 60, new Map());
   }
@@ -3543,6 +3544,44 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       'acquiring artifacts from your own LOADING ZONE is not control (no G408)',
       w.match.fouls.blue.minor === 0,
       `blueMinor=${w.match.fouls.blue.minor}`,
+    );
+  }
+
+  // CROSSING A LITTERED FIELD is the case G408 explicitly excuses — "BULLDOZING (inadvertent
+  // contact with a SCORING ELEMENT while in the path of the ROBOT moving about the FIELD)".
+  // A full hopper driving straight through a dozen scattered artifacts must draw NOTHING.
+  // Before the per-artifact confirm gate this scenario drew 5 MINORs and a yellow card:
+  // every brush counted, and the per-robot clock could not tell a dozen different artifacts
+  // touched briefly from the same six held.
+  {
+    const w = foulWorld();
+    const r = w.robots[0];
+    // clear the staged field so this isolates BRUSHING PAST scattered artifacts. Driving a
+    // whole spike ROW down the field for seconds is a different act — the artifacts hold
+    // station against the bumper the entire way — and it SHOULD foul; the manual puts that
+    // burden on the robot ("design your ROBOT so that it is impossible to inadvertently
+    // ... CONTROL more than the limit").
+    w.balls.length = 0;
+    w.robots[1].pos = { x: 60, y: 60 }; // and the opponent out of the lane
+    r.pos = { x: 0, y: -60 };
+    r.heading = Math.PI / 2;
+    r.hopper = ['green', 'green', 'green'];
+    for (let i = 0; i < 12; i++) {
+      w.balls.push({
+        id: 9300 + i,
+        color: 'purple',
+        state: { kind: 'ground' },
+        pos: { x: (i % 3) * 7 - 7, y: -48 + i * 9 },
+        vel: { x: 0, y: 0 },
+        z: 0,
+        vz: 0,
+      });
+    }
+    runCmds(w, new Map([[0, cmd({ driveY: 1 })]]), 8);
+    check(
+      'crossing a littered field is BULLDOZING, not control (no G408)',
+      w.match.fouls.blue.minor === 0 && !w.match.cards?.blue.yellow,
+      `blueMinor=${w.match.fouls.blue.minor} cards=${JSON.stringify(w.match.cards?.blue)}`,
     );
   }
 
