@@ -673,15 +673,25 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
 - **G402 auto interference** (MAJOR): an alliance BELONGS on its **goalSide** (blue −x, red +x
   — NOT driverSide, which was inverted and fouled the alliance sitting on its own side); fires
   when fully on the opponent's side + contact during AUTO, on the CROSSER.
-- **G408 over-possession** (MINOR **per ARTIFACT over the limit**, + a **YELLOW CARD** when
-  excessive). CONTROL is the manual's — contact "either directly or TRANSITIVELY through other
-  SCORING ELEMENTS" — so `controlledArtifacts` seeds on the artifacts touching the footprint
-  and grows the contact chain ball-to-ball: a shoved wedge counts WHOLE. An artifact counts
-  only while the robot is MOVING, is AHEAD along the DIRECTION OF TRAVEL (not the chassis nose
-  — a rear-bumper hoard driven in reverse is the same violation), and is coming along at
-  `POSSESSION_CARRY_SPEED`. That last test is the line G408 itself draws: it lists "BULLDOZING
-  (inadvertent contact ... while in the path of the ROBOT moving about the FIELD)" and
-  "DEFLECTING" as explicitly NOT control. EXCESSIVE is defined by the rule, not by taste:
+- **G408 over-possession** (MINOR **per ARTIFACT over the limit**, topped up as a pile GROWS
+  inside one held violation, + a **YELLOW CARD** when excessive). Both of the manual's
+  definitions are implemented literally, and both matter:
+  **CONTROL** is contact "either directly or TRANSITIVELY through other SCORING ELEMENTS", so
+  `controlledArtifacts` seeds on the artifacts touching the footprint and grows the contact
+  chain artifact-to-artifact — a shoved wedge counts WHOLE.
+  **POSSESSION** is "as the ROBOT moves or changes ORIENTATION (... moves forward, turns,
+  backs up, spins in place), the object remains in approximately the same position relative to
+  the ROBOT", so the test is RELATIVE: an artifact counts when its velocity is within
+  `POSSESSION_SLIP` of the robot's rigid-body velocity AT that point (`robotPointVelocity`,
+  ω×r included). That one test replaced a pile of absolute-velocity heuristics and is what
+  makes the rule hold up — TURNING triggers it on its own (a corralled pile spun on the spot
+  is possessed), speed does not matter (a load crept at 5 in/s is still a load), direction does
+  not matter (a rear hoard driven in reverse is the same violation), and the exempt cases fall
+  out for free: an artifact you drive PAST slips at road speed and one DEFLECTING off leaves at
+  its own, which is G408's "BULLDOZING"/"DEFLECTING". A completely motionless robot is outside
+  the test, as the definition is conditional on the robot doing something — sitting inert on a
+  pile is G405/G423 (impeding) territory and neither is modelled. Artifacts in the robot's own
+  LOADING ZONE are skipped, the rule's third carve-out. EXCESSIVE is defined by the rule, not by taste:
   5+ at once (clause A) or 3+ separate stretches of greater-than-MOMENTARY (glossary: "fewer
   than approximately 3 seconds", `MOMENTARY_S`) control of 4+ (clause B). G408 cards a robot at
   most ONCE per match, per its own "REPEATED excessive violations ... do not result in

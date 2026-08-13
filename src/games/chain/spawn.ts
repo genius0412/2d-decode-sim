@@ -234,6 +234,7 @@ export function createChainWorld(
       pins: {},
       pinFouls: {},
       possession: {},
+      possessionBilled: {},
       controlHeld: {},
       controlInstances: {},
       carded: {},

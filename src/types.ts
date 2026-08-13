@@ -466,6 +466,10 @@ export interface PenaltyState {
    * CARD_CONTROL_FREQUENT or more artifacts (the clause-B stretch); `controlInstances` =
    * how many such stretches have run longer than MOMENTARY this match; `carded` = the
    * colour each robot currently holds, since a second yellow becomes a red. */
+  /** how many artifacts OVER the limit have already been billed in the current G408
+   * episode, so a pile that grows while the violation is held tops the tariff up rather
+   * than riding free on the first assessment */
+  possessionBilled: Record<number, number>;
   controlHeld: Record<number, number>;
   controlInstances: Record<number, number>;
   carded: Record<number, CardColor>;

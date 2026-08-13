@@ -3314,20 +3314,24 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     `blueMinor=${w.match.fouls.blue.minor}`,
   );
 
-  // ...and a ball BEHIND the robot is something it drove past, not something it herds
+  // ...and one lying AT REST that the robot drives past is BULLDOZING, which G408 names as
+  // NOT control: it slips backwards at the robot's whole road speed rather than holding
+  // station, so it fails the possession test on the tick of contact.
   const w2 = foulWorld();
   const r2 = w2.robots[0];
   r2.pos = { x: 0, y: -8 };
   r2.heading = 0;
   r2.hopper = ['green', 'green', 'green'];
-  r2.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
-  w2.balls.push({ id: 9102, color: 'purple', state: { kind: 'ground' }, pos: { x: -2, y: 0 }, vel: { x: POSSESSION_MOVE_SPEED + 4, y: 0 }, z: 0, vz: 0 });
+  r2.vel = { x: 70, y: 0 };
+  for (let i = 0; i < 5; i++) {
+    w2.balls.push({ id: 9110 + i, color: 'purple', state: { kind: 'ground' }, pos: { x: 2 + i * 5, y: 0 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
+  }
   for (let i = 0; i < Math.round(POSSESSION_GRACE / (1 / 60)) + 30; i++) {
     w2.time = i / 60;
     updatePenalties(w2, 1 / 60, new Map());
   }
   check(
-    'a ball trailing BEHIND the robot is not plowed (no G408)',
+    'driving PAST artifacts lying on the field is bulldozing, not control (no G408)',
     w2.match.fouls.blue.minor === 0,
     `blueMinor=${w2.match.fouls.blue.minor}`,
   );
@@ -3416,6 +3420,132 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   const earned = w5.match.scores.blue.total;
   awardCard(w5, w5.robots[0], 'test'); // yellow
   awardCard(w5, w5.robots[0], 'test'); // ...escalates to red
+  // The TARIFF TOPS UP as a pile grows inside one held violation. Opening at 4 and scooping
+  // up to 7 used to cost a single MINOR, because the count was taken once at the episode
+  // edge — so escalating while already over was free. It is a MINOR "per SCORING ELEMENT
+  // over the limit", so the bill follows the pile.
+  {
+    const w = foulWorld();
+    const r = w.robots[0];
+    r.pos = { x: 0, y: -8 };
+    r.heading = 0;
+    r.hopper = ['green', 'green', 'green'];
+    const v = 30;
+    r.vel = { x: v, y: 0 };
+    const add1 = (id: number, x: number): void => {
+      w.balls.push({ id, color: 'purple', state: { kind: 'ground' }, pos: { x, y: -8 }, vel: { x: v, y: 0 }, z: 0, vz: 0 });
+    };
+    add1(9950, 2); // 4 controlled: 1 over
+    const run1 = (secs: number, t0: number): void => {
+      for (let i = 0; i < Math.round(secs / (1 / 60)); i++) {
+        w.time = t0 + i / 60;
+        updatePenalties(w, 1 / 60, new Map());
+      }
+    };
+    run1(2, 0);
+    const atFour = w.match.fouls.blue.minor;
+    for (let i = 1; i < 4; i++) add1(9950 + i, 2 + i * (BALL_RADIUS * 2)); // now 7: 4 over
+    run1(2, 2);
+    check(
+      'growing the pile inside a held violation tops the tariff up (not billed once)',
+      atFour === 1 && w.match.fouls.blue.minor === 4,
+      `atFour=${atFour} final=${w.match.fouls.blue.minor}`,
+    );
+  }
+
+  // ---- G408 possession: the manual's test is RELATIVE, and these are the cases that only
+  // a relative test gets right. Each of the first three drew ZERO fouls under the previous
+  // absolute-velocity model, which is why they are pinned.
+  {
+    /** a robot over the limit, holding `n` artifacts in station relative to itself */
+    const hoard = (n: number, setup: (r: World['robots'][number]) => void, secs = 4): World => {
+      const w = foulWorld();
+      const r = w.robots[0];
+      r.pos = { x: 0, y: -8 };
+      r.heading = 0;
+      r.hopper = ['green', 'green', 'green']; // at the limit before a single loose one
+      setup(r);
+      for (let i = 0; i < n; i++) {
+        const pos = { x: 2 + i * (BALL_RADIUS * 2), y: -8 };
+        // station-keeping = the artifact carries the robot's rigid-body velocity AT its own
+        // position, spin included — which is what "remains in approximately the same position
+        // relative to the ROBOT" means moment to moment
+        const vel = {
+          x: r.vel.x - r.angVel * (pos.y - r.pos.y),
+          y: r.vel.y + r.angVel * (pos.x - r.pos.x),
+        };
+        w.balls.push({ id: 9800 + i, color: 'purple', state: { kind: 'ground' }, pos, vel, z: 0, vz: 0 });
+      }
+      for (let i = 0; i < Math.round(secs / (1 / 60)); i++) {
+        w.time = i / 60;
+        updatePenalties(w, 1 / 60, new Map());
+      }
+      return w;
+    };
+
+    // SPINNING IN PLACE is named in the possession definition itself — "moves forward, turns,
+    // backs up, spins in place" — so a corralled pile spun on the spot is possessed.
+    const spun = hoard(4, (r) => { r.angVel = 2.5; });
+    check(
+      'a pile corralled and SPUN IN PLACE is possessed (G408 fires)',
+      spun.match.fouls.blue.minor === 4,
+      `blueMinor=${spun.match.fouls.blue.minor}`,
+    );
+
+    // ...and CREEPING one downfield is too. Speed is not what the rule turns on.
+    const crept = hoard(4, (r) => { r.vel = { x: 5, y: 0 }; });
+    check(
+      'a pile CREPT downfield at 5 in/s is possessed (no slow-herd window)',
+      crept.match.fouls.blue.minor === 4,
+      `blueMinor=${crept.match.fouls.blue.minor}`,
+    );
+
+    // A robot doing NOTHING AT ALL is outside the test, which is conditional on the robot
+    // moving or changing orientation. (Sitting inert on a pile is G405/G423 territory —
+    // impeding access — not G408, and neither is modelled.)
+    const inert = hoard(4, () => {});
+    check(
+      'a completely motionless robot is outside the possession test (no G408)',
+      inert.match.fouls.blue.minor === 0,
+      `blueMinor=${inert.match.fouls.blue.minor}`,
+    );
+  }
+
+  // The LOADING ZONE carve-out: "inadvertent contact with a SCORING ELEMENT while attempting
+  // to acquire a SCORING ELEMENT from the LOADING ZONE" is not control. Without it a robot
+  // collecting its own restock was fouled for the artifacts it went there to collect.
+  {
+    const w = foulWorld();
+    const r = w.robots[0];
+    const lz = loadZone(r.alliance);
+    r.pos = { x: (lz.x0 + lz.x1) / 2, y: (lz.y0 + lz.y1) / 2 };
+    r.heading = 0;
+    r.hopper = ['green', 'green', 'green'];
+    r.vel = { x: 20, y: 0 };
+    for (let i = 0; i < 3; i++) {
+      w.balls.push({
+        id: 9900 + i,
+        color: 'purple',
+        state: { kind: 'ground' },
+        // spread ACROSS the zone, so all three stay inside it — the grab row a robot
+        // actually drives into. (One carried OUT of the zone is control again, correctly.)
+        pos: { x: r.pos.x + 2, y: r.pos.y + (i - 1) * (BALL_RADIUS * 2) },
+        vel: { x: 20, y: 0 },
+        z: 0,
+        vz: 0,
+      });
+    }
+    for (let i = 0; i < 240; i++) {
+      w.time = i / 60;
+      updatePenalties(w, 1 / 60, new Map());
+    }
+    check(
+      'acquiring artifacts from your own LOADING ZONE is not control (no G408)',
+      w.match.fouls.blue.minor === 0,
+      `blueMinor=${w.match.fouls.blue.minor}`,
+    );
+  }
+
   check(
     'a second card becomes a RED, which voids that alliance total',
     w5.penalties.carded[w5.robots[0].id] === 'red' &&

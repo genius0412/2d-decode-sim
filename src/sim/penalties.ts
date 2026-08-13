@@ -12,7 +12,7 @@ import {
   inRect, goalSide,
 } from './field';
 import type { Rect } from './field';
-import { closestPointOnRobot, robotCorners, robotIntersectsRect } from './physics';
+import { closestPointOnRobot, robotCorners, robotIntersectsRect, robotPointVelocity } from './physics';
 import { pushingGate, ZERO_CMD } from './goal';
 import { awardCard, awardFoul } from './scoring';
 import { hyp } from '../math';
@@ -245,13 +245,25 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
     if (over > 0) {
       const t = (pen.possession[r.id] ?? 0) + dt;
       pen.possession[r.id] = t;
-      // ONE episode, but N fouls — `fire` owns the edge-debounce (a held violation is one
-      // episode, not a stream), and the count it fires with is the manual's per-artifact tariff.
-      if (t >= C.POSSESSION_GRACE && fire(`G408:${r.id}`, r.alliance, 'minor', 'G408 over-possession')) {
-        for (let i = 1; i < over; i++) awardFoul(world, r.alliance, 'minor', 'G408 over-possession');
-        // ...and the card, if this violation is one of the two the rule calls excessive.
-        // Gated on the same episode as the foul: the grace is what makes the contact test
-        // trustworthy, and a card should never rest on a reading the foul itself wouldn't.
+      if (t >= C.POSSESSION_GRACE) {
+        // ONE episode, but N fouls — `fire` owns the edge-debounce (a held violation is one
+        // episode, not a stream) and bills the first artifact over the limit.
+        if (fire(`G408:${r.id}`, r.alliance, 'minor', 'G408 over-possession')) {
+          pen.possessionBilled[r.id] = 1;
+        }
+        // ...and the rest of the tariff TOPS UP as the pile grows. Billing only at the
+        // episode edge meant scooping up more while already over was free: a robot that
+        // opened the violation at 4 could grow to 9 inside the same hold and still pay for
+        // one. It is a MINOR "per SCORING ELEMENT over the limit" — all of them.
+        const billed = pen.possessionBilled[r.id] ?? 0;
+        for (let i = billed; i < over; i++) {
+          awardFoul(world, r.alliance, 'minor', 'G408 over-possession');
+        }
+        if (over > billed) pen.possessionBilled[r.id] = over;
+
+        // The CARD is likewise re-checked every tick the violation is live, not once at the
+        // edge — clause A is about what is controlled AT THE MOMENT, and a pile that grows
+        // past 5 after the episode opened is exactly the case it exists for.
         const excessive =
           controlled >= C.CARD_CONTROL_SIMULTANEOUS ||
           (pen.controlInstances[r.id] ?? 0) >= C.CARD_CONTROL_INSTANCES;
@@ -259,48 +271,56 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
       }
     } else {
       pen.possession[r.id] = 0; // back within the limit — reset the grace clock
+      pen.possessionBilled[r.id] = 0; // ...and the next episode bills from scratch
     }
   }
 }
 
 /**
- * How many artifacts robot r is CONTROLLING, per the manual's own vocabulary:
+ * How many artifacts robot r is CONTROLLING, straight from the manual's definitions:
  *
- *   CONTROL   — "requires contact with a ROBOT, either directly or TRANSITIVELY through
- *               other SCORING ELEMENTS."
- *   POSSESSION— the artifact "remains in approximately the same position relative to the
- *               ROBOT" as it moves, turns, backs up or spins. Possessed ⇒ controlled.
- *   HERDING   — pushing artifacts somewhere "that gains a strategic advantage beyond moving
- *               the ROBOT around the FIELD." This is the thing G408 is aimed at.
- *   PLOWING   — "INADVERTENT contact ... that provides no additional advantages beyond field
- *               mobility." Explicitly NOT control, and so never a foul.
+ *   CONTROL    — "requires contact with a ROBOT, either directly or TRANSITIVELY through
+ *                 other SCORING ELEMENTS."
+ *   POSSESSION — an object "is POSSESSED by a ROBOT if, as the ROBOT moves or changes
+ *                 ORIENTATION (for example, moves forward, turns, backs up, spins in
+ *                 place), the object remains in approximately the same position relative
+ *                 to the ROBOT. Objects POSSESSED by a ROBOT are considered to be
+ *                 CONTROLLED."
+ *   and G408's own list of what is NOT control: "BULLDOZING (inadvertent contact with a
+ *   SCORING ELEMENT while in the path of the ROBOT moving about the FIELD)", "DEFLECTING",
+ *   "inadvertent contact ... while attempting to acquire a SCORING ELEMENT from the LOADING
+ *   ZONE", and LAUNCHED artifacts no longer in contact.
  *
- * Hopper balls are possession outright. A loose GROUND ball counts when all three hold:
- *   1. the robot is MOVING (a parked robot controls nothing — the balls can roll free),
- *   2. it is AHEAD along the DIRECTION OF TRAVEL (so a rear-bumper hoard driven in reverse
- *      is the same violation as pushing with the nose — travel, not chassis front), and
- *   3. it is moving WITH the robot at POSSESSION_CARRY_SPEED — staying in about the same
- *      place relative to it, which is the manual's possession test, and the line between
- *      HERDING a load and PLOWING through one.
+ * Hopper artifacts are possession outright. A loose GROUND artifact counts when:
+ *   1. the robot is MOVING or TURNING — the condition the possession test is written under,
+ *      and turning counts on its own, so a corralled pile spun on the spot is possessed;
+ *   2. it is in CONTACT, directly or through the chain of artifacts that is (the transitive
+ *      clause — a shoved wedge counts WHOLE, not just the two against the bumper); and
+ *   3. it HOLDS STATION relative to the robot — its velocity is within POSSESSION_SLIP of
+ *      the robot's rigid-body velocity AT that point, ω×r included. That is the continuous
+ *      form of "remains in approximately the same position relative to the ROBOT", and it
+ *      is what separates possession from the exempt cases by itself: an artifact you drive
+ *      PAST slips at road speed, one DEFLECTING off leaves at its own.
  *
- * TRANSITIVE, per the definition above: the seed set is the balls touching the footprint,
- * and the chain then grows ball-to-ball. A robot shoving a wedge controls the WHOLE wedge,
- * not just the two artifacts against its bumper — which is exactly the case the rule exists
- * for, and was being undercounted by the width of the pile.
+ * Artifacts in the robot's OWN LOADING ZONE are skipped outright — that is the third carve-
+ * out, and without it a robot collecting its restock was fouled for the artifacts it was
+ * there to pick up.
  *
- * Balls in flight / basin / rail / held by another robot are not loose and never count.
+ * Artifacts in flight / basin / rail / held by another robot are not loose and never count.
  */
 function controlledArtifacts(world: World, r: RobotState): number {
-  const speed = hyp(r.vel.x, r.vel.y);
-  if (speed < C.POSSESSION_MOVE_SPEED) return r.hopper.length; // parked: no herding
-  const dx = r.vel.x / speed; // direction of travel
-  const dy = r.vel.y / speed;
-  const ground = world.balls.filter((b) => b.state.kind === 'ground');
+  // the possession test only asks what happens "as the ROBOT moves or changes ORIENTATION"
+  const active =
+    hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED || Math.abs(r.angVel) >= C.POSSESSION_TURN_RATE;
+  if (!active) return r.hopper.length;
+  const home = loadZone(r.alliance);
+  const ground = world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home));
 
-  /** is this ball being carried along by the robot (vs clipped, or squirting away)? */
-  const carried = (b: (typeof ground)[number]): boolean =>
-    (b.pos.x - r.pos.x) * dx + (b.pos.y - r.pos.y) * dy > 0 && // ahead along travel
-    b.vel.x * dx + b.vel.y * dy >= C.POSSESSION_CARRY_SPEED; // ...and coming with it
+  /** does this artifact hold station relative to the robot — the possession test itself? */
+  const carried = (b: (typeof ground)[number]): boolean => {
+    const pv = robotPointVelocity(r, b.pos); // includes the spin term
+    return hyp(b.vel.x - pv.x, b.vel.y - pv.y) <= C.POSSESSION_SLIP;
+  };
 
   const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN; // touching the footprint
   const chain = C.BALL_RADIUS * 2 + C.POSSESSION_CONTROL_MARGIN; // ...or touching a ball that is

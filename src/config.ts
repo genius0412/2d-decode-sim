@@ -148,23 +148,35 @@ export const POSSESSION_LIMIT = 3; // == HOPPER_CAPACITY
  * controlled, since the manual's CONTROL is transitive through scoring elements).
  * A touch tolerance, not a catchment radius. */
 export const POSSESSION_CONTROL_MARGIN = 0.4; // in
-/** herding requires motion — a parked robot merely resting against loose balls is not
- * controlling them (they can roll free), so ignore control below this.
+/**
+ * The POSSESSION test is CONDITIONAL on the robot doing something, and these are the two
+ * things the glossary names: an artifact is possessed if "as the ROBOT moves or changes
+ * ORIENTATION (for example, moves forward, turns, backs up, SPINS IN PLACE), the object
+ * remains in approximately the same position relative to the ROBOT."
  *
- * Lowered 9 → 6 once POSSESSION_CARRY_SPEED existed. This gate used to be the only thing
- * excusing a parked robot, so it had to sit well clear of a standstill; the carry test now
- * does that job directly and better (a stationary robot's balls are not moving with it at
- * all). Left high, it was a loophole in its own right: herd a pile at 8 in/s and the rule
- * simply did not look. */
-export const POSSESSION_MOVE_SPEED = 6; // in/s
-/** ...and the artifact must be going WITH the robot at least this fast.
+ * So there are TWO gates, not one — and TURNING is a first-class trigger. An earlier model
+ * gated on linear speed alone at 6-9 in/s, which meant a robot could corral a pile, spin on
+ * the spot, and control nothing at all, and a robot that crept below the threshold was
+ * likewise invisible. Both are now caught, so the gates only have to separate "doing
+ * something" from "parked", and they sit accordingly low.
+ */
+export const POSSESSION_MOVE_SPEED = 1.5; // in/s — the robot is moving at all
+export const POSSESSION_TURN_RATE = 0.15; // rad/s — ...or changing orientation at all
+/**
+ * How far an artifact may DRIFT relative to the robot and still count as "approximately the
+ * same position relative to the ROBOT" — the glossary's own words, measured the only way
+ * that phrase can be measured continuously: the artifact's velocity against the RIGID-BODY
+ * velocity of the robot AT THAT POINT (`robotPointVelocity`, which carries the ω×r term, so
+ * a spin counts).
  *
- * This is the line G408 draws. The rule lists what is NOT control, first item: "BULLDOZING
- * (inadvertent contact with a SCORING ELEMENT while in the path of the ROBOT moving about
- * the FIELD)", second: "DEFLECTING (being hit by a SCORING ELEMENT that bounces into or off
- * a ROBOT)". An artifact that keeps pace with the robot is neither — it is being taken
- * along, which is the thing the limit exists to bound. */
-export const POSSESSION_CARRY_SPEED = 5; // in/s, along the robot's heading of travel
+ * Being RELATIVE is the whole point, and is what makes this the manual's test rather than a
+ * heuristic. It needs no direction check (a rear-bumper hoard driven in reverse holds
+ * station just as well as one pushed by the nose) and no speed floor (a load crept downfield
+ * at 5 in/s is still a load). It also draws the line G408 draws between control and the two
+ * things it says are NOT control: an artifact you drive PAST slips at your full road speed,
+ * and one DEFLECTING off a bumper leaves at its own. Neither holds station; a possessed one
+ * does. */
+export const POSSESSION_SLIP = 5; // in/s of drift relative to the robot
 /** grace before over-possession is fouled.
  *
  * The rule is meant to catch a robot BULLDOZING a load around the field, not the ordinary
