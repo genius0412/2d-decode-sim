@@ -3571,7 +3571,10 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
         id: 9300 + i,
         color: 'purple',
         state: { kind: 'ground' },
-        pos: { x: (i % 3) * 7 - 7, y: -48 + i * 9 },
+        // OFF the driving lane, alternating sides: this tests BRUSHING PAST. An artifact
+        // parked dead in front gets pushed the whole way instead, which is herding — a
+        // different act, and one that should foul.
+        pos: { x: i % 2 === 0 ? -11 : 11, y: -48 + i * 9 },
         vel: { x: 0, y: 0 },
         z: 0,
         vz: 0,

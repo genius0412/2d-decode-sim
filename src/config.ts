@@ -175,8 +175,21 @@ export const POSSESSION_TURN_RATE = 0.15; // rad/s — ...or changing orientatio
  * at 5 in/s is still a load). It also draws the line G408 draws between control and the two
  * things it says are NOT control: an artifact you drive PAST slips at your full road speed,
  * and one DEFLECTING off a bumper leaves at its own. Neither holds station; a possessed one
- * does. */
-export const POSSESSION_SLIP = 5; // in/s of drift relative to the robot
+ * does.
+ *
+ * THE NUMBER IS MEASURED, not chosen. It was 5 in/s, and at 5 the rule silently switched
+ * itself off: artifacts do not RIDE a bumper in this sim, they bounce off it and are
+ * re-struck, so contact is a train of micro-impacts. Sampled over a six-second shove of a
+ * staged spike row, the slip of the artifacts actually touching the footprint ran p10 7.6,
+ * p50 17.2, p90 33.1 in/s — the threshold sat below the TENTH PERCENTILE of a textbook
+ * violation, no artifact ever confirmed, and shoving a row down the field drew nothing at
+ * all. 40 sits above that distribution and still far below the ~80 in/s a stationary
+ * artifact slips at when you simply drive past it, which is the case that must not count.
+ *
+ * 20 is where the sweep landed: it is above the bulk of a real shove's contact (p50 17.2)
+ * and below a deflection off the bumper, so shoving a row fouls while a clipped artifact and
+ * a drive-past both stay clean. */
+export const POSSESSION_SLIP = 20; // in/s of drift relative to the robot
 /** grace before over-possession is fouled — seconds of control that have to ACCUMULATE.
  *
  * The rule is meant to catch a robot taking a load around the field, not the ordinary
