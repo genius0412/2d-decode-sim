@@ -825,9 +825,25 @@ export const RAIL_EXIT_S = -4; // past the gate: ball drops out to the floor
  * column. Well under an artifact radius, so nothing slips past; a robot is only ~18in long,
  * so the walk is a few dozen samples. Fixed, because the rail must stay deterministic. */
 export const RAIL_BLOCK_STEP = 0.5; // in
-/** how hard the column shoves an artifact still sitting in the gate's doorway, as a
- * fraction of the exit velocity. Enough to keep the queue moving without firing it out. */
-export const EXIT_NUDGE = 0.5;
+/** how fast a solid floor (a robot's bumper, the exit lip) may push an artifact back UP the
+ * rail. The solver otherwise refuses to move an artifact upward at all — a floor that moves
+ * must never yank the column, which is what made it jump up and down the classifier in time
+ * with the steering. But a robot leaning into the channel really does shove the column, and
+ * an artifact that slipped under the exit really must come back. Rate-limiting it means both
+ * read as a push instead of a teleport. */
+export const RAIL_PUSH_RATE = 60; // in/s
+/**
+ * How hard the column shoves an artifact still sitting in the gate's doorway, as a fraction
+ * of the exit velocity — a FLOOR on its outward speed, re-applied each tick the doorway is
+ * occupied, never an addition (see the release loop: adding compounded to 91 in/s).
+ *
+ * 1.0 = the queue moves at the speed of the flow that is pushing it, which is the only value
+ * that isn't arbitrary. At 0.5 the doorway artifact crept out at 11 in/s and took 0.9s to
+ * clear its own diameter, throttling a nine-artifact drain to 12s — and that throttle used
+ * to be invisible, because artifacts queued BELOW the exit (off the field entirely) and then
+ * burst out together once it cleared. With the exit sealed, the queue rate is what you see.
+ */
+export const EXIT_NUDGE = 1.0;
 /** clearance BEYOND touching that the doorway needs before the next artifact is released.
  *
  * Swept rather than guessed. Releasing as soon as the previous artifact was one diameter

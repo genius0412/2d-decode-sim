@@ -396,7 +396,30 @@ export function updateRails(world: World, dt: number): void {
       .filter((b) => b.state.kind === 'rail' && b.state.goal === a)
       .sort((p, q) => (p.state as { s: number }).s - (q.state as { s: number }).s || p.id - q.id);
     const mouth = railBlock(world, a);
-    const canLeave = goal.gateOpen && mouth.s === -Infinity;
+    /**
+     * THE SOLVER AND THE RELEASE MUST AGREE ABOUT WHETHER AN ARTIFACT CAN LEAVE, and this is
+     * the ONE place that decides it. They used to disagree, and the disagreement let an
+     * artifact walk off the end of the world:
+     *
+     *   the solver saw an open gate, dropped the floor to -Infinity, and let the artifact
+     *   descend past the exit — while the release loop refused it, because an artifact was
+     *   still sitting in the doorway. Nothing then stopped it: the `wasS >= base` exemption
+     *   (which exists so a shut gate cannot reach back UP for something already past it) also
+     *   exempts an artifact that has slipped below the exit, permanently. Measured: an
+     *   artifact in `rail` state marching from y=-64.9 to y=-75.6 — SIX INCHES OUTSIDE the
+     *   audience wall — where it was finally released and the ground clamp snapped it back
+     *   in, a 394 in/s teleport. The rail is a scripted 1D flow with no wall awareness, so
+     *   nothing about being off the field stops it; it simply must never be down there.
+     *
+     * The doorway is therefore part of "can it leave", not a late veto — and the release lets
+     * at most ONE artifact out per tick, since the artifact it just released IS the new
+     * doorway. RAIL_PITCH is wider than a tick of travel, so no two can cross together.
+     */
+    const doorway = mouth.taker ? null : doorwayArtifact(world, a);
+    const mouthClear = mouth.s === -Infinity && !doorway;
+    // the gate holds the RAMP lane only; OVERFLOW rides over the top of it (manual 9.8.3),
+    // so a shut gate is not what stops an elevated artifact — only the mouth is.
+    const canLeave = goal.gateOpen && mouthClear;
     // where the RAMP-level column is stopped: the exit if it can leave, the gate if it is
     // shut — and in either case never past a robot's body, which is a floor of its own at
     // whatever `s` it actually reaches.
@@ -409,8 +432,8 @@ export function updateRails(world: World, dt: number): void {
     // A ROBOT BLOCKS THE ELEVATED LANE TOO. Overflow rides over the retained column, not over
     // a robot: an artifact on top of the stack still runs into the bumper of anything parked
     // across the channel, so the same floor applies to both lanes.
-    const rampBase = Math.max(gateBase, mouth.s);
-    const overBase = Math.max(canLeave ? -Infinity : C.RAIL_EXIT_S, mouth.s);
+    const rampBase = gateBase;
+    const overBase = mouthClear ? -Infinity : C.RAIL_EXIT_S;
     // TWO CONSTRAINTS, and they are NOT the same kind of thing:
     //  · the artifact AHEAD — unconditional, artifacts cannot pass through one another;
     //  · the BASE (the gate, or an occupied mouth) — a floor only for artifacts still ABOVE it.
@@ -435,6 +458,7 @@ export function updateRails(world: World, dt: number): void {
     for (const b of rail) {
       const st = b.state as { s: number; v: number; overflow: boolean; pending?: boolean };
       const wasS = st.s; // an artifact never travels back UP the ramp (see the clamp below)
+      const wasV = st.v; // its speed BEFORE this tick's gravity — see the exit lip below
 
       // RIDING ON THE COLUMN? Whenever there is anything retained BELOW it — not merely
       // directly underneath. An artifact approaching the column from above is already going
@@ -486,6 +510,37 @@ export function updateRails(world: World, dt: number): void {
         }
       }
 
+      /**
+       * SOLID FLOORS, WHICH ARE NEVER EXEMPTED — a robot's bumper and the edge of the rail.
+       *
+       * The `wasS >= base` exemption above exists for ONE case: a shut GATE must not reach
+       * back up for an overflow artifact that legitimately dropped in below the gate line.
+       * Neither of these floors has a legitimate "already past it":
+       *
+       *  · BELOW THE EXIT the rail line runs on past the audience wall, position-written and
+       *    wall-blind, so an artifact that slips under and is not released rides it straight
+       *    off the field — measured six inches out, then snapped back by the ground clamp as
+       *    a 394 in/s teleport. Two lanes make this reachable even when the solver and the
+       *    release agree, since ramp and elevated can each deliver an artifact to the exit on
+       *    one tick while only one fits through the doorway.
+       *  · INSIDE A ROBOT is not a place either. Exempting the robot floor let a column that
+       *    started below it stay there, 7.2in inside the chassis — the same artifacts-in-the-
+       *    robot the body floor was added to prevent.
+       *
+       * Correcting these means moving an artifact UP, which the clamp above refuses to do on
+       * purpose (a floor that moves must never yank the column). So it is rate-limited to
+       * RAIL_PUSH_RATE: a robot leaning into the channel SHOVES the column up its ramp,
+       * visibly, rather than teleporting it. Resting on a bumper kills the roll; queued at
+       * the exit lip an artifact keeps `wasV`, neither accelerating under a gravity it cannot
+       * act on nor losing the momentum it arrived with.
+       */
+      const exitFloor = (elevated ? mouthClear : canLeave) ? -Infinity : C.RAIL_EXIT_S;
+      const solid = Math.max(mouth.s, exitFloor);
+      if (st.s < solid) {
+        st.s = Math.min(solid, wasS + C.RAIL_PUSH_RATE * dt);
+        st.v = mouth.s > exitFloor ? 0 : wasV;
+      }
+
       if (elevated) {
         overAhead = st.s + C.RAIL_PITCH;
         overFloorV = st.v;
@@ -500,19 +555,21 @@ export function updateRails(world: World, dt: number): void {
       b.z = approach(b.z, elevated ? C.OVERFLOW_Z : C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
     }
 
-    // balls past the gate roll out onto the floor from where they are
+    // Balls past the exit roll out onto the floor from where they are — the LOWEST first, and
+    // AT MOST ONE per tick, because the artifact just released becomes the doorway for the
+    // next. `mouthClear` above already accounts for the doorway, so the solver has held
+    // everything else above the exit rather than letting it descend into a refusal.
     const out = mouth;
-    for (const b of world.balls) {
-      if (b.state.kind !== 'rail' || b.state.goal !== a) continue;
-      // a robot collecting the drain takes it at its bumper; otherwise it rolls to the exit
-      if (b.state.s > out.takeAt) continue;
+    const leaving = rail.filter((b) => (b.state as { s: number }).s <= out.takeAt);
+    for (const b of leaving.slice(0, 1)) {
+      if (b.state.kind !== 'rail') continue; // narrowing; `rail` is pre-filtered by goal
       // NOTHING LEAVES INTO AN OCCUPIED MOUTH. Without a taker to hand it to, the artifact
       // stays on the rail and the column queues behind it (see `railBlock`).
       if (out.s !== -Infinity) continue;
       // ...and if the LAST artifact out is still in the doorway, shove it clear and wait a
       // tick rather than materialising this one on top of it.
       if (!out.taker) {
-        const ahead = doorwayArtifact(world, a);
+        const ahead = doorway;
         if (ahead) {
           /**
            * TOP UP TO A CREEP — never ADD.

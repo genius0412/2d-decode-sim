@@ -1410,6 +1410,75 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- THE RAIL IS NOT A HOLE IN THE FIELD ----------------------------------------
+// An artifact walked off the end of the world: in `rail` state, position written straight
+// down the rail line, from y=-64.9 to y=-75.6 — six inches outside the audience wall —
+// where it was finally released and the ground clamp snapped it back in as a 394 in/s
+// teleport ("they go past the field wall then teleport back in"). The rail is a scripted
+// 1D flow with no wall awareness, so nothing about being off the field stops it; the
+// invariant has to be that it is never down there. It got there because the solver and the
+// release disagreed: an open gate dropped the floor to -Infinity while the release refused
+// on an occupied doorway, and the `wasS >= base` exemption then freed it permanently.
+{
+  const w = mkWorld('match', 'red', 11);
+  startMatch(w);
+  w.balls.length = 0;
+  // 9 retained + 2 overflow. NOT more: the channel is RAIL_S_MAX long and stacking past it
+  // puts the top artifact through the far wall — a fixture bug, not a sim one.
+  const staged = Math.min(11, Math.floor((RAIL_S_MAX - GATE_STOP_S) / RAIL_PITCH) + 1);
+  for (let i = 0; i < staged; i++) {
+    const s0 = GATE_STOP_S + i * RAIL_PITCH;
+    w.balls.push({
+      id: 900 + i,
+      color: 'purple',
+      state: { kind: 'rail', goal: 'red', s: s0, v: 0, overflow: i >= 9, pending: false },
+      pos: railPos('red', s0),
+      vel: { x: 0, y: 0 },
+      z: i >= 9 ? OVERFLOW_Z : RAMP_SURFACE_Z,
+      vz: 0,
+    });
+  }
+  const r = w.robots[0];
+  r.pos = { x: 60, y: -10 };
+  r.fieldCentric = false;
+  let oobFrames = 0;
+  let worstOob = 0;
+  let oobKind = '';
+  let belowExit = 0;
+  for (let i = 0; i < Math.round(14 / SIM_DT); i++) {
+    // drive at the gate, grind along the wall, back off spinning — the reported scenario
+    const ph = i % 240;
+    const c =
+      ph < 90
+        ? cmd({ driveY: 1 })
+        : ph < 150
+          ? cmd({ driveX: ph % 2 ? 1 : -1, driveY: 0.6 })
+          : ph < 190
+            ? cmd({ driveY: -1, rotate: 0.7 })
+            : cmd({ driveY: 1, rotate: -0.5, intake: true });
+    step(w, SIM_DT, new Map([[r.id, c]]));
+    for (const b of w.balls) {
+      if (b.state.kind === 'rail' && b.state.s < RAIL_EXIT_S - 0.01) belowExit++;
+      if (b.state.kind === 'stock' || b.state.kind === 'held') continue;
+      const out = Math.max(Math.abs(b.pos.x), Math.abs(b.pos.y)) - (FIELD_HALF - BALL_RADIUS);
+      if (out > 0.01) {
+        oobFrames++;
+        if (out > worstOob) { worstOob = out; oobKind = `${b.state.kind} at (${b.pos.x.toFixed(1)}, ${b.pos.y.toFixed(1)})`; }
+      }
+    }
+  }
+  check(
+    'no artifact is ever drawn outside the field wall',
+    oobFrames === 0,
+    `${oobFrames} ball-frames out, worst ${worstOob.toFixed(2)}in — ${oobKind}`,
+  );
+  check(
+    'no artifact rides the rail below the exit (that is off the field)',
+    belowExit === 0,
+    `${belowExit} ball-frames below RAIL_EXIT_S`,
+  );
+}
+
 // ---- a robot's BODY is where the column stops, wherever that body is ------------
 // Reported: "balls can STILL pass through the robot when the robot is slightly blocking the
 // classifier". The mouth used to be ONE point with a boolean on it, so a robot sitting on the
