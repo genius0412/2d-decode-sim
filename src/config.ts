@@ -821,10 +821,18 @@ export const GATE_STOP_S = 2; // lowest rest position against the closed gate
 // the basin. One pitch below the entry keeps proper spacing but drains ~2× faster.
 export const RAIL_ENTRY_BLOCK_S = 50;
 export const RAIL_EXIT_S = -4; // past the gate: ball drops out to the floor
-/** how much two artifacts may overlap at the gate's mouth before the drain treats it as
- * occupied. A little slack, because the artifact that just left is still sitting in the
- * doorway for a tick or two and the column should follow it out, not stall behind it. */
-export const EXIT_QUEUE_SLOP = 1.5; // in
+/** how hard the column shoves an artifact still sitting in the gate's doorway, as a
+ * fraction of the exit velocity. Enough to keep the queue moving without firing it out. */
+export const EXIT_NUDGE = 0.5;
+/** clearance BEYOND touching that the doorway needs before the next artifact is released.
+ *
+ * Swept rather than guessed. Releasing as soon as the previous artifact was one diameter
+ * clear still produced a 2.8in overlap spike — the pair converge after the release, so
+ * "not touching yet" is not the same as "there is room". Widening the gate to roughly two
+ * diameters takes the worst transient to ZERO with no cost to the drain, which still empties
+ * a full 9-artifact column. (Overlap by margin: +0 -> 2.78in, +1.5 -> 1.76, +3 -> 0.60,
+ * +4.5 -> 0.00.) */
+export const EXIT_CLEARANCE = 4.5; // in, on top of a full artifact diameter
 export const OVERFLOW_FLOW_SPEED = 58; // in/s, overflow rides over everything (clears a full goal quickly)
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s

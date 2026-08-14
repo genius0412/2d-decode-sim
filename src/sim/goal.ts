@@ -274,9 +274,22 @@ export function updateBasins(world: World, dt: number): void {
  *   `taker`  — a robot over the mouth WITH room in its hopper. The artifact drops straight
  *              into it, which is what happens on the real field: you park under the gate to
  *              collect the drain.
- *   `blocked`— the mouth is occupied by something that cannot accept the artifact: a FULL
- *              robot, or an artifact already lying there. Nothing leaves; the column backs
- *              up behind the gate exactly as it does behind a closed one.
+ *   `blocked`— a FULL robot is over the mouth. Nothing leaves; the column backs up behind
+ *              the gate exactly as it does behind a closed one.
+ *
+ * ONLY A ROBOT BLOCKS OUTRIGHT. An artifact lying in the doorway is a different case and
+ * must not be treated as one: making it block deadlocked the whole classifier, because a
+ * drained artifact rolls a couple of inches, friction stops it dead in the mouth, and the
+ * column behind it can then never leave — and since the flow never completes, the gate is
+ * held open forever and never falls closed. Letting it through instead is no better: the
+ * new artifact lands on top of the old one, which is the pop-and-stack that started all
+ * this (measured at 4.3in of overlap on a 5in artifact).
+ *
+ * So the column PUSHES it (see `doorwayArtifact`): the artifact in the way is shoved along
+ * with the same exit velocity and the release waits a tick for it to clear. That is what
+ * the artifacts behind it do on a real ramp, it cannot deadlock (the shove is applied every
+ * tick), and if something genuinely immovable is pinning it — a robot parked down the
+ * tunnel — then the column stalling IS the right answer.
  */
 function exitMouth(world: World, a: Alliance): { taker: RobotState | null; blocked: boolean } {
   const p = railPos(a, C.RAIL_EXIT_S);
@@ -285,14 +298,18 @@ function exitMouth(world: World, a: Alliance): { taker: RobotState | null; block
     if (pointDepthInRobot(r, p) < -C.BALL_RADIUS) continue;
     return r.hopper.length < C.HOPPER_CAPACITY ? { taker: r, blocked: false } : { taker: null, blocked: true };
   }
-  // ...or by an artifact already lying in it (the drain has to queue behind its own output)
+  return { taker: null, blocked: false };
+}
+
+/** the artifact still sitting in the gate's doorway, if any — the one the column has to
+ * push out of the way before the next can leave. */
+function doorwayArtifact(world: World, a: Alliance): Artifact | null {
+  const p = railPos(a, C.RAIL_EXIT_S);
   for (const b of world.balls) {
     if (b.state.kind !== 'ground') continue;
-    if (hyp(b.pos.x - p.x, b.pos.y - p.y) < C.BALL_RADIUS * 2 - C.EXIT_QUEUE_SLOP) {
-      return { taker: null, blocked: true };
-    }
+    if (hyp(b.pos.x - p.x, b.pos.y - p.y) < C.BALL_RADIUS * 2 + C.EXIT_CLEARANCE) return b;
   }
-  return { taker: null, blocked: false };
+  return null;
 }
 
 /** 1D flow down the classifier rail with contact stacking against the gate
@@ -350,11 +367,30 @@ export function updateRails(world: World, dt: number): void {
       b.z = approach(b.z, C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
     }
 
-    // overflow balls ride over the stack at constant flow
-    for (const b of world.balls) {
-      if (b.state.kind !== 'rail' || b.state.goal !== a || !b.state.overflow) continue;
-      b.state.s -= C.OVERFLOW_FLOW_SPEED * dt;
-      b.pos.y = C.CLASSIFIER_Y0 + b.state.s;
+    // Overflow balls ride OVER the stack at constant flow — the manual's "OVERFLOW ARTIFACTS
+    // can pass over the top of the GATE to exit the RAMP" — but they still STOP AT THE EXIT.
+    // This used to run with no floor at all, which was invisible while every artifact was
+    // released the instant it reached RAIL_EXIT_S: now that the release waits for a clear
+    // doorway, an ungated overflow artifact kept decrementing `s` and marched off down the
+    // tunnel and out of the field, still in `rail` state, never stopping.
+    const overflow = world.balls
+      .filter((b) => b.state.kind === 'rail' && b.state.goal === a && b.state.overflow)
+      .sort((p, q) => (p.state as { s: number }).s - (q.state as { s: number }).s || p.id - q.id);
+    // flow first...
+    for (const b of overflow) {
+      const st = b.state as { s: number };
+      st.s = Math.max(C.RAIL_EXIT_S, st.s - C.OVERFLOW_FLOW_SPEED * dt);
+    }
+    // ...then QUEUE them, nose to tail from the exit upward. Without this they all clamp to
+    // RAIL_EXIT_S and sit inside one another: rail artifacts are positioned by `s` alone, so
+    // the ground solver's separation pass never sees them and a blocked exit stacks the lot
+    // on a single point.
+    let queue = C.RAIL_EXIT_S;
+    for (const b of overflow) {
+      const st = b.state as { s: number };
+      if (st.s < queue) st.s = queue;
+      queue = st.s + C.RAIL_PITCH;
+      b.pos.y = C.CLASSIFIER_Y0 + st.s;
       b.pos.x = approach(b.pos.x, railX, C.RAIL_BLEND_SPEED * dt);
       b.z = approach(b.z, C.OVERFLOW_Z, C.RAIL_BLEND_SPEED * dt);
     }
@@ -367,6 +403,17 @@ export function updateRails(world: World, dt: number): void {
       // NOTHING LEAVES INTO AN OCCUPIED MOUTH. Without a taker to hand it to, the artifact
       // stays on the rail and the column queues behind it (see `exitMouth`).
       if (out.blocked && !out.taker) continue;
+      // ...and if the LAST artifact out is still in the doorway, shove it clear and wait a
+      // tick rather than materialising this one on top of it.
+      if (!out.taker) {
+        const ahead = doorwayArtifact(world, a);
+        if (ahead) {
+          const push = tunnelExitVel(a);
+          ahead.vel.x += push.x * C.EXIT_NUDGE;
+          ahead.vel.y += push.y * C.EXIT_NUDGE;
+          continue;
+        }
+      }
       if (b.state.pending) {
         // flowed down the whole channel and out an open gate without ever
         // meeting the column: it was sorted, then released — CLASSIFIED

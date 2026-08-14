@@ -61,6 +61,7 @@ import {
   RAIL_PITCH,
   HOPPER_CAPACITY,
   RAIL_EXIT_S,
+  OVERFLOW_Z,
   BASIN_FLOOR_Z,
   RAMP_SURFACE_Z,
   FIELD_HALF,
@@ -3659,6 +3660,47 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     'a FULL robot on the mouth blocks the drain — the column queues on the rail',
     stillRail >= 4 && insideFull === 0,
     `rail=${stillRail} inside=${insideFull}`,
+  );
+}
+
+// ---- OVERFLOW stops at the exit, and queues if it cannot leave ---------------
+// Overflow rides OVER the retained column ("OVERFLOW ARTIFACTS can pass over the top of the
+// GATE to exit the RAMP", 9.8.3) — but it still has to STOP at the exit. Its flow had no
+// floor, which was invisible while every artifact released the instant it reached
+// RAIL_EXIT_S; once the release waits for a clear doorway, an ungated overflow artifact
+// kept going down the tunnel and off the field, still in `rail` state.
+{
+  const w = foulWorld();
+  w.balls.length = 0;
+  w.robots[0].pos = { x: -60, y: -60 };
+  const r = w.robots[1]; // red, parked ON the mouth with a full hopper: nothing can leave
+  r.hopper = ['green', 'green', 'green'];
+  const mouth = railPos('red', RAIL_EXIT_S);
+  r.pos = { x: mouth.x - 2, y: mouth.y };
+  r.heading = Math.PI / 2;
+  r.vel = { x: 0, y: 0 };
+  for (let i = 0; i < 4; i++) {
+    w.balls.push({
+      id: 700 + i,
+      color: 'purple',
+      state: { kind: 'rail', goal: 'red', s: 20 + i * 6, v: 0, overflow: true },
+      pos: railPos('red', 20 + i * 6),
+      vel: { x: 0, y: 0 },
+      z: OVERFLOW_Z,
+      vz: 0,
+    });
+  }
+  runCmds(w, new Map(), 8);
+  const rail = w.balls.filter((b) => b.state.kind === 'rail');
+  const ss = rail.map((b) => (b.state as { s: number }).s).sort((a, b) => a - b);
+  const runaway = w.balls.some((b) => b.state.kind === 'rail' && (b.state as { s: number }).s < RAIL_EXIT_S);
+  // ...and they QUEUE nose to tail rather than all clamping onto the exit point: rail
+  // artifacts are placed by `s` alone, so the ground solver never separates them.
+  const spaced = ss.every((v, i) => i === 0 || v - ss[i - 1] >= RAIL_PITCH - 0.01);
+  check(
+    'blocked OVERFLOW stops at the exit and queues instead of running off the field',
+    rail.length === 4 && !runaway && spaced,
+    `s = ${ss.map((v) => v.toFixed(1)).join(', ')} (exit ${RAIL_EXIT_S})`,
   );
 }
 
