@@ -62,7 +62,7 @@ import {
   HOPPER_CAPACITY,
   RAIL_EXIT_S,
   RAIL_S_MAX,
-  OVERFLOW_FLOW_SPEED,
+  OVERFLOW_DRAG,
   RAIL_ACCEL,
   OVERFLOW_Z,
   BASIN_FLOOR_Z,
@@ -1295,7 +1295,8 @@ function queueTenth(w: World): void {
   // long enough for an OVERFLOW artifact to clamber the length of the ramp. It rides over
   // the retained column rather than rolling a clear ramp, so it is slow (OVERFLOW_FLOW_SPEED)
   // — the window has to follow that constant rather than a number tuned to an older one.
-  run(w, cmd({}), (RAIL_S_MAX / OVERFLOW_FLOW_SPEED) * 1.6);
+  // terminal ride speed while clambering the column is RAIL_ACCEL / OVERFLOW_DRAG
+  run(w, cmd({}), (RAIL_S_MAX / (RAIL_ACCEL / OVERFLOW_DRAG)) * 2.5);
   const g = w.goals.blue;
   check(
     '10th ball meeting a full column overflows (1 pt)',
@@ -1303,6 +1304,36 @@ function queueTenth(w: World): void {
     `classified=${g.classifiedCount} overflow=${g.overflowCount}`,
   );
   check('overflow ball rode over the closed gate and exited', w.balls[9].state.kind === 'ground');
+}
+
+// ---- a SHUT gate retains the whole column, indefinitely --------------------------
+// The suite passed for a whole session while this was broken: the rail solver's two
+// constraints (the artifact ahead / the gate) were both made conditional on "was it above
+// this last tick", so one artifact dipping a hair below its neighbour fell through the
+// entire column and out through a closed gate at terminal speed. Nothing here is subtle —
+// it just was not being watched.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  fillBlueRail(w);
+  run(w, cmd({}), 5);
+  const onRail = w.balls.filter((b) => b.state.kind === 'rail');
+  const ss = onRail.map((b) => (b.state as { s: number }).s).sort((p, q) => p - q);
+  check(
+    'a closed gate retains all 9 for 5s',
+    onRail.length === 9 && !w.goals.blue.gateOpen,
+    `onRail=${onRail.length} gateOpen=${w.goals.blue.gateOpen}`,
+  );
+  check(
+    'the retained column rests packed against the gate',
+    Math.abs(ss[0] - GATE_STOP_S) < 0.05 &&
+      ss.every((s, i) => i === 0 || Math.abs(s - ss[i - 1] - RAIL_PITCH) < 0.05),
+    `s=${ss.map((s) => s.toFixed(2)).join(',')}`,
+  );
+  check(
+    'nothing scored while the gate stayed shut',
+    w.goals.blue.classifiedCount === 0 && w.goals.blue.overflowCount === 0,
+  );
 }
 
 // ---- overflow decided at contact: gate cleared in time -> classified -------------

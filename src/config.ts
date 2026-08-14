@@ -834,19 +834,18 @@ export const EXIT_NUDGE = 0.5;
  * +4.5 -> 0.00.) */
 export const EXIT_CLEARANCE = 4.5; // in, on top of a full artifact diameter
 /**
- * How fast an OVERFLOW artifact travels down the ramp.
+ * Rolling resistance an artifact carries while it is riding ON TOP of the retained column
+ * instead of on the ramp — the bumpy business of climbing over one artifact, dropping between
+ * it and the next, and climbing again.
  *
- * SLOW, and slower than a classified artifact rolling the clear ramp — which is the opposite
- * of what it used to be (58 in/s, the fastest thing on the field). An overflow artifact is
- * not rolling down a ramp at all: it is climbing over the row of artifacts already sitting
- * on it, dropping between them and riding up the next, which is bumpy and slow. It gets
- * there because the ramp is full, not because it is quick.
- *
- * This also fixes the exit: overflow carries its flow speed off the end (momentum is
- * conserved through the release now), so a 58 in/s flow fired artifacts out of the gate
- * hard enough to cross the tunnel and keep going.
+ * This REPLACED a fixed OVERFLOW_FLOW_SPEED. A constant speed made overflow a mode rather
+ * than a situation: it could not rejoin the column when the gate opened, and its pace was a
+ * number to be argued about instead of a consequence. As a drag it is neither — gravity still
+ * drives it, the ramp still sets the scale, and terminal speed while riding is simply
+ * RAIL_ACCEL / OVERFLOW_DRAG. Drop onto a drained ramp and it accelerates away like anything
+ * else, because nothing about it was ever special except its height.
  */
-export const OVERFLOW_FLOW_SPEED = 16; // in/s, clambering over the retained column
+export const OVERFLOW_DRAG = 2.2; // 1/s — terminal ride speed ~RAIL_ACCEL/OVERFLOW_DRAG
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s
 

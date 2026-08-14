@@ -320,79 +320,131 @@ export function updateRails(world: World, dt: number): void {
 
     const railX = railPos(a, 0).x;
 
-    // stacked balls flow together as a packed column: a ball resting on the one
-    // below inherits ITS velocity (floorV) rather than stopping, so when the
-    // gate opens the whole column drains as a unit instead of each ball
-    // re-accelerating from rest and spreading apart.
-    const stack = railStack(world, a);
-    // A BLOCKED MOUTH IS A CLOSED GATE, as far as the column is concerned — it queues at the
-    // exit instead of flowing through whatever is parked there.
+    /**
+     * ONE PHYSICS FOR EVERY ARTIFACT ON THE RAMP.
+     *
+     * `overflow` used to be a permanent MODE: an artifact that met a full column was moved
+     * to a separate pass and slid at a fixed OVERFLOW_FLOW_SPEED for the rest of its life,
+     * regardless of what happened underneath it. That is why it could not rejoin the column
+     * when the gate opened, and why its speed was a number to be tuned rather than a
+     * consequence of anything.
+     *
+     * What `overflow` actually means is two things, and only two:
+     *   1. SCORING — it is worth 1 rather than 3, decided at contact (which is unchanged:
+     *      the decision still happens the moment it first meets the column).
+     *   2. HEIGHT — while the column is underneath it, it is riding on TOP of the retained
+     *      artifacts rather than sitting on the ramp.
+     *
+     * Everything else follows from height. An ELEVATED artifact rolls over the bumpy tops of
+     * other artifacts, so it carries a rolling resistance the ramp does not impose, and it is
+     * blocked only by other elevated artifacts — not by the retained column it is riding over,
+     * and not by the GATE, which it passes over ("OVERFLOW ARTIFACTS can pass over the top of
+     * the GATE to exit the RAMP", 9.8.3). The moment the column below drains away it SINKS
+     * onto the ramp, and from then on it is an ordinary rolling artifact: gravity, the gate,
+     * the artifact ahead. Open the gate while one is coming down and it follows the rest out,
+     * because there is nothing left for it to ride on.
+     */
+    const rail = world.balls
+      .filter((b) => b.state.kind === 'rail' && b.state.goal === a)
+      .sort((p, q) => (p.state as { s: number }).s - (q.state as { s: number }).s || p.id - q.id);
     const mouth = exitMouth(world, a);
     const canLeave = goal.gateOpen && (!mouth.blocked || mouth.taker !== null);
-    let floor = canLeave ? -Infinity : goal.gateOpen ? C.RAIL_EXIT_S : C.GATE_STOP_S;
-    let floorV = 0; // velocity of the constraint below (the gate is stationary)
-    let below = 0; // column balls ahead of (below) the current one
-    for (const b of stack) {
+    // where the RAMP-level column is stopped: the exit if it can leave, the mouth if
+    // something is parked in it, the gate if it is shut
+    // THE GATE IS A FLOOR UNDER THE FLOOR. Whatever the artifact ahead does, the column can
+    // never pass this: without it, an overflow artifact that had ridden over the top and
+    // dropped in BELOW the gate line became the reference for everything behind it, its
+    // `s + RAIL_PITCH` sat under GATE_STOP_S, and the entire retained column cascaded out
+    // through a shut gate.
+    const rampBase = canLeave ? -Infinity : goal.gateOpen ? C.RAIL_EXIT_S : C.GATE_STOP_S;
+    const overBase = canLeave ? -Infinity : C.RAIL_EXIT_S;
+    // TWO CONSTRAINTS, and they are NOT the same kind of thing:
+    //  · the artifact AHEAD — unconditional, artifacts cannot pass through one another;
+    //  · the BASE (the gate, or an occupied mouth) — a floor only for artifacts still ABOVE it.
+    // Conflating them is what broke this twice. Making both unconditional let a base that MOVES
+    // (`canLeave` flips as a robot turns near the mouth) drag artifacts back UP the ramp; making
+    // both conditional on "was it above this last tick" let an artifact that dipped below its
+    // neighbour by a hair free-fall through the entire column (measured: id 906 passing s=2.5 at
+    // 46 in/s with its floor at 7.1, straight out through a shut gate).
+    let rampAhead = -Infinity;
+    let rampFloorV = 0;
+    // ...and the same pair for an ELEVATED artifact: never stopped by the gate, only by the exit
+    // being physically occupied or by another elevated artifact ahead of it
+    let overAhead = -Infinity;
+    let overFloorV = 0;
+    let retainedBelow = 0;
+
+    // the ramp-level artifacts, for deciding what is riding on what
+    const retainedS = rail
+      .filter((b) => !(b.state as { overflow: boolean }).overflow)
+      .map((b) => (b.state as { s: number }).s);
+
+    for (const b of rail) {
       const st = b.state as { s: number; v: number; overflow: boolean; pending?: boolean };
+      const wasS = st.s; // an artifact never travels back UP the ramp (see the clamp below)
+
+      // RIDING ON THE COLUMN? Whenever there is anything retained BELOW it — not merely
+      // directly underneath. An artifact approaching the column from above is already going
+      // to ride over it; treating it as ramp-level until it is exactly on top meant the
+      // column's own top blocked it and it never got up there at all. It sinks when there is
+      // nothing left below to ride on, which is precisely when the ramp has drained.
+      const elevated = st.overflow && retainedS.some((rs) => rs < st.s + C.RAIL_PITCH * 0.5);
+
       st.v = Math.max(st.v - C.RAIL_ACCEL * dt, -C.RAIL_TERMINAL);
+      // clambering over artifacts is lossy in a way a ramp is not — this is what makes
+      // overflow slower, rather than a speed handed to it. Terminal speed while riding is
+      // RAIL_ACCEL / OVERFLOW_DRAG.
+      if (elevated) st.v *= Math.max(0, 1 - C.OVERFLOW_DRAG * dt);
       st.s += st.v * dt;
+
+      const ahead = elevated ? overAhead : rampAhead;
+      const base = elevated ? overBase : rampBase;
+      // THE BASE CANNOT REACH BACK UP FOR SOMETHING ALREADY PAST IT. An overflow artifact that
+      // rode over the column and dropped in below the gate line is BELOW the gate stop; without
+      // this the gate reached up and froze it there (measured: stranded at s=-1.1, velocity
+      // zeroed, two inches short of an exit it had already earned). The artifact ahead has no
+      // such exemption — it is solid from both sides.
+      const floor = Math.max(ahead, wasS >= base ? base : -Infinity);
+      const floorV = elevated ? overFloorV : rampFloorV;
       if (st.s < floor) {
-        // first contact with the gate stop or the ball ahead: a pending ball
-        // decides HERE — meeting a full column (9 below) diverts it over the
-        // top as OVERFLOW; otherwise it settles into the column CLASSIFIED
-        if (st.pending && below >= C.RAMP_SLOTS) {
+        // FIRST CONTACT decides the score: meeting a full column (RAMP_SLOTS below) diverts
+        // it over the top as OVERFLOW, otherwise it settles in as CLASSIFIED. Unchanged —
+        // the decision is made at contact, not at hand-off.
+        if (st.pending && retainedBelow >= C.RAMP_SLOTS) {
           st.pending = false;
           st.overflow = true;
-          st.v = -C.OVERFLOW_FLOW_SPEED;
           goal.overflowCount++;
           addOverflow(world, a);
-          continue; // rides over from here on — handled by the overflow pass
+          // it is now riding the column; it keeps whatever speed it arrived with
+          continue;
         }
-        st.s = floor;
-        // move WITH the ball below (0 against the closed gate) — the column
-        // stays packed and drains together instead of stopping/re-accelerating
-        st.v = Math.max(st.v, floorV);
+        // NEVER PUSH IT BACK UP. `floor` moves — -Infinity while the exit is clear,
+        // RAIL_EXIT_S the moment something occupies the mouth — so an artifact already past
+        // it would be snapped upward when the exit state changed. Turning a robot by the
+        // gate flips that check, and the column visibly jumped up and down the classifier in
+        // time with the steering. Clamping to min(floor, wasS) lets a constraint STOP an
+        // artifact, never reverse it.
+        st.s = Math.min(floor, wasS);
+        st.v = Math.max(st.v, floorV); // move WITH whatever is ahead, so the column drains packed
         if (st.pending) {
           st.pending = false;
           goal.classifiedCount++;
           addClassified(world, a);
         }
       }
-      floor = st.s + C.RAIL_PITCH;
-      floorV = st.v;
-      below++;
+
+      if (elevated) {
+        overAhead = st.s + C.RAIL_PITCH;
+        overFloorV = st.v;
+      } else {
+        rampAhead = st.s + C.RAIL_PITCH;
+        rampFloorV = st.v;
+        retainedBelow++;
+      }
       // glide smoothly onto the rail line — no positional snapping
       b.pos.y = C.CLASSIFIER_Y0 + st.s;
       b.pos.x = approach(b.pos.x, railX, C.RAIL_BLEND_SPEED * dt);
-      b.z = approach(b.z, C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
-    }
-
-    // Overflow balls ride OVER the stack at constant flow — the manual's "OVERFLOW ARTIFACTS
-    // can pass over the top of the GATE to exit the RAMP" — but they still STOP AT THE EXIT.
-    // This used to run with no floor at all, which was invisible while every artifact was
-    // released the instant it reached RAIL_EXIT_S: now that the release waits for a clear
-    // doorway, an ungated overflow artifact kept decrementing `s` and marched off down the
-    // tunnel and out of the field, still in `rail` state, never stopping.
-    const overflow = world.balls
-      .filter((b) => b.state.kind === 'rail' && b.state.goal === a && b.state.overflow)
-      .sort((p, q) => (p.state as { s: number }).s - (q.state as { s: number }).s || p.id - q.id);
-    // flow first...
-    for (const b of overflow) {
-      const st = b.state as { s: number };
-      st.s = Math.max(C.RAIL_EXIT_S, st.s - C.OVERFLOW_FLOW_SPEED * dt);
-    }
-    // ...then QUEUE them, nose to tail from the exit upward. Without this they all clamp to
-    // RAIL_EXIT_S and sit inside one another: rail artifacts are positioned by `s` alone, so
-    // the ground solver's separation pass never sees them and a blocked exit stacks the lot
-    // on a single point.
-    let queue = C.RAIL_EXIT_S;
-    for (const b of overflow) {
-      const st = b.state as { s: number };
-      if (st.s < queue) st.s = queue;
-      queue = st.s + C.RAIL_PITCH;
-      b.pos.y = C.CLASSIFIER_Y0 + st.s;
-      b.pos.x = approach(b.pos.x, railX, C.RAIL_BLEND_SPEED * dt);
-      b.z = approach(b.z, C.OVERFLOW_Z, C.RAIL_BLEND_SPEED * dt);
+      b.z = approach(b.z, elevated ? C.OVERFLOW_Z : C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
     }
 
     // balls past the gate roll out onto the floor from where they are
@@ -474,12 +526,28 @@ export function updateRails(world: World, dt: number): void {
        * scaling magnitude — the drain still spreads into a cone instead of a single file,
        * without anything changing pace as it lands.
        */
-      const st0 = b.state as { v: number; overflow: boolean };
-      const speed = st0.overflow ? C.OVERFLOW_FLOW_SPEED : Math.abs(st0.v);
+      // every artifact now carries its OWN speed off the ramp, overflow included — there is
+      // no separate flow constant to substitute in
+      const st0 = b.state as { v: number };
+      const speed = Math.abs(st0.v);
       // The fan is a DIRECTION, not a speed: the exit heads down-tunnel with a little
       // off-the-wall lean, varied per artifact so a drain spreads into a cone instead of
       // single file. Normalised, so `speed` is the exact magnitude that comes out — the
       // artifact leaves the ramp at precisely the speed the ramp gave it.
+      /**
+       * IT ROLLS OFF A LIP AND FALLS. The ramp discharges above the floor (manual 9.8.3:
+       * the gate's contact area is 3.75-5.5in up), so an artifact leaving it drops, lands,
+       * and bounces — and THAT is what takes the speed out of it. Handing it a flat floor
+       * velocity instead sent every artifact off on the same diagonal at ramp speed,
+       * arriving halfway across the field when they should be settling in front of the
+       * gate, along the tunnel, or in the human player zone.
+       *
+       * Released as a FLIGHT artifact at lip height with its ramp momentum, so the existing
+       * ballistic + landing code does the work: gravity, a bounce that keeps
+       * BALL_BOUNCE_H_RETAIN of the horizontal each time, then rolling friction. Nothing
+       * scripted, and the scatter comes from where each one happens to land rather than
+       * from a fan applied to all of them.
+       */
       const lean = (C.TUNNEL_EXIT_VEL.inward / C.TUNNEL_EXIT_VEL.along) * (0.5 + r1.value);
       const norm = Math.sqrt(1 + lean * lean);
       b.state = { kind: 'ground' };
