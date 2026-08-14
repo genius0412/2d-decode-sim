@@ -907,6 +907,20 @@ export const GATE_ARM_Y1 = 3;
 export const GATE_TAPE_W = 2.75; // spacing between the two lines (zone width)
 export const GATE_TAPE_LEN = 10; // line length, into the field from the wall
 export const GATE_TAPE_Y = (GATE_ZONE.y0 + GATE_ZONE.y1) / 2; // gate center y
+/**
+ * Where the classifier STRUCTURE ends — at the GATE, not past it.
+ *
+ * The ramp used to be modelled all the way down to `GATE_ZONE.y0`, about 3in beyond the
+ * gate line, so its side rails stuck out into the SECRET TUNNEL ZONE and a robot coming up
+ * the wall hit ramp instead of gate. Figure 9-16 (GATE Actuation) is a side elevation of
+ * exactly this: the structure ends at the pivot mount and only the LEVER extends past it.
+ * The zone definition says the same thing from the other side — the tunnel is "bounded by
+ * ... the GOAL assembly", so the assembly stops where the tunnel starts.
+ *
+ * The arm still protrudes (that is what a robot pushes), but it is a separate, retractable
+ * collider — `decodeGateArms` — not part of the ramp's footprint.
+ */
+export const CLASSIFIER_GATE_Y = GATE_TAPE_Y;
 /** where released/overflow balls emerge onto the floor, on the goal's wall */
 export const TUNNEL_EXIT = { x: 68, y: -3 };
 /** gate-release exit velocity. Kept GENTLE (low `along`): a big forward push

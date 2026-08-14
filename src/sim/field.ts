@@ -114,11 +114,13 @@ export function goalTriangle(a: Alliance): [Vec2, Vec2, Vec2] {
   return [far, side, { x: g * f, y: f }];
 }
 
-/** the classifier channel along the side wall (gate up into the far corner)
- * — an obstacle for ROBOTS (released balls exit beneath the gate) */
+/** the classifier channel along the side wall, running from the GATE up into the far corner
+ * — an obstacle for ROBOTS. It stops AT the gate (`CLASSIFIER_GATE_Y`): past that is the
+ * SECRET TUNNEL ZONE, which is floor, and the only thing protruding into it is the gate arm
+ * (a separate collider). Released artifacts exit beneath the gate into that floor. */
 export function classifierRect(a: Alliance): Rect {
   const g = goalSide(a);
-  return sideRect(g, C.FIELD_HALF, C.FIELD_HALF - C.CLASSIFIER_W, C.GATE_ZONE.y0, C.CLASSIFIER_Y1);
+  return sideRect(g, C.FIELD_HALF, C.FIELD_HALF - C.CLASSIFIER_W, C.CLASSIFIER_GATE_Y, C.CLASSIFIER_Y1);
 }
 
 export function gateZone(a: Alliance): Rect {
