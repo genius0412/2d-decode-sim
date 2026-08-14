@@ -13,7 +13,7 @@ import {
 } from './field';
 import { addClassified, addOverflow } from './scoring';
 import { approach, nextRandom, hyp, rot } from '../math';
-import { pointDepthInRobot, robotIntersectsRect } from './physics';
+import { pointDepthInRobot, robotExtents, robotIntersectsRect } from './physics';
 
 export const ZERO_CMD: RobotCommand = {
   driveX: 0,
@@ -270,12 +270,12 @@ export function updateBasins(world: World, dt: number): void {
  * it and piled up — teleporting into an occupied space, which is the one thing the ball
  * lifecycle is not allowed to do.
  *
- * So the mouth is checked before anything leaves:
- *   `taker`  — a robot over the mouth WITH room in its hopper. The artifact drops straight
- *              into it, which is what happens on the real field: you park under the gate to
- *              collect the drain.
- *   `blocked`— a FULL robot is over the mouth. Nothing leaves; the column backs up behind
- *              the gate exactly as it does behind a closed one.
+ * So the mouth is checked before anything leaves (`railBlock`):
+ *   `taker` — a robot reaching the channel WITH room in its hopper. The artifact drops
+ *             straight into it, which is what happens on the real field: you park under the
+ *             gate to collect the drain.
+ *   `s`     — how far up the rail a FULL robot's body reaches. That becomes the column's
+ *             floor, so it backs up against the bumper wherever the bumper actually is.
  *
  * ONLY A ROBOT BLOCKS OUTRIGHT. An artifact lying in the doorway is a different case and
  * must not be treated as one: making it block deadlocked the whole classifier, because a
@@ -291,14 +291,62 @@ export function updateBasins(world: World, dt: number): void {
  * tick), and if something genuinely immovable is pinning it — a robot parked down the
  * tunnel — then the column stalling IS the right answer.
  */
-function exitMouth(world: World, a: Alliance): { taker: RobotState | null; blocked: boolean } {
-  const p = railPos(a, C.RAIL_EXIT_S);
+/**
+ * WHERE A ROBOT STOPS THE COLUMN — an `s` on the rail, not a yes/no at one point.
+ *
+ * This used to test the single point `railPos(a, RAIL_EXIT_S)` and return a boolean. Both
+ * halves of that were wrong, and measurably so. A robot sitting ON the mouth stopped the
+ * flow but the floor stayed at RAIL_EXIT_S, so the column stacked up to 7.3in INSIDE the
+ * chassis and sat there — the artifacts visibly inside the robot. And a robot 9in to the
+ * side, touching nothing, still blocked the whole ramp, because the one point it tested was
+ * the only geometry the rail knew about.
+ *
+ * So walk the rail line instead and find the highest `s` the robot's body actually reaches.
+ * That `s` (plus an artifact radius, so it rests AGAINST the bumper rather than in it) is the
+ * column's floor. Partial coverage now does the partial thing: the column stops where the
+ * robot is, wherever that happens to be, and stops nothing when the robot is clear.
+ *
+ * Only the stretch below the classifier's gate end is walked — above it the channel has
+ * walls and a robot cannot be in it at all.
+ */
+function railBlock(
+  world: World,
+  a: Alliance,
+): { s: number; taker: RobotState | null; takeAt: number } {
+  let best = -Infinity;
+  let who: RobotState | null = null;
   for (const r of world.robots) {
-    // the mouth counts as occupied once the robot's body reaches within an artifact radius
-    if (pointDepthInRobot(r, p) < -C.BALL_RADIUS) continue;
-    return r.hopper.length < C.HOPPER_CAPACITY ? { taker: r, blocked: false } : { taker: null, blocked: true };
+    // HOW FAR UP TO LOOK COMES FROM THE ROBOT, not from the channel. Bounding the walk at the
+    // classifier's gate end (s = 1) looked reasonable and was badly wrong: a robot parked on
+    // the mouth reaches s = 6.5, so the walk began ALREADY INSIDE the chassis, stopped there,
+    // and put the floor 5in inside the robot. Its own collision extents can't lie about this.
+    const e = robotExtents(r);
+    const top = C.RAIL_EXIT_S + hyp(e.front + e.rear, e.half * 2) + C.BALL_RADIUS;
+    // Walk UP and keep the LAST position an artifact could not occupy — `pointDepthInRobot`
+    // is a signed distance, so `> -BALL_RADIUS` means the artifact's skin would be in the
+    // bumper. The floor is one step above that, which this walk has already tested and found
+    // clear. Deriving it instead as "deepest blocked sample plus a radius" left up to 0.75in
+    // of overlap, because a radius along the rail is not a radius along the surface normal of
+    // a robot sitting at an angle to it.
+    // Fixed step, deterministic, and well under an artifact radius so nothing slips through.
+    let reach = -Infinity;
+    for (let s = C.RAIL_EXIT_S; s <= top; s += C.RAIL_BLOCK_STEP) {
+      if (pointDepthInRobot(r, railPos(a, s)) > -C.BALL_RADIUS) reach = s + C.RAIL_BLOCK_STEP;
+    }
+    if (reach > best) {
+      best = reach;
+      who = r;
+    }
   }
-  return { taker: null, blocked: false };
+  if (who === null) return { s: -Infinity, taker: null, takeAt: C.RAIL_EXIT_S };
+  // A ROBOT WITH ROOM COLLECTS RATHER THAN BLOCKS (unchanged): it is standing under the
+  // gate intaking the drain, so the artifact goes into its hopper instead of piling on it.
+  // ...and it collects WHERE ITS BODY IS (`takeAt`), not at the fixed exit point. Handing the
+  // artifact over at RAIL_EXIT_S meant it first travelled the length of the robot's own
+  // footprint to get there — through the chassis — which is the same point-vs-body mistake as
+  // the block, just on the friendly branch of it.
+  if (who.hopper.length < C.HOPPER_CAPACITY) return { s: -Infinity, taker: who, takeAt: best };
+  return { s: best, taker: null, takeAt: C.RAIL_EXIT_S };
 }
 
 /** the artifact still sitting in the gate's doorway, if any — the one the column has to
@@ -347,17 +395,22 @@ export function updateRails(world: World, dt: number): void {
     const rail = world.balls
       .filter((b) => b.state.kind === 'rail' && b.state.goal === a)
       .sort((p, q) => (p.state as { s: number }).s - (q.state as { s: number }).s || p.id - q.id);
-    const mouth = exitMouth(world, a);
-    const canLeave = goal.gateOpen && (!mouth.blocked || mouth.taker !== null);
-    // where the RAMP-level column is stopped: the exit if it can leave, the mouth if
-    // something is parked in it, the gate if it is shut
+    const mouth = railBlock(world, a);
+    const canLeave = goal.gateOpen && mouth.s === -Infinity;
+    // where the RAMP-level column is stopped: the exit if it can leave, the gate if it is
+    // shut — and in either case never past a robot's body, which is a floor of its own at
+    // whatever `s` it actually reaches.
     // THE GATE IS A FLOOR UNDER THE FLOOR. Whatever the artifact ahead does, the column can
     // never pass this: without it, an overflow artifact that had ridden over the top and
     // dropped in BELOW the gate line became the reference for everything behind it, its
     // `s + RAIL_PITCH` sat under GATE_STOP_S, and the entire retained column cascaded out
     // through a shut gate.
-    const rampBase = canLeave ? -Infinity : goal.gateOpen ? C.RAIL_EXIT_S : C.GATE_STOP_S;
-    const overBase = canLeave ? -Infinity : C.RAIL_EXIT_S;
+    const gateBase = canLeave ? -Infinity : goal.gateOpen ? C.RAIL_EXIT_S : C.GATE_STOP_S;
+    // A ROBOT BLOCKS THE ELEVATED LANE TOO. Overflow rides over the retained column, not over
+    // a robot: an artifact on top of the stack still runs into the bumper of anything parked
+    // across the channel, so the same floor applies to both lanes.
+    const rampBase = Math.max(gateBase, mouth.s);
+    const overBase = Math.max(canLeave ? -Infinity : C.RAIL_EXIT_S, mouth.s);
     // TWO CONSTRAINTS, and they are NOT the same kind of thing:
     //  · the artifact AHEAD — unconditional, artifacts cannot pass through one another;
     //  · the BASE (the gate, or an occupied mouth) — a floor only for artifacts still ABOVE it.
@@ -448,13 +501,14 @@ export function updateRails(world: World, dt: number): void {
     }
 
     // balls past the gate roll out onto the floor from where they are
-    const out = exitMouth(world, a);
+    const out = mouth;
     for (const b of world.balls) {
       if (b.state.kind !== 'rail' || b.state.goal !== a) continue;
-      if (b.state.s > C.RAIL_EXIT_S) continue;
+      // a robot collecting the drain takes it at its bumper; otherwise it rolls to the exit
+      if (b.state.s > out.takeAt) continue;
       // NOTHING LEAVES INTO AN OCCUPIED MOUTH. Without a taker to hand it to, the artifact
-      // stays on the rail and the column queues behind it (see `exitMouth`).
-      if (out.blocked && !out.taker) continue;
+      // stays on the rail and the column queues behind it (see `railBlock`).
+      if (out.s !== -Infinity) continue;
       // ...and if the LAST artifact out is still in the doorway, shove it clear and wait a
       // tick rather than materialising this one on top of it.
       if (!out.taker) {
@@ -550,12 +604,23 @@ export function updateRails(world: World, dt: number): void {
        */
       const lean = (C.TUNNEL_EXIT_VEL.inward / C.TUNNEL_EXIT_VEL.along) * (0.5 + r1.value);
       const norm = Math.sqrt(1 + lean * lean);
-      // `target` is meaningless for an artifact that is falling off a ramp rather than flying
-      // at a goal — it is only read by checkGoalEntry, which additionally needs an UPWARD
-      // crossing of GOAL_OPENING_Z within GOAL_OPENING_RADIUS of the opening. This one starts
-      // below that plane, falling, at the far end of the classifier. It cannot re-enter.
-      b.state = { kind: 'flight', target: a };
-      b.z = C.GATE_LIP_Z;
+      /**
+       * IT IS ON THE FLOOR THE TICK IT LEAVES, AT THE SPEED THE RAMP GAVE IT.
+       *
+       * Two things were tried here and both were wrong in ways worth remembering. Releasing
+       * it as a FLIGHT artifact off a 3.75in lip is the honest geometry — it really does drop
+       * — but 3.75in takes 0.14s and the bounces another 0.2s, and at this scale that does not
+       * read as a ramp discharging, it reads as artifacts floating out of the wall. Charging
+       * the drop's cost up front instead (multiply the horizontal by what a bounce keeps) puts
+       * them on the floor but makes them change speed by 16in/s on the tick they arrive, which
+       * is precisely the sudden step this release was rebuilt to get rid of.
+       *
+       * So neither: it lands immediately and keeps its speed, and BALL_ROLL_FRICTION takes it
+       * out over the tunnel the way a ball rolling on foam tile actually stops. The exit is not
+       * an event that does something to the artifact — it is just where the ramp ends.
+       */
+      b.state = { kind: 'ground' };
+      b.z = 0;
       b.vz = 0;
       b.vel = { x: (Math.sign(vel.x) * lean * speed) / norm, y: (-speed) / norm };
     }

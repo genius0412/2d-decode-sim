@@ -69,6 +69,7 @@ import {
   RAMP_SURFACE_Z,
   FIELD_HALF,
   TUNNEL_STRIP_LEN,
+  LOAD_ZONE_SIZE,
   BALL_RADIUS,
   HP_INITIAL_STOCK,
   HP_PLACE_DELAY,
@@ -100,7 +101,13 @@ import {
   chassisFill,
   PLACEMENT_GAMES,
 } from '../src/config';
-import { robotCorners, robotExtents, robotIntersectsRect, wheelContacts } from '../src/sim/physics';
+import {
+  pointDepthInRobot,
+  robotCorners,
+  robotExtents,
+  robotIntersectsRect,
+  wheelContacts,
+} from '../src/sim/physics';
 import { beamBlock, beamDrag, beamDragFactor, beamStrafeBlock, beamForwardness, beamRide, canCrossBeams, cogFactor, wheelsOnBeam, CHAIN_BEAMS } from '../src/games/chain/beams';
 import { butterflyTankRpmLimits, driveParams, massLimits, rpmLimits, motorStep, driveSummary, widthLimits } from '../src/sim/drivetrain';
 import { coerceSettings, defaultSettings, switchGame, syncAudioMirrors } from '../src/settings';
@@ -1385,15 +1392,68 @@ function queueTenth(w: World): void {
   const drained = w.balls.filter((b) => ids.includes(b.id)); // the HP restocks others
   const far = drained.map((b) => hyp(b.pos.x - mouth.x, b.pos.y - mouth.y));
   const offWall = drained.map((b) => FIELD_HALF - Math.abs(b.pos.x));
+  // The three places a drain is allowed to end up, in the user's words: in front of the gate,
+  // along the secret tunnel, or in the human player zone. That is the WALL CORRIDOR — the
+  // tunnel plus the loading zone at the audience corner — not the tunnel alone. (An earlier
+  // version of this check bounded it at the tunnel length and failed artifacts that had rolled
+  // into the loading zone, which is a destination, not an escape.)
+  const corridor = TUNNEL_STRIP_LEN + LOAD_ZONE_SIZE;
   check(
-    'a full drain settles within the tunnel length of the gate',
-    drained.every((b) => b.state.kind === 'ground') && Math.max(...far) < TUNNEL_STRIP_LEN,
-    `max=${Math.max(...far).toFixed(0)}in tunnel=${TUNNEL_STRIP_LEN}in`,
+    'a full drain settles in the wall corridor: gate, tunnel, or loading zone',
+    drained.every((b) => b.state.kind === 'ground') && Math.max(...far) < corridor,
+    `max=${Math.max(...far).toFixed(0)}in corridor=${corridor}in`,
   );
   check(
     'the drain settles ALONG the wall, not out on a diagonal',
     offWall.filter((d) => d < 20).length >= 7,
     `off-wall=${offWall.map((d) => d.toFixed(0)).join(',')}`,
+  );
+}
+
+// ---- a robot's BODY is where the column stops, wherever that body is ------------
+// Reported: "balls can STILL pass through the robot when the robot is slightly blocking the
+// classifier". The mouth used to be ONE point with a boolean on it, so a robot sitting on the
+// outflow stopped the flow while the floor stayed at RAIL_EXIT_S — the column stacked 7.3in
+// INSIDE the chassis and sat there. A robot 9in to the side, touching nothing, blocked the
+// whole ramp for the same reason. Both are geometry, so both are measured here.
+{
+  const offsets = [0, 6, 9, 13, 18];
+  const inside: number[] = [];
+  const drained: number[] = [];
+  for (const off of offsets) {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    fillBlueRail(w);
+    const ids = w.balls.slice(0, 9).map((b) => b.id);
+    const g = w.goals.blue;
+    const mouth = railPos('blue', RAIL_EXIT_S);
+    const r = w.robots[0];
+    r.heading = 0;
+    let worst = 0;
+    for (let i = 0; i < Math.round(8 / SIM_DT); i++) {
+      r.pos = { x: mouth.x - off, y: mouth.y }; // pinned, straddling the mouth by `off`
+      r.vel = { x: 0, y: 0 };
+      g.gatePos = 1;
+      g.gateOpen = true;
+      step(w, SIM_DT, new Map());
+      if (i < 90) continue; // let the staged column settle out of its spawn positions first
+      for (const b of w.balls) {
+        if (!ids.includes(b.id) || b.state.kind === 'held') continue;
+        worst = Math.max(worst, pointDepthInRobot(r, b.pos));
+      }
+    }
+    inside.push(worst);
+    drained.push(w.balls.filter((b) => ids.includes(b.id) && b.state.kind === 'rail').length);
+  }
+  check(
+    'no artifact ever rests inside the robot, at any coverage of the mouth',
+    inside.every((d) => d <= 0),
+    offsets.map((o, i) => `${o}in:${inside[i].toFixed(2)}`).join(' '),
+  );
+  check(
+    'a robot ON the mouth holds the column; one CLEAR of it does not',
+    drained[0] === 9 && drained[drained.length - 1] === 0,
+    `on=${drained[0]} clear=${drained[drained.length - 1]} all=${drained.join(',')}`,
   );
 }
 
