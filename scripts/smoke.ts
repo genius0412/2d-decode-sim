@@ -68,6 +68,7 @@ import {
   BASIN_FLOOR_Z,
   RAMP_SURFACE_Z,
   FIELD_HALF,
+  TUNNEL_STRIP_LEN,
   BALL_RADIUS,
   HP_INITIAL_STOCK,
   HP_PLACE_DELAY,
@@ -1360,6 +1361,39 @@ function queueTenth(w: World): void {
     'ball arriving during a gate drain classifies (3 pts, not overflow)',
     g.overflowCount === 0 && g.classifiedCount === 1 && w.match.scores.blue.autoClassified === 3,
     `classified=${g.classifiedCount} overflow=${g.overflowCount} pts=${w.match.scores.blue.autoClassified}`,
+  );
+}
+
+// ---- a drain settles ALONG the tunnel, not across the field ---------------------
+// Reported twice: artifacts leaving the gate "hyper accelerated... all going diagonally in
+// one direction" when they should pile up in front of the gate, along the secret tunnel, or
+// in the human player zone. Two causes, both fixed: a doorway nudge that compounded to
+// 91 in/s, and a release that set a flat floor velocity on a wide fan. They now roll off the
+// GATE_LIP_Z lip and land, so this watches WHERE nine of them come to rest.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  fillBlueRail(w);
+  const ids = w.balls.slice(0, 9).map((b) => b.id);
+  const g = w.goals.blue;
+  const mouth = railPos('blue', RAIL_EXIT_S);
+  for (let i = 0; i < 60 * 12; i++) {
+    g.gatePos = 1; // hold it open: this is about the outflow, not the lever
+    g.gateOpen = true;
+    step(w, SIM_DT, new Map());
+  }
+  const drained = w.balls.filter((b) => ids.includes(b.id)); // the HP restocks others
+  const far = drained.map((b) => hyp(b.pos.x - mouth.x, b.pos.y - mouth.y));
+  const offWall = drained.map((b) => FIELD_HALF - Math.abs(b.pos.x));
+  check(
+    'a full drain settles within the tunnel length of the gate',
+    drained.every((b) => b.state.kind === 'ground') && Math.max(...far) < TUNNEL_STRIP_LEN,
+    `max=${Math.max(...far).toFixed(0)}in tunnel=${TUNNEL_STRIP_LEN}in`,
+  );
+  check(
+    'the drain settles ALONG the wall, not out on a diagonal',
+    offWall.filter((d) => d < 20).length >= 7,
+    `off-wall=${offWall.map((d) => d.toFixed(0)).join(',')}`,
   );
 }
 

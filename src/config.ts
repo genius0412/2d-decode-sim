@@ -821,6 +821,11 @@ export const GATE_STOP_S = 2; // lowest rest position against the closed gate
 // the basin. One pitch below the entry keeps proper spacing but drains ~2× faster.
 export const RAIL_ENTRY_BLOCK_S = 50;
 export const RAIL_EXIT_S = -4; // past the gate: ball drops out to the floor
+/** height of the ramp's discharge lip above the tile. The manual puts the GATE's contact
+ * area at 3.75-5.5in up (9.8.3), so an artifact leaving the ramp is about that far up and
+ * FALLS the rest of the way. That fall is not decoration: the landing bounce is what takes
+ * the speed out of it, and where each one happens to land is where the scatter comes from. */
+export const GATE_LIP_Z = 3.75; // in
 /** how hard the column shoves an artifact still sitting in the gate's doorway, as a
  * fraction of the exit velocity. Enough to keep the queue moving without firing it out. */
 export const EXIT_NUDGE = 0.5;
@@ -943,11 +948,20 @@ export const GATE_TAPE_Y = (GATE_ZONE.y0 + GATE_ZONE.y1) / 2; // gate center y
 export const CLASSIFIER_GATE_Y = GATE_TAPE_Y;
 /** where released/overflow balls emerge onto the floor, on the goal's wall */
 export const TUNNEL_EXIT = { x: 68, y: -3 };
-/** gate-release exit velocity. Kept GENTLE (low `along`): a big forward push
- * plows the whole drain out in a straight conga line. With little momentum the
- * front balls stall on friction and the ones behind carom off them, so the
- * drain fans out across the floor instead of running linear. */
-export const TUNNEL_EXIT_VEL = { along: 22, inward: 8 }; // toward audience, off the wall
+/**
+ * Gate-release exit DIRECTION (and the magnitude of the doorway nudge). An artifact leaves
+ * with whatever speed the ramp gave it, so only the RATIO matters here: `inward/along` is the
+ * off-the-wall lean, jittered per artifact into a fan.
+ *
+ * The lean is small because the ramp discharges ALONG the wall — an artifact rolls out of the
+ * channel, it is not thrown across the floor. At 8 the fan was 10-29 degrees, which over the
+ * ~40in an artifact travels left the drain a median 13in off a 6in-wide tunnel: all of them
+ * drifting out on the same diagonal, which is exactly what it looked like. At 4 it is 5-15
+ * degrees and the drain settles along the tunnel. The SPREAD does not come from this number
+ * anyway — it comes from the landing bounce off GATE_LIP_Z and from artifacts caroming off
+ * the ones that stopped first.
+ */
+export const TUNNEL_EXIT_VEL = { along: 22, inward: 4 }; // toward audience, off the wall
 
 // ---------------------------------------------------------------- zones ----
 /** small audience-side launch zone: apex (0,-48), base 2 tiles on the wall */

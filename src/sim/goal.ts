@@ -550,8 +550,12 @@ export function updateRails(world: World, dt: number): void {
        */
       const lean = (C.TUNNEL_EXIT_VEL.inward / C.TUNNEL_EXIT_VEL.along) * (0.5 + r1.value);
       const norm = Math.sqrt(1 + lean * lean);
-      b.state = { kind: 'ground' };
-      b.z = 0;
+      // `target` is meaningless for an artifact that is falling off a ramp rather than flying
+      // at a goal — it is only read by checkGoalEntry, which additionally needs an UPWARD
+      // crossing of GOAL_OPENING_Z within GOAL_OPENING_RADIUS of the opening. This one starts
+      // below that plane, falling, at the far end of the classifier. It cannot re-enter.
+      b.state = { kind: 'flight', target: a };
+      b.z = C.GATE_LIP_Z;
       b.vz = 0;
       b.vel = { x: (Math.sign(vel.x) * lean * speed) / norm, y: (-speed) / norm };
     }
