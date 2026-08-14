@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-15 (the classifier: possession, the gate, and the ramp) — alpha only
 
-Branch **alpha**, commit `c65209a`, **103 commits ahead of `origin/main`**.
+Branch **alpha**, commit `d3442fb`, **105 commits ahead of `origin/main`**.
 `npm test` ALL PASS (~215 checks) · `npm run build` green · working tree clean.
 **Not deployed.** Production `dohun-sim-decode` is still on the pre-session build and
 still owes the migrations listed under "Still pending".
@@ -43,25 +43,63 @@ survived a full session of a green suite** — smoke never checked that a closed
 retains anything. It does now: three checks that nine artifacts stay put for five
 seconds, packed at exactly `RAIL_PITCH` against the gate, scoring nothing.
 
-### The gate discharges off a LIP (`c65209a`)
+### The exit: where the ramp ends, and nothing more (`c65209a`, `d3442fb`)
 
 An artifact leaving the ramp used to be handed a flat floor velocity on the tick it
 crossed the exit, on a fan 10–29° off the wall — nine of them left on the same diagonal
 at 46 in/s and ran out across the floor. That was *"hyper accelerated and all going
 diagonally in one direction"*.
 
-The ramp does not discharge at floor level. The manual puts the gate's contact area
-3.75–5.5 in up (9.8.3), so it is released as a **flight** artifact at `GATE_LIP_Z`
-carrying its ramp momentum and the existing ballistic code does the rest: gravity, a
-landing bounce keeping `BALL_BOUNCE_H_RETAIN`, then rolling friction. The speed comes out
-because it *lands*; the scatter comes from where each one lands and from caroming off
-whichever stopped first. With the drop doing that work, `TUNNEL_EXIT_VEL.inward` dropped
-8 → 4. Measured over a full nine-artifact drain: **22–42 in from the mouth** (tunnel is
-46.5 in long), **3–18 in off the wall** against a 6.1 in tunnel, median 7.
+**Two attempts at the drop are recorded here because both are instructive.** The manual
+puts the gate's contact area 3.75–5.5 in up (9.8.3), so releasing it as a `flight`
+artifact off a lip is the honest geometry — and it is wrong at 1:1. 3.75 in of fall plus
+the bounces is **0.32 s of every artifact hanging in the air on the way out**, which does
+not read as a ramp discharging; it reads as artifacts floating out of the wall. Charging
+the drop's cost up front instead (multiply the horizontal by what a bounce keeps) puts
+them on the floor but costs them **16 in/s on the tick they arrive** — precisely the
+sudden step at ground contact that the release was rebuilt to remove, and there is a
+smoke check for it.
 
-`target` is required by the flight state and meaningless here; it is read only by
+So neither. The artifact lands immediately and keeps the speed the ramp gave it;
+`BALL_ROLL_FRICTION` takes it out over the tunnel. Worst transition step is now
+**1.33 in/s, exactly one tick of gravity**. The exit is not an event that does something
+to the artifact — it is just where the ramp ends. `TUNNEL_EXIT_VEL.inward` stays at 4
+(5–15°, down from 8) and the spread comes from artifacts caroming off whichever stopped
+first. Measured over a full drain: within the **wall corridor** — gate, tunnel, or
+loading zone — and 3–18 in off a 6.1 in tunnel.
+
+`GATE_LIP_Z` is gone with the lip. If it comes back, note that `flight` requires a
+`target`, which is meaningless for something falling off a ramp; it is read only by
 `checkGoalEntry`, which also needs an UPWARD crossing of `GOAL_OPENING_Z` within
-`GOAL_OPENING_RADIUS`. This artifact starts below that plane, falling, 60 in away.
+`GOAL_OPENING_RADIUS`, so an exiting artifact cannot re-enter.
+
+### A robot's BODY is where the column stops (`d3442fb`)
+
+Reported as *"balls can STILL pass through the robot when the robot is slightly blocking
+the classifier"*, and it was one cause with the floating: **the classifier knew about
+robots through a single point.** `exitMouth` tested `railPos(a, RAIL_EXIT_S)` and returned
+a boolean, so a robot parked on the outflow stopped the flow while the column's floor
+stayed at that fixed point — 7.3 in of artifacts sitting INSIDE the chassis, 1182 frames
+of it. A robot 9 in to the side, touching nothing, blocked the whole ramp for the same
+reason.
+
+`railBlock` walks the rail line and returns the `s` a robot's body actually reaches; that
+is the column's floor, for the elevated lane too (overflow rides over the retained column,
+not over a robot). A robot WITH hopper room still collects the drain, now at its own
+bumper — handing it over at `RAIL_EXIT_S` made the artifact travel the length of the
+robot's footprint to get there, through the chassis.
+
+Two things about that walk cost real time and should not be re-derived:
+
+- **Its ceiling comes from the ROBOT's collision extents, not from the channel.** Bounding
+  it at the classifier's gate end (s = 1) looks reasonable and is badly wrong: a robot on
+  the mouth reaches s = 6.5, so the walk began already inside the chassis, stopped there,
+  and put the floor 5 in inside the robot.
+- **The floor is the sample the walk PROVED clear**, not the deepest blocked sample plus a
+  radius — a radius along the rail is not a radius along the surface normal of a robot
+  sitting at an angle, and that version still left 0.75 in of overlap.
+
+Measured across five coverages from dead-centre to clear: **0.00 in, every one.**
 
 ### Earlier in the session
 
@@ -94,10 +132,10 @@ whichever stopped first. With the drop doing that work, `TUNNEL_EXIT_VEL.inward`
 
 ## Open, not started
 
-- **"Balls still pass over the robot."** Not reproduced. Chassis penetration measures
-  0.00 in, and `ballRobotContact` leaves the intake mouth open *by design* — which is what
-  the earlier "2.77 in penetration" reading actually was. Needs the user's specific
-  scenario before more code is written against it.
+- **Ball/robot pass-through** — the classifier case is fixed and watched (`d3442fb`).
+  The earlier "2.77 in penetration" reading was the intake mouth, which `ballRobotContact`
+  leaves open *by design*; chassis penetration measures 0.00 in. If it is reported again,
+  get the specific scenario rather than re-measuring the mouth.
 - **Penalty hitbox audit** (roadmap #1) — the rules are right, the trigger volumes have
   never been checked against the manual figures.
 - **Production deploy**: prod is on migration 0024; 0025–0029 plus the 08-07 spectating
