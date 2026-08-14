@@ -190,13 +190,18 @@ export const POSSESSION_TURN_RATE = 0.15; // rad/s — ...or changing orientatio
  * and below a deflection off the bumper, so shoving a row fouls while a clipped artifact and
  * a drive-past both stay clean. */
 export const POSSESSION_SLIP = 20; // in/s of drift relative to the robot
-/** grace before over-possession is fouled — seconds of control that have to ACCUMULATE.
+/** grace before over-possession is fouled — seconds of control that have to ACCUMULATE, on
+ * TOP of the per-artifact POSSESSION_CONFIRM.
  *
  * The rule is meant to catch a robot taking a load around the field, not the ordinary
- * business of driving into a clump to collect it, nudging a ball aside, or carrying a full
- * hopper past loose artifacts. One second is a deliberate hold, not an accident, and still
- * forgives a normal intake pass (a capture is < 0.2 s). */
-export const POSSESSION_GRACE = 1; // s
+ * business of driving into a clump to collect it or nudging a ball aside.
+ *
+ * Cut 1 s -> 0.4 s: with the confirm window in front of it the total wait was 1.35 s, which
+ * is a long time to hold a violation before anything happens, and G408 itself has no grace
+ * at all — control over the limit is a foul the moment a referee sees it. The carve-outs are
+ * held by the per-artifact confirm (which artifacts, and for how long each), not by this, so
+ * shortening it costs them nothing: every bulldozing case still passes at 0.4. */
+export const POSSESSION_GRACE = 0.4; // s
 /**
  * ...and how fast that clock DRAINS while control is back within the limit, as a fraction
  * of real time. This is the difference between a clock that accumulates and one that resets,
