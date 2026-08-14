@@ -189,7 +189,24 @@ export const POSSESSION_TURN_RATE = 0.15; // rad/s — ...or changing orientatio
  * 20 is where the sweep landed: it is above the bulk of a real shove's contact (p50 17.2)
  * and below a deflection off the bumper, so shoving a row fouls while a clipped artifact and
  * a drive-past both stay clean. */
-export const POSSESSION_SLIP = 20; // in/s of drift relative to the robot
+/**
+ * How far an artifact may WANDER, in the robot's own frame, and still count as remaining
+ * "in approximately the same position relative to the ROBOT" — the glossary's test, applied
+ * to the thing it actually talks about: POSITION.
+ *
+ * This replaced a velocity test (the artifact's speed against the robot's rigid-body
+ * velocity at that point). Velocity reads possession only while an artifact is TRAPPED: a
+ * clump shoved across open floor bounces and shuffles constantly, so no instantaneous match
+ * ever holds, and the rule stayed silent until the pile was pinned against a wall and forced
+ * to move at exactly the robot's speed. Reported as exactly that — "I don't get the
+ * penalty until I push the clump all the way to the wall."
+ *
+ * Position is immune to that. An artifact being herded sits in front of the bumper the whole
+ * way, however much it rattles; one you drive PAST sweeps the length of the chassis and is
+ * gone; one that DEFLECTS leaves immediately. 8 in is about half a chassis width — room to
+ * shuffle within the pile, not to travel across it.
+ */
+export const POSSESSION_DRIFT = 8; // in, in the ROBOT frame, from where the hold began
 /** grace before over-possession is fouled — seconds of control that have to ACCUMULATE, on
  * TOP of the per-artifact POSSESSION_CONFIRM.
  *
@@ -295,6 +312,21 @@ export const BALL_PIN_PUSH_MIN_SPEED = 0.5; // in/s
 /** ball-ball + ball-robot passes per tick, so robot -> ball -> pinned-ball
  * chains converge instead of tunnelling */
 export const BALL_SOLVER_ITERATIONS = 2;
+/**
+ * Passes of the FINAL ball-vs-ball relaxation (see the end of the ground-ball solve in
+ * world.ts).
+ *
+ * Rapier separates artifacts EARLY in the tick, but four things move them afterwards: the
+ * bespoke robot push, the held-ball block, the classifier eviction and the wall clamp. With
+ * nothing separating them again, a robot ramming a clump drives one artifact into another
+ * and the overlap survives to the next tick — and while the robot keeps pushing, the next
+ * tick never wins either. That is why artifacts visibly stack when rammed, and why they
+ * stack at the gate when a robot blocks the outflow.
+ *
+ * Four passes because the pile is a CHAIN: separating the front pair pushes into the pair
+ * behind it, so the correction has to propagate back through the clump within one tick.
+ */
+export const BALL_RELAX_PASSES = 4;
 
 // ------------------------------------------------- robot contact torque ----
 /** per-tick angular correction cap from a single contact group (rad), at rest */

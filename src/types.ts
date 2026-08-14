@@ -478,6 +478,12 @@ export interface PenaltyState {
    * which is what separates HERDING (the same artifacts, over and over) from crossing a
    * littered field (a different artifact each moment). Entries are deleted at 0. */
   ballHold: Record<string, number>;
+  /** ...and WHERE that artifact was, in the ROBOT'S OWN FRAME, when the hold began:
+   * `"<robotId>:<ballId>"` -> {x,y}. The possession test is whether it "remains in
+   * approximately the same position relative to the ROBOT", so the anchor is the position
+   * it is compared against. Re-seeded when an artifact moves to a new station, deleted with
+   * the hold. */
+  ballAnchor: Record<string, Vec2>;
   controlInstances: Record<number, number>;
   carded: Record<number, CardColor>;
   /** which OPPONENT alliance (if any) is responsible for each goal's gate being

@@ -708,6 +708,40 @@ export function collideBallBall(a: Artifact, b: Artifact): void {
   }
 }
 
+/**
+ * POSITION-ONLY de-overlap of two ground artifacts — a constraint pass, not a collision.
+ *
+ * `collideBallBall` also applies an impulse, which is right when two artifacts MEET but
+ * wrong as a cleanup pass: by then the overlap was created by something else moving a ball
+ * (a robot's bumper, a wall clamp, the channel eviction), and answering that with an
+ * impulse injects energy and makes a pinned clump jitter. Here the ONLY job is that no two
+ * artifacts occupy the same space.
+ */
+export function separateBalls(a: Artifact, b: Artifact): void {
+  const dx = b.pos.x - a.pos.x;
+  const dy = b.pos.y - a.pos.y;
+  const d2 = dx * dx + dy * dy;
+  const minD = C.BALL_RADIUS * 2;
+  if (d2 >= minD * minD) return;
+  // EXACTLY coincident: two artifacts stacked dead centre have no separating direction to
+  // read off their positions, and returning here is what lets a stack persist forever.
+  // Push them apart along a deterministic axis instead (ids are stable and unique).
+  if (d2 < 1e-9) {
+    const s = a.id < b.id ? 1 : -1;
+    a.pos.x -= s * C.BALL_RADIUS * 0.5;
+    b.pos.x += s * C.BALL_RADIUS * 0.5;
+    return;
+  }
+  const d = Math.sqrt(d2);
+  const push = (minD - d) / 2;
+  const nx = (dx / d) * push;
+  const ny = (dy / d) * push;
+  a.pos.x -= nx;
+  a.pos.y -= ny;
+  b.pos.x += nx;
+  b.pos.y += ny;
+}
+
 /** a HELD ball (stored in a robot's intake) is a solid immovable obstacle to an
  * incoming GROUND ball — so a full intake physically blocks the mouth: no more
  * can be funneled in past the balls already occupying it. Pushes the ground ball

@@ -12,10 +12,10 @@ import {
   inRect, goalSide,
 } from './field';
 import type { Rect } from './field';
-import { closestPointOnRobot, robotCorners, robotIntersectsRect, robotPointVelocity } from './physics';
+import { closestPointOnRobot, robotCorners, robotIntersectsRect } from './physics';
 import { pushingGate, ZERO_CMD } from './goal';
 import { awardCard, awardFoul } from './scoring';
-import { hyp } from '../math';
+import { hyp, rot } from '../math';
 
 /**
  * DECODE penalty engine (Competition Manual Section 11). Pure and
@@ -311,11 +311,18 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
  *      and turning counts on its own, so a corralled pile spun on the spot is possessed;
  *   2. it is in CONTACT, directly or through the chain of artifacts that is (the transitive
  *      clause — a shoved wedge counts WHOLE, not just the two against the bumper); and
- *   3. it HOLDS STATION relative to the robot — its velocity is within POSSESSION_SLIP of
- *      the robot's rigid-body velocity AT that point, ω×r included. That is the continuous
- *      form of "remains in approximately the same position relative to the ROBOT", and it
- *      is what separates possession from the exempt cases by itself: an artifact you drive
- *      PAST slips at road speed, one DEFLECTING off leaves at its own.
+ *   3. it KEEPS ITS STATION on the robot — its position IN THE ROBOT'S FRAME stays within
+ *      POSSESSION_DRIFT of where it was when the hold began. That is the glossary's test
+ *      applied to what the glossary actually talks about: POSITION.
+ *
+ *      This was a VELOCITY test (the artifact's speed against the robot's rigid-body
+ *      velocity at that point). Velocity only reads possession while an artifact is
+ *      TRAPPED — a clump shoved across open floor bounces and shuffles constantly, so no
+ *      instantaneous match ever holds, and the rule stayed silent right up until the pile
+ *      was pinned against a wall and forced to move at exactly the robot's speed. Position
+ *      does not care about the rattling: a herded artifact sits in front of the bumper the
+ *      whole way, one you drive PAST sweeps the length of the chassis and is gone, and one
+ *      that DEFLECTS leaves at once.
  *
  * Artifacts in the robot's OWN LOADING ZONE are skipped outright — that is the third carve-
  * out, and without it a robot collecting its restock was fouled for the artifacts it was
@@ -332,34 +339,18 @@ function controlledArtifacts(world: World, r: RobotState, dt: number): number {
     ? world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home))
     : [];
 
-  /** does this artifact hold station relative to the robot — the possession test itself? */
-  const carried = (b: (typeof ground)[number]): boolean => {
-    const pv = robotPointVelocity(r, b.pos); // includes the spin term
-    return hyp(b.vel.x - pv.x, b.vel.y - pv.y) <= C.POSSESSION_SLIP;
-  };
-
   const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN; // touching the footprint
   const chain = C.BALL_RADIUS * 2 + C.POSSESSION_CONTROL_MARGIN; // ...or touching a ball that is
+  // SEEDS: the artifacts the robot is actually touching. Only these take the station test —
+  // they are the ones the possession definition is written about ("as the ROBOT moves ...,
+  // the object remains in approximately the same position relative to the ROBOT"). The rest
+  // of a pile is reached transitively below, and the transitive clause of CONTROL asks only
+  // for contact, not for station: an artifact three deep in a shoved wedge is controlled
+  // because it is pressed against one that is, however much it rolls while it goes.
   const held = new Set<number>();
   for (const b of ground) {
-    if (!carried(b)) continue;
     const cp = closestPointOnRobot(r, b.pos);
     if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach) held.add(b.id);
-  }
-  // grow the contact chain outward until it stops finding anything (a pile is small, and
-  // the pass is order-independent, so this stays deterministic)
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const b of ground) {
-      if (held.has(b.id) || !carried(b)) continue;
-      for (const c of ground) {
-        if (!held.has(c.id)) continue;
-        if (hyp(b.pos.x - c.pos.x, b.pos.y - c.pos.y) > chain) continue;
-        held.add(b.id);
-        grew = true;
-        break;
-      }
-    }
   }
   /**
    * THE CONFIRM GATE — an artifact counts only once IT has been with this robot long enough.
@@ -382,16 +373,62 @@ function controlledArtifacts(world: World, r: RobotState, dt: number): number {
     const key = `${r.id}:${b.id}`;
     const prev = pen.ballHold[key];
     if (held.has(b.id)) {
-      const t = (prev ?? 0) + dt;
-      pen.ballHold[key] = t;
-      if (t >= C.POSSESSION_CONFIRM) confirmed++;
+      // WHERE it sits on the robot, in the robot's own frame — the quantity the possession
+      // test is written about.
+      const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+      const anchor = pen.ballAnchor[key];
+      const stationed = anchor !== undefined && hyp(loc.x - anchor.x, loc.y - anchor.y) <= C.POSSESSION_DRIFT;
+      if (!stationed) {
+        // first contact, or it has moved to a NEW station on the robot: start the hold here
+        // rather than crediting travel across the chassis as if it had stayed put.
+        pen.ballAnchor[key] = { x: loc.x, y: loc.y };
+        pen.ballHold[key] = dt;
+      } else {
+        const t = (prev ?? 0) + dt;
+        pen.ballHold[key] = t;
+        if (t >= C.POSSESSION_CONFIRM) confirmed++;
+      }
     } else if (prev !== undefined) {
       const t = prev - dt * C.POSSESSION_LEAK;
-      if (t <= 0) delete pen.ballHold[key];
-      else pen.ballHold[key] = t;
+      if (t <= 0) {
+        delete pen.ballHold[key];
+        delete pen.ballAnchor[key];
+      } else pen.ballHold[key] = t;
     }
   }
-  return r.hopper.length + confirmed;
+
+  /**
+   * ...THEN GROW THE CHAIN, from the confirmed seeds outward.
+   *
+   * "CONTROL requires contact with a ROBOT, either directly or TRANSITIVELY through other
+   * SCORING ELEMENTS", and the transitive half asks for contact and nothing else. Growing
+   * the chain from artifacts that have ALREADY confirmed — rather than testing every member
+   * of the pile as if the robot were touching it — is what lets a deliberately organised
+   * clump count whole. A robot's bumper only fronts about five artifacts; a well-packed
+   * wedge can be twice that, and the ones behind roll and shuffle far more than the ones
+   * pinned against the plate, so holding them to the same station test quietly let the back
+   * half of every pile go free.
+   */
+  const controlled = new Set<number>();
+  for (const b of ground) {
+    if ((pen.ballHold[`${r.id}:${b.id}`] ?? 0) >= C.POSSESSION_CONFIRM && held.has(b.id)) {
+      controlled.add(b.id);
+    }
+  }
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const b of ground) {
+      if (controlled.has(b.id)) continue;
+      for (const c of ground) {
+        if (!controlled.has(c.id)) continue;
+        if (hyp(b.pos.x - c.pos.x, b.pos.y - c.pos.y) > chain) continue;
+        controlled.add(b.id);
+        grew = true;
+        break;
+      }
+    }
+  }
+  return r.hopper.length + controlled.size;
 }
 
 type FireFn = (key: string, offender: Alliance, severity: 'minor' | 'major', rule: string) => boolean;

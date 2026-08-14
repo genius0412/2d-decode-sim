@@ -7,6 +7,7 @@ import {
   collideBallRect,
   collideBallRobot,
   collideBallStatic,
+  separateBalls,
   squareUpRobots,
   stepFlightBall,
   stepGroundBall,
@@ -140,11 +141,39 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // can't reach into the channel). collideBallRect pushes it out the field side,
   // the only valid exit, exactly like the wall/goal clamp. Tunnel-exit balls become
   // 'ground' at the channel's bottom edge already moving out, so they're unaffected.
-  for (const b of world.balls) {
-    if (b.state.kind !== 'ground') continue;
+  const ground = world.balls.filter((b) => b.state.kind === 'ground');
+  for (const b of ground) {
     collideBallRect(b, classifierRect('red'));
     collideBallRect(b, classifierRect('blue'));
     clampGroundBall(b);
+  }
+
+  /**
+   * FINAL RELAXATION — de-overlap the artifacts LAST, after everything that can move them.
+   *
+   * Rapier separates artifacts early in the tick, but FOUR things move them afterwards: the
+   * bespoke robot push, the held-ball block, the classifier eviction and the wall clamp.
+   * Nothing separated them again, so a robot ramming a clump drove one artifact into another
+   * and the overlap survived the tick — and while the robot keeps pushing, the next tick
+   * never wins either. That is the stacking, both when ramming a pile and when a robot parks
+   * over the gate outflow: in both the artifacts are held in overlap by something that acts
+   * after the solver that was supposed to keep them apart.
+   *
+   * Position-only, and INTERLEAVED with the static clamps: separating two artifacts can push
+   * one into a wall or back into the channel, so each pass re-clamps rather than trusting a
+   * single ordering. The pair loop is over a stable array in id order, so it stays
+   * deterministic for lockstep/replays.
+   */
+  for (let pass = 0; pass < C.BALL_RELAX_PASSES; pass++) {
+    for (let i = 0; i < ground.length; i++) {
+      for (let j = i + 1; j < ground.length; j++) separateBalls(ground[i], ground[j]);
+    }
+    for (const b of ground) {
+      for (const h of heldBalls) collideBallHeld(b, h);
+      collideBallRect(b, classifierRect('red'));
+      collideBallRect(b, classifierRect('blue'));
+      clampGroundBall(b);
+    }
   }
 
   // ---- balls: FLIGHT (ground balls resolved above) -------------------------

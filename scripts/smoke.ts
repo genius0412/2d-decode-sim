@@ -3302,13 +3302,11 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   r.pos = { x: 0, y: -8 };
   r.heading = 0;
   r.hopper = ['green', 'green', 'green'];
-  r.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
-  // touching and in front, but NOT being carried — it is rolling away sideways
-  w.balls.push({ id: 9101, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: 0, y: 20 }, z: 0, vz: 0 });
-  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 30; i++) {
-    w.time = i / 60;
-    updatePenalties(w, 1 / 60, new Map());
-  }
+  // STEPPED, not hand-held: the possession test is about where an artifact STAYS relative to
+  // the robot, so a fixture that pins both in place and only calls updatePenalties would show
+  // a permanently stationed artifact and assert the opposite of what it means to.
+  w.balls.push({ id: 9101, color: 'purple', state: { kind: 'ground' }, pos: { x: 12, y: 0 }, vel: { x: 0, y: 60 }, z: 0, vz: 0 });
+  runCmds(w, new Map([[0, cmd({ driveY: 1 })]]), POSSESSION_CONFIRM + POSSESSION_GRACE + 0.5);
   check(
     'a ball squirting sideways off the bumper is not plowed (no G408)',
     w.match.fouls.blue.minor === 0,
@@ -3323,14 +3321,13 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   r2.pos = { x: 0, y: -8 };
   r2.heading = 0;
   r2.hopper = ['green', 'green', 'green'];
-  r2.vel = { x: 70, y: 0 };
+  r2.heading = Math.PI / 2; // driving +y, PAST a line of artifacts strung along that path
+  r2.pos = { x: 0, y: -60 };
   for (let i = 0; i < 5; i++) {
-    w2.balls.push({ id: 9110 + i, color: 'purple', state: { kind: 'ground' }, pos: { x: 2 + i * 5, y: 0 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
+    // offset to the SIDE of the lane: clipped in passing, never gathered in front
+    w2.balls.push({ id: 9110 + i, color: 'purple', state: { kind: 'ground' }, pos: { x: i % 2 === 0 ? -12 : 12, y: -40 + i * 16 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
   }
-  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 30; i++) {
-    w2.time = i / 60;
-    updatePenalties(w2, 1 / 60, new Map());
-  }
+  runCmds(w2, new Map([[0, cmd({ driveY: 1 })]]), 4);
   check(
     'driving PAST artifacts lying on the field is bulldozing, not control (no G408)',
     w2.match.fouls.blue.minor === 0,
