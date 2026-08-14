@@ -61,6 +61,8 @@ import {
   RAIL_PITCH,
   HOPPER_CAPACITY,
   RAIL_EXIT_S,
+  RAIL_S_MAX,
+  OVERFLOW_FLOW_SPEED,
   RAIL_ACCEL,
   OVERFLOW_Z,
   BASIN_FLOOR_Z,
@@ -1290,7 +1292,10 @@ function queueTenth(w: World): void {
   startMatch(w);
   fillBlueRail(w);
   queueTenth(w);
-  run(w, cmd({}), 3);
+  // long enough for an OVERFLOW artifact to clamber the length of the ramp. It rides over
+  // the retained column rather than rolling a clear ramp, so it is slow (OVERFLOW_FLOW_SPEED)
+  // — the window has to follow that constant rather than a number tuned to an older one.
+  run(w, cmd({}), (RAIL_S_MAX / OVERFLOW_FLOW_SPEED) * 1.6);
   const g = w.goals.blue;
   check(
     '10th ball meeting a full column overflows (1 pt)',

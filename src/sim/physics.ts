@@ -889,6 +889,24 @@ function ballRobotContact(
  * pushback + normal velocity kill + contact torque), so the robot stalls
  * against a pinned ball instead of grinding it through. Off-center balls keep
  * the tangential part of the push and squirt out sideways. */
+/**
+ * POSITION-ONLY eviction of an artifact from a robot — the constraint half of
+ * `collideBallRobot`, with none of its impulse, pin-feedback or push-drag work.
+ *
+ * That work is correct once per contact and wrong four times per tick, which is what the
+ * final relaxation pass needs: it moves artifacts AFTER the robot solve has run, so it has
+ * to be able to answer "is this artifact inside a chassis" without re-running the whole
+ * collision response and double-charging the robot for the same shove.
+ */
+export function evictBallFromRobot(b: Artifact, r: RobotState): void {
+  const contact = ballRobotContact(r, b.pos);
+  if (!contact) return;
+  const { nx, ny, pen } = contact;
+  const c = clampBallPosToStatics({ x: b.pos.x + nx * pen, y: b.pos.y + ny * pen });
+  b.pos.x = c.x;
+  b.pos.y = c.y;
+}
+
 export function collideBallRobot(b: Artifact, r: RobotState): void {
   const contact = ballRobotContact(r, b.pos);
   if (!contact) return;

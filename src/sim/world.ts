@@ -8,6 +8,7 @@ import {
   collideBallRobot,
   collideBallStatic,
   separateBalls,
+  evictBallFromRobot,
   squareUpRobots,
   stepFlightBall,
   stepGroundBall,
@@ -169,6 +170,12 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
       for (let j = i + 1; j < ground.length; j++) separateBalls(ground[i], ground[j]);
     }
     for (const b of ground) {
+      // ROBOTS ARE PART OF THE WORLD THIS PASS HAS TO RESPECT. Separation moves artifacts
+      // after `collideBallRobot` has already run, so without re-evicting here the pass can
+      // push one INTO a robot and nothing takes it back out — and since the next tick's
+      // robot pass runs BEFORE this one, a pressed clump walks artifacts straight through a
+      // chassis. Measured before this line: 2.77in of penetration on a 2.5in radius.
+      for (const r of world.robots) evictBallFromRobot(b, r);
       for (const h of heldBalls) collideBallHeld(b, h);
       collideBallRect(b, classifierRect('red'));
       collideBallRect(b, classifierRect('blue'));

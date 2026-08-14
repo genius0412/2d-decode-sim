@@ -408,9 +408,28 @@ export function updateRails(world: World, dt: number): void {
       if (!out.taker) {
         const ahead = doorwayArtifact(world, a);
         if (ahead) {
+          /**
+           * TOP UP TO A CREEP — never ADD.
+           *
+           * This used to add a fraction of the exit velocity every tick the doorway was
+           * occupied, which compounds: an artifact resting in the mouth was shoved again
+           * and again and left at 91 in/s, far faster than anything the ramp could produce
+           * and fast enough to travel the length of the field. The column is nudging a
+           * stationary artifact out of the way, not firing it.
+           *
+           * So it sets a FLOOR on the outward component and leaves anything already faster
+           * alone: the artifact creeps clear and nothing accumulates.
+           */
           const push = tunnelExitVel(a);
-          ahead.vel.x += push.x * C.EXIT_NUDGE;
-          ahead.vel.y += push.y * C.EXIT_NUDGE;
+          const mag = hyp(push.x, push.y);
+          const ux = push.x / mag;
+          const uy = push.y / mag;
+          const target = mag * C.EXIT_NUDGE;
+          const along = ahead.vel.x * ux + ahead.vel.y * uy;
+          if (along < target) {
+            ahead.vel.x += ux * (target - along);
+            ahead.vel.y += uy * (target - along);
+          }
           continue;
         }
       }
