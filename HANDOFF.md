@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-15 (the classifier: possession, the gate, and the ramp) — alpha only
 
-Branch **alpha**, commit `3eb8521`, **106 commits ahead of `origin/main`**.
+Branch **alpha**, commit `8d184f6`, **108 commits ahead of `origin/main`**.
 `npm test` ALL PASS (~215 checks) · `npm run build` green · working tree clean.
 **Not deployed.** Production `dohun-sim-decode` is still on the pre-session build and
 still owes the migrations listed under "Still pending".
@@ -137,55 +137,62 @@ BELOW the exit, off the field, and burst out together once it cleared, which is 
 *"disperse outward at insane speeds"* was. At 1.0 the queue moves at the speed of the
 flow pushing it (the only non-arbitrary value) and the drain takes 8 s.
 
-## The residual: bespoke ball passes fight each other
+## Slice 2 (scoped): the chassis is in the ball solve — DONE (`8d184f6`)
 
-**Not fixed.** An artifact squeezed between a bumper and the classifier still jitters up
-to **4.5 in in a single tick with zero velocity**. Attributed by stage:
+An artifact squeezed between a bumper and the classifier used to be resolved by two
+position writes taking turns — the bespoke robot push drove it in (3.13 in), the static
+eviction shoved it back out (3.70 in), on an artifact whose velocity was **zero**.
+Neither pass was wrong alone; they could not see each other. Reordering and interleaving
+them each bought under 0.2 in, because **a squeeze is precisely a constraint with no
+one-contact-at-a-time answer.**
 
-| stage | max single-tick move |
-| --- | --- |
-| `collideBallRobot` (bespoke robot push) | 3.13 in |
-| Rapier ball solve | 1.32 in |
-| classifier eviction + wall clamp | 3.70 in |
+The chassis is now a **kinematic** body in `solveBalls`, so bumper, channel wall and the
+other artifacts resolve together. Kinematic also hands you product decision #7's
+"gate outflow can't shove a parked robot" for free. The **intake stays bespoke** — its
+mouth is open by design (#10) and its funnel geometry is per-preset.
 
-All position writes taking turns, so one shoves the artifact into the channel and the
-next shoves it back out. Note the classifier is ALREADY a Rapier static for artifacts —
-the problem is that `collideBallRobot` runs *after* `solveBalls` and writes positions
-Rapier never sees.
+Measured, robot grinding a pile into the classifier corner over 8 s:
 
-### Slice 2 was attempted and reverted — read this before trying again
+| | baseline | after |
+| --- | --- | --- |
+| corner pile | 2.88 in worst, **41** jump-frames / 480 | 1.84 in, **4** |
+| mid-wall | 4.50 in, 6 frames | 4.50 in, 6 frames |
+| open field | 0.00 in, 0 | 0.00 in, 0 |
 
-The fix "make the squeeze one solve" is right, and three structural variants were built,
-measured, and reverted. None is a tweak away from working; each breaks a DIFFERENT set of
-tuned behaviours, which is the real finding.
+**Three earlier attempts failed and are worth not repeating.** Kinematic chassis with the
+feedback still running *after* the solve: the stall never fires, and a dead-centre
+artifact squirts 34 in along the wall with the robot sailing through at 30 in/s. Heavy
+**dynamic** chassis, reading back the velocity delta so the stall is emergent: it is not
+— an artifact is ~0.3 lb against 20–42 lb and the drivetrain restores the loss the same
+tick. Feedback moved before the solve but probing the pin at a **full radius**: nine
+checks broke at once (intake capture, gate drain, G417/G418 counts, clump stacking),
+because a radius-wide probe calls anything within 2.5 in of a wall pinned and robots stop
+driving into things at all.
 
-1. **Chassis as a KINEMATIC body in `solveBalls`**, bespoke pass reduced to the intake
-   region + robot-side feel. Rapier resolves the squeeze correctly — but a kinematic body
-   cannot be told it is blocked, so handed a robot still driving at a dead-centre artifact
-   trapped on a wall, its only answer is to squirt the artifact out sideways: **34 in along
-   the wall, robot sailing through at 30 in/s**. Breaks product decision #7's dead-centre
-   stall. (Physically a round ball between two flat faces *does* squirt; #7 deliberately
-   does not.)
-2. **Chassis as a heavy DYNAMIC body**, reading back only the velocity delta so the stall
-   and clump-drag fall out of the solve. They do not: an artifact is ~0.3 lb against a
-   20–42 lb robot and the drivetrain restores the loss the same tick. Stall still absent,
-   and clump stacking regressed (1.85 in overlap).
-3. **Robot-side feedback moved BEFORE `solveBalls`** (stall the robot first, so the solver
-   is handed a robot that has already stopped). Fixes the stall — and breaks nine other
-   checks: intake capture stops happening at all (center and edge both hit the 120-tick
-   cap), the gate drain, G417/G418 foul counts, and clump stacking.
+What made it work:
 
-**What it actually needs.** The intake capture model assumes artifacts can occupy the
-chassis-front region that a Rapier chassis collider makes solid, so slice 2 is not
-"add a collider" — the per-preset intake geometry (`intakeMouth`, the funnel/slope/throat
-in `ballRobotContact`) has to move into the solve as colliders at the same time, and the
-`#7` feel rules (dead-centre stall, outflow-no-shove, clump drag) have to be re-expressed
-as constraints rather than post-hoc velocity edits. That is a designed piece of work with
-its own smoke additions, not an incremental edit. Budget it as such.
+- `ballRobotFeedback` moves **nothing** — only `r.vel` — and runs **before** the solve. A
+  kinematic body cannot be told it is blocked, so the robot has to be stopped before the
+  solver ever sees the squeeze.
+- It probes the pin against **this tick's push** (`approach·dt`), not a fixed distance:
+  *can it move as far as I am about to push it?*
+- **`clampBallPosToStatics` now includes the classifier channel.** Its absence is why the
+  stall never fired there: the clamp knew only the perimeter walls and goal faces, so an
+  artifact pressed on the channel was never seen as trapped. **Anything solid an artifact
+  can be pinned against must be in that clamp, or the pin test cannot see it.**
 
-Earlier, smaller attempts on the same residual, also reverted: evicting along the
-artifact's entry path (bisection against its pre-step position) and interleaving the
-static eviction with the four `collideBallRobot` passes. Both moved it **< 0.2 in**.
+### What is left
+
+A rare spike at the channel **entrance** — 6 frames of 480, 4.50 in — on an artifact that
+begins a tick already embedded in the channel, where there is no entry path to walk back
+and the eviction falls through to pushing it out the nearest face by depth+radius. Not the
+continuous jitter, which is gone. Fixing it properly means the artifact should never be
+embedded at the start of a tick, i.e. finding what still places it there (it is not
+`separateBalls` — disabling that changed nothing).
+
+Still genuinely deferred: flight/basin/rail artifacts remain scripted, and the intake
+funnel geometry is still bespoke. Porting the intake would mean re-expressing the capture
+model, which assumes artifacts can occupy the chassis-front region a collider makes solid.
 
 ### Earlier in the session
 
