@@ -764,12 +764,53 @@ export function collideBallHeld(b: Artifact, held: Artifact): void {
   }
 }
 
-/** position-only clamp against walls and goal faces: where a pushed ball is
- * actually allowed to end up. The difference between the requested and the
- * clamped position is the part of a push the field refused. */
+/** push a point out of `rect` inflated by an artifact radius, the shallowest way that does
+ * not put it outside the field (the classifier's outer edge IS the side wall, so the only
+ * valid exits are into the field). Returns the point unchanged if it is already clear. */
+function clampOutOfRect(p: Vec2, rect: Rect): Vec2 {
+  const R = C.BALL_RADIUS;
+  if (!(p.x > rect.x0 - R && p.x < rect.x1 + R && p.y > rect.y0 - R && p.y < rect.y1 + R)) {
+    return p;
+  }
+  const lim = C.FIELD_HALF - R;
+  const exits: [number, number, number][] = [
+    [-1, 0, p.x - (rect.x0 - R)],
+    [1, 0, rect.x1 + R - p.x],
+    [0, -1, p.y - (rect.y0 - R)],
+    [0, 1, rect.y1 + R - p.y],
+  ];
+  let best: [number, number, number] | null = null;
+  for (const e of exits) {
+    const qx = p.x + e[0] * e[2];
+    const qy = p.y + e[1] * e[2];
+    if (Math.abs(qx) > lim || Math.abs(qy) > lim) continue; // would leave the field
+    if (!best || e[2] < best[2]) best = e;
+  }
+  if (!best) return p;
+  return { x: p.x + best[0] * best[2], y: p.y + best[1] * best[2] };
+}
+
+/**
+ * Position-only clamp against the solid field: where a pushed artifact is actually allowed
+ * to end up. The difference between the requested and the clamped position is the part of a
+ * push the field refused — which is how `ballRobotFeedback` decides an artifact is PINNED.
+ *
+ * THE CLASSIFIER CHANNEL BELONGS IN HERE, and its absence was a real bug. This knew only
+ * the perimeter walls and the goal faces, so an artifact pressed against the classifier was
+ * never seen as trapped: the robot never stalled on it, drove it into the channel, and the
+ * separate `collideBallRect` eviction shoved it back out — 4.5in of oscillation per tick on
+ * an artifact whose velocity was zero, for as long as the robot leaned on it. Disabling the
+ * eviction proved it (the artifact simply stayed 0.8in inside the channel and the jitter
+ * fell to 0.64in), and disabling the ball-ball separation changed nothing.
+ *
+ * With the channel here, the robot stalls on it exactly as it does on a wall, so nothing is
+ * being driven in for the eviction to argue with. It also makes `clampGroundBall` enforce
+ * the "artifacts never enter the classifier" invariant directly rather than leaving it all
+ * to the eviction pass.
+ */
 function clampBallPosToStatics(p: Vec2): Vec2 {
   const f = C.FIELD_HALF - C.BALL_RADIUS;
-  const out = { x: clamp(p.x, -f, f), y: clamp(p.y, -f, f) };
+  let out = { x: clamp(p.x, -f, f), y: clamp(p.y, -f, f) };
   for (const a of ALLIANCES) {
     const dist = goalLineValue(out, a); // perpendicular distance behind the face
     const pen = dist + C.BALL_RADIUS;
@@ -779,6 +820,7 @@ function clampBallPosToStatics(p: Vec2): Vec2 {
       out.y += n.y * pen;
     }
   }
+  for (const a of ALLIANCES) out = clampOutOfRect(out, classifierRect(a));
   return out;
 }
 
@@ -907,38 +949,75 @@ export function evictBallFromRobot(b: Artifact, r: RobotState): void {
   b.pos.y = c.y;
 }
 
+/**
+ * ROBOT-SIDE feedback from one artifact — the stall on a pinned artifact and the drag of
+ * shoving a clump. Moves NOTHING; only `r.vel` changes.
+ *
+ * RUNS BEFORE `solveBalls`, and the order carries the whole design. Rapier's chassis body
+ * is kinematic, so it cannot be told it is blocked: handed a robot still driving at a
+ * dead-centre artifact trapped on a wall, the solver's only available answer is to squirt
+ * the artifact out sideways — 34in along the wall with the robot sailing through at
+ * 30 in/s. Stalling the robot FIRST means the solver is handed a robot that has already
+ * stopped, and there is no squeeze left for it to answer wrongly.
+ *
+ * IS THE ARTIFACT ACTUALLY TRAPPED? — probed against THIS TICK'S PUSH, which is the whole
+ * trick. Asking "could it move a full radius" calls an artifact pinned whenever a wall is
+ * within 2.5in of it, so robots stalled on anything near a wall and stopped driving into
+ * things at all: intake capture never fired, the gate drain stalled, foul counts collapsed
+ * — nine checks, all from one over-wide probe. The physical question is narrower and it is
+ * this: *can it move as far as I am about to push it?* That distance is the robot's own
+ * approach in one tick, so a robot creeping up on a wall artifact is not stalled by it,
+ * and a robot driving hard into a trapped one is.
+ */
+export function ballRobotFeedback(b: Artifact, r: RobotState, dt: number): void {
+  const contact = ballRobotContact(r, b.pos);
+  if (!contact) return;
+  const { nx, ny, pen, cp } = contact;
+  const approach = r.vel.x * nx + r.vel.y * ny; // robot speed INTO the artifact
+  const probe = Math.max(pen, Math.max(0, approach) * dt);
+  const px = b.pos.x + nx * probe;
+  const py = b.pos.y + ny * probe;
+  const pc = clampBallPosToStatics({ x: px, y: py });
+  const bx = px - pc.x; // push refused by the field, pointing into the wall
+  const by = py - pc.y;
+  const blocked = hyp(bx, by);
+  if (blocked > C.BALL_PIN_SLOP) {
+    const inx = bx / blocked;
+    const iny = by / blocked;
+    // only the robot's OWN drive transmits through a pinned artifact — one arriving under
+    // its own momentum (gate outflow) just stops against the chassis
+    const drivingIn = r.vel.x * inx + r.vel.y * iny;
+    if (drivingIn > C.BALL_PIN_PUSH_MIN_SPEED) {
+      // depth is SEPARATION and stays the real overlap; the STALL is the velocity kill
+      // inside pushRobotAt, which is what this call is actually for.
+      pushRobotAt(r, -inx, -iny, Math.min(blocked, pen), [{ c: cp, d: blocked }], false);
+    }
+    return;
+  }
+  // open field: artifacts have MASS — shoving one bleeds a little robot momentum, so a
+  // large CLUMP is cumulatively heavy to push (pinned artifacts take the stall above)
+  if (approach > 0) {
+    r.vel.x -= nx * approach * C.BALL_PUSH_DRAG;
+    r.vel.y -= ny * approach * C.BALL_PUSH_DRAG;
+  }
+}
+
+/**
+ * ARTIFACT-side resolution against the INTAKE only. Its mouth is open by design (product
+ * decision #10) and its funnel/slope geometry is per-preset, so Rapier has no collider
+ * there. The CHASSIS belongs to Rapier now (see `solveBalls`); resolving it here as well
+ * was the bug — two position writes per tick, one driving an artifact into the classifier
+ * and the next shoving it back out, 4.5in of jitter at zero velocity.
+ */
 export function collideBallRobot(b: Artifact, r: RobotState): void {
   const contact = ballRobotContact(r, b.pos);
   if (!contact) return;
   const { nx, ny, pen, cp } = contact;
-  const tx = b.pos.x + nx * pen;
-  const ty = b.pos.y + ny * pen;
-  const c = clampBallPosToStatics({ x: tx, y: ty });
+  const localX = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading).x;
+  if (localX <= r.spec.length / 2) return; // chassis — Rapier already resolved it
+  const c = clampBallPosToStatics({ x: b.pos.x + nx * pen, y: b.pos.y + ny * pen });
   b.pos.x = c.x;
   b.pos.y = c.y;
-  const bx = tx - c.x; // push refused by the field, pointing into the wall
-  const by = ty - c.y;
-  const blocked = hyp(bx, by);
-  if (blocked > C.BALL_PIN_SLOP) {
-    const inx = bx / blocked; // direction of the refused push (into the wall)
-    const iny = by / blocked;
-    // only the robot's OWN drive transmits through a pinned ball — a foam
-    // ball arriving under its own momentum (e.g. gate outflow) can't shove
-    // the chassis; it just stops against it and the flow stacks up behind
-    const drivingIn = r.vel.x * inx + r.vel.y * iny;
-    if (drivingIn > C.BALL_PIN_PUSH_MIN_SPEED) {
-      pushRobotAt(r, -inx, -iny, blocked, [{ c: cp, d: blocked }], false);
-    }
-  } else {
-    // open field: balls have MASS — shoving one bleeds a little robot momentum,
-    // so a large CLUMP is cumulatively heavy to push (pinned balls use the stall
-    // path above; this would fight it)
-    const into = r.vel.x * nx + r.vel.y * ny; // robot speed INTO the ball
-    if (into > 0) {
-      r.vel.x -= nx * into * C.BALL_PUSH_DRAG;
-      r.vel.y -= ny * into * C.BALL_PUSH_DRAG;
-    }
-  }
   const sv = robotPointVelocity(r, cp);
   const rvx = b.vel.x - sv.x;
   const rvy = b.vel.y - sv.y;
@@ -947,21 +1026,71 @@ export function collideBallRobot(b: Artifact, r: RobotState): void {
     b.vel.x -= nx * vn * (1 + C.BALL_ROBOT_RESTITUTION);
     b.vel.y -= ny * vn * (1 + C.BALL_ROBOT_RESTITUTION);
   }
-  // balls have MASS: shoving one costs the robot a little momentum, so a large
-  // CLUMP is cumulatively heavy to push (each contact drags the robot a bit)
-  const into = r.vel.x * nx + r.vel.y * ny; // robot speed INTO the ball (>0 = pushing)
-  if (into > 0) {
-    r.vel.x -= nx * into * C.BALL_PUSH_DRAG;
-    r.vel.y -= ny * into * C.BALL_PUSH_DRAG;
-  }
 }
 
 /** solid rect for balls: bounces approaching balls off the faces, and evicts
  * a ball that ends up inside through the nearest edge */
-export function collideBallRect(b: Artifact, rect: Rect, restitution = C.BALL_WALL_RESTITUTION): void {
+/**
+ * `from` — where the artifact was at the START of the tick, when the caller knows it.
+ *
+ * Without it, an artifact whose CENTRE has crossed inside can only be pushed out the
+ * nearest FACE, by depth+radius. For the 6in classifier channel that is up to 5.5in in one
+ * tick, and it was measured at 3.70in on an artifact at REST — pushed 1.2in into the
+ * channel by the ball-ball separation pass (which knows nothing about statics) and
+ * teleported back out by this one. That trade is what "they keep teleporting up and down
+ * the classifier depending on how I turn the robot" looks like from the driver's seat.
+ *
+ * With `from`, an artifact that entered THIS TICK is walked back along the path it took,
+ * so the correction is bounded by how far it actually travelled and points the way it came
+ * instead of sideways. The face push stays for anything already inside at the start of the
+ * tick (a flight artifact that landed in the channel) — there is no path to undo there.
+ *
+ * NOTE both ground call sites must pass it. Passing it only to the pre-relaxation one
+ * changed nothing measurable, because the eviction that actually fires here is the one
+ * INSIDE the relaxation loop, right after the separation pass that caused the overlap.
+ */
+export function collideBallRect(
+  b: Artifact,
+  rect: Rect,
+  restitution = C.BALL_WALL_RESTITUTION,
+  from?: Vec2,
+): void {
   const inside =
     b.pos.x > rect.x0 && b.pos.x < rect.x1 && b.pos.y > rect.y0 && b.pos.y < rect.y1;
   if (inside) {
+    const cameFromOutside =
+      from && !(from.x > rect.x0 && from.x < rect.x1 && from.y > rect.y0 && from.y < rect.y1);
+    if (cameFromOutside) {
+      // bisect the chord back toward `from` for the last point outside the rect
+      let lo = 0; // 0 = `from` (outside), 1 = here (inside)
+      let hi = 1;
+      for (let i = 0; i < 14; i++) {
+        const m = (lo + hi) / 2;
+        const px = from.x + (b.pos.x - from.x) * m;
+        const py = from.y + (b.pos.y - from.y) * m;
+        if (px > rect.x0 && px < rect.x1 && py > rect.y0 && py < rect.y1) hi = m;
+        else lo = m;
+      }
+      const ex = from.x + (b.pos.x - from.x) * lo;
+      const ey = from.y + (b.pos.y - from.y) * lo;
+      // ...then hold it a radius off the face it crossed, using the shallowest exit from
+      // that entry point (a corner entry crosses two faces; the nearest is the right one)
+      const dxs: [number, number, number][] = [
+        [-1, 0, ex - rect.x0],
+        [1, 0, rect.x1 - ex],
+        [0, -1, ey - rect.y0],
+        [0, 1, rect.y1 - ey],
+      ];
+      const [nx, ny] = dxs.reduce((p, q2) => (Math.abs(q2[2]) < Math.abs(p[2]) ? q2 : p));
+      b.pos.x = ex + nx * C.BALL_RADIUS;
+      b.pos.y = ey + ny * C.BALL_RADIUS;
+      const vn = b.vel.x * nx + b.vel.y * ny;
+      if (vn < 0) {
+        b.vel.x -= nx * vn * (1 + restitution);
+        b.vel.y -= ny * vn * (1 + restitution);
+      }
+      return;
+    }
     // never evict through a field wall (e.g. the classifier channel's outer
     // edge IS the wall — a squeezed ball must exit into the field)
     const lim = C.FIELD_HALF - C.BALL_RADIUS;

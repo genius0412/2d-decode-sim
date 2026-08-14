@@ -192,11 +192,30 @@ export function solveRobots(
 /**
  * Resolve GROUND-ball translation + velocity for one tick via a separate Rapier
  * solve: light circle bodies (linvel = b.vel, mass = BALL_MASS) against the
- * static field only — ball↔ball and ball↔wall / ball↔goal-face / ball↔classifier
- * contact. Robots are ABSENT (ball↔robot is the bespoke `collideBallRobot` pass,
- * run after this, for the reasons in `solveRobots`). Friction/rest-snap (velocity
- * pre-pass) and the hard field clamp are applied around this call in world.ts.
- * Bodies are built in stable `world.balls` id order so the solve is deterministic.
+ * static field — ball↔ball and ball↔wall / ball↔goal-face / ball↔classifier — AND
+ * against each robot's CHASSIS. Friction/rest-snap (velocity pre-pass) and the hard
+ * field clamp are applied around this call in world.ts. Bodies are built in stable id
+ * order (artifacts, then robots) so the solve is deterministic.
+ *
+ * THE CHASSIS IS HERE BECAUSE A SQUEEZE HAS NO ONE-CONTACT-AT-A-TIME ANSWER.
+ * It used to be resolved bespoke AFTER this solve, so an artifact caught between a
+ * bumper and the classifier was handled by two position writes taking turns — measured
+ * 3.13in in from the robot pass and 3.70in back out from the static eviction, on an
+ * artifact whose velocity was ZERO. Neither pass was wrong alone; they could not see
+ * each other. Reordering and interleaving them were both tried and both bought under
+ * 0.2in.
+ *
+ * KINEMATIC: the robot pushes artifacts and is never pushed back, which IS product
+ * decision #7's "gate outflow can't shove a parked robot". The robot-side feel that
+ * cannot fall out of a kinematic body — the stall on a pinned artifact and the drag of
+ * a clump — is `ballRobotFeedback`, which runs BEFORE this solve for the reason
+ * documented there. (A heavy DYNAMIC body was tried so the stall would be emergent; it
+ * is not, because an artifact is ~0.3lb against 20-42lb and the drivetrain restores the
+ * loss the same tick.)
+ *
+ * The INTAKE is deliberately absent: its mouth is open to artifacts by design (product
+ * decision #10) and its funnel geometry is per-preset. That region stays bespoke, in
+ * `collideBallRobot`, which now handles ONLY it.
  */
 export function solveBalls(world: World, dt: number, colliders: FieldColliders): void {
   const groundBalls = world.balls.filter((b) => b.state.kind === 'ground');
@@ -220,6 +239,27 @@ export function solveBalls(world: World, dt: number, colliders: FieldColliders):
       body,
     );
     ballBodies.push({ b, body });
+  }
+
+  // ...then the robot CHASSIS bodies, AFTER the artifacts so the artifact collider
+  // creation order is untouched (Rapier resolution depends on it, and replays re-sim
+  // through this). Chassis only — NOT robotExtents, which includes the intake reach:
+  // that box is what the robot collides with, but to an artifact the mouth is open.
+  for (const r of world.robots) {
+    const body = rw.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicVelocityBased()
+        .setTranslation(r.pos.x, r.pos.y)
+        .setRotation(r.heading)
+        .setLinvel(r.vel.x, r.vel.y)
+        .setAngvel(r.angVel),
+    );
+    rw.createCollider(
+      RAPIER.ColliderDesc.cuboid(r.spec.length / 2, r.spec.width / 2)
+        .setRestitution(C.BALL_ROBOT_RESTITUTION)
+        .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
+        .setFriction(C.PHYS_FRICTION),
+      body,
+    );
   }
 
   rw.step();

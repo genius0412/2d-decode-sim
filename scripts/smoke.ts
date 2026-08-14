@@ -1410,6 +1410,57 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- artifacts do not JITTER against the classifier --------------------------------
+// "They keep teleporting up and down the classifier depending on how I turn the robot."
+// An artifact squeezed between a bumper and the channel was resolved by two position
+// writes taking turns — the bespoke robot push drove it in, the static eviction shoved it
+// back out — and neither could see the other. Slice 2 put the chassis into the ball solve
+// so the squeeze is ONE constraint problem. This measures the symptom directly: movement
+// in a tick that the artifact's own velocity does not account for.
+{
+  const w = mkWorld('free', 'blue', 9);
+  w.balls.length = 0;
+  for (let i = 0; i < 8; i++) {
+    w.balls.push({
+      id: 900 + i,
+      color: 'purple',
+      state: { kind: 'ground' },
+      pos: { x: 53 + (i % 4) * 5, y: -60 + Math.floor(i / 4) * 5 },
+      vel: { x: 0, y: 0 },
+      z: 0,
+      vz: 0,
+    });
+  }
+  const r = w.robots[0];
+  r.pos = { x: 42, y: -78 + 24 };
+  r.fieldCentric = false;
+  const prev = new Map<number, { x: number; y: number; v: number; k: string }>();
+  let jumpFrames = 0;
+  let worst = 0;
+  for (let i = 0; i < Math.round(8 / SIM_DT); i++) {
+    for (const b of w.balls) {
+      prev.set(b.id, { x: b.pos.x, y: b.pos.y, v: hyp(b.vel.x, b.vel.y), k: b.state.kind });
+    }
+    // grind the pile into the classifier corner, turning as it goes
+    step(w, SIM_DT, new Map([[r.id, cmd({ driveY: 1, rotate: i % 120 < 60 ? 0.4 : -0.4 })]]));
+    for (const b of w.balls) {
+      const p = prev.get(b.id);
+      if (!p || p.k !== 'ground' || b.state.kind !== 'ground') continue;
+      const unexplained = hyp(b.pos.x - p.x, b.pos.y - p.y) / SIM_DT - p.v;
+      if (unexplained > 60) jumpFrames++; // 60 in/s-equiv = 1in in a single tick
+      worst = Math.max(worst, unexplained);
+    }
+  }
+  // Baseline before slice 2 was 41 jump-frames and 2.88in worst; after, 4 and 1.84in.
+  // The bound is deliberately loose — this guards the ORDER of magnitude, not the exact
+  // solver output, which legitimately shifts when contact tuning changes.
+  check(
+    'artifacts do not jitter against the classifier when a robot grinds a pile in',
+    jumpFrames <= 15 && worst < 2.5 / SIM_DT,
+    `${jumpFrames} jump-frames of ${Math.round(8 / SIM_DT)}, worst ${(worst * SIM_DT).toFixed(2)}in in one tick`,
+  );
+}
+
 // ---- THE RAIL IS NOT A HOLE IN THE FIELD ----------------------------------------
 // An artifact walked off the end of the world: in `rail` state, position written straight
 // down the rail line, from y=-64.9 to y=-75.6 — six inches outside the audience wall —

@@ -140,8 +140,30 @@ if it names a game element (artifact, gate, particle, catalyst, beam) it belongs
   into the canonical `RobotState`. The bespoke square-up torque + `rrContacts` stay in
   `physics.ts`. `RAPIER.init()` is async → **`initPhysics()` must be awaited** in smoke, the
   server, and `main.tsx` before any step.
-- **BALLS/PARTICLES are still bespoke** (Rapier slice 2, deferred). Key gotcha: the world is
-  in **INCHES** → set `integrationParameters.lengthUnit` (see `PHYS_*` constants).
+- **GROUND artifacts are Rapier too** (`solveBalls`): circle bodies against the static field
+  AND each robot's **CHASSIS** (kinematic — the robot pushes artifacts and is never pushed
+  back, which is product decision #7's outflow-no-shove). Flight/basin/rail stay scripted.
+  Key gotcha: the world is in **INCHES** → set `integrationParameters.lengthUnit` (see
+  `PHYS_*` constants).
+  - **A SQUEEZE HAS NO ONE-CONTACT-AT-A-TIME ANSWER.** The chassis is in that solve because
+    it used to be resolved bespoke *after* it: an artifact caught between a bumper and the
+    classifier got two position writes taking turns (3.13in in from the robot pass, 3.70in
+    back out from the static eviction, on an artifact whose velocity was ZERO) and neither
+    pass could see the other. Reordering and interleaving them each bought under 0.2in.
+    Smoke watches the symptom directly ("artifacts do not jitter against the classifier").
+  - **`ballRobotFeedback` runs BEFORE `solveBalls`** and moves nothing — only `r.vel`. A
+    kinematic body cannot be told it is blocked, so a robot still driving at a trapped
+    artifact makes the solver squirt it sideways (34in along a wall). Stall the robot first
+    and there is no squeeze left to answer wrongly. It probes the pin against **this tick's
+    push** (`approach·dt`), NOT a fixed radius: a radius-wide probe calls anything near a
+    wall pinned, and robots stopped driving into things at all — intake capture, the gate
+    drain and the foul counts all collapsed together.
+  - **`clampBallPosToStatics` includes the classifier channel.** It knew only the perimeter
+    walls and goal faces, so an artifact pressed on the channel was never seen as trapped,
+    the robot never stalled, and the eviction fought it forever. Anything solid an artifact
+    can be pinned against belongs in that clamp, or the pin test cannot see it.
+  - **The INTAKE is deliberately NOT in the solve** — its mouth is open by design (#10) and
+    its funnel geometry is per-preset. `collideBallRobot` now resolves only that region.
 - Wall/structure contacts apply **TORQUE** (summed over touching corners) so a tilted robot
   squares up flush. Torque is PRESSURE-SCALED (`CONTACT_PRESS_GAIN`); a fast angled hit also
   injects spin (`CONTACT_IMPACT_SPIN`, scaled by torque×speed — it **must** scale with torque;

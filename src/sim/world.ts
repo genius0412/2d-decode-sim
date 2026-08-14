@@ -1,10 +1,11 @@
-import type { Alliance, RobotCommand, World } from '../types';
+import type { Alliance, RobotCommand, Vec2, World } from '../types';
 import * as C from '../config';
 import {
   clampGroundBall,
   collideBallBall,
   collideBallHeld,
   collideBallRect,
+  ballRobotFeedback,
   collideBallRobot,
   collideBallStatic,
   separateBalls,
@@ -117,8 +118,22 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // GROUND balls: rolling friction (velocity only) → Rapier solve (ball↔ball,
   // ball↔wall, ball↔goal-face, ball↔classifier) → bespoke ball↔robot (pin
   // feedback / outflow-no-shove, kept scripted for feel) → hard field clamp.
+  // WHERE EACH GROUND ARTIFACT STARTED THE TICK — the classifier eviction needs it, so it
+  // can walk an artifact back along the path it took instead of shoving it out the nearest
+  // face by depth+radius. One Vec2 per ground artifact.
+  const ballFrom = new Map<number, Vec2>();
   for (const b of world.balls) {
-    if (b.state.kind === 'ground') stepGroundBall(b, dt);
+    if (b.state.kind !== 'ground') continue;
+    ballFrom.set(b.id, { x: b.pos.x, y: b.pos.y });
+    stepGroundBall(b, dt);
+  }
+  // ROBOT-SIDE FEEDBACK FIRST — the stall on a pinned artifact, the drag of a clump. It
+  // touches only `r.vel`, and it must land BEFORE the solve: the chassis body in there is
+  // kinematic and cannot be told it is blocked, so a robot still driving at a trapped
+  // artifact makes the solver squirt it out sideways instead. See `ballRobotFeedback`.
+  for (const b of world.balls) {
+    if (b.state.kind !== 'ground') continue;
+    for (const r of world.robots) ballRobotFeedback(b, r, dt);
   }
   solveBalls(world, dt, decodeColliders);
   // ball↔robot stays bespoke (see solveRobots): the pin stall + outflow-no-shove
@@ -144,8 +159,9 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // 'ground' at the channel's bottom edge already moving out, so they're unaffected.
   const ground = world.balls.filter((b) => b.state.kind === 'ground');
   for (const b of ground) {
-    collideBallRect(b, classifierRect('red'));
-    collideBallRect(b, classifierRect('blue'));
+    const from = ballFrom.get(b.id);
+    collideBallRect(b, classifierRect('red'), C.BALL_WALL_RESTITUTION, from);
+    collideBallRect(b, classifierRect('blue'), C.BALL_WALL_RESTITUTION, from);
     clampGroundBall(b);
   }
 
@@ -177,8 +193,9 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
       // chassis. Measured before this line: 2.77in of penetration on a 2.5in radius.
       for (const r of world.robots) evictBallFromRobot(b, r);
       for (const h of heldBalls) collideBallHeld(b, h);
-      collideBallRect(b, classifierRect('red'));
-      collideBallRect(b, classifierRect('blue'));
+      const from = ballFrom.get(b.id);
+      collideBallRect(b, classifierRect('red'), C.BALL_WALL_RESTITUTION, from);
+      collideBallRect(b, classifierRect('blue'), C.BALL_WALL_RESTITUTION, from);
       clampGroundBall(b);
     }
   }
