@@ -844,15 +844,23 @@ export const RAIL_PUSH_RATE = 60; // in/s
  * burst out together once it cleared. With the exit sealed, the queue rate is what you see.
  */
 export const EXIT_NUDGE = 1.0;
-/** clearance BEYOND touching that the doorway needs before the next artifact is released.
+/**
+ * Clearance BEYOND touching that the doorway needs before the next artifact is released.
  *
- * Swept rather than guessed. Releasing as soon as the previous artifact was one diameter
- * clear still produced a 2.8in overlap spike — the pair converge after the release, so
- * "not touching yet" is not the same as "there is room". Widening the gate to roughly two
- * diameters takes the worst transient to ZERO with no cost to the drain, which still empties
- * a full 9-artifact column. (Overlap by margin: +0 -> 2.78in, +1.5 -> 1.76, +3 -> 0.60,
- * +4.5 -> 0.00.) */
-export const EXIT_CLEARANCE = 4.5; // in, on top of a full artifact diameter
+ * This was 4.5 — nearly two artifact diameters — swept to that value back when ground
+ * artifacts were resolved bespoke and releasing at one diameter left a 2.8in overlap spike
+ * (the pair converge after the release, so "not touching yet" was not "there is room").
+ * Ground artifacts are Rapier bodies now and the chassis is in that solve, so the overlap
+ * is handled where it belongs: re-swept at 4.5 / 2.0 / 1.0 / 0.0, the worst clump overlap
+ * is 0.12in at EVERY value. The old margin was buying nothing and costing cadence.
+ *
+ * What it costs: the doorway is the WAIT half of the drain cadence. The other half is
+ * gravity carrying an artifact one RAIL_PITCH down to the exit, ~0.33s, which is real and
+ * irreducible. At 4.5 the wait was ~0.5s on top of that and the drain read as a metronome —
+ * 0.77s between releases with a mean-abs-dev of 0.10s, artifacts leaving one at a time like
+ * a dispenser rather than flowing.
+ */
+export const EXIT_CLEARANCE = 1.0; // in, on top of a full artifact diameter
 /**
  * Rolling resistance an artifact carries while it is riding ON TOP of the retained column
  * instead of on the ramp — the bumpy business of climbing over one artifact, dropping between
