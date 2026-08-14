@@ -139,8 +139,8 @@ flow pushing it (the only non-arbitrary value) and the drain takes 8 s.
 
 ## The residual: bespoke ball passes fight each other
 
-**Not fixed, and not a tweak.** An artifact squeezed between a bumper and the classifier
-still jitters up to **4.5 in in a single tick with zero velocity**. Attributed by stage:
+**Not fixed.** An artifact squeezed between a bumper and the classifier still jitters up
+to **4.5 in in a single tick with zero velocity**. Attributed by stage:
 
 | stage | max single-tick move |
 | --- | --- |
@@ -148,19 +148,44 @@ still jitters up to **4.5 in in a single tick with zero velocity**. Attributed b
 | Rapier ball solve | 1.32 in |
 | classifier eviction + wall clamp | 3.70 in |
 
-These are all POSITION writes taking turns, so one shoves the artifact into the channel
-and the next shoves it back out. Two contained attempts each moved it **< 0.2 in** and
-were reverted rather than shipped:
+All position writes taking turns, so one shoves the artifact into the channel and the
+next shoves it back out. Note the classifier is ALREADY a Rapier static for artifacts —
+the problem is that `collideBallRobot` runs *after* `solveBalls` and writes positions
+Rapier never sees.
 
-1. evicting along the artifact's entry path (bisection against its pre-step position)
-   instead of out the nearest face — no effect, because the dominant term is the
-   proximity push, not the centre-inside branch;
-2. interleaving the static eviction with the four `collideBallRobot` passes so they
-   converge instead of trading one big correction each — no effect.
+### Slice 2 was attempted and reverted — read this before trying again
 
-That this resists both says the fix is **slice 2 of the Rapier port**: give the
-classifier a real ball collider so these contacts are solved together instead of by
-successive position writes. Do not spend more on tweaks here.
+The fix "make the squeeze one solve" is right, and three structural variants were built,
+measured, and reverted. None is a tweak away from working; each breaks a DIFFERENT set of
+tuned behaviours, which is the real finding.
+
+1. **Chassis as a KINEMATIC body in `solveBalls`**, bespoke pass reduced to the intake
+   region + robot-side feel. Rapier resolves the squeeze correctly — but a kinematic body
+   cannot be told it is blocked, so handed a robot still driving at a dead-centre artifact
+   trapped on a wall, its only answer is to squirt the artifact out sideways: **34 in along
+   the wall, robot sailing through at 30 in/s**. Breaks product decision #7's dead-centre
+   stall. (Physically a round ball between two flat faces *does* squirt; #7 deliberately
+   does not.)
+2. **Chassis as a heavy DYNAMIC body**, reading back only the velocity delta so the stall
+   and clump-drag fall out of the solve. They do not: an artifact is ~0.3 lb against a
+   20–42 lb robot and the drivetrain restores the loss the same tick. Stall still absent,
+   and clump stacking regressed (1.85 in overlap).
+3. **Robot-side feedback moved BEFORE `solveBalls`** (stall the robot first, so the solver
+   is handed a robot that has already stopped). Fixes the stall — and breaks nine other
+   checks: intake capture stops happening at all (center and edge both hit the 120-tick
+   cap), the gate drain, G417/G418 foul counts, and clump stacking.
+
+**What it actually needs.** The intake capture model assumes artifacts can occupy the
+chassis-front region that a Rapier chassis collider makes solid, so slice 2 is not
+"add a collider" — the per-preset intake geometry (`intakeMouth`, the funnel/slope/throat
+in `ballRobotContact`) has to move into the solve as colliders at the same time, and the
+`#7` feel rules (dead-centre stall, outflow-no-shove, clump drag) have to be re-expressed
+as constraints rather than post-hoc velocity edits. That is a designed piece of work with
+its own smoke additions, not an incremental edit. Budget it as such.
+
+Earlier, smaller attempts on the same residual, also reverted: evicting along the
+artifact's entry path (bisection against its pre-step position) and interleaving the
+static eviction with the four `collideBallRobot` passes. Both moved it **< 0.2 in**.
 
 ### Earlier in the session
 
