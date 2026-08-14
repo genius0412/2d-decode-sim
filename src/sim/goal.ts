@@ -436,19 +436,37 @@ export function updateRails(world: World, dt: number): void {
         continue;
       }
       const vel = tunnelExitVel(a);
-      let r1 = nextRandom(world.rngState);
-      let r2 = nextRandom(r1.state);
-      world.rngState = r2.state;
+      const r1 = nextRandom(world.rngState);
+      world.rngState = r1.state;
+      /**
+       * MOMENTUM IS CARRIED OFF THE RAMP, not replaced at the bottom of it.
+       *
+       * This used to ASSIGN `tunnelExitVel` scaled by an independent 0.6-1.4 roll per axis,
+       * throwing away whatever the artifact was actually doing. An artifact that had spent
+       * the whole ramp accelerating under RAIL_ACCEL arrived at the exit and was handed a
+       * different speed on the tick it touched the floor — sometimes slower, sometimes a
+       * jump to 33 in/s, always a step change with no cause. Speed down a ramp comes from
+       * gravity, and it should still be that speed at the bottom.
+       *
+       * So the ALONG-ramp component is the artifact's own: `v` for a classified artifact
+       * (which RAIL_ACCEL has been building the whole way down) and the constant flow speed
+       * for overflow, which rides over the column rather than rolling. Only the small
+       * OFF-THE-WALL component is synthesised, and the jitter now fans DIRECTION rather than
+       * scaling magnitude — the drain still spreads into a cone instead of a single file,
+       * without anything changing pace as it lands.
+       */
+      const st0 = b.state as { v: number; overflow: boolean };
+      const speed = st0.overflow ? C.OVERFLOW_FLOW_SPEED : Math.abs(st0.v);
+      // The fan is a DIRECTION, not a speed: the exit heads down-tunnel with a little
+      // off-the-wall lean, varied per artifact so a drain spreads into a cone instead of
+      // single file. Normalised, so `speed` is the exact magnitude that comes out — the
+      // artifact leaves the ramp at precisely the speed the ramp gave it.
+      const lean = (C.TUNNEL_EXIT_VEL.inward / C.TUNNEL_EXIT_VEL.along) * (0.5 + r1.value);
+      const norm = Math.sqrt(1 + lean * lean);
       b.state = { kind: 'ground' };
       b.z = 0;
       b.vz = 0;
-      // gentle release, SAME treatment the overflow balls get: low forward
-      // momentum (friction + ball↔ball contact spread the drain instead of it
-      // plowing out) with an INDEPENDENT x/y jitter that fans the exit directions
-      // into a cone. A symmetric perpendicular kick was tried and split the tight
-      // drain column into TWO diverging branches — the independent jitter keeps
-      // every ball moving in the same quadrant, so they fan out instead.
-      b.vel = { x: vel.x * (0.6 + r1.value * 0.8), y: vel.y * (0.6 + r2.value * 0.8) };
+      b.vel = { x: (Math.sign(vel.x) * lean * speed) / norm, y: (-speed) / norm };
     }
   }
 }

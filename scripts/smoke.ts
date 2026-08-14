@@ -61,6 +61,7 @@ import {
   RAIL_PITCH,
   HOPPER_CAPACITY,
   RAIL_EXIT_S,
+  RAIL_ACCEL,
   OVERFLOW_Z,
   BASIN_FLOOR_Z,
   RAMP_SURFACE_Z,
@@ -3660,6 +3661,52 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     'a FULL robot on the mouth blocks the drain — the column queues on the rail',
     stillRail >= 4 && insideFull === 0,
     `rail=${stillRail} inside=${insideFull}`,
+  );
+}
+
+// ---- artifacts leave the ramp at the speed the ramp gave them ---------------
+// The release used to ASSIGN a scripted exit velocity, discarding whatever the artifact was
+// doing. An artifact resting against a closed gate has ~zero speed and was handed 23 in/s
+// on the tick it touched the floor: a step change with no cause. Speed down a ramp comes
+// from gravity, so it should still be that speed at the bottom — the only legitimate change
+// across the transition is ONE TICK of RAIL_ACCEL.
+{
+  const w = foulWorld();
+  w.balls.length = 0;
+  w.robots[0].pos = { x: -60, y: -60 };
+  w.robots[1].pos = { x: -60, y: 60 };
+  for (let i = 0; i < 9; i++) {
+    w.balls.push({
+      id: 950 + i,
+      color: 'purple',
+      state: { kind: 'rail', goal: 'red', s: GATE_STOP_S + i * RAIL_PITCH, v: 0, overflow: false },
+      pos: railPos('red', GATE_STOP_S + i * RAIL_PITCH),
+      vel: { x: 0, y: 0 },
+      z: 0,
+      vz: 0,
+    });
+  }
+  const before = new Map<number, { kind: string; v: number }>();
+  let worst = 0;
+  for (let i = 0; i < Math.round(8 / SIM_DT); i++) {
+    w.goals.red.gatePos = 1; // hold it open so the whole column drains
+    for (const b of w.balls) {
+      before.set(b.id, {
+        kind: b.state.kind,
+        v: b.state.kind === 'rail' ? Math.abs((b.state as { v: number }).v) : hyp(b.vel.x, b.vel.y),
+      });
+    }
+    step(w, SIM_DT, new Map());
+    for (const b of w.balls) {
+      const p = before.get(b.id);
+      if (!p || p.kind !== 'rail' || b.state.kind !== 'ground') continue;
+      worst = Math.max(worst, Math.abs(hyp(b.vel.x, b.vel.y) - p.v));
+    }
+  }
+  check(
+    'artifacts leave the ramp at ramp speed (no kick as they reach the floor)',
+    worst <= RAIL_ACCEL * SIM_DT * 1.5,
+    `worst step ${worst.toFixed(2)}in/s, one tick of gravity is ${(RAIL_ACCEL * SIM_DT).toFixed(2)}`,
   );
 }
 
