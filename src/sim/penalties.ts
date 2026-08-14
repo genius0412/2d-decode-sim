@@ -12,7 +12,12 @@ import {
   inRect, goalSide,
 } from './field';
 import type { Rect } from './field';
-import { closestPointOnRobot, robotCorners, robotIntersectsRect } from './physics';
+import {
+  clampBallPosToStatics,
+  closestPointOnRobot,
+  robotCorners,
+  robotIntersectsRect,
+} from './physics';
 import { pushingGate, ZERO_CMD } from './goal';
 import { awardCard, awardFoul } from './scoring';
 import { hyp, rot } from '../math';
@@ -195,7 +200,7 @@ export function updatePenalties(
   updateGateFouls(world, commands, fire);
 
   // ---- G408 over-possession / plowing (per robot, own second-accumulator) --
-  updatePossession(world, dt, fire);
+  updatePossession(world, dt, commands, fire);
 
   // ---- G422 pinning (ordered pairs, own second-accumulator) ---------------
   updatePins(world, dt, commands);
@@ -223,10 +228,15 @@ export function updatePenalties(
  * `controlledArtifacts` decides the count; POSSESSION_GRACE is how much control has to
  * ACCUMULATE on the leaky clock below.
  */
-function updatePossession(world: World, dt: number, fire: FireFn): void {
+function updatePossession(
+  world: World,
+  dt: number,
+  commands: Map<number, RobotCommand>,
+  fire: FireFn,
+): void {
   const pen = world.penalties;
   for (const r of world.robots) {
-    const controlled = controlledArtifacts(world, r, dt);
+    const controlled = controlledArtifacts(world, r, dt, commands.get(r.id)?.intake === true);
     const over = controlled - C.POSSESSION_LIMIT;
 
     // CLAUSE B's clock: one continuous stretch of controlling 4+. The INSTANCE is counted
@@ -330,7 +340,12 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
  *
  * Artifacts in flight / basin / rail / held by another robot are not loose and never count.
  */
-function controlledArtifacts(world: World, r: RobotState, dt: number): number {
+function controlledArtifacts(
+  world: World,
+  r: RobotState,
+  dt: number,
+  intaking: boolean,
+): number {
   // the possession test only asks what happens "as the ROBOT moves or changes ORIENTATION"
   const active =
     hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED || Math.abs(r.angVel) >= C.POSSESSION_TURN_RATE;
@@ -347,8 +362,80 @@ function controlledArtifacts(world: World, r: RobotState, dt: number): number {
   // of a pile is reached transitively below, and the transitive clause of CONTROL asks only
   // for contact, not for station: an artifact three deep in a shoved wedge is controlled
   // because it is pressed against one that is, however much it rolls while it goes.
+  /**
+   * WHAT THE FIELD IS HOLDING, THE ROBOT DOES NOT CONTROL.
+   *
+   * CONTROL means the robot is in a position to move an artifact where it wants. An artifact
+   * jammed between the robot and a wall is held by the WALL — the robot cannot take it
+   * anywhere, and the manual says so directly: BULLDOZING, "inadvertent contact with a
+   * SCORING ELEMENT while in the path of the ROBOT moving about the FIELD", is explicitly
+   * NOT control. Driving into a clump parked on a wall to intake from it was drawing five
+   * MINOR fouls for exactly this.
+   *
+   * A velocity test was tried first and is WRONG, which is worth recording because it is the
+   * obvious idea: "moves with the robot ⇒ controlled" gets both cases backwards. Measured,
+   * a wall clump slips a median 3.5 in/s against the robot while a herded one slips 15.6 —
+   * pressing a jammed pile STALLS the robot, so artifact and robot are both near zero, while
+   * a clump actually being pushed rolls and squirms as it goes. Artifact speed and distance
+   * travelled do not separate them either.
+   *
+   * TRANSITIVE, because a jam is: the front row is not touching the wall, it is touching the
+   * row that is. An artifact is pinned if the push would be refused by the field OR lands it
+   * on something already pinned, iterated until it settles.
+   */
+  const pushDir = (b: (typeof ground)[number]) => {
+    const cp = closestPointOnRobot(r, b.pos);
+    const dx = b.pos.x - cp.x;
+    const dy = b.pos.y - cp.y;
+    const d = hyp(dx, dy) || 1;
+    return { x: dx / d, y: dy / d };
+  };
+  const jammed = new Set<number>();
+  for (const b of ground) {
+    const n = pushDir(b);
+    const tx = b.pos.x + n.x * C.BALL_RADIUS;
+    const ty = b.pos.y + n.y * C.BALL_RADIUS;
+    const c = clampBallPosToStatics({ x: tx, y: ty });
+    if (hyp(tx - c.x, ty - c.y) > C.BALL_PIN_SLOP) jammed.add(b.id);
+  }
+  for (let pass = 0; pass < 3; pass++) {
+    for (const b of ground) {
+      if (jammed.has(b.id)) continue;
+      const n = pushDir(b);
+      const tx = b.pos.x + n.x * C.BALL_RADIUS;
+      const ty = b.pos.y + n.y * C.BALL_RADIUS;
+      for (const o of ground) {
+        if (o.id === b.id || !jammed.has(o.id)) continue;
+        if (hyp(tx - o.pos.x, ty - o.pos.y) < C.BALL_RADIUS * 2) {
+          jammed.add(b.id);
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * AN ARTIFACT BEING DRAWN IN IS NOT A FOURTH ARTIFACT — it is the one about to be the
+   * third, and the count already has a slot for it.
+   *
+   * POSSESSION_LIMIT and HOPPER_CAPACITY are the same number (3). A robot with a full
+   * hopper that is intaking cannot KEEP what is in its mouth — it has to fire something
+   * first — so counting the in-flight artifact on top of a full hopper charges the same
+   * limit twice, and every approach to a clump with three aboard read as controlling four.
+   * Measured on "drive into a wall clump with the intake running": 173 of 272 confirmed
+   * frames were artifacts sitting in the mouth, queued to be swallowed.
+   *
+   * Gated on the intake actually RUNNING. With it off, artifacts held in the mouth are
+   * being scooped and carried, which is control in the ordinary sense and still counts.
+   */
+  const mouthFront = r.spec.length / 2;
   const held = new Set<number>();
   for (const b of ground) {
+    if (jammed.has(b.id)) continue; // the field is holding it, not the robot
+    if (intaking) {
+      const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+      if (loc.x > mouthFront) continue; // in the mouth, on its way to the hopper
+    }
     const cp = closestPointOnRobot(r, b.pos);
     if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach) held.add(b.id);
   }
@@ -419,6 +506,11 @@ function controlledArtifacts(world: World, r: RobotState, dt: number): number {
     grew = false;
     for (const b of ground) {
       if (controlled.has(b.id)) continue;
+      // ...but the chain does not run through what the FIELD is holding either. A confirmed
+      // seed touching a pile jammed on a wall would otherwise pull the whole pile in through
+      // the contact clause alone — which is how intaking from a wall clump still drew three
+      // MINORs after the seeds were cleaned up.
+      if (jammed.has(b.id)) continue;
       for (const c of ground) {
         if (!controlled.has(c.id)) continue;
         if (hyp(b.pos.x - c.pos.x, b.pos.y - c.pos.y) > chain) continue;

@@ -808,7 +808,7 @@ function clampOutOfRect(p: Vec2, rect: Rect): Vec2 {
  * the "artifacts never enter the classifier" invariant directly rather than leaving it all
  * to the eviction pass.
  */
-function clampBallPosToStatics(p: Vec2): Vec2 {
+export function clampBallPosToStatics(p: Vec2): Vec2 {
   const f = C.FIELD_HALF - C.BALL_RADIUS;
   let out = { x: clamp(p.x, -f, f), y: clamp(p.y, -f, f) };
   for (const a of ALLIANCES) {

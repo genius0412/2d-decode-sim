@@ -3546,6 +3546,49 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- G408: intaking from a clump is not over-possession ---------------------
+// Reported: "I get overpossession penalties when I am just intaking from a clump" —
+// "clump against a wall, specifically". Two separate things were counting artifacts the
+// robot does not control, and both are structural rather than a matter of timing:
+//   · the FIELD holds a jammed pile, not the robot. CONTROL means being in a position to
+//     move an artifact where you want, and a pile pressed on a wall goes nowhere — the
+//     manual names this BULLDOZING and excludes it. (Transitive: the front row is not on
+//     the wall, it is on the row that is.)
+//   · an artifact in the MOUTH while intaking is not a fourth artifact. POSSESSION_LIMIT
+//     and HOPPER_CAPACITY are the same 3, so a full robot cannot keep what it is drawing
+//     in; counting it charges the same limit twice.
+// A velocity test was tried first and is WRONG — see the note in penalties.ts. Measured:
+// this scenario drew 5 MINORs before, 0 after.
+{
+  const w = mkWorld('match', 'blue', 31);
+  startMatch(w);
+  w.balls.length = 0;
+  const cy = FIELD_HALF - BALL_RADIUS; // clump jammed on the far wall
+  for (let i = 0; i < 6; i++) {
+    w.balls.push({
+      id: 900 + i,
+      color: 'purple',
+      state: { kind: 'ground' },
+      pos: { x: -6 + (i % 3) * 5.2, y: cy - Math.floor(i / 3) * 5.0 },
+      vel: { x: 0, y: 0 },
+      z: 0,
+      vz: 0,
+    });
+  }
+  const r = w.robots[0];
+  r.pos = { x: 0, y: cy - 26 };
+  r.heading = Math.PI / 2; // facing the clump
+  r.fieldCentric = false;
+  const before = w.match.fouls.blue.minor;
+  run(w, cmd({ driveY: 1, intake: true }), 6);
+  check(
+    'intaking from a clump jammed on a wall is not over-possession (no G408)',
+    w.match.fouls.blue.minor === before,
+    `minor fouls=${w.match.fouls.blue.minor - before}, hopper=${r.hopper.length}`,
+  );
+  check('...and it actually intaked (the test is not vacuous)', r.hopper.length > 0, `hopper=${r.hopper.length}`);
+}
+
 // ---- G408: the plow test is CONTACT + CARRIED, not proximity ----------------
 // The lenient model only counts a loose ball the robot is genuinely bulldozing:
 // touching, ahead along the direction of travel, and moving WITH the robot. A ball
