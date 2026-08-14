@@ -3597,6 +3597,58 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- artifacts never STACK, however hard they are rammed --------------------
+// Rapier separates artifacts early in the tick, but the bespoke robot push, the held-ball
+// block, the classifier eviction and the wall clamp all move them AFTERWARDS. Without a
+// final relaxation the overlap those create survives the tick, and while a robot keeps
+// pushing, the next tick never wins either — artifacts visibly stacked when rammed into a
+// clump, and piled up at the gate when a robot blocked the outflow.
+{
+  const overlapWorst = (w: World): number => {
+    const g = w.balls.filter((b) => b.state.kind === 'ground');
+    let worst = 0;
+    for (let i = 0; i < g.length; i++) {
+      for (let j = i + 1; j < g.length; j++) {
+        worst = Math.max(worst, BALL_RADIUS * 2 - hyp(g[i].pos.x - g[j].pos.x, g[i].pos.y - g[j].pos.y));
+      }
+    }
+    return worst;
+  };
+
+  const w = foulWorld();
+  w.balls.length = 0;
+  w.robots[1].pos = { x: 60, y: 60 };
+  const r = w.robots[0];
+  r.hopper = ['green', 'green', 'green'];
+  r.pos = { x: 0, y: -30 };
+  r.heading = Math.PI / 2;
+  for (let i = 0; i < 9; i++) {
+    w.balls.push({
+      id: 9500 + i,
+      color: 'purple',
+      state: { kind: 'ground' },
+      pos: { x: -6 + (i % 3) * 6, y: -12 + Math.floor(i / 3) * 6 },
+      vel: { x: 0, y: 0 },
+      z: 0,
+      vz: 0,
+    });
+  }
+  let worst = 0;
+  for (let c = 0; c < 6; c++) {
+    runCmds(w, new Map([[0, cmd({ driveY: 1 })]]), 0.65);
+    worst = Math.max(worst, overlapWorst(w));
+    runCmds(w, new Map([[0, cmd({ driveY: -1 })]]), 0.35);
+    worst = Math.max(worst, overlapWorst(w));
+  }
+  // a soft-contact solver leaves a little slop; STACKING is a different thing entirely
+  // (half a diameter or more, and it never resolves).
+  check(
+    'ramming a clump never stacks artifacts (overlap stays contact slop)',
+    worst < BALL_RADIUS * 0.5,
+    `worst overlap ${worst.toFixed(2)}in of ${BALL_RADIUS * 2}in diameter`,
+  );
+}
+
 // ---- penalty state stays deterministic -------------------------------------
 {
   const w1 = pinWorld(); runCmds(w1, PIN_CMDS, 4);
