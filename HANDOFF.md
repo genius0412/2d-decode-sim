@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-15 (the classifier: possession, the gate, and the ramp) — alpha only
 
-Branch **alpha**, commit `d3442fb`, **105 commits ahead of `origin/main`**.
+Branch **alpha**, commit `3eb8521`, **106 commits ahead of `origin/main`**.
 `npm test` ALL PASS (~215 checks) · `npm run build` green · working tree clean.
 **Not deployed.** Production `dohun-sim-decode` is still on the pre-session build and
 still owes the migrations listed under "Still pending".
@@ -100,6 +100,67 @@ Two things about that walk cost real time and should not be re-derived:
   sitting at an angle, and that version still left 0.75 in of overlap.
 
 Measured across five coverages from dead-centre to clear: **0.00 in, every one.**
+
+### The rail is not a hole in the field (`3eb8521`)
+
+*"They still often go past the field wall then teleport back in."* They did. The state
+column is the whole diagnosis:
+
+```
+tick 223  rail    pos 69.0 -71.0     already past the wall (field half is 72)
+tick 228  rail    pos 69.0 -74.8     still marching, still on the rail
+tick 229  ground  pos 69.0 -75.6     released six inches outside the field
+tick 230  ground  pos 64.9 -69.5     ground clamp snaps it back: a 394 in/s teleport
+```
+
+The rail is a scripted 1D flow with **no wall awareness** — the rail line simply runs on
+past the audience wall — so nothing about being off the field stops an artifact. It got
+there because the solver and the release disagreed about whether it could leave: an open
+gate dropped the floor to `-Infinity` while the release refused on an occupied doorway,
+and the `wasS >= base` exemption then freed it permanently. `mouthClear` decides that
+once now, doorway included, for both; the release lets **one** artifact out per tick,
+since the one it just released is the next doorway.
+
+**The exemption was too broad**, and this is the part to remember. It exists for exactly
+one case: a shut GATE must not reach back up for an overflow artifact that legitimately
+dropped in below the gate line. Two floors have no legitimate "already past it" — *below
+the exit* (off the field) and *inside a robot* (7.2in inside the chassis, the very thing
+the body floor was added to prevent). Those two are solid and unconditional. Correcting
+them means moving an artifact UP, which the solver refuses on purpose, so it is
+rate-limited to `RAIL_PUSH_RATE`: a robot leaning into the channel shoves the column up
+its ramp visibly instead of teleporting it.
+
+Sealing the exit made the queue rate **real**, and it was bad: `EXIT_NUDGE` 0.5 crept the
+doorway artifact out at 11 in/s, 0.9 s to clear its own diameter, a nine-artifact drain
+taking 12 s. That throttle was always there — it was hidden because artifacts queued
+BELOW the exit, off the field, and burst out together once it cleared, which is what
+*"disperse outward at insane speeds"* was. At 1.0 the queue moves at the speed of the
+flow pushing it (the only non-arbitrary value) and the drain takes 8 s.
+
+## The residual: bespoke ball passes fight each other
+
+**Not fixed, and not a tweak.** An artifact squeezed between a bumper and the classifier
+still jitters up to **4.5 in in a single tick with zero velocity**. Attributed by stage:
+
+| stage | max single-tick move |
+| --- | --- |
+| `collideBallRobot` (bespoke robot push) | 3.13 in |
+| Rapier ball solve | 1.32 in |
+| classifier eviction + wall clamp | 3.70 in |
+
+These are all POSITION writes taking turns, so one shoves the artifact into the channel
+and the next shoves it back out. Two contained attempts each moved it **< 0.2 in** and
+were reverted rather than shipped:
+
+1. evicting along the artifact's entry path (bisection against its pre-step position)
+   instead of out the nearest face — no effect, because the dominant term is the
+   proximity push, not the centre-inside branch;
+2. interleaving the static eviction with the four `collideBallRobot` passes so they
+   converge instead of trading one big correction each — no effect.
+
+That this resists both says the fix is **slice 2 of the Rapier port**: give the
+classifier a real ball collider so these contacts are solved together instead of by
+successive position writes. Do not spend more on tweaks here.
 
 ### Earlier in the session
 
