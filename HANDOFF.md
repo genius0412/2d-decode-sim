@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-15 (the classifier: possession, the gate, and the ramp) — alpha only
 
-Branch **alpha**, commit `8d184f6`, **108 commits ahead of `origin/main`**.
+Branch **alpha**, commit `dcaf1f5`, **111 commits ahead of `origin/main`**.
 `npm test` ALL PASS (~215 checks) · `npm run build` green · working tree clean.
 **Not deployed.** Production `dohun-sim-decode` is still on the pre-session build and
 still owes the migrations listed under "Still pending".
@@ -193,6 +193,48 @@ embedded at the start of a tick, i.e. finding what still places it there (it is 
 Still genuinely deferred: flight/basin/rail artifacts remain scripted, and the intake
 funnel geometry is still bespoke. Porting the intake would mean re-expressing the capture
 model, which assumes artifacts can occupy the chassis-front region a collider makes solid.
+
+## G408: two things were counted that the robot does not control (`7470c0c`)
+
+Reported as *"I get overpossession penalties when I am just intaking from a clump"* —
+*"clump against a wall, specifically"*. Reproduced at **five MINOR fouls** for driving
+into a wall clump with the intake running, while the hopper ended with a legal three.
+
+- **What the FIELD holds, the robot does not control.** A pile jammed between a bumper
+  and a wall goes nowhere, and the manual names the case: BULLDOZING is explicitly not
+  control. Excluded when the field refuses the push — **transitively**, because a jam is
+  (the front row touches the row that touches the wall), and from the **chain** as well as
+  the seeds, since the chain clause asks for contact and nothing else.
+- **An artifact being drawn in is not a fourth artifact.** `POSSESSION_LIMIT` and
+  `HOPPER_CAPACITY` are the same 3, so a full robot cannot keep what is in its mouth —
+  counting it charges the same limit twice. 173 of 272 confirmed frames in the reported
+  scenario were artifacts queued in the mouth. Gated on the intake actually running; with
+  it off, artifacts in the mouth are being scooped and still count.
+
+5 MINORs → 0, hopper still filling, and every existing G408 check still passes.
+
+**A velocity test was tried FIRST and is wrong** — worth knowing, since it is the obvious
+idea and the user suggested it. "Moves with the robot ⇒ controlled" gets both cases
+backwards: a wall clump slips a median **3.5 in/s** against the robot while a **herded**
+one slips **15.6**, because pressing a jammed pile stalls the robot (both near zero) while
+a clump actually being pushed rolls and squirms the whole way. Artifact speed and distance
+travelled separate them no better (open clump travels 43–68in, herding 49–66in).
+
+## Drain cadence (`dcaf1f5`)
+
+*"The balls flow out at a weird slow cadence"* — 0.77 s between releases, mean-abs-dev
+0.10 s. A metronome. Two halves: gravity over one `RAIL_PITCH` (~0.33 s, real) and the
+doorway wait (~0.5 s). `EXIT_CLEARANCE` was 4.5 — nearly two diameters — swept honestly
+but for bespoke ground artifacts, where releasing at one diameter left a 2.8 in overlap
+spike. Re-swept now that artifacts are Rapier bodies: **worst clump overlap is 0.12 in at
+4.5 / 2.0 / 1.0 / 0.0 alike.** At 1.0, releases are 0.60 s apart and a nine-artifact
+column drains in 5.2 s instead of 6.3 s.
+
+**Floor is 0.36 s** (gravity over one artifact diameter, from rest). The remaining gap is
+the column restarting every cycle instead of staying loaded: the front artifact is slammed
+to v=0 at the exit and `floorV` propagates that zero up the whole column. Closing it means
+changing how the floor propagates velocity to a queued column — a solver change, not a
+constant.
 
 ### Earlier in the session
 
