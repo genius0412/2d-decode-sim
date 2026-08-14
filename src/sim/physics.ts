@@ -226,7 +226,7 @@ function applyContactTorque(
 
 /** how deep a world point sits inside the robot's OBB (incl. intake);
  * negative = outside */
-function pointDepthInRobot(r: RobotState, p: Vec2): number {
+export function pointDepthInRobot(r: RobotState, p: Vec2): number {
   const e = robotExtents(r);
   const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);
   const dx = Math.min(local.x + e.rear, e.front - local.x);

@@ -130,11 +130,31 @@ export function drawField(ctx: CanvasRenderingContext2D, world: World): void {
     ctx.lineTo(tunnelFieldX, ts.y1);
     ctx.stroke();
 
-    // classifier ramp structure (robot obstacle) next to this alliance's goal
-    // — a neutral gray STRUCTURE, not an alliance tape line
+    /**
+     * Classifier RAMP structure (a robot obstacle) next to this alliance's goal — a neutral
+     * grey STRUCTURE, not an alliance tape line.
+     *
+     * Outlined on THREE sides, never four. The short end at the gate is the RAMP'S EXIT, not
+     * a wall: "The GATE ... prevents CLASSIFIED ARTIFACTS from exiting the RAMP into the
+     * opposing ALLIANCE'S SECRET TUNNEL ZONE. OVERFLOW ARTIFACTS can pass over the top of the
+     * GATE to exit the RAMP into the opposing ALLIANCE'S SECRET TUNNEL ZONE" (manual 9.8.3).
+     * Stroking the full rect capped that opening with a wall line, and it read as one — the
+     * one thing at that end is the gate arm, which draws itself.
+     */
     const cr = classifierRect(a);
     fillRect(ctx, cr, '#191d24');
-    strokeRect(ctx, cr, C.COLORS.wall);
+    // the gate end is whichever short edge faces the AUDIENCE (away from the goal, which
+    // sits in the far corner at +y)
+    const gateEndY = cr.y0;
+    const farEndY = cr.y1;
+    ctx.strokeStyle = C.COLORS.wall;
+    ctx.lineWidth = C.TAPE_W;
+    ctx.beginPath();
+    ctx.moveTo(cr.x0, gateEndY); // up the FIELD-side rail from the gate...
+    ctx.lineTo(cr.x0, farEndY); // ...to the goal end,
+    ctx.lineTo(cr.x1, farEndY); // across the far end,
+    ctx.lineTo(cr.x1, gateEndY); // and back down the wall side. The gate end stays OPEN.
+    ctx.stroke();
 
     // GATE ZONE marking: two parallel alliance-colored tape lines, 10in long,
     // 2.75in apart (the larger invisible interaction rect works the gate)

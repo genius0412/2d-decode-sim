@@ -13,7 +13,7 @@ import {
 } from './field';
 import { addClassified, addOverflow } from './scoring';
 import { approach, nextRandom, hyp, rot } from '../math';
-import { robotIntersectsRect } from './physics';
+import { pointDepthInRobot, robotIntersectsRect } from './physics';
 
 export const ZERO_CMD: RobotCommand = {
   driveX: 0,
@@ -261,6 +261,40 @@ export function updateBasins(world: World, dt: number): void {
   }
 }
 
+/**
+ * WHAT IS SITTING IN THE GATE'S MOUTH.
+ *
+ * The exit is a real place with a real volume, and until now the drain ignored that: a ball
+ * reaching RAIL_EXIT_S became a ground artifact at a fixed point below the gate no matter
+ * what already occupied it. Park a robot over the outflow and artifacts materialised inside
+ * it and piled up — teleporting into an occupied space, which is the one thing the ball
+ * lifecycle is not allowed to do.
+ *
+ * So the mouth is checked before anything leaves:
+ *   `taker`  — a robot over the mouth WITH room in its hopper. The artifact drops straight
+ *              into it, which is what happens on the real field: you park under the gate to
+ *              collect the drain.
+ *   `blocked`— the mouth is occupied by something that cannot accept the artifact: a FULL
+ *              robot, or an artifact already lying there. Nothing leaves; the column backs
+ *              up behind the gate exactly as it does behind a closed one.
+ */
+function exitMouth(world: World, a: Alliance): { taker: RobotState | null; blocked: boolean } {
+  const p = railPos(a, C.RAIL_EXIT_S);
+  for (const r of world.robots) {
+    // the mouth counts as occupied once the robot's body reaches within an artifact radius
+    if (pointDepthInRobot(r, p) < -C.BALL_RADIUS) continue;
+    return r.hopper.length < C.HOPPER_CAPACITY ? { taker: r, blocked: false } : { taker: null, blocked: true };
+  }
+  // ...or by an artifact already lying in it (the drain has to queue behind its own output)
+  for (const b of world.balls) {
+    if (b.state.kind !== 'ground') continue;
+    if (hyp(b.pos.x - p.x, b.pos.y - p.y) < C.BALL_RADIUS * 2 - C.EXIT_QUEUE_SLOP) {
+      return { taker: null, blocked: true };
+    }
+  }
+  return { taker: null, blocked: false };
+}
+
 /** 1D flow down the classifier rail with contact stacking against the gate
  * (or the ball ahead). Overflow balls ride over everything and always exit. */
 export function updateRails(world: World, dt: number): void {
@@ -274,7 +308,11 @@ export function updateRails(world: World, dt: number): void {
     // gate opens the whole column drains as a unit instead of each ball
     // re-accelerating from rest and spreading apart.
     const stack = railStack(world, a);
-    let floor = goal.gateOpen ? -Infinity : C.GATE_STOP_S;
+    // A BLOCKED MOUTH IS A CLOSED GATE, as far as the column is concerned — it queues at the
+    // exit instead of flowing through whatever is parked there.
+    const mouth = exitMouth(world, a);
+    const canLeave = goal.gateOpen && (!mouth.blocked || mouth.taker !== null);
+    let floor = canLeave ? -Infinity : goal.gateOpen ? C.RAIL_EXIT_S : C.GATE_STOP_S;
     let floorV = 0; // velocity of the constraint below (the gate is stationary)
     let below = 0; // column balls ahead of (below) the current one
     for (const b of stack) {
@@ -322,15 +360,33 @@ export function updateRails(world: World, dt: number): void {
     }
 
     // balls past the gate roll out onto the floor from where they are
+    const out = exitMouth(world, a);
     for (const b of world.balls) {
       if (b.state.kind !== 'rail' || b.state.goal !== a) continue;
       if (b.state.s > C.RAIL_EXIT_S) continue;
+      // NOTHING LEAVES INTO AN OCCUPIED MOUTH. Without a taker to hand it to, the artifact
+      // stays on the rail and the column queues behind it (see `exitMouth`).
+      if (out.blocked && !out.taker) continue;
       if (b.state.pending) {
         // flowed down the whole channel and out an open gate without ever
         // meeting the column: it was sorted, then released — CLASSIFIED
         b.state.pending = false;
         goal.classifiedCount++;
         addClassified(world, a);
+      }
+      // A ROBOT PARKED UNDER THE GATE COLLECTS THE DRAIN — the artifact goes straight into
+      // its hopper rather than through it onto the floor. It stays a physical world object
+      // (`held`), seeded from where it actually is, so it slides in from the mouth like any
+      // other intake instead of appearing in a slot.
+      if (out.taker && out.taker.hopper.length < C.HOPPER_CAPACITY) {
+        const r = out.taker;
+        const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+        b.state = { kind: 'held', robot: r.id, slot: r.hopper.length, lx: loc.x, ly: loc.y, side: 0 };
+        b.vel = { x: 0, y: 0 };
+        b.z = 0;
+        b.vz = 0;
+        r.hopper.push(b.color);
+        continue;
       }
       const vel = tunnelExitVel(a);
       let r1 = nextRandom(world.rngState);

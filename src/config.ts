@@ -821,6 +821,10 @@ export const GATE_STOP_S = 2; // lowest rest position against the closed gate
 // the basin. One pitch below the entry keeps proper spacing but drains ~2× faster.
 export const RAIL_ENTRY_BLOCK_S = 50;
 export const RAIL_EXIT_S = -4; // past the gate: ball drops out to the floor
+/** how much two artifacts may overlap at the gate's mouth before the drain treats it as
+ * occupied. A little slack, because the artifact that just left is still sitting in the
+ * doorway for a tick or two and the column should follow it out, not stall behind it. */
+export const EXIT_QUEUE_SLOP = 1.5; // in
 export const OVERFLOW_FLOW_SPEED = 58; // in/s, overflow rides over everything (clears a full goal quickly)
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s

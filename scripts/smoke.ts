@@ -59,6 +59,8 @@ import {
   GATE_OPEN_LATCH_S,
   GATE_TAPE_Y,
   RAIL_PITCH,
+  HOPPER_CAPACITY,
+  RAIL_EXIT_S,
   BASIN_FLOOR_Z,
   RAMP_SURFACE_Z,
   FIELD_HALF,
@@ -3594,6 +3596,69 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       w5.match.cards?.blue.red === 1 &&
       w5.match.cards?.blue.yellow === 0,
     `earned=${earned} total=${w5.match.scores.blue.total} cards=${JSON.stringify(w5.match.cards?.blue)}`,
+  );
+}
+
+// ---- the gate's mouth is a PLACE, and a blocked one holds the column back ----
+// A drained artifact used to become a ground artifact at a fixed point below the gate
+// whatever occupied it, so parking a robot over the outflow made artifacts materialise
+// inside it and pile up. The mouth is checked now: a robot with room COLLECTS the drain,
+// a full one BLOCKS it, and the column queues on the rail exactly as it does behind a
+// closed gate.
+{
+  const stagedDrain = (hopper: number): World => {
+    const w = foulWorld();
+    w.balls.length = 0;
+    const r = w.robots[1]; // red owns this classifier
+    w.robots[0].pos = { x: -60, y: -60 };
+    r.hopper = Array.from({ length: hopper }, () => 'green' as const);
+    const mouth = railPos('red', RAIL_EXIT_S);
+    r.pos = { x: mouth.x - 2, y: mouth.y }; // parked squarely on the outflow
+    r.heading = Math.PI / 2;
+    r.vel = { x: 0, y: 0 };
+    for (let i = 0; i < 6; i++) {
+      w.balls.push({
+        id: 400 + i,
+        color: 'purple',
+        state: { kind: 'rail', goal: 'red', s: 6 + i * 5.2, v: 0, overflow: false, pending: false },
+        pos: railPos('red', 6 + i * 5.2),
+        vel: { x: 0, y: 0 },
+        z: 0,
+        vz: 0,
+      });
+    }
+    for (let i = 0; i < Math.round(5 / SIM_DT); i++) {
+      w.goals.red.gatePos = 1; // hold the gate fully open
+      step(w, SIM_DT, new Map());
+    }
+    return w;
+  };
+
+  const empty = stagedDrain(0);
+  const er = empty.robots[1];
+  const insideEmpty = empty.balls.filter(
+    (b) => b.state.kind === 'ground' &&
+      Math.abs(b.pos.x - er.pos.x) < er.spec.width / 2 &&
+      Math.abs(b.pos.y - er.pos.y) < er.spec.length / 2,
+  ).length;
+  check(
+    'a robot parked under the gate COLLECTS the drain instead of it appearing inside it',
+    er.hopper.length === HOPPER_CAPACITY && insideEmpty === 0,
+    `hopper=${er.hopper.length} inside=${insideEmpty}`,
+  );
+
+  const full = stagedDrain(HOPPER_CAPACITY);
+  const fr = full.robots[1];
+  const stillRail = full.balls.filter((b) => b.state.kind === 'rail').length;
+  const insideFull = full.balls.filter(
+    (b) => b.state.kind === 'ground' &&
+      Math.abs(b.pos.x - fr.pos.x) < fr.spec.width / 2 &&
+      Math.abs(b.pos.y - fr.pos.y) < fr.spec.length / 2,
+  ).length;
+  check(
+    'a FULL robot on the mouth blocks the drain — the column queues on the rail',
+    stillRail >= 4 && insideFull === 0,
+    `rail=${stillRail} inside=${insideFull}`,
   );
 }
 
