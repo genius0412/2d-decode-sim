@@ -59,6 +59,7 @@ import {
   GATE_OPEN_LATCH_S,
   GATE_PASS_FRAC,
   GATE_SEAT_FRAC,
+  RAIL_OPEN_S,
   GATE_LINE_S,
   GATE_RIDE_FRAC,
   GATE_TAPE_Y,
@@ -4322,12 +4323,86 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- A ROBOT CANNOT TOUCH AN ARTIFACT THAT IS STILL ON THE CLASSIFIER ----------
+// "I should not be able to intake directly off of the balls on the classifier or interact
+// in any way (push)." Artifacts in `rail` state are excluded from the Rapier solve
+// (solveBalls takes only `ground`) and from intake capture (robot.ts skips anything that is
+// not `ground`), so the ONLY path a robot ever had to one was railBlock's hand-off. It is
+// gone. This check states the invariant directly so it cannot come back by another route.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+  for (let i = 0; i < 6; i++) {
+    const b = w.balls[i];
+    const s = GATE_STOP_S + i * RAIL_PITCH;
+    b.state = { kind: 'rail', goal: 'blue', s, v: 0, overflow: false, pending: false };
+    b.pos = railPos('blue', s);
+    b.vel = { x: 0, y: 0 };
+    b.z = RAMP_SURFACE_Z;
+    b.vz = 0;
+  }
+  const ids = w.balls.slice(0, 6).map((b) => b.id);
+  const r = w.robots[0];
+  const z = gateZone('blue');
+  const hopper0 = r.hopper.length; // it starts with PRELOADS — only growth would matter
+  // Parked ON the outflow, well BELOW the lever (gateArmRect is y -2..3) so it cannot open
+  // the gate — otherwise the column advances because the gate opened, which is gate
+  // operation and not a shove, and the comparison below would be measuring that instead.
+  r.pos = { x: railPos('blue', RAIL_EXIT_S).x, y: -10 };
+  r.heading = 0;
+  r.fieldCentric = false;
+  r.vel = { x: 0, y: 0 };
+  void z;
+  for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+    step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+  }
+  const took = w.balls.filter((b) => ids.includes(b.id) && b.state.kind === 'held').length;
+  const withBot = w.balls.slice(0, 6).map((b) => (b.state as { s?: number }).s ?? NaN);
+  check(
+    'a robot driving into a shut gate with the intake running takes NOTHING off the rail',
+    took === 0 && r.hopper.length === hopper0,
+    `took ${took}, hopper ${hopper0} -> ${r.hopper.length}`,
+  );
+  // ...and it must not PUSH them. Against a CONTROL with no robot present, because the
+  // column settles against the shut gate on its own and that settling is not a shove.
+  const ctl = mkWorld('match', 'blue', 42);
+  startMatch(ctl);
+  for (const b of ctl.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+  for (let i = 0; i < 6; i++) {
+    const b = ctl.balls[i];
+    const cs = GATE_STOP_S + i * RAIL_PITCH;
+    b.state = { kind: 'rail', goal: 'blue', s: cs, v: 0, overflow: false, pending: false };
+    b.pos = railPos('blue', cs);
+    b.vel = { x: 0, y: 0 };
+    b.z = RAMP_SURFACE_Z;
+    b.vz = 0;
+  }
+  ctl.robots[0].pos = { x: 0, y: -40 }; // nowhere near
+  for (let i = 0; i < Math.round(3 / SIM_DT); i++) step(ctl, SIM_DT, new Map([[0, cmd({})]]));
+  const control = ctl.balls.slice(0, 6).map((b) => (b.state as { s?: number }).s ?? NaN);
+  // ...and it must not move anything that is INSIDE the channel. Scoped to s > RAIL_OPEN_S
+  // deliberately: below the mouth the rail runs on in the open under the gate, and a robot
+  // parked there legitimately blocks the outflow — that is a block, not a shove.
+  const inChannel = withBot
+    .map((v, i) => ({ v, c: control[i] }))
+    .filter((e) => e.c > RAIL_OPEN_S + BALL_RADIUS);
+  const shove = Math.max(...inChannel.map((e) => Math.abs(e.v - e.c)));
+  check(
+    '...and cannot move an artifact that is inside the channel (vs no robot at all)',
+    inChannel.length >= 4 && shove < 0.01,
+    `${inChannel.length} in-channel, worst difference ${shove.toFixed(4)}in`,
+  );
+}
+
 // ---- the gate's mouth is a PLACE, and a blocked one holds the column back ----
 // A drained artifact used to become a ground artifact at a fixed point below the gate
 // whatever occupied it, so parking a robot over the outflow made artifacts materialise
-// inside it and pile up. The mouth is checked now: a robot with room COLLECTS the drain,
-// a full one BLOCKS it, and the column queues on the rail exactly as it does behind a
-// closed gate.
+// inside it and pile up. The mouth is checked now, and a robot on it BLOCKS - it does not
+// collect. Handing artifacts straight off the rail into a hopper was the one path a robot
+// had to an artifact still in the classifier ("I should not be able to intake directly off
+// of the balls on the classifier"); they have to come OUT of the gate first, and then the
+// ordinary intake picks them up off the floor like anything else.
 {
   const stagedDrain = (hopper: number): World => {
     const w = foulWorld();
@@ -4365,9 +4440,14 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       Math.abs(b.pos.y - er.pos.y) < er.spec.length / 2,
   ).length;
   check(
-    'a robot parked under the gate COLLECTS the drain instead of it appearing inside it',
-    er.hopper.length === HOPPER_CAPACITY && insideEmpty === 0,
+    'a robot parked under the gate BLOCKS the drain — it never takes one off the rail',
+    er.hopper.length === 0 && insideEmpty === 0,
     `hopper=${er.hopper.length} inside=${insideEmpty}`,
+  );
+  check(
+    '...and the column queues on the rail behind it rather than materialising in it',
+    empty.balls.filter((b) => b.state.kind === 'rail').length === 6,
+    `${empty.balls.filter((b) => b.state.kind === 'rail').length}/6 still on the rail`,
   );
 
   const full = stagedDrain(HOPPER_CAPACITY);

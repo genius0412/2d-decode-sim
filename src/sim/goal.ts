@@ -351,11 +351,9 @@ export function updateBasins(world: World, dt: number): void {
  * lifecycle is not allowed to do.
  *
  * So the mouth is checked before anything leaves (`railBlock`):
- *   `taker` — a robot reaching the channel WITH room in its hopper. The artifact drops
- *             straight into it, which is what happens on the real field: you park under the
- *             gate to collect the drain.
- *   `s`     — how far up the rail a FULL robot's body reaches. That becomes the column's
- *             floor, so it backs up against the bumper wherever the bumper actually is.
+ *   `s`     — how far up the rail a robot's body reaches. That becomes the column's floor, so
+ *             it backs up against the bumper wherever the bumper actually is. A robot NEVER
+ *             takes an artifact off the rail: it has to come out of the gate first.
  *
  * ONLY A ROBOT BLOCKS OUTRIGHT. An artifact lying in the doorway is a different case and
  * must not be treated as one: making it block deadlocked the whole classifier, because a
@@ -401,6 +399,12 @@ function railBlock(
     // the mouth reaches s = 6.5, so the walk began ALREADY INSIDE the chassis, stopped there,
     // and put the floor 5in inside the robot. Its own collision extents can't lie about this.
     const e = robotExtents(r);
+    // The ceiling comes from the ROBOT's own extents and is NOT clamped to the channel mouth
+    // (RAIL_OPEN_S). Clamping it looks right — the classifier is solid, so a robot cannot be
+    // in there anyway — but the walk is what keeps an artifact from resting INSIDE a chassis,
+    // and capping it makes the block underestimate whenever a robot does overlap the rail
+    // above the mouth: measured 4.99in of an artifact inside the bumper, a full diameter.
+    // Keeping a robot out of the channel is the collider's job, not this walk's.
     const top = C.RAIL_EXIT_S + hyp(e.front + e.rear, e.half * 2) + C.BALL_RADIUS;
     // Walk UP and keep the LAST position an artifact could not occupy — `pointDepthInRobot`
     // is a signed distance, so `> -BALL_RADIUS` means the artifact's skin would be in the
@@ -419,13 +423,18 @@ function railBlock(
     }
   }
   if (who === null) return { s: -Infinity, taker: null, takeAt: C.RAIL_EXIT_S };
-  // A ROBOT WITH ROOM COLLECTS RATHER THAN BLOCKS (unchanged): it is standing under the
-  // gate intaking the drain, so the artifact goes into its hopper instead of piling on it.
-  // ...and it collects WHERE ITS BODY IS (`takeAt`), not at the fixed exit point. Handing the
-  // artifact over at RAIL_EXIT_S meant it first travelled the length of the robot's own
-  // footprint to get there — through the chassis — which is the same point-vs-body mistake as
-  // the block, just on the friendly branch of it.
-  if (who.hopper.length < C.HOPPER_CAPACITY) return { s: -Infinity, taker: who, takeAt: best };
+  /**
+   * A ROBOT BLOCKS. IT DOES NOT COLLECT.
+   *
+   * A robot with hopper room used to have artifacts handed to it straight off the rail — it
+   * "stood under the gate intaking the drain". That is reaching into the classifier, and the
+   * artifacts it took had never left the ramp. Artifacts must come OUT of the gate first
+   * (`ground`), and then the ordinary intake picks them up off the floor like anything else,
+   * which is both the physical truth and the only way the intake's own geometry gets a say.
+   *
+   * A robot sitting on the outflow now simply blocks it, at its own bumper — it is parked on
+   * the hole. Back off, let them out, then intake them.
+   */
   return { s: best, taker: null, takeAt: C.RAIL_EXIT_S };
 }
 
@@ -495,7 +504,7 @@ export function updateRails(world: World, dt: number): void {
      * at most ONE artifact out per tick, since the artifact it just released IS the new
      * doorway. RAIL_PITCH is wider than a tick of travel, so no two can cross together.
      */
-    const doorway = mouth.taker ? null : doorwayArtifact(world, a);
+    const doorway = doorwayArtifact(world, a);
     const mouthClear = mouth.s === -Infinity && !doorway;
     // the gate holds the RAMP lane only; OVERFLOW rides over the top of it (manual 9.8.3),
     // so a shut gate is not what stops an elevated artifact — only the mouth is.
@@ -720,12 +729,12 @@ export function updateRails(world: World, dt: number): void {
     const leaving = rail.filter((b) => (b.state as { s: number }).s <= out.takeAt);
     for (const b of leaving.slice(0, 1)) {
       if (b.state.kind !== 'rail') continue; // narrowing; `rail` is pre-filtered by goal
-      // NOTHING LEAVES INTO AN OCCUPIED MOUTH. Without a taker to hand it to, the artifact
-      // stays on the rail and the column queues behind it (see `railBlock`).
+      // NOTHING LEAVES INTO AN OCCUPIED MOUTH — the artifact stays on the rail and the
+      // column queues behind it (see `railBlock`).
       if (out.s !== -Infinity) continue;
       // ...and if the LAST artifact out is still in the doorway, shove it clear and wait a
       // tick rather than materialising this one on top of it.
-      if (!out.taker) {
+      {
         const ahead = doorway;
         if (ahead) {
           /**
@@ -759,20 +768,6 @@ export function updateRails(world: World, dt: number): void {
         b.state.pending = false;
         goal.classifiedCount++;
         addClassified(world, a);
-      }
-      // A ROBOT PARKED UNDER THE GATE COLLECTS THE DRAIN — the artifact goes straight into
-      // its hopper rather than through it onto the floor. It stays a physical world object
-      // (`held`), seeded from where it actually is, so it slides in from the mouth like any
-      // other intake instead of appearing in a slot.
-      if (out.taker && out.taker.hopper.length < C.HOPPER_CAPACITY) {
-        const r = out.taker;
-        const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
-        b.state = { kind: 'held', robot: r.id, slot: r.hopper.length, lx: loc.x, ly: loc.y, side: 0 };
-        b.vel = { x: 0, y: 0 };
-        b.z = 0;
-        b.vz = 0;
-        r.hopper.push(b.color);
-        continue;
       }
       const vel = tunnelExitVel(a);
       const r1 = nextRandom(world.rngState);

@@ -964,6 +964,7 @@ export const GATE_PADDLE_DRAG = 7; // 1/s at full sag
  * resting against sits one radius further down.
  */
 export const GATE_LINE_S = GATE_STOP_S - BALL_RADIUS;
+
 /**
  * THE ARM STOPS WHERE THE GEOMETRY STOPS IT — it does not come to rest between artifacts.
  *
@@ -1077,6 +1078,20 @@ export const GATE_TAPE_Y = (GATE_ZONE.y0 + GATE_ZONE.y1) / 2; // gate center y
  * collider — `decodeGateArms` — not part of the ramp's footprint.
  */
 export const CLASSIFIER_GATE_Y = GATE_TAPE_Y;
+/**
+ * WHERE THE CHANNEL ENDS AND THE OPEN FIELD BEGINS, in rail `s`.
+ *
+ * The classifier is a solid structure (`classifierRect`, y from CLASSIFIER_GATE_Y up), so a
+ * robot cannot be inside it and cannot reach an artifact that is. Above this `s` an artifact
+ * is IN the channel and untouchable; below it the rail runs on in the open, under the gate,
+ * toward the exit.
+ *
+ * `railBlock` used to walk the rail from RAIL_EXIT_S up to a ceiling taken from the ROBOT's
+ * own extents — as far as s = 6.5, well inside the channel. That is the single path a robot
+ * had to an artifact on the ramp, and it was both a block and a HAND-OFF: a robot with hopper
+ * room took artifacts straight off the rail into its hopper.
+ */
+export const RAIL_OPEN_S = CLASSIFIER_GATE_Y - CLASSIFIER_Y0;
 /** where released/overflow balls emerge onto the floor, on the goal's wall */
 export const TUNNEL_EXIT = { x: 68, y: -3 };
 /**
