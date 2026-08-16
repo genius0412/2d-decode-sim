@@ -190,6 +190,21 @@ export function solveRobots(
 }
 
 /**
+ * COLLISION GROUPS for the artifact solve. Rapier packs these as
+ * `(membership << 16) | filter`, and two colliders interact only if each one's membership
+ * is in the other's filter. Static field colliders keep the default (member of everything,
+ * filter everything), so they are unaffected and need no changes.
+ *
+ * The point is one exclusion: the chassis must not fight the intake over an artifact the
+ * intake is actively drawing in. The funnel pulls toward the throat at the chassis front
+ * face while the chassis collider pushes off it, and the artifact oscillates — measured
+ * 1.45s to swallow one 7in off-centre against main's 0.33s. See `intakeClaims`.
+ */
+const LOOSE_GROUP = 0x0001ffff; // ordinary artifact: everything sees it
+const CLAIMED_GROUP = 0x0002ffff; // artifact the intake has hold of
+const CHASSIS_GROUP = 0x0004fffd; // chassis: filters OUT the claimed bit (0x0002)
+
+/**
  * Resolve GROUND-ball translation + velocity for one tick via a separate Rapier
  * solve: light circle bodies (linvel = b.vel, mass = BALL_MASS) against the
  * static field — ball↔ball and ball↔wall / ball↔goal-face / ball↔classifier — AND
@@ -217,7 +232,12 @@ export function solveRobots(
  * decision #10) and its funnel geometry is per-preset. That region stays bespoke, in
  * `collideBallRobot`, which now handles ONLY it.
  */
-export function solveBalls(world: World, dt: number, colliders: FieldColliders): void {
+export function solveBalls(
+  world: World,
+  dt: number,
+  colliders: FieldColliders,
+  claimed: Set<number> = new Set(),
+): void {
   const groundBalls = world.balls.filter((b) => b.state.kind === 'ground');
   if (groundBalls.length === 0) return;
 
@@ -235,6 +255,10 @@ export function solveBalls(world: World, dt: number, colliders: FieldColliders):
         .setMass(C.BALL_MASS)
         .setRestitution(C.BALL_BALL_RESTITUTION)
         .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
+        // An artifact the intake has hold of goes in its own membership group so the
+        // chassis can filter it out — see CLAIMED_GROUP. Everything else (field, other
+        // artifacts) still sees it, because those groups accept all comers.
+        .setCollisionGroups(claimed.has(b.id) ? CLAIMED_GROUP : LOOSE_GROUP)
         .setFriction(C.PHYS_FRICTION),
       body,
     );
@@ -257,6 +281,8 @@ export function solveBalls(world: World, dt: number, colliders: FieldColliders):
       RAPIER.ColliderDesc.cuboid(r.spec.length / 2, r.spec.width / 2)
         .setRestitution(C.BALL_ROBOT_RESTITUTION)
         .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
+        // ...and the chassis does NOT see artifacts the intake is drawing in.
+        .setCollisionGroups(CHASSIS_GROUP)
         .setFriction(C.PHYS_FRICTION),
       body,
     );

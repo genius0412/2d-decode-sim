@@ -61,6 +61,7 @@ import {
   GATE_SEAT_FRAC,
   RAIL_OPEN_S,
   RAMP_SLOTS,
+  ROBOT_MIN_WIDTH,
   GATE_LINE_S,
   GATE_RIDE_FRAC,
   GATE_TAPE_Y,
@@ -4020,6 +4021,73 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     w.match.fouls.blue.minor + w.match.fouls.blue.major >= 1 &&
       w.match.fouls.red.minor + w.match.fouls.red.major === 0,
     `blue=${w.match.fouls.blue.minor}/${w.match.fouls.blue.major} red=${w.match.fouls.red.minor}/${w.match.fouls.red.major}`,
+  );
+}
+
+// ---- the intake and the chassis must not fight over the same artifact -------------
+// "It seems to be harder to intake in general compared to the stable version."
+// The capture ENVELOPE was never the problem — the same offsets hit and the same ones miss
+// as on main. What changed is that the chassis became a collider in the artifact solve, and
+// the intake's funnel pulls toward the throat at `local.x = hl`, which IS the chassis front
+// face. The two reached for the same artifact and pulled opposite ways: measured 7in
+// off-centre, the funnel drew it 7.0 -> 4.4 -> 3.9 and the chassis shoved it back out
+// 4.2 -> 4.7 -> 5.3 -> 6.1 -> 6.9 -> 7.8 -> 8.8 before it was finally swallowed. 1.45s
+// against main's 0.33s, and that oscillation is what reads as the intake not gripping.
+{
+  const grab = (offset: number, key: 'sloped' | 'vector' | 'triangle') => {
+    const w = mkWorld('match', 'blue', 7, {
+      intake: key,
+      length: INTAKE_PRESETS[key].maxLength,
+      width: Math.max(ROBOT_MIN_WIDTH, INTAKE_PRESETS[key].minWidth),
+    });
+    startMatch(w);
+    const r = w.robots[0];
+    r.hopper = [];
+    for (const b of w.balls) {
+      b.state = { kind: 'ground' };
+      b.pos = { x: FIELD_HALF - 6, y: -FIELD_HALF + 6 };
+      b.vel = { x: 0, y: 0 };
+      b.z = 0;
+      b.vz = 0;
+    }
+    const target = w.balls[0];
+    target.pos = { x: offset, y: -10 };
+    r.pos = { x: 0, y: -26 };
+    r.heading = Math.PI / 2;
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    let pushedOut = offset;
+    for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: 1, intake: true })]]));
+      // the human player restocks during teleop — keep everything but the target away
+      for (const b of w.balls) {
+        if (b.id !== target.id && b.state.kind === 'ground') {
+          b.pos = { x: FIELD_HALF - 6, y: -FIELD_HALF + 6 };
+          b.vel = { x: 0, y: 0 };
+        }
+      }
+      if (target.state.kind !== 'ground') return { t: i * SIM_DT, pushedOut };
+      pushedOut = Math.max(pushedOut, target.pos.x);
+    }
+    return { t: -1, pushedOut };
+  };
+  // measured on main, which is the reference the user is comparing against
+  const edge = grab(7, 'sloped');
+  check(
+    'an artifact at the edge of the mouth is swallowed promptly, not batted about',
+    edge.t >= 0 && edge.t < 0.5,
+    `7in off-centre: ${edge.t < 0 ? 'never' : edge.t.toFixed(2) + 's'} (main 0.33s, unclaimed 1.45s)`,
+  );
+  check(
+    '...and the chassis never shoves it back out of the mouth',
+    edge.pushedOut < 7.5,
+    `pushed out to x=${edge.pushedOut.toFixed(2)} (started at 7.0; unclaimed reached 9.28)`,
+  );
+  // the envelope itself is unchanged — this is about the two passes fighting, not reach
+  check(
+    'the capture envelope is unchanged: in at 6in, out at 8in',
+    grab(6, 'sloped').t >= 0 && grab(8, 'sloped').t < 0,
+    `6in ${grab(6, 'sloped').t.toFixed(2)}s, 8in ${grab(8, 'sloped').t < 0 ? 'MISS' : 'hit'}`,
   );
 }
 

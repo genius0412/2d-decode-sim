@@ -264,6 +264,54 @@ export function updateRobot(world: World, r: RobotState, cmd: RobotCommand, dt: 
  * Updates the robot's actions (turret, fire, intake).
  * This function is called for all robots regardless of movement type.
  */
+/**
+ * ARTIFACTS THE INTAKE HAS ENGAGED — the ones its funnel is actively drawing in.
+ *
+ * The intake pulls an artifact toward the throat at `local.x = hl`, which IS the chassis
+ * front face, so the funnel and the chassis collider in `solveBalls` are reaching for the
+ * same artifact and pulling opposite ways. Measured against main on an artifact 7in
+ * off-centre: the funnel draws it 7.0 -> 4.4 -> 3.9, then the chassis shoves it back out
+ * 4.2 -> 4.7 -> 5.3 -> 6.1 -> 6.9 -> 7.8 -> 8.8 before it is finally swallowed. 1.45s
+ * against main's 0.33s, and that oscillation is what reads as the intake not gripping.
+ *
+ * The capture ENVELOPE is unchanged either way — the same offsets hit and the same ones
+ * miss — so this is not about reach, only about the two passes fighting. An artifact under
+ * the wheels belongs to the intake (product decision #10: the mouth is open by design and
+ * its funnel geometry is per-preset), so it is excluded from the chassis collider for as
+ * long as the intake has hold of it. It still collides with the field and other artifacts.
+ *
+ * Mirrors the `underWheels` test in updateRobotActions — keep the two in step.
+ */
+export function intakeClaims(world: World, commands: Map<number, RobotCommand>): Set<number> {
+  const claimed = new Set<number>();
+  for (const r of world.robots) {
+    const running = (commands.get(r.id)?.intake ?? false) || r.autoIntake;
+    if (!running || r.hopper.length >= C.HOPPER_CAPACITY) continue;
+    const preset = C.INTAKE_PRESETS[r.spec.intake];
+    const m = C.intakeMouth(r.spec);
+    if (m.drawIn <= 0) continue;
+    const hl = r.spec.length / 2;
+    const tip = hl + preset.reach;
+    // The WHOLE mouth opening, not just the wheel span: on a wedge preset the wheels only
+    // span the narrow throat, but the wedge funnels artifacts in from the full width of the
+    // opening (product decision #10), and it is those outermost ones the chassis was
+    // fighting hardest — sloped at 7in off-centre took 1.45s against main's 0.33s.
+    const own = Math.max(m.wedge ? m.throatHalf : m.mouthHalf, m.mouthHalf);
+    for (const b of world.balls) {
+      if (b.state.kind !== 'ground' || b.z > 6) continue;
+      const local = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+      if (
+        local.x > hl - C.BALL_RADIUS &&
+        local.x < tip + C.BALL_RADIUS &&
+        Math.abs(local.y) < own
+      ) {
+        claimed.add(b.id);
+      }
+    }
+  }
+  return claimed;
+}
+
 export function updateRobotActions(world: World, r: RobotState, cmd: RobotCommand, dt: number): void {
   // If autoPathActive, force aimAssist, autoIntake, and autoFire to true
   if (r.autoPathActive) {
