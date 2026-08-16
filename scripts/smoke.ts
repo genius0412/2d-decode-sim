@@ -60,6 +60,7 @@ import {
   GATE_PASS_FRAC,
   GATE_SEAT_FRAC,
   RAIL_OPEN_S,
+  RAMP_SLOTS,
   GATE_LINE_S,
   GATE_RIDE_FRAC,
   GATE_TAPE_Y,
@@ -4320,6 +4321,126 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       w5.match.cards?.blue.red === 1 &&
       w5.match.cards?.blue.yellow === 0,
     `earned=${earned} total=${w5.match.scores.blue.total} cards=${JSON.stringify(w5.match.cards?.blue)}`,
+  );
+}
+
+// ---- a PINNED artifact in the doorway is not shoved — it must not buzz -------------
+// "only the ball that has already dropped from the classifier moves back and forth."
+// EXIT_NUDGE is a velocity FLOOR re-applied every tick the doorway is occupied. With a robot
+// parked down the tunnel the artifact has nowhere to go, so the floor and the chassis took
+// turns: 60 direction reversals in two seconds, one every OTHER TICK, peaking at 67.6 in/s.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+  for (let i = 0; i < 9; i++) {
+    const b = w.balls[i];
+    const cs = GATE_STOP_S + i * RAIL_PITCH;
+    b.state = { kind: 'rail', goal: 'blue', s: cs, v: 0, overflow: false, pending: false };
+    b.pos = railPos('blue', cs);
+    b.vel = { x: 0, y: 0 };
+    b.z = RAMP_SURFACE_Z;
+    b.vz = 0;
+  }
+  const r = w.robots[0];
+  const z = gateZone('blue');
+  r.pos = { x: z.x1 + 7, y: (z.y0 + z.y1) / 2 };
+  r.heading = Math.PI;
+  r.fieldCentric = false;
+  r.vel = { x: 0, y: 0 };
+  run(w, cmd({ driveY: 1 }), 0.4); // tap it open so something drops out
+  r.pos = { x: railPos('blue', RAIL_EXIT_S).x, y: -16 }; // ...then park down the tunnel
+  r.heading = Math.PI / 2;
+  r.vel = { x: 0, y: 0 };
+  const hist = new Map<number, { x: number; y: number }[]>();
+  for (let i = 0; i < Math.round(6 / SIM_DT); i++) {
+    step(w, SIM_DT, new Map([[0, cmd({})]]));
+    for (const b of w.balls) {
+      if (b.state.kind !== 'ground' || b.pos.x > 100) continue;
+      if (!hist.has(b.id)) hist.set(b.id, []);
+      hist.get(b.id)!.push({ x: b.pos.x, y: b.pos.y });
+    }
+  }
+  let worst = 0;
+  let peak = 0;
+  for (const pts of hist.values()) {
+    if (pts.length < 120) continue;
+    const t = pts.slice(-120); // the last 2s, long after everything should have settled
+    let rev = 0;
+    for (let i = 2; i < t.length; i++) {
+      const a1 = { x: t[i - 1].x - t[i - 2].x, y: t[i - 1].y - t[i - 2].y };
+      const a2 = { x: t[i].x - t[i - 1].x, y: t[i].y - t[i - 1].y };
+      const m2 = hyp(a2.x, a2.y);
+      if (a1.x * a2.x + a1.y * a2.y < 0 && m2 > 0.004) {
+        rev++;
+        peak = Math.max(peak, m2 * 60);
+      }
+    }
+    worst = Math.max(worst, rev);
+  }
+  check(
+    'an artifact pinned in the doorway settles instead of buzzing back and forth',
+    worst <= 4,
+    `worst ${worst} reversals in the last 2s, peak ${peak.toFixed(1)} in/s`,
+  );
+}
+
+// ---- overflow RIDES the retained column, it does not glide over a flat lid --------
+// "overflow balls should not stack either. also, remember the geometry. overflow balls
+// should not be flowing down that smoothly." Both halves were true: the ride height was a
+// flat OVERFLOW_Z for the whole descent (measured dead level at 13.50 across nine spheres)
+// and 13.5 is LESS than a diameter above the ramp — sunk into the column it is supposed to
+// be riding on. A ball resting on a ball sits one full diameter up.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  w.robots[0].pos = { x: 0, y: -40 };
+  for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+  for (let i = 0; i < RAMP_SLOTS; i++) {
+    const b = w.balls[i];
+    const cs = GATE_STOP_S + i * RAIL_PITCH;
+    b.state = { kind: 'rail', goal: 'blue', s: cs, v: 0, overflow: false, pending: false };
+    b.pos = railPos('blue', cs);
+    b.vel = { x: 0, y: 0 };
+    b.z = RAMP_SURFACE_Z;
+    b.vz = 0;
+  }
+  const rider = w.balls[RAMP_SLOTS];
+  rider.state = { kind: 'rail', goal: 'blue', s: 46, v: 0, overflow: true, pending: false };
+  rider.pos = railPos('blue', 46);
+  rider.vel = { x: 0, y: 0 };
+  rider.z = OVERFLOW_Z;
+  rider.vz = 0;
+  let zLo = Infinity;
+  let zHi = -Infinity;
+  const speeds: number[] = [];
+  for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+    step(w, SIM_DT, new Map([[0, cmd({})]]));
+    if (rider.state.kind !== 'rail') break;
+    const st = rider.state as { s: number; v: number };
+    if (st.s < 4) break; // stop before it leaves the column
+    zLo = Math.min(zLo, rider.z);
+    zHi = Math.max(zHi, rider.z);
+    speeds.push(Math.abs(st.v));
+  }
+  check(
+    'an overflow artifact rides a DIAMETER above the ramp, on top of the column',
+    Math.abs(OVERFLOW_Z - (RAMP_SURFACE_Z + 2 * BALL_RADIUS)) < 1e-9 && zHi > RAMP_SURFACE_Z + 2 * BALL_RADIUS - 0.2,
+    `peak z ${zHi.toFixed(2)}, a diameter up is ${(RAMP_SURFACE_Z + 2 * BALL_RADIUS).toFixed(2)}`,
+  );
+  check(
+    '...and its height UNDULATES over the spheres rather than tracking a flat lid',
+    zHi - zLo > 0.3,
+    `z ${zLo.toFixed(2)}..${zHi.toFixed(2)} (span ${(zHi - zLo).toFixed(2)}in)`,
+  );
+  // the ride is only mildly bumpy BY GEOMETRY: on a packed column the spheres are touching,
+  // so a rider dips just 0.7in between crests. It must not be perfectly monotonic, though.
+  let stalls = 0;
+  for (let i = 1; i < speeds.length; i++) if (speeds[i] < speeds[i - 1] - 1e-9) stalls++;
+  check(
+    '...and it loses speed cresting each artifact instead of accelerating monotonically',
+    stalls > 0,
+    `${stalls} decelerating ticks over ${speeds.length}`,
   );
 }
 

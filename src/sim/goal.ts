@@ -586,10 +586,51 @@ export function updateRails(world: World, dt: number): void {
       const elevated = st.overflow && retainedS.some((rs) => rs < st.s + C.RAIL_PITCH * 0.5);
 
       st.v = Math.max(st.v - C.RAIL_ACCEL * dt, -C.RAIL_TERMINAL);
-      // clambering over artifacts is lossy in a way a ramp is not — this is what makes
-      // overflow slower, rather than a speed handed to it. Terminal speed while riding is
-      // RAIL_ACCEL / OVERFLOW_DRAG.
-      if (elevated) st.v *= Math.max(0, 1 - C.OVERFLOW_DRAG * dt);
+      /**
+       * WHAT AN ELEVATED ARTIFACT IS ACTUALLY ROLLING ON — the scalloped tops of the
+       * retained column, not a smooth incline.
+       *
+       * `surfaceZ` is where its centre sits: resting on a sphere of the same size means its
+       * centre is one DIAMETER from that sphere's centre, so at horizontal offset `dx` it
+       * rides at RAMP_SURFACE_Z + sqrt(D² − dx²) — a full diameter up when dead on top of
+       * one, dipping into the hollow between two. The old model pinned it at a flat
+       * OVERFLOW_Z for the entire ride: measured dead level at 13.50 across nine spheres,
+       * and 13.5 is less than a diameter above the ramp, i.e. sunk INTO the column it is
+       * supposed to be riding over.
+       *
+       * The slope of that surface is the interesting half. Rolling down-ramp, the artifact
+       * drops into each hollow (gravity with it) and has to climb the next crest (gravity
+       * against it), so it lurches rather than gliding — which is what "should not be
+       * flowing down that smoothly" is asking for, and it also breaks up the tidy second
+       * row the overflow lane used to hold at exactly RAIL_PITCH.
+       */
+      let surfaceZ = C.OVERFLOW_Z;
+      if (elevated) {
+        const D = 2 * C.BALL_RADIUS;
+        let slope = 0;
+        // seeded BELOW every possible scallop, not at OVERFLOW_Z: the fallback is exactly the
+        // dead-on-top height (RAMP_SURFACE_Z + D), so seeding there made `h > surfaceZ` false
+        // for every sphere and the slope never got set at all — the ride stayed dead level.
+        let best = -Infinity;
+        for (const rs of retainedS) {
+          const dx = st.s - rs;
+          if (Math.abs(dx) >= D) continue;
+          const lift = Math.sqrt(D * D - dx * dx);
+          const h = C.RAMP_SURFACE_Z + lift;
+          if (h <= best) continue;
+          best = h;
+          // dh/ds of that sphere's surface; it diverges at the hand-over between spheres,
+          // so it is capped (an unbounded kick there would fling artifacts off the ramp)
+          slope = Math.max(-C.OVERFLOW_SLOPE_MAX, Math.min(C.OVERFLOW_SLOPE_MAX, -dx / Math.max(lift, 1e-3)));
+        }
+        if (best > -Infinity) surfaceZ = best; // else it is over nothing — keep the fallback
+        // gravity along the LOCAL slope: descending into a hollow speeds it up, cresting
+        // the next artifact slows it down
+        st.v -= C.OVERFLOW_BUMP * slope * dt;
+        // ...and clambering is still lossy in a way a ramp is not
+        st.v *= Math.max(0, 1 - C.OVERFLOW_DRAG * dt);
+        st.v = Math.max(st.v, -C.RAIL_TERMINAL);
+      }
       // THE PADDLE HAS WEIGHT, and an artifact passing under an arm that is resting on it
       // carries that weight. The bear is (1 − gatePos): a robot holding the arm fully
       // lifted is touching nothing and costs the flow nothing — which is precisely why a
@@ -718,7 +759,7 @@ export function updateRails(world: World, dt: number): void {
       // glide smoothly onto the rail line — no positional snapping
       b.pos.y = C.CLASSIFIER_Y0 + st.s;
       b.pos.x = approach(b.pos.x, railX, C.RAIL_BLEND_SPEED * dt);
-      b.z = approach(b.z, elevated ? C.OVERFLOW_Z : C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
+      b.z = approach(b.z, elevated ? surfaceZ : C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
     }
 
     // Balls past the exit roll out onto the floor from where they are — the LOWEST first, and
@@ -749,15 +790,31 @@ export function updateRails(world: World, dt: number): void {
            * So it sets a FLOOR on the outward component and leaves anything already faster
            * alone: the artifact creeps clear and nothing accumulates.
            */
-          const push = tunnelExitVel(a);
-          const mag = hyp(push.x, push.y);
-          const ux = push.x / mag;
-          const uy = push.y / mag;
-          const target = mag * C.EXIT_NUDGE;
-          const along = ahead.vel.x * ux + ahead.vel.y * uy;
-          if (along < target) {
-            ahead.vel.x += ux * (target - along);
-            ahead.vel.y += uy * (target - along);
+          /**
+           * ...BUT NOT INTO SOMETHING SOLID. The nudge is a FLOOR re-applied every tick the
+           * doorway is occupied, and if the artifact cannot go anywhere — pinned between the
+           * gate and a robot parked down the tunnel — the floor and the chassis take turns:
+           * measured 60 direction reversals in two seconds, one every other tick, peaking at
+           * 67.6 in/s. That is the artifact "moving back and forth" in front of the gate.
+           *
+           * A robot on the outflow means the mouth is blocked, and a blocked mouth is
+           * supposed to STALL the column (railBlock already says so). So the column stops
+           * shoving and simply waits, which is what it does behind any other obstruction.
+           */
+          const pinned = world.robots.some(
+            (rb) => pointDepthInRobot(rb, ahead.pos) > -C.BALL_RADIUS * C.EXIT_PIN_FRAC,
+          );
+          if (!pinned) {
+            const push = tunnelExitVel(a);
+            const mag = hyp(push.x, push.y);
+            const ux = push.x / mag;
+            const uy = push.y / mag;
+            const target = mag * C.EXIT_NUDGE;
+            const along = ahead.vel.x * ux + ahead.vel.y * uy;
+            if (along < target) {
+              ahead.vel.x += ux * (target - along);
+              ahead.vel.y += uy * (target - along);
+            }
           }
           continue;
         }

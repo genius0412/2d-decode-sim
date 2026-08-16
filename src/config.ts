@@ -791,7 +791,30 @@ export const CLASSIFIER_Y0 = 2; // gate end (y)
 export const CLASSIFIER_Y1 = FIELD_HALF; // reaches the far wall corner
 export const RAMP_RAIL_INSET = 3; // ball rail distance from the wall
 export const RAMP_SURFACE_Z = 10; // drawn height of balls on the ramp
-export const OVERFLOW_Z = 13.5; // overflow rolls over the retained balls
+/**
+ * Height an overflow artifact's centre rides at when it is NOT over anything — the fallback
+ * only. A ball resting on another ball sits one full DIAMETER above it, so over the retained
+ * column the real height is RAMP_SURFACE_Z + 2R = 15, and it is computed per-tick from the
+ * artifacts actually underneath (see the scallop in updateRails). This was a flat 13.5 —
+ * less than a diameter above the ramp, i.e. sunk into the column it is supposed to be riding
+ * on, and pinned there for the whole ride: measured z = 13.50 from top to bottom, dead level
+ * across nine spheres.
+ */
+export const OVERFLOW_Z = RAMP_SURFACE_Z + 2 * BALL_RADIUS;
+/**
+ * How hard the scalloped top of the retained column throws an overflow artifact about.
+ *
+ * Riding over a row of spheres is not a ramp: the artifact drops into each hollow and has to
+ * climb the next crest, so gravity is alternately with it and against it. This is that
+ * component — acceleration per unit of local surface slope — and it is what makes the ride
+ * lurch instead of gliding. Without it the overflow lane accelerated monotonically to
+ * terminal (1 → 13 → 21 → 26 → 29 → 31 → 33 → 34 in/s, dead smooth) and the artifacts held
+ * a tidy second row at exactly RAIL_PITCH, which is not what rolling over a pile looks like.
+ */
+export const OVERFLOW_BUMP = 40; // in/s² per unit slope
+/** cap on that slope — the geometry diverges at the point where one sphere hands over to
+ * the next, and an unbounded kick there would fling artifacts off the ramp */
+export const OVERFLOW_SLOPE_MAX = 1.0;
 
 // goal basin (inside the triangular goal structure)
 export const BASIN_FLOOR_Z = 14; // funnel floor height inside the goal
@@ -861,6 +884,16 @@ export const EXIT_NUDGE = 1.0;
  * a dispenser rather than flowing.
  */
 export const EXIT_CLEARANCE = 1.0; // in, on top of a full artifact diameter
+/**
+ * How close to a chassis the doorway artifact has to be before the column stops shoving it.
+ *
+ * EXIT_NUDGE is a velocity FLOOR re-applied every tick the doorway is occupied. If the
+ * artifact is pinned — between the gate and a robot parked down the tunnel — the floor and
+ * the chassis take turns and it BUZZES: measured 60 direction reversals in two seconds, one
+ * every other tick, peaking at 67.6 in/s. A fraction of a radius rather than the whole one,
+ * so an artifact merely rolling past a robot is still nudged normally.
+ */
+export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
 /**
  * Rolling resistance an artifact carries while it is riding ON TOP of the retained column
  * instead of on the ramp — the bumpy business of climbing over one artifact, dropping between
