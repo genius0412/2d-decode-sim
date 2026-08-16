@@ -70,6 +70,45 @@ export function gateLiftRate(ramSpeed: number): number {
   return Math.min(C.GATE_OPEN_RATE + C.GATE_OPEN_RATE_SPEED * ramSpeed, C.GATE_OPEN_RATE_MAX);
 }
 
+/**
+ * HOW HIGH AN ARTIFACT HOLDS THE PADDLE, from where the paddle actually lands on it.
+ *
+ * `d` is the artifact's centre minus GATE_LINE_S: positive = it has not reached the gate
+ * line yet, negative = it is already through. The paddle's edge comes down the vertical at
+ * the gate line and meets the artifact's surface at height `R + sqrt(R² − d²)` — a full
+ * diameter dead on top, one radius at the equator, nothing at all beyond.
+ *
+ * The full-diameter case maps to GATE_SEAT_FRAC, which is BELOW GATE_PASS_FRAC on purpose:
+ * a paddle resting on a ball is the marginal contact, clearance exactly the ball and no
+ * more, so being seated under the arm is NOT being past it. Lifting the rest of the way
+ * takes momentum. Equating the two is what made a tap empty the whole ramp — see
+ * GATE_SEAT_FRAC.
+ */
+export function gateRestOn(d: number): number {
+  const R = C.BALL_RADIUS;
+  if (Math.abs(d) >= R) return 0; // the paddle misses it entirely and falls past
+  return (C.GATE_SEAT_FRAC * (R + Math.sqrt(R * R - d * d))) / (2 * R);
+}
+
+/**
+ * Is the paddle actually RESTING ON the artifact at offset `d` — bearing its weight on it,
+ * as opposed to merely being somewhere near it?
+ *
+ * Three conditions, and the FIRST one is load-bearing in a way that is easy to miss:
+ * `gateRestOn` returns 0 both for "the arm is flat on the ramp" and for "this artifact is
+ * nowhere near the gate", so testing `gatePos <= gateRestOn(d)` alone says every artifact
+ * on the rail is in contact whenever the gate is shut. That froze the ENTIRE rail the
+ * moment the gate closed: artifacts never reached the stack, nothing classified, and a
+ * dozen unrelated shot/scoring checks went red at once. The paddle has to physically reach
+ * it (|d| < R) before any of the rest means anything.
+ */
+function paddleBearsOn(goal: World['goals'][Alliance], d: number): boolean {
+  const rest = gateRestOn(d);
+  if (rest <= 0) return false; // out of the paddle's reach — it falls past, touching nothing
+  if (goal.gateLatch > 0) return false; // a robot is holding the arm up, clear of everything
+  return goal.gatePos <= rest + 1e-9; // settled onto it, not riding above it
+}
+
 /** the open fraction the PHYSICAL handle collider should use THIS tick. buildGateArms
  * (in physicsEngine solveRobots) runs one step BEFORE updateGates mutates gatePos, so
  * without this it would build the handle from last tick's (still-closed) gatePos and
@@ -442,12 +481,37 @@ export function updateRails(world: World, dt: number): void {
     // both conditional on "was it above this last tick" let an artifact that dipped below its
     // neighbour by a hair free-fall through the entire column (measured: id 906 passing s=2.5 at
     // 46 in/s with its floor at 7.1, straight out through a shut gate).
+    /**
+     * THE FLOOR AT THE EXIT IS MOVING, and seeding this at zero is what made the drain a
+     * metronome — 0.60s between releases whether the gate was held wide open or merely
+     * tapped, which is the same thing twice and neither of them is flow.
+     *
+     * The frontmost artifact rests on whatever is in the doorway. That is not a wall: it is
+     * another artifact, rolling away down the tunnel at ~30 in/s. Handing it `floorV = 0`
+     * said otherwise, and the consequences cascaded exactly once per artifact, forever:
+     *
+     *   the front artifact reaches the exit at 27 in/s → clamped to a DEAD STOP → released
+     *   on a later tick with `speed = |v| = 0` → sits motionless in the doorway → blocks the
+     *   next one, which is now also stopped dead and also leaves at zero → and the only
+     *   thing that ever moves any of them is the EXIT_NUDGE creep at 22 in/s.
+     *
+     * So every artifact after the first restarted from rest and re-ran the same 0.33s of
+     * gravity down one RAIL_PITCH, then waited ~0.28s for the creep to clear the doorway.
+     * Measured: the doorway distance sat pinned at 0.02in for the whole of each cycle.
+     *
+     * The floor moves at the speed of what is on it. A packed column then follows the
+     * artifact ahead out at ramp speed, and the "cadence" of a wide-open gate becomes what
+     * it should always have been — the rate at which artifacts one RAIL_PITCH apart pass a
+     * point, i.e. a stream. Only while the gate is OPEN: against a shut gate the floor is
+     * the paddle, which is not going anywhere.
+     */
+    const exitFloorV = goal.gateOpen && doorway ? Math.min(0, doorway.vel.y) : 0;
     let rampAhead = -Infinity;
-    let rampFloorV = 0;
+    let rampFloorV = exitFloorV;
     // ...and the same pair for an ELEVATED artifact: never stopped by the gate, only by the exit
     // being physically occupied or by another elevated artifact ahead of it
     let overAhead = -Infinity;
-    let overFloorV = 0;
+    let overFloorV = exitFloorV;
     let retainedBelow = 0;
 
     // the ramp-level artifacts, for deciding what is riding on what
@@ -472,6 +536,41 @@ export function updateRails(world: World, dt: number): void {
       // overflow slower, rather than a speed handed to it. Terminal speed while riding is
       // RAIL_ACCEL / OVERFLOW_DRAG.
       if (elevated) st.v *= Math.max(0, 1 - C.OVERFLOW_DRAG * dt);
+      // THE PADDLE HAS WEIGHT, and an artifact passing under an arm that is resting on it
+      // carries that weight. The bear is (1 − gatePos): a robot holding the arm fully
+      // lifted is touching nothing and costs the flow nothing — which is precisely why a
+      // HELD gate streams and a merely-tapped one, with the paddle settled onto the flow
+      // at GATE_RIDE_FRAC, meters it. Overflow rides over the top of the gate (9.8.3) and
+      // never meets the paddle at all.
+      if (
+        !elevated &&
+        st.s > C.GATE_CLOSE_CLEAR_LO &&
+        st.s < C.GATE_CLOSE_CLEAR_HI &&
+        goal.gatePos < 1
+      ) {
+        st.v *= Math.max(0, 1 - C.GATE_PADDLE_DRAG * (1 - goal.gatePos) * dt);
+        /**
+         * ...AND WHERE ON THE ARTIFACT IT LANDED DECIDES WHAT HAPPENS NEXT.
+         *
+         * The paddle bearing down off-centre does not only press, it pushes sideways — the
+         * contact normal is tilted by exactly as much as the artifact is off the gate line.
+         * `d < 0` means the arm came down on the artifact's UPHILL face, behind it, so that
+         * component points down-ramp: the arm squeezes it out from under itself and falls
+         * shut behind it, with no robot involved. Scaled by d/R, so it is nothing dead on
+         * top (the balance point) and strongest out at the equator.
+         *
+         * Only the downhill half is applied. `d > 0` is the arm resting on the artifact's
+         * downhill face, wedging it — and that block is already the solver's gate floor; an
+         * up-ramp force here would fight the "never push it back UP" invariant instead.
+         *
+         * Gated on the arm actually being IN CONTACT: it bears on this artifact only if it
+         * has settled to the height this artifact holds it at, not merely passed nearby.
+         */
+        const d = st.s - C.GATE_LINE_S;
+        if (d < 0 && paddleBearsOn(goal, d)) {
+          st.v += ((C.GATE_PADDLE_SHOVE * d) / C.BALL_RADIUS) * dt; // d < 0 ⇒ down-ramp
+        }
+      }
       st.s += st.v * dt;
 
       const ahead = elevated ? overAhead : rampAhead;
@@ -539,6 +638,24 @@ export function updateRails(world: World, dt: number): void {
       if (st.s < solid) {
         st.s = Math.min(solid, wasS + C.RAIL_PUSH_RATE * dt);
         st.v = mouth.s > exitFloor ? 0 : wasV;
+      }
+      /**
+       * WEDGED: the paddle came down on this artifact's DOWNHILL face and is now physically
+       * in front of it. It cannot descend — not because the gate is "shut" (it is resting on
+       * this artifact, part-open, and `gateOpen` may be either) but because there is a plate
+       * in the way.
+       *
+       * The solver's gate floor does not cover this. That floor sits at GATE_STOP_S, where a
+       * retained column packs, and an artifact the arm has landed on is BELOW it and hence
+       * exempted by `wasS >= base` — so without this it simply rolled on out from under a
+       * paddle resting on it. Frozen where it is until somebody works the lever, which is
+       * the whole point of the distinction: land on the uphill face and it squeezes itself
+       * out (GATE_PADDLE_SHOVE above); land on the downhill face and it is stuck.
+       */
+      const dw = wasS - C.GATE_LINE_S; // where the paddle met it, at the START of the tick
+      if (!elevated && dw > 0 && paddleBearsOn(goal, dw) && st.s < wasS) {
+        st.s = wasS;
+        st.v = 0;
       }
 
       if (elevated) {
@@ -714,47 +831,96 @@ export function updateGates(
     const touching = world.robots.some((r) => robotIntersectsRect(r, gateArmRect(a)));
     const wasOpen = goal.gateOpen;
 
-    if (pushing) {
-      // a push (past the tiny debounce) COMMITS the arm open and re-arms a latch — the
-      // driver does NOT have to keep pressing: a tap lifts it fully and it stays up.
-      goal.gateHoldTime += dt;
-      if (goal.gateHoldTime >= C.GATE_OPEN_HOLD) goal.gateLatch = C.GATE_OPEN_LATCH_S;
-    } else if (touching && goal.gateOpen) {
-      // resting against an already-OPEN gate holds it open without re-pushing (the light
-      // arm doesn't shove the robot off). NOT a way to OPEN a closed gate — that needs a
-      // push — so loitering against a shut gate still does nothing.
-      goal.gateHoldTime = 0;
-      goal.gateLatch = C.GATE_OPEN_LATCH_S;
-    } else {
-      goal.gateHoldTime = 0;
-      goal.gateLatch = Math.max(0, goal.gateLatch - dt);
-    }
+    /**
+     * THE ARM IS PINNED UP ONLY WHILE A ROBOT IS ACTUALLY ON IT.
+     *
+     * A tap used to LATCH it at fully open for GATE_OPEN_LATCH_S — half a second of the
+     * paddle hovering at maximum lift, clear of everything, with nobody touching it. A
+     * hinged arm cannot do that, and it is why a tap emptied the whole ramp: measured, a
+     * tap drained EVERY column up to six artifacts, two of them during the latch alone,
+     * and the arm never got the chance to come down onto the flow at all.
+     *
+     * What a tap really does is throw the arm up and let go. `GATE_OPEN_LATCH_S` is now the
+     * arm's mechanical OVERSWING — the moment of its own momentum carrying past the release
+     * — and the rest of "it stays open a beat without holding" comes from where it actually
+     * comes from: the FALL. Gravity takes ~0.23s to bring it from full lift back to the pass
+     * line, artifacts flow the whole way down, and then it lands on the column and meters.
+     * The product decision (a tap opens it; the driver does not keep pressing) is intact —
+     * a tap still commits it fully open and still drains. It just no longer drains all of it.
+     *
+     * TOUCH-HOLD is unchanged and is the case that legitimately pins the arm: a robot
+     * resting against an already-open arm really does hold it up, indefinitely, and that is
+     * what makes a HELD gate stream.
+     */
+    const onArm = pushing || (touching && goal.gateOpen);
+    if (pushing) goal.gateHoldTime += dt;
+    else goal.gateHoldTime = 0;
+    // the latch now tracks CONTACT (plus the overswing tail), not a free-floating timer
+    goal.gateLatch =
+      onArm && goal.gateHoldTime >= C.GATE_OPEN_HOLD
+        ? C.GATE_OPEN_LATCH_S
+        : Math.max(0, goal.gateLatch - dt);
 
-    // a ball occupying the gateway props the OPEN arm up: gravity can't swing it shut
-    // while artifacts stream underneath. It only HOLDS an already-open arm — a ball
+    // HOW HARD THE FLOW IS SHOULDERING THE ARM. An artifact in the gateway props the OPEN
+    // arm up — but a paddle resting on a ball is held up by the BALL, so what matters is
+    // not merely that one is there, it is how fast it is going. `gatewaySpeed` is the
+    // briskest down-ramp speed under the arm right now (0 if the gateway is empty or
+    // whatever is in it has stalled). It only ever HOLDS an already-open arm — a ball
     // reaching an almost-closed gate must NOT lift it back open (only a robot push does).
-    const ballInGateway = world.balls.some(
-      (b) =>
-        b.state.kind === 'rail' &&
-        b.state.goal === a &&
-        b.state.s > C.GATE_CLOSE_CLEAR_LO &&
-        b.state.s < C.GATE_CLOSE_CLEAR_HI,
-    );
+    // (LOCALS, deliberately — GoalState rides the network snapshot, and both are
+    // recomputed from world state every tick anyway)
+    let gatewaySpeed = 0;
+    // ...and how high the artifacts physically sitting under the arm hold it, which is a
+    // question about GEOMETRY and not about speed: the paddle's edge lands where the
+    // vertical at the gate line meets an artifact's surface (gateRestOn). Without this the
+    // arm fell through a stalled artifact to fully shut, so it only ever came to rest in
+    // the gap BETWEEN two of them.
+    let gatewayRest = 0;
+    for (const b of world.balls) {
+      if (b.state.kind !== 'rail' || b.state.goal !== a) continue;
+      if (b.state.s <= C.GATE_CLOSE_CLEAR_LO || b.state.s >= C.GATE_CLOSE_CLEAR_HI) continue;
+      const down = -b.state.v; // v is negative down-ramp
+      if (down > gatewaySpeed) gatewaySpeed = down;
+      if (b.state.overflow) continue; // rides OVER the gate (9.8.3) — never under the paddle
+      const rest = gateRestOn(b.state.s - C.GATE_LINE_S);
+      if (rest > gatewayRest) gatewayRest = rest; // whichever holds it highest is the one bearing it
+    }
 
     if (goal.gateLatch > 0) {
       // latched open (a push, or resting against the open arm): lift toward fully open at
-      // the ram-scaled rate (a harder push swings it up faster — matches gateColliderPos)
+      // the ram-scaled rate (a harder push swings it up faster — matches gateColliderPos).
+      // A robot holds the paddle CLEAR of the flow, which is why a held gate has no cadence.
       goal.gatePos = Math.min(1, goal.gatePos + gateLiftRate(ram) * dt);
       goal.gateVel = 0;
-    } else if (goal.gateOpen && ballInGateway) {
-      // an artifact is streaming under the OPEN arm — HOLD its position (gravity
-      // suspended) but do NOT lift it, so a new ball can't reopen a near-closed gate
-      goal.gateVel = 0;
     } else if (goal.gatePos > 0) {
-      // released and unheld: the arm falls closed under gravity, starting slow and
-      // accelerating (variable, non-instant close — manual 9.8.3)
+      // Released and unheld, the arm falls closed under gravity, starting slow and
+      // accelerating (variable, non-instant close — manual 9.8.3) — and it falls onto
+      // WHATEVER IS UNDER IT. It used to be frozen in place by the mere presence of an
+      // artifact in the gateway, so a tapped gate hovered at 1.0 with the flow passing
+      // beneath it untouched and drained exactly as fast as a held one. It cannot hover:
+      // an artifact is a ball's worth of lift (GATE_RIDE_FRAC) and no more, and it can
+      // only hold the paddle that high if it is actually moving (GATE_SHOULDER_LIFT) —
+      // a faltering artifact lets the arm settle onto it and the drain stops there.
+      const wasPos = goal.gatePos;
       goal.gateVel = Math.max(goal.gateVel - C.GATE_GRAVITY * dt, -C.GATE_CLOSE_MAX);
       goal.gatePos = Math.max(0, goal.gatePos + goal.gateVel * dt);
+      // What is under the arm holds it up two ways, and it comes to rest on the higher:
+      // a MOVING artifact keeps knocking it up (speed), and one that has STOPPED simply
+      // holds it at whatever height the paddle landed on it (geometry).
+      const rest = Math.max(
+        Math.min(C.GATE_RIDE_FRAC, gatewaySpeed * C.GATE_SHOULDER_LIFT),
+        gatewayRest,
+      );
+      // IT CAN COME TO REST ON SOMETHING; IT CANNOT BE LIFTED BY IT. Same shape as the rail
+      // solver's `wasS >= base`: a floor may stop the arm where it already is, never reach
+      // up and raise it. This is what keeps "a ball reaching an almost-closed gate must not
+      // reopen it" true now that the floor is geometric rather than gated on `gateOpen` —
+      // an artifact rolling under a shut arm finds it below its own rest height and is
+      // simply blocked, while one the arm descends ONTO stops it dead.
+      if (wasPos >= rest && goal.gatePos < rest) {
+        goal.gatePos = rest;
+        goal.gateVel = 0;
+      }
       if (goal.gatePos === 0) goal.gateVel = 0;
     }
 

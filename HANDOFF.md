@@ -1,7 +1,8 @@
 # HANDOFF — 2026-08-15 (the classifier: possession, the gate, and the ramp) — alpha only
 
-Branch **alpha**, commit `dcaf1f5`, **111 commits ahead of `origin/main`**.
-`npm test` ALL PASS (~215 checks) · `npm run build` green · working tree clean.
+Branch **alpha**, commit `94e08ae` + UNCOMMITTED gate-cadence work (see "Drain cadence, part 2").
+`npm test` ALL PASS (~237 checks) · `npm run build` green · **working tree DIRTY** — the
+gate-cadence work is unstaged, awaiting review.
 **Not deployed.** Production `dohun-sim-decode` is still on the pre-session build and
 still owes the migrations listed under "Still pending".
 
@@ -245,7 +246,7 @@ one slips **15.6**, because pressing a jammed pile stalls the robot (both near z
 a clump actually being pushed rolls and squirms the whole way. Artifact speed and distance
 travelled separate them no better (open clump travels 43–68in, herding 49–66in).
 
-## Drain cadence (`dcaf1f5`)
+## Drain cadence, part 1 (`dcaf1f5`)
 
 *"The balls flow out at a weird slow cadence"* — 0.77 s between releases, mean-abs-dev
 0.10 s. A metronome. Two halves: gravity over one `RAIL_PITCH` (~0.33 s, real) and the
@@ -255,11 +256,152 @@ spike. Re-swept now that artifacts are Rapier bodies: **worst clump overlap is 0
 4.5 / 2.0 / 1.0 / 0.0 alike.** At 1.0, releases are 0.60 s apart and a nine-artifact
 column drains in 5.2 s instead of 6.3 s.
 
-**Floor is 0.36 s** (gravity over one artifact diameter, from rest). The remaining gap is
-the column restarting every cycle instead of staying loaded: the front artifact is slammed
-to v=0 at the exit and `floorV` propagates that zero up the whole column. Closing it means
-changing how the floor propagates velocity to a queued column — a solver change, not a
-constant.
+## Drain cadence, part 2: the paddle has weight (uncommitted)
+
+*"When the gate is held open, there shouldn't be a cadence. When the gate is not held open
+but was left open (e.g. tapped open), it would have a semi uniform cadence but it would
+randomly stop if the momentum is not enough to keep the gate open."*
+
+Measured before touching anything, and the reading is the whole diagnosis: **held open and
+tapped open drained at 0.596 s and 0.598 s.** The same metronome either way. Whatever the
+gate was doing, it was not the thing metering the flow — and it was not doing anything at
+all, because a ball in the gateway simply FROZE `gatePos` wherever it happened to be,
+which meant a tapped gate hovered at 1.0 (fully lifted, 77°) with artifacts rolling under
+it touching nothing.
+
+### What was actually metering it (`floorV`, seeded at zero)
+
+Traced per tick, the cycle was entirely artificial and repeated exactly once per artifact:
+
+```
+0.533  front s=-3.87 v=-41.2   arriving at the exit at speed
+0.550  front s=-4.00 v=  0.0   clamped — st.v = max(st.v, floorV) with floorV = 0
+0.617  released                 speed = |v| = ZERO
+0.617..0.950   doorway distance pinned at 0.02 in    it never moved
+0.950  next artifact reaches the exit, EXIT_NUDGE creeps the dead one out at 22 in/s
+```
+
+`rampFloorV` starts at 0 for the frontmost artifact, and it is not resting on a wall — it
+is resting on **another artifact that is rolling away down the tunnel at 30 in/s.** Zero
+said otherwise, so every artifact after the first was stopped dead, released motionless,
+became the obstruction for the next, and the column re-ran 0.33 s of gravity down one
+`RAIL_PITCH` from rest, every single cycle. The floor now moves at the speed of whatever
+is on it (`exitFloorV` = the doorway artifact's `vel.y`, and only while the gate is OPEN —
+against a shut gate the floor is the paddle, which is going nowhere).
+
+### The arm cannot hover (`GATE_RIDE_FRAC`)
+
+Everything the user described falls out of one physical fact, with no special cases: an
+unheld arm falls until it **lands on something**, and an artifact is a ball's worth of
+lift and no more.
+
+- **HELD** — a robot latches it at 1.0, clear of the flow. No contact, no drag, no cadence.
+- **TAPPED** — the arm settles onto the stream at `GATE_RIDE_FRAC` and rides it. Its weight
+  drags each artifact passing under (`GATE_PADDLE_DRAG`, scaled by `1 − gatePos`, which is
+  why a held arm costs the flow exactly nothing), and it sags in the gaps, so the next one
+  must shoulder it back up.
+- **GIVES OUT** — the height an artifact can hold the paddle to is proportional to its
+  speed (`GATE_SHOULDER_LIFT`). A column that has spread out can no longer lift it past
+  `GATE_PASS_FRAC`, the arm settles, and the drain stops. Deterministic (no RNG — the sim
+  cannot have any here) but scenario-dependent enough to feel like it just gave up.
+
+Measured, nine-artifact column: **held 0.323 s mean / 0.073 mad, all 9 out in 3.0 s
+(was 5.2 s); tapped 0.376 s / 0.144 mad, 8 of 9 out, arm riding at 0.449–0.62, then shut.**
+A second tap clears the rest — it is a stall, never a deadlock, and there is a check for
+that. Six new smoke checks cover the pair.
+
+`gatewaySpeed` is deliberately a LOCAL in `updateGates`, not a `GoalState` field: goal
+state rides the network snapshot, and a new numeric field is the exact shape of the
+stale-server NaN bug in memory. It is recomputed from world state every tick anyway.
+
+**`EXIT_CLEARANCE` was left at 1.0.** At 0.0 the held drain is smoother still (0.260 s /
+0.048) — but the tapped drain then never gives out, and that is the behaviour being asked
+for. It is a swept value from the previous session; do not churn it to buy cadence that
+the paddle model should be providing.
+
+### The arm rests ON an artifact, never between two (uncommitted)
+
+*"When the classifier flow is stopped by the robot, the gate is always in between two
+artifacts. This does not have to be that way."*
+
+It was not a preference the arm had — it had **no idea what was underneath it.** With the
+flow halted it fell straight to 0 THROUGH whatever sat in the gateway, measured at every
+offset from +4 to −2.4 in: `0.000` every time. The ride model above was keyed on SPEED
+alone, so a stopped artifact held it up not at all.
+
+The paddle's edge descends the vertical at `GATE_LINE_S` (= `GATE_STOP_S − BALL_RADIUS`)
+and lands where that meets the artifact's surface: height `R + sqrt(R² − d²)`. A full
+diameter of clearance IS the pass height, so it maps onto `GATE_PASS_FRAC` with no constant
+of its own — dead on top is exactly the pass line, the equator is half of it, and past the
+artifact's edge the paddle misses entirely (which is why a column packed at `GATE_STOP_S`,
+one radius clear, still reads as fully shut — that existing check was the load-bearing one).
+
+**Which side it landed on is the whole outcome**, and measured it comes out clean:
+
+| d (centre − gate line) | arm rests at | once the robot is gone |
+| --- | --- | --- |
+| +2.0 (not through) | 0.338 | wedged, stuck at s=1.31 |
+| +1.2 | 0.383 | wedged, stuck at s=0.51 |
+| −1.2 (mostly through) | — | **squeezed out**, arm shuts behind it |
+| −2.0 | — | **squeezed out** |
+| ±2.6 (beyond the edge) | 0.000 | paddle misses it |
+
+`d > 0` is a wedge and needs its own clamp: the solver's gate floor sits at `GATE_STOP_S`
+and an artifact the arm has landed ON is *below* it, hence exempted by `wasS >= base` — so
+without it the thing rolled out from under a paddle resting on it. `d < 0` gets
+`GATE_PADDLE_SHOVE`, the horizontal component of the paddle's weight, scaled by `d/R`. Only
+the downhill half is applied; an up-ramp force would fight the solver's "never push it back
+UP" invariant, and the block already does that job.
+
+**The trap, which cost a red suite of fourteen unrelated checks.** `gateRestOn` returns 0
+for *two different reasons* — "the arm is flat on the ramp" and "this artifact is nowhere
+near the gate" — so `gatePos <= gateRestOn(d)` alone calls every artifact on the rail a
+contact whenever the gate is shut. That froze the entire rail the instant the gate closed:
+nothing reached the stack, nothing classified, and point-blank shots "stopped entering the
+goal". The reach test (`|d| < R`) has to come first; `paddleBearsOn` exists so there is one
+place that can be got wrong.
+
+Also fixed a check that was measuring the wrong thing: comparing *mean gaps* between held
+and tapped is a trap, because the tapped run gives out early so its mean covers only the
+opening (fast) releases while the held mean is dragged up by the later ones, where a pile
+has built outside the gate — it read as the tapped gate being FASTER. Do not restate the
+claim that way.
+
+### "The gate always empties all. I told you it shouldn't." (uncommitted)
+
+It did, and the 9-stack check that "passed" was hiding it. Swept by column depth, a tap
+drained **every column up to six artifacts** — and real ramps hold a handful, so in play it
+always emptied. Two causes, and the second is the one that mattered:
+
+**1. The tap latch pinned the arm at maximum lift for 0.5 s with nothing touching it.** A
+hinged arm cannot do that. `GATE_OPEN_LATCH_S` is now the arm's mechanical OVERSWING (0.08 s)
+and the arm is pinned only while a robot is genuinely on it; "stays open a beat" comes from
+the FALL instead — ~0.23 s from full lift to the pass line, artifacts flowing the whole way.
+Touch-hold is untouched and is what legitimately pins it. **This changes a documented product
+decision** (CLAUDE.md updated): a tap still commits the arm fully open and you still do not
+have to keep pressing.
+
+**2. `GATE_SEAT_FRAC` — seated under the arm is NOT past it.** The geometry originally mapped
+"paddle resting dead on top of an artifact" to *exactly* `GATE_PASS_FRAC`, on the reasoning
+that a full diameter of clearance is the pass height. That is off by precisely the amount
+that matters: resting on top is the MARGINAL contact — clearance is the ball and no more —
+so with the arm's weight on it, it does not roll through. And because the gateway window
+(8.5 in) is wider than the artifact pitch (5.1 in), a packed column ALWAYS has something
+under the arm — so if being under it holds the gate exactly passable, a dense column keeps
+itself flowing forever, which is what it did.
+
+Seat is now 0.34 against a pass of 0.4, and getting past takes momentum:
+`GATE_SHOULDER_LIFT` 0.045 → **0.016**, putting the threshold at ~25 in/s, inside the 20–46
+in/s band the ramp actually produces. At 0.045 the threshold was 8.9 in/s — below anything
+on the ramp, so every artifact cleared it and the rule never bit.
+
+**`GATE_RIDE_FRAC` swept 0.44 → 0.62 changed nothing**, which is what pointed at the seat
+height rather than the ride height. Don't re-sweep it.
+
+Measured now: **hold drains 9/9; one tap drains 3 and gives out at every depth 5–9**, and
+what a tap is worth varies with packing (3/3/2/2 at +0/1.5/3/5 in extra spacing) rather than
+being a fixed dose. Both are checked, the depth sweep explicitly — a 9-stack stalling proves
+nothing on its own.
 
 ### Earlier in the session
 

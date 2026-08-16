@@ -19,7 +19,7 @@ import { updatePenalties } from '../src/sim/penalties';
 import { aimSolution, robotInLaunchZone } from '../src/sim/robot';
 import { updateHumanPlayers } from '../src/sim/humanPlayer';
 import { startMatch } from '../src/sim/match';
-import { gateColliderPos, pushingGate } from '../src/sim/goal';
+import { gateColliderPos, gateRestOn, pushingGate } from '../src/sim/goal';
 import {
   inLaunchZone,
   gateZone,
@@ -57,6 +57,10 @@ import {
   PRE_COUNTDOWN as C_PRE_COUNTDOWN,
   GATE_STOP_S,
   GATE_OPEN_LATCH_S,
+  GATE_PASS_FRAC,
+  GATE_SEAT_FRAC,
+  GATE_LINE_S,
+  GATE_RIDE_FRAC,
   GATE_TAPE_Y,
   RAIL_PITCH,
   HOPPER_CAPACITY,
@@ -1128,6 +1132,273 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   check('gate arm fell fully closed (gatePos 0) after draining', w.goals.blue.gatePos === 0, `gatePos ${w.goals.blue.gatePos.toFixed(3)}`);
 }
 
+// ---- HELD open streams; TAPPED open meters, and can give out ---------------------
+// The paddle is not weightless and it cannot hover. A robot holding the arm up keeps it
+// CLEAR of the artifacts, so the column just flows; let go and the arm settles ONTO the
+// flow at GATE_RIDE_FRAC, where its weight drags every artifact passing under it and it
+// sags in the gaps between them. That is the whole difference, and before it existed the
+// two drained at literally the same rate — 0.596s vs 0.598s between releases, a metronome
+// either way, because a ball in the gateway simply FROZE gatePos wherever it happened to
+// be (pinned at 1.0, touching nothing).
+{
+  /** drain a full 9-artifact column and report the release cadence */
+  const drain = (hold: boolean) => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    fillBlueRail(w);
+    const r = w.robots[0];
+    const zone = gateZone('blue');
+    r.pos = { x: zone.x1 + 7, y: (zone.y0 + zone.y1) / 2 };
+    r.heading = Math.PI; // face the -x (blue) wall
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    const left = () => w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length;
+    const gaps: number[] = [];
+    const times: number[] = []; // when each artifact was released
+    let prev = left();
+    let last = -1;
+    let drove = false;
+    // how far the arm SAGS onto the flow — measured only once it has reached full open,
+    // so the opening ramp (0 -> 1, which passes through every fraction) isn't mistaken
+    // for the paddle resting on an artifact
+    let sag = 1;
+    let rode = 0; // the fraction it was last seen riding at, above the pass line
+    let peakPos = 0;
+    let fullyOpen = false;
+    for (let i = 0; i < Math.round(10 / SIM_DT); i++) {
+      const t = i * SIM_DT;
+      let c = cmd({});
+      if (hold || t < 0.3) c = cmd({ driveY: 1 });
+      else if (!drove) {
+        r.pos = { x: 0, y: -30 }; // tap: drive away and let the arm find the flow
+        drove = true;
+      }
+      step(w, SIM_DT, new Map([[0, c]]));
+      const g = w.goals.blue;
+      const n = left();
+      if (n > 0) {
+        if (g.gatePos > peakPos) peakPos = g.gatePos;
+        if (g.gatePos >= 1) fullyOpen = true;
+        if (fullyOpen) {
+          if (g.gatePos < sag) sag = g.gatePos;
+          if (g.gatePos > GATE_PASS_FRAC && g.gatePos < 1) rode = g.gatePos;
+        }
+      }
+      if (n < prev) {
+        for (let k = 0; k < prev - n; k++) {
+          if (last >= 0) gaps.push(t - last);
+          last = t;
+          times.push(t);
+        }
+        prev = n;
+      }
+    }
+    const mean = gaps.length ? gaps.reduce((p, q) => p + q, 0) / gaps.length : 0;
+    return { w, left: left(), gaps, mean, max: gaps.length ? Math.max(...gaps) : 0, rode, sag, peakPos, times };
+  };
+
+  const held = drain(true);
+  const tapped = drain(false);
+
+  check(
+    'a HELD gate drains the whole column',
+    held.left === 0,
+    `${9 - held.left}/9 out`,
+  );
+  // the old bug: every artifact was slammed to v=0 at the exit, released at ZERO speed,
+  // and only shoved clear by the EXIT_NUDGE creep — so the column restarted from rest
+  // every cycle and the gaps sat at 0.60s. A packed column following the artifact ahead
+  // out at ramp speed is roughly RAIL_PITCH / flow speed.
+  check(
+    'a HELD gate STREAMS — no metering cadence between releases',
+    held.mean < 0.4 && held.max < 0.5,
+    `mean ${held.mean.toFixed(3)}s max ${held.max.toFixed(3)}s`,
+  );
+  check(
+    'a held arm stays fully lifted, clear of the flow (no paddle drag)',
+    held.peakPos === 1 && held.sag === 1,
+    `peak ${held.peakPos.toFixed(2)} sag ${held.sag.toFixed(2)}`,
+  );
+  check(
+    'an UNHELD arm settles ONTO the flow rather than hovering',
+    tapped.sag < 1 && tapped.rode > 0 && tapped.rode <= GATE_RIDE_FRAC + 1e-9,
+    `rode at ${tapped.rode.toFixed(3)} (ride ${GATE_RIDE_FRAC}, pass ${GATE_PASS_FRAC})`,
+  );
+  // THE HEADLINE REQUIREMENT: "the gate always empties all... it shouldn't." A tap buys you
+  // a few artifacts and then the arm settles onto the column and the drain gives out; only
+  // a robot actually holding the lever empties the ramp.
+  //
+  // (Do NOT restate this as a comparison of mean release gaps. It was written that way
+  // first and it lies: the tapped run gives out early, so its mean covers only the opening
+  // fast releases while the held mean is dragged up by the later ones, where a pile has
+  // built outside the gate — it reads as the tapped gate being FASTER.)
+  check(
+    'a TAPPED gate delivers strictly less than a held one',
+    9 - tapped.left < 9 - held.left,
+    `tapped ${9 - tapped.left}/9 vs held ${9 - held.left}/9`,
+  );
+  // "it would randomly stop if the momentum is not enough to keep the gate open" — the
+  // ride height an artifact can hold is proportional to its speed, so a column that has
+  // spread out lets the arm fall past GATE_PASS_FRAC and the drain simply gives out.
+  check(
+    'a TAPPED gate can give out mid-drain when the flow loses momentum',
+    tapped.left > 0 && !tapped.w.goals.blue.gateOpen,
+    `${9 - tapped.left}/9 out, gatePos ${tapped.w.goals.blue.gatePos.toFixed(3)}`,
+  );
+
+  // ...AT EVERY COLUMN DEPTH, which is the form the complaint actually took ("right now the
+  // gate always empties all"). A 9-stack stalling proves nothing on its own: real ramps hold
+  // a handful, and a tap used to empty EVERY column up to six. A tap is worth a few
+  // artifacts, and how many depends on how the column happens to be packed.
+  {
+    const tapDrain = (n: number, spread: number) => {
+      const w = mkWorld('match', 'blue', 42);
+      startMatch(w);
+      for (let i = 0; i < n; i++) {
+        const b = w.balls[i];
+        const s = GATE_STOP_S + i * (RAIL_PITCH + spread);
+        b.state = { kind: 'rail', goal: 'blue', s, v: 0, overflow: false };
+        b.pos = railPos('blue', s);
+        b.vel = { x: 0, y: 0 };
+        b.z = RAMP_SURFACE_Z;
+        b.vz = 0;
+      }
+      const r = w.robots[0];
+      const z = gateZone('blue');
+      r.pos = { x: z.x1 + 7, y: (z.y0 + z.y1) / 2 };
+      r.heading = Math.PI;
+      r.fieldCentric = false;
+      r.vel = { x: 0, y: 0 };
+      run(w, cmd({ driveY: 1 }), 0.3);
+      r.pos = { x: 0, y: -30 };
+      run(w, cmd({}), 10);
+      return n - w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length;
+    };
+    const depths = [5, 6, 7, 8, 9];
+    const got = depths.map((n) => tapDrain(n, 0));
+    const emptied = depths.filter((n, i) => got[i] === n);
+    check(
+      'ONE TAP NEVER EMPTIES THE RAMP, at any column depth',
+      emptied.length === 0,
+      `${depths.map((n, i) => `${got[i]}/${n}`).join(' ')}${emptied.length ? ` — emptied ${emptied.join(',')}` : ''}`,
+    );
+    // ...and what a tap is worth is situational, not a fixed dose
+    const spreads = [0, 1.5, 3, 5].map((sp) => tapDrain(9, sp));
+    check(
+      '...and how much a tap is worth depends on how the column is packed',
+      new Set(spreads).size > 1,
+      `spacing +0/1.5/3/5in -> ${spreads.join(' ')}`,
+    );
+  }
+
+  // ...and it must be a STALL, not a deadlock: tap again and the rest comes out.
+  {
+    const w = tapped.w;
+    const r = w.robots[0];
+    const zone = gateZone('blue');
+    r.pos = { x: zone.x1 + 7, y: (zone.y0 + zone.y1) / 2 };
+    r.vel = { x: 0, y: 0 };
+    const before = tapped.left;
+    run(w, cmd({ driveY: 1 }), 0.3);
+    r.pos = { x: 0, y: -30 };
+    run(w, cmd({}), 6);
+    const after = w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length;
+    check(
+      'a second tap resumes a gate that gave out (a stall, never a deadlock)',
+      after < before,
+      `${before} left -> ${after}`,
+    );
+  }
+}
+
+// ---- the arm comes to rest ON an artifact, never between two -----------------------
+// Reported as "when the classifier flow is stopped by the robot, the gate is always in
+// between two artifacts. This does not have to be that way." It was not a preference the
+// arm had — it had no idea what was under it, and fell straight to 0 THROUGH whatever was
+// sitting in the gateway at every offset from +4 to −2.4in.
+//
+// The paddle's edge descends the vertical at GATE_LINE_S and lands where that meets the
+// artifact's surface. WHICH SIDE it landed on is then the whole story once the robot is
+// gone: on the downhill face it wedges the artifact, on the uphill face its own weight
+// squeezes it out.
+{
+  /** one artifact parked `d` from the gate line (+ = not through yet), a second a pitch
+   * behind, arm descending onto it, no robot anywhere near the lever */
+  const settle = (d: number) => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.robots[0].pos = { x: 0, y: -40 };
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    for (let i = 0; i < 2; i++) {
+      const b = w.balls[i];
+      const s = GATE_LINE_S + d + i * RAIL_PITCH;
+      b.state = { kind: 'rail', goal: 'blue', s, v: 0, overflow: false };
+      b.pos = railPos('blue', s);
+      b.vel = { x: 0, y: 0 };
+      b.z = RAMP_SURFACE_Z;
+      b.vz = 0;
+    }
+    const g = w.goals.blue;
+    g.gatePos = Math.min(1, gateRestOn(d) + 0.08); // coming down onto it
+    g.gateVel = 0;
+    g.gateLatch = 0;
+    g.gateOpen = g.gatePos >= GATE_PASS_FRAC;
+    run(w, cmd({}), 5);
+    return { gatePos: g.gatePos, out: w.balls[0].state.kind === 'ground' };
+  };
+
+  // the geometry itself: a full diameter dead on top, one radius at the equator, nothing
+  // at all beyond the artifact's edge
+  check(
+    'gateRestOn: dead on top of an artifact seats the arm at GATE_SEAT_FRAC',
+    Math.abs(gateRestOn(0) - GATE_SEAT_FRAC) < 1e-9,
+    `${gateRestOn(0).toFixed(4)} vs ${GATE_SEAT_FRAC}`,
+  );
+  // THE ONE THAT MATTERS. Seated on an artifact is the MARGINAL contact — clearance is
+  // exactly the ball and no more — so it is not passable, and getting past takes momentum.
+  // This was originally set EQUAL to GATE_PASS_FRAC ("a full diameter of clearance is the
+  // pass height"), and because the 8.5in gateway window is wider than the 5.1in artifact
+  // pitch a packed column always has something under the arm — so merely being under it
+  // held the gate permanently passable and a tap drained the entire ramp.
+  check(
+    'a seated arm is NOT passable — getting past it takes momentum',
+    GATE_SEAT_FRAC < GATE_PASS_FRAC && gateRestOn(0) < GATE_PASS_FRAC,
+    `seat ${GATE_SEAT_FRAC} vs pass ${GATE_PASS_FRAC}`,
+  );
+  check(
+    'gateRestOn: out at the equator it is half that, and past the edge it misses entirely',
+    Math.abs(gateRestOn(BALL_RADIUS * 0.999) - GATE_SEAT_FRAC / 2) < 0.01 &&
+      gateRestOn(BALL_RADIUS) === 0 &&
+      gateRestOn(-BALL_RADIUS - 1) === 0,
+    `equator ${gateRestOn(BALL_RADIUS * 0.999).toFixed(3)}, past edge ${gateRestOn(BALL_RADIUS)}`,
+  );
+
+  const wedged = settle(1.2);
+  const past = settle(-1.2);
+  check(
+    'the arm comes to REST on a stopped artifact instead of falling through it',
+    Math.abs(wedged.gatePos - gateRestOn(1.2)) < 0.05 && wedged.gatePos > 0,
+    `rests at ${wedged.gatePos.toFixed(3)}, geometry says ${gateRestOn(1.2).toFixed(3)}`,
+  );
+  check(
+    'landing on the DOWNHILL face wedges the artifact — it stays put',
+    !wedged.out,
+    `gatePos ${wedged.gatePos.toFixed(3)}`,
+  );
+  check(
+    "landing on the UPHILL face squeezes it out and the arm shuts behind it",
+    past.out && past.gatePos === 0,
+    `out=${past.out} gatePos ${past.gatePos.toFixed(3)}`,
+  );
+  // ...and beyond the artifact's edge the paddle genuinely misses: a column packed against
+  // a shut gate rests at GATE_STOP_S, one radius clear, and must not hold the arm up at all
+  check(
+    'a column parked at GATE_STOP_S is clear of the paddle (gate reads fully shut)',
+    gateRestOn(GATE_STOP_S - GATE_LINE_S) === 0,
+    `d=${(GATE_STOP_S - GATE_LINE_S).toFixed(2)} -> ${gateRestOn(GATE_STOP_S - GATE_LINE_S)}`,
+  );
+}
+
 // ---- gate is a physical arm: only opens on a real push, then lifts/falls smoothly
 {
   const w = mkWorld('match', 'blue', 42);
@@ -1172,9 +1443,31 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   r.fieldCentric = false;
   r.vel = { x: 0, y: 0 };
   run(w, cmd({ driveY: 1 }), 0.15); // a brief TAP against the arm
+  const atRelease = g.gatePos;
   r.pos = { x: 0, y: -30 }; // then drive away immediately (stop pressing)
-  run(w, cmd({}), 0.3); // no ball flowing, no push — yet the latch holds it up
-  check('a brief tap latches the gate fully open without holding', g.gatePos >= 0.99 && g.gateOpen, `gatePos ${g.gatePos.toFixed(3)}`);
+  run(w, cmd({}), 0.1); // ...and it is still passable a beat later with nothing holding it
+  const shortly = g.gatePos;
+  run(w, cmd({}), 1); // left alone, gravity finishes bringing it down
+  // A tap COMMITS the arm fully open and the driver does not have to keep pressing — but
+  // "stays up a beat" is the FALL, not a pin. It used to be latched at maximum lift for
+  // GATE_OPEN_LATCH_S (0.5s) with nothing touching it, which a hinged arm cannot do and
+  // which is why a tap emptied the whole ramp; the beat is now the ~0.23s gravity needs to
+  // bring it from full lift back to the pass line.
+  check(
+    'a brief tap commits the arm fully open without holding',
+    atRelease >= 0.99,
+    `gatePos at release ${atRelease.toFixed(3)}`,
+  );
+  check(
+    '...and it is still passable a beat later with nothing holding it up',
+    shortly >= GATE_PASS_FRAC && shortly < 1,
+    `gatePos ${shortly.toFixed(3)} (pass ${GATE_PASS_FRAC})`,
+  );
+  check(
+    '...but it is NOT pinned there — with no flow under it, it falls shut',
+    g.gatePos === 0 && !g.gateOpen,
+    `gatePos ${g.gatePos.toFixed(3)}`,
+  );
 }
 
 // ---- gate opens on a straight push only — NOT driving sideways along the lever ---

@@ -878,15 +878,123 @@ export const OVERFLOW_DRAG = 2.2; // 1/s — terminal ride speed ~RAIL_ACCEL/OVE
 export const RAIL_BLEND_SPEED = 30; // in/s
 
 export const GATE_OPEN_HOLD = 0; // s of push before the gate arm starts to lift. ZERO so the lift (and the handle-collider retract that rides on it, see gateColliderPos) begins on the very tick you contact it — no debounce means no jam against the closed stub. The push gate (pushingGate: a STRAIGHT ram, not a graze) already prevents accidental opens.
-/** a TOUCH commits the arm open and LATCHES it up for this long, so the driver does
- * NOT have to keep pressing to hold it open — a tap lifts it fully and it stays up a
- * beat. After the latch lapses (and no artifact is streaming under it) gravity swings
- * it shut as before, so it still "may or may not stay open" a moment longer. */
-export const GATE_OPEN_LATCH_S = 0.5; // s the arm stays latched open after a tap (then it swings shut)
+/**
+ * The arm's mechanical OVERSWING: its own momentum carrying it up for a moment past the
+ * instant the robot stops touching it.
+ *
+ * This was 0.5s and meant something quite different — the arm was PINNED at maximum lift,
+ * hovering clear of everything, for half a second after a tap with nothing holding it. A
+ * hinged arm cannot do that, and it is what made a tap empty the entire ramp: measured, a
+ * tap drained every column up to six artifacts, two of them during the latch alone.
+ *
+ * "A tap opens it and the driver does not have to keep pressing" is still true, but it now
+ * comes from the FALL rather than from a timer: gravity needs ~0.23s to bring the arm from
+ * full lift back down to GATE_PASS_FRAC, artifacts flow the whole way, and then it lands on
+ * the column and meters it. Touch-hold (a robot resting against the arm) is what pins it.
+ */
+export const GATE_OPEN_LATCH_S = 0.08; // s of overswing after contact ends
 /** once open, gravity/flow decide re-close: it can only fall while no ball occupies
  * the gateway (a ball streaming under the arm physically holds it up) */
 export const GATE_CLOSE_CLEAR_LO = -4;
 export const GATE_CLOSE_CLEAR_HI = 4.5;
+/**
+ * THE ARM CANNOT HOVER — it rests on whatever is under it, and an artifact is only
+ * a ball's worth of lift.
+ *
+ * A ball in the gateway used to FREEZE `gatePos` wherever it happened to be, which meant
+ * a tapped gate stayed pinned at 1.0 (fully lifted, 77°) with artifacts rolling under it
+ * touching nothing. Held open and tapped open then drained at exactly the same rate —
+ * measured 0.596s vs 0.598s between releases, the same metronome either way — because the
+ * arm was doing nothing in either case.
+ *
+ * An unheld arm falls until it lands on the flow, and that height is GATE_RIDE_FRAC: how
+ * far a 5in artifact passing beneath holds the paddle up. Everything the user asked for
+ * follows from that one fact and needs no special cases:
+ *  · HELD by a robot ⇒ latched at 1.0, well clear of the artifacts ⇒ no contact, no drag,
+ *    no cadence: the column just streams out.
+ *  · TAPPED ⇒ the arm settles onto the stream and RIDES it. Its weight drags each artifact
+ *    passing under (GATE_PADDLE_DRAG), and in the gap between artifacts it sags, so the
+ *    next one has to shoulder it back up — which is the cadence, and it is semi-uniform
+ *    because it depends on how packed the column happens to be.
+ *  · NOT ENOUGH MOMENTUM ⇒ the ride height an artifact can hold is proportional to its
+ *    speed (GATE_SHOULDER_LIFT). A faltering one cannot lift the paddle past
+ *    GATE_PASS_FRAC, the arm settles onto it, and the drain stops until someone taps
+ *    again. Deterministic, but scenario-dependent enough to feel like it just gave out.
+ */
+export const GATE_RIDE_FRAC = 0.62; // open fraction the arm rests at while riding the flow
+/**
+ * SITTING UNDER THE ARM IS NOT THE SAME AS GETTING PAST IT — this is the constant that
+ * makes the difference, and getting it wrong made a tap empty the whole ramp.
+ *
+ * GATE_SEAT_FRAC is where the paddle comes to rest on an artifact directly beneath it. It
+ * is deliberately BELOW GATE_PASS_FRAC, because a paddle resting on top of a ball is the
+ * MARGINAL contact case: the clearance is exactly the ball and no more, so with the arm's
+ * weight on it, it does not roll through. Getting past means lifting the paddle the rest
+ * of the way, and the only thing that does that is momentum (GATE_SHOULDER_LIFT).
+ *
+ * It was originally set equal to GATE_PASS_FRAC — "a full diameter of clearance IS the
+ * pass height", which sounds right and is off by exactly the amount that matters. The
+ * gateway window is 8.5in against a 5.1in artifact pitch, so a packed column ALWAYS has
+ * something under the arm; if merely being under it holds the gate exactly passable, a
+ * dense column keeps itself flowing forever. Measured, that drained every column up to
+ * six artifacts no matter what else was tuned — GATE_RIDE_FRAC swept 0.44→0.62 changed
+ * nothing, which is what pointed here.
+ */
+export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, not passable
+/**
+ * Open fraction an artifact in the gateway can shoulder the arm up to, per in/s of its
+ * down-ramp speed (capped at GATE_RIDE_FRAC), taken as the higher of this and the seated
+ * geometry. GATE_PASS_FRAC / this is therefore the speed an artifact needs to keep the gate
+ * passable at all — below it the arm settles onto it and the drain stops.
+ *
+ * Ramp speeds run 20–40 in/s (RAIL_ACCEL 80, terminal 46), so this has to put the threshold
+ * INSIDE that band or the rule never bites. At the old 0.045 the threshold was 8.9 in/s —
+ * far below anything the ramp produces, so every artifact cleared it and the gate never
+ * gave out. The drain is meant to be marginal as the column spreads and artifacts start
+ * arriving slower; that is the whole "it randomly stops" behaviour.
+ */
+export const GATE_SHOULDER_LIFT = 0.016; // open fraction per in/s (≈25 in/s to stay passable)
+/** rolling resistance the paddle's weight imposes on the artifact it is resting on, at
+ * full sag (arm down). Scaled by (1 − gatePos), so a fully-lifted arm — held up by a
+ * robot — costs the flow nothing at all, which is what makes a held gate stream. */
+export const GATE_PADDLE_DRAG = 7; // 1/s at full sag
+/**
+ * WHERE THE PADDLE'S EDGE COMES DOWN, in rail `s`. A retained column rests packed against
+ * the shut gate with its first artifact centred at GATE_STOP_S, so the barrier it is
+ * resting against sits one radius further down.
+ */
+export const GATE_LINE_S = GATE_STOP_S - BALL_RADIUS;
+/**
+ * THE ARM STOPS WHERE THE GEOMETRY STOPS IT — it does not come to rest between artifacts.
+ *
+ * The arm used to have no idea what was underneath it: with the flow halted (a robot across
+ * the outflow, or a column that ran out of momentum) it fell straight to 0 THROUGH whatever
+ * was sitting in the gateway — measured at every offset from +4 to −2.4 in, always 0.000.
+ * So it only ever ended up in the gap between two artifacts, which is not something it can
+ * physically do.
+ *
+ * The paddle's edge descends the vertical at GATE_LINE_S and lands wherever that line meets
+ * the artifact's surface. With the artifact's centre `d` from the gate line, the contact
+ * sits at height `R + sqrt(R² − d²)` above the ramp — a full diameter dead on top (d = 0),
+ * shrinking to a single radius out at the equator (|d| = R), and missing entirely beyond
+ * that. GATE_SEAT_FRAC is what the full-diameter case maps to and the profile scales from
+ * there; note it is BELOW GATE_PASS_FRAC, so an artifact merely SEATED under the arm has
+ * not thereby got past it (see GATE_SEAT_FRAC).
+ *
+ * WHICH SIDE it landed on decides what happens once the robot leaves, and the two are
+ * genuinely different situations:
+ *  · d > 0 — the artifact has NOT reached the gate line. The paddle rests on its downhill
+ *    face, in front of it, and its weight bears back up-ramp: wedged, and it stays wedged
+ *    until somebody works the lever. (The block itself is the rail solver's existing gate
+ *    floor. Nothing extra is applied, because shoving the column back UP the ramp is the
+ *    one thing that solver refuses to do.)
+ *  · d < 0 — the artifact is already mostly THROUGH. The paddle is on its uphill face and
+ *    the same weight bears down-ramp: GATE_PADDLE_SHOVE is that component, and the arm
+ *    squeezes the artifact out from under itself and falls shut behind it, unassisted.
+ *  · d ≈ 0 is the balance point: the arm sits squarely on top at GATE_SEAT_FRAC, which is
+ *    not passable, so it stays there until something works the lever or shoves it.
+ */
+export const GATE_PADDLE_SHOVE = 34; // in/s² down-ramp, at the artifact's equator
 /** GATE as a PHYSICAL push-to-open arm (manual 9.8.3): a robot shoves the arm the
  * ~2in open, and it is "closed by gravity" — after release it does NOT snap shut but
  * SWINGS closed, starting slow and accelerating (a hinged arm falling), so a tap

@@ -592,12 +592,34 @@ handle (`GATE_ARM_SHORT`) pokes OUT into the gate zone (what a robot pushes) and
 - **Opening is ONE-DIRECTIONAL** (`pushingGate`): only a STRAIGHT push toward the wall opens it
   (`velToward = r.vel.x·goalSide`); driving SIDEWAYS along the wall does not, and loitering
   does not.
-- **A tap LATCHES it open** (`GATE_OPEN_LATCH_S`) so the driver need not keep pressing; resting
-  against an already-OPEN gate RE-ARMS the latch (touch-hold). Released, the latch decays and
-  it is **closed by gravity** — it SWINGS shut (`GATE_GRAVITY`/`GATE_CLOSE_MAX`), never snaps.
-- **Flow holds an OPEN gate open** — a ball in the gateway suspends gravity (drains the whole
-  column) but does NOT LIFT it: a ball reaching an almost-closed gate (below `GATE_PASS_FRAC`)
-  can't reopen it, only a robot push can. `gateOpen` is DERIVED = `gatePos >= GATE_PASS_FRAC`.
+- **A tap COMMITS it fully open** and the driver need not keep pressing — but the arm is
+  PINNED only while a robot is on it (a push, or resting against an already-OPEN arm:
+  touch-hold). "Stays open a beat" is the FALL, not a timer: `GATE_OPEN_LATCH_S` is now just
+  the arm's mechanical OVERSWING (0.08 s), and gravity needs ~0.23 s to bring it from full
+  lift back to `GATE_PASS_FRAC`. It is **closed by gravity** — it SWINGS shut
+  (`GATE_GRAVITY`/`GATE_CLOSE_MAX`), never snaps. (Was a 0.5 s pin at maximum lift with
+  nothing touching it, which a hinged arm cannot do and which made a tap empty the whole ramp.)
+- **THE ARM CANNOT HOVER — it rests on what is under it.** An unheld arm falls until it lands
+  on the flow. `gateRestOn(d)` is the geometry: the paddle's edge comes down the vertical at
+  `GATE_LINE_S` and meets an artifact's surface at `R + sqrt(R²−d²)`, mapping the
+  full-diameter case to **`GATE_SEAT_FRAC`, which is BELOW `GATE_PASS_FRAC` on purpose** —
+  seated on an artifact is the marginal contact, so being under the arm is NOT being past it.
+  Getting past takes MOMENTUM (`GATE_SHOULDER_LIFT`, ≈25 in/s to stay passable, capped at
+  `GATE_RIDE_FRAC`). Hence: **HELD ⇒ streams (paddle clear, no drag); TAPPED ⇒ a few
+  artifacts then the arm settles onto the column and the drain GIVES OUT** — one tap never
+  empties the ramp, and how much it is worth depends on how the column is packed.
+  Equating seat with pass is the trap: the gateway window (8.5") is wider than the artifact
+  pitch (5.1"), so a packed column always has something under the arm and would hold itself
+  passable forever.
+- **WHICH SIDE the paddle landed on decides the outcome.** `d > 0` (not yet through) ⇒ the arm
+  rests on the artifact's downhill face and WEDGES it — frozen until someone works the lever
+  (its own clamp in `updateRails`; the solver's gate floor sits at `GATE_STOP_S` and does not
+  reach). `d < 0` (mostly through) ⇒ the arm is on its uphill face and `GATE_PADDLE_SHOVE`
+  squeezes it out, the gate falling shut behind it. `GATE_PADDLE_DRAG` (×`1 − gatePos`) is the
+  paddle's weight on whatever passes under it. `paddleBearsOn` gates all of this and MUST test
+  reach (`|d| < R`) first — `gateRestOn` returns 0 both for "arm flat" and "artifact nowhere
+  near", so without it every artifact on the rail reads as in-contact whenever the gate is
+  shut and the ENTIRE rail freezes. `gateOpen` is DERIVED = `gatePos >= GATE_PASS_FRAC`.
 - **The handle is a PHYSICAL one-way door** — a robot-only Rapier collider (`buildGateArms`),
   so a robot can't strafe THROUGH the closed lever; a straight push lifts `gatePos` and
   RETRACTS the collider so the opening robot glides in.
