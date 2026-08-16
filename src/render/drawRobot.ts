@@ -50,27 +50,38 @@ export function drawRobot(
   const rollerBack = rollerTip - dia;
   const wedgeTip = rollerTip - dia / 2; // wedges meet the roller at its axle
   const mouthOn = intakeOn ? 'rgba(34,197,94,0.85)' : '#2a303c';
+  /**
+   * The roller is DISCRETE WHEELS ON A SHAFT, not a solid bar. Drawing it as one filled
+   * rectangle the width of the mouth worked while it was 1in deep, but at 72mm it covers
+   * the whole reach and buries the funnel — the slopes ARE the identity of these presets.
+   * Wheels with gaps let the slopes read through, which is also what the real thing looks
+   * like from above.
+   */
   const drawRoller = () => {
+    const axis = rollerTip - dia / 2;
+    // shaft across the mouth
     ctx.fillStyle = intakeOn ? '#166534' : '#333a45';
-    ctx.fillRect(rollerBack, -rw, dia, rw * 2);
-    // GATE OPENER: a block on each end of the roller beam out to the chassis edge. The
-    // collision box is already solid here (footprintExtents spans the full half-width) —
-    // this is the geometry that was missing from the picture, not new physics.
+    ctx.fillRect(axis - 0.28, -rw, 0.56, rw * 2);
+    // GATE OPENER: a block on each end of the shaft out to the chassis edge. The collision
+    // box is already solid here (footprintExtents spans the full half-width) — this is the
+    // geometry that was missing from the picture, not new physics.
     if (hw > rw + 0.05) {
-      ctx.fillStyle = intakeOn ? '#14532d' : '#2c333e';
       for (const s of [1, -1] as const) {
-        ctx.fillRect(rollerBack, s === 1 ? rw : -hw, dia, hw - rw);
-      }
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 0.8;
-      for (const s of [1, -1] as const) {
-        ctx.strokeRect(rollerBack, s === 1 ? rw : -hw, dia, hw - rw);
+        const y0 = s === 1 ? rw : -hw;
+        ctx.fillStyle = intakeOn ? '#14532d' : '#2c333e';
+        ctx.fillRect(rollerBack, y0, dia, hw - rw);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(rollerBack, y0, dia, hw - rw);
       }
     }
-    for (let i = -3; i <= 3; i++) {
-      const center = Math.abs(i) <= 1;
+    // the compliant wheels themselves, evenly spaced along the shaft
+    const n = Math.max(2, Math.round(rw)); // ~one wheel per inch of half-span
+    for (let i = -n; i <= n; i++) {
+      const cy = (i * rw) / (n + 0.4);
+      const center = Math.abs(i) <= Math.max(1, n / 3);
       ctx.fillStyle = center ? (intakeOn ? '#22c55e' : '#6b7280') : intakeOn ? '#15803d' : '#4b5563';
-      ctx.fillRect(rollerTip - 1.5, (i * rw) / 3.4 - 0.8, 1.3, 1.6);
+      ctx.fillRect(rollerBack, cy - 0.55, dia, 1.1);
     }
   };
   if (m.wedge) {

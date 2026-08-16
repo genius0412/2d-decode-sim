@@ -86,10 +86,16 @@ export function RobotPreview({
   // RECESSED (to wedgeTipY); the ROLLER (axle + compliant wheels) sticks out past
   // them to tipY. Funnel presets show two side slopes into the throat (no flat
   // front); the flat (vector) preset shows an open mouth to the chassis front.
+  // The roller is DISCRETE WHEELS ON A SHAFT, not a solid bar: at 72mm a filled rectangle
+  // the width of the mouth covers the whole reach and buries the funnel, and the slopes are
+  // the identity of these presets. Gaps between wheels let them read through, which is also
+  // what the real thing looks like from above.
+  const wheelN = Math.max(2, Math.round(mouthHalf));
   const roller = (
     <g>
-      <rect x={-mouthHalf} y={rollerTipY} width={mouthHalf * 2} height={rollerDia} fill={accent} opacity={0.45} />
-      {/* GATE OPENER: a block on each end of the roller beam out to the chassis edge. The
+      {/* shaft across the mouth */}
+      <rect x={-mouthHalf} y={rollerTipY + rollerDia / 2 - 0.28} width={mouthHalf * 2} height={0.56} fill={accent} opacity={0.5} />
+      {/* GATE OPENER: a block on each end of the shaft out to the chassis edge. The
           collision box is already solid out here (footprintExtents spans the full
           half-width) — this is the geometry that was missing from the picture. */}
       {halfW > mouthHalf + 0.05 &&
@@ -107,16 +113,16 @@ export function RobotPreview({
             strokeOpacity={0.7}
           />
         ))}
-      {[-3, -2, -1, 0, 1, 2, 3].map((i) => (
+      {Array.from({ length: wheelN * 2 + 1 }, (_, k) => k - wheelN).map((i) => (
         <rect
           key={i}
-          x={(i * mouthHalf) / 3.4 - 0.5}
+          x={(i * mouthHalf) / (wheelN + 0.4) - 0.55}
           y={rollerTipY}
-          width={1}
-          height={1.6}
-          rx={0.3}
+          width={1.1}
+          height={rollerDia}
+          rx={0.45}
           fill={accent}
-          opacity={Math.abs(i) <= 1 ? 0.95 : 0.6}
+          opacity={Math.abs(i) <= Math.max(1, wheelN / 3) ? 0.95 : 0.6}
         />
       ))}
     </g>
