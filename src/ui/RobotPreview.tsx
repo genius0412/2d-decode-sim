@@ -90,14 +90,16 @@ export function RobotPreview({
   // the width of the mouth covers the whole reach and buries the funnel, and the slopes are
   // the identity of these presets. Gaps between wheels let them read through, which is also
   // what the real thing looks like from above.
-  const wheelN = Math.max(2, Math.round(mouthHalf));
+  // The compliant WHEELS sit at the THROAT on a funnel preset (robot.ts captures there);
+  // the SHAFT still spans the mouth because the gate opener hangs off its ends. FIXED pitch
+  // so there is always a gap — scaling the count with the span made them overlap into a bar.
+  const wheelSpanHalf = wedge ? throatHalf : mouthHalf;
+  const wheelN = Math.max(1, Math.floor(wheelSpanHalf / 1.9));
   const roller = (
     <g>
-      {/* shaft across the mouth */}
       <rect x={-mouthHalf} y={rollerTipY + rollerDia / 2 - 0.28} width={mouthHalf * 2} height={0.56} fill={accent} opacity={0.5} />
-      {/* GATE OPENER: a block on each end of the shaft out to the chassis edge. The
-          collision box is already solid out here (footprintExtents spans the full
-          half-width) — this is the geometry that was missing from the picture. */}
+      {/* GATE OPENER: a block on each end of the shaft out to the chassis edge. Solid to
+          robots/walls/the gate lever (footprintExtents); artifacts pass UNDER it. */}
       {halfW > mouthHalf + 0.05 &&
         ([1, -1] as const).map((sgn) => (
           <rect
@@ -116,9 +118,9 @@ export function RobotPreview({
       {Array.from({ length: wheelN * 2 + 1 }, (_, k) => k - wheelN).map((i) => (
         <rect
           key={i}
-          x={(i * mouthHalf) / (wheelN + 0.4) - 0.55}
+          x={(i * wheelSpanHalf) / (wheelN + 0.35) - 0.6}
           y={rollerTipY}
-          width={1.1}
+          width={1.2}
           height={rollerDia}
           rx={0.45}
           fill={accent}

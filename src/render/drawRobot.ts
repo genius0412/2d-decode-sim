@@ -59,15 +59,19 @@ export function drawRobot(
    */
   const drawRoller = () => {
     const axis = rollerTip - dia / 2;
-    // shaft across the mouth
+    // The compliant WHEELS sit at the THROAT on a funnel preset — that is where the sim
+    // captures (robot.ts: `wheelSpan = wedge ? throatHalf : mouthHalf`). Drawing them across
+    // the whole mouth buried the slopes, which are the identity of these presets. The SHAFT
+    // still spans the mouth, because the gate opener hangs off its ends.
+    const wheelHalf = m.wedge ? m.throatHalf : rw;
     ctx.fillStyle = intakeOn ? '#166534' : '#333a45';
     ctx.fillRect(axis - 0.28, -rw, 0.56, rw * 2);
     // GATE OPENER: a block on each end of the shaft out to the chassis edge. The collision
-    // box is already solid here (footprintExtents spans the full half-width) — this is the
-    // geometry that was missing from the picture, not new physics.
+    // box is already solid here for robots/walls/the gate lever (footprintExtents spans the
+    // full half-width); artifacts pass UNDER it (see ballRobotContact).
     if (hw > rw + 0.05) {
-      for (const s of [1, -1] as const) {
-        const y0 = s === 1 ? rw : -hw;
+      for (const sg of [1, -1] as const) {
+        const y0 = sg === 1 ? rw : -hw;
         ctx.fillStyle = intakeOn ? '#14532d' : '#2c333e';
         ctx.fillRect(rollerBack, y0, dia, hw - rw);
         ctx.strokeStyle = color;
@@ -75,13 +79,15 @@ export function drawRobot(
         ctx.strokeRect(rollerBack, y0, dia, hw - rw);
       }
     }
-    // the compliant wheels themselves, evenly spaced along the shaft
-    const n = Math.max(2, Math.round(rw)); // ~one wheel per inch of half-span
+    // FIXED PITCH, so there is always a visible gap between wheels. Scaling the count with
+    // the span (one per inch) gave a 0.95in pitch for 1.1in wheels — a NEGATIVE gap, so they
+    // merged back into the solid bar this was meant to break up.
+    const n = Math.max(1, Math.floor(wheelHalf / 1.9));
     for (let i = -n; i <= n; i++) {
-      const cy = (i * rw) / (n + 0.4);
+      const cy = (i * wheelHalf) / (n + 0.35);
       const center = Math.abs(i) <= Math.max(1, n / 3);
       ctx.fillStyle = center ? (intakeOn ? '#22c55e' : '#6b7280') : intakeOn ? '#15803d' : '#4b5563';
-      ctx.fillRect(rollerBack, cy - 0.55, dia, 1.1);
+      ctx.fillRect(rollerBack, cy - 0.6, dia, 1.2);
     }
   };
   if (m.wedge) {
