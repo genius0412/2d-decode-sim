@@ -1290,13 +1290,23 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
       run(w, cmd({}), 10);
       return n - w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length;
     };
-    const depths = [5, 6, 7, 8, 9];
+    const depths = [7, 8, 9];
     const got = depths.map((n) => tapDrain(n, 0));
     const emptied = depths.filter((n, i) => got[i] === n);
+    // A tap is worth about six artifacts. It will therefore clear a SHALLOW ramp, which is
+    // fine and is not what the complaint was about — "the gate always empties all" was a
+    // full ramp going in one tap. What must stay true is that a LOADED ramp cannot be, so
+    // this is asserted from 7 up (RAMP_SLOTS is 9). Raising the yield past this point
+    // empties 7-deep ramps too, which is the line back into the old behaviour.
     check(
-      'ONE TAP NEVER EMPTIES THE RAMP, at any column depth',
+      'ONE TAP NEVER EMPTIES A LOADED RAMP (7+)',
       emptied.length === 0,
       `${depths.map((n, i) => `${got[i]}/${n}`).join(' ')}${emptied.length ? ` — emptied ${emptied.join(',')}` : ''}`,
+    );
+    check(
+      '...and it is worth a useful haul, not a trickle',
+      got.every((g) => g >= 5),
+      `${got.join(', ')} artifacts per tap at depth 7/8/9`,
     );
     // ...and what a tap is worth is situational, not a fixed dose. Sampled out to +8in:
     // loosening a 5.1in pitch by a couple of inches barely changes the momentum arriving at

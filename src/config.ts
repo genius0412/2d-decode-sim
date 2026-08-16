@@ -1008,7 +1008,26 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.0125; // open fraction per in/s (≈32 in/s to stay passable)
+export const GATE_SHOULDER_LIFT = 0.017; // open fraction per in/s (≈24 in/s to stay passable)
+/**
+ * WHAT A TAP IS WORTH is set by three constants together — GATE_SHOULDER_LIFT (momentum
+ * needed to keep the gate passable), GATE_FLOW_CUSHION (flow needed to suspend the fall)
+ * and GATE_CLOSE_MAX (how fast it settles). They move as a set; adjusting one alone mostly
+ * does nothing, because the drain ends when the arm crosses the pass line and all three
+ * govern when that happens.
+ *
+ * The yield does not vary smoothly with them — it comes in steps, because the drain ends
+ * on a whole artifact. Swept:
+ *
+ *     0.0125 / 62 / 1.65  ->  4 per tap, empties nothing 5-9
+ *     0.014  / 55 / 1.55  ->  5,        empties a 5-deep ramp
+ *     0.017  / 46 / 1.42  ->  6,        empties 5 and 6      <- here
+ *     0.018  / 42 / 1.35  ->  7,        empties 5, 6 and 7
+ *
+ * Six is the most that keeps a LOADED ramp (7+) un-clearable in one tap, which is the line
+ * the "the gate always empties all" complaint was actually about. Past it, a 7-deep ramp
+ * goes in one tap and the old behaviour is back.
+ */
 /** rolling resistance the paddle's weight imposes on the artifact it is resting on, at
  * full sag (arm down). Scaled by (1 − gatePos), so a fully-lifted arm — held up by a
  * robot — costs the flow nothing at all, which is what makes a held gate stream. */
@@ -1136,7 +1155,7 @@ export const GATE_GRAVITY = 22; // 1/s^2 on gatePos: gravity swinging the releas
  * the travel). Terminal-limited instead, so the time is very nearly proportional to how far
  * open it was — "how fast it closes is determined by the initial position of the gate".
  */
-export const GATE_CLOSE_MAX = 1.65; // 1/s: terminal swing speed as it falls closed
+export const GATE_CLOSE_MAX = 1.42; // 1/s: terminal swing speed as it falls closed
 /**
  * How much momentum in the flow it takes to hold the falling arm up.
  *
@@ -1147,7 +1166,7 @@ export const GATE_CLOSE_MAX = 1.65; // 1/s: terminal swing speed as it falls clo
  * gravity. This is a RATE cushion and is separate from the height floor the same artifacts
  * set via GATE_SHOULDER_LIFT — that says how low it may go, this says how fast it gets there.
  */
-export const GATE_FLOW_CUSHION = 62; // in/s of down-ramp flow that fully suspends the fall
+export const GATE_FLOW_CUSHION = 46; // in/s of down-ramp flow that fully suspends the fall
 export const GATE_PASS_FRAC = 0.4; // arm must be at least this lifted for an ARTIFACT to pass
 export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement (manual 9.8.3)
 /** the gate is a class-1 LEVER (manual Figure 9-15) hinged at the CLASSIFIER EDGE — where
