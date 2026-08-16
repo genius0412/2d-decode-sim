@@ -59,15 +59,10 @@ export function drawRobot(
    */
   const drawRoller = () => {
     const axis = rollerTip - dia / 2;
-    // The compliant roller sits at the THROAT on a funnel preset — that is where the sim
-    // draws artifacts in and captures them (robot.ts: `wheelSpan = wedge ? throatHalf :
-    // mouthHalf`). Drawn as ONE rounded body with wheel divisions rather than separate
-    // rects: at 72mm, separate wheels read as fingers sticking off the front.
-    const rollHalf = m.wedge ? m.throatHalf : rw;
-    // shaft across the mouth — the gate opener hangs off its ends
+    // beam across the mouth
     ctx.fillStyle = intakeOn ? '#166534' : '#475569';
-    ctx.fillRect(axis - 0.3, -rw, 0.6, rw * 2);
-    // GATE OPENER: a THIN tab on each shaft end out to the chassis edge. Solid to robots,
+    ctx.fillRect(axis - 0.28, -rw, 0.56, rw * 2);
+    // GATE OPENER: a THIN tab on each beam end out to the chassis edge. Solid to robots,
     // walls and the gate lever (footprintExtents); artifacts pass UNDER it.
     if (hw > rw + 0.05) {
       for (const sg of [1, -1] as const) {
@@ -79,20 +74,21 @@ export function drawRobot(
         ctx.strokeRect(axis - C.INTAKE_OPENER_THICK / 2, y0, C.INTAKE_OPENER_THICK, hw - rw);
       }
     }
-    // the roller body, front face flush with the collision front
-    ctx.fillStyle = intakeOn ? '#22c55e' : '#6b7280';
-    ctx.beginPath();
-    const rr = Math.min(0.9, rollHalf);
-    ctx.roundRect(rollerBack, -rollHalf, dia, rollHalf * 2, rr);
-    ctx.fill();
-    ctx.strokeStyle = intakeOn ? '#15803d' : '#4b5563';
-    ctx.lineWidth = 0.5;
-    const nd = Math.max(1, Math.round(rollHalf / 1.1));
-    for (let i = -nd + 1; i < nd; i++) {
-      const y = (i * rollHalf) / nd;
+    // ROLLERS along the WHOLE beam, out to the openers that cap its ends. `wheelSpan` in
+    // robot.ts is the SUCTION region, not the hardware — drawing to it left a few rollers
+    // in the middle and bare beam either side.
+    const n = Math.max(1, Math.round(rw / C.INTAKE_ROLLER_PITCH));
+    const halfW = C.INTAKE_ROLLER_W / 2;
+    ctx.strokeStyle = intakeOn ? '#15803d' : '#94a3b8';
+    ctx.lineWidth = 0.4;
+    for (let i = -n; i <= n; i++) {
+      const cy = (i * rw) / (n + 0.35);
+      if (Math.abs(cy) + halfW > rw + 0.01) continue; // never past the beam ends
+      const center = Math.abs(i) <= Math.max(1, n / 3);
+      ctx.fillStyle = center ? (intakeOn ? '#22c55e' : '#6b7280') : intakeOn ? '#15803d' : '#5b6472';
       ctx.beginPath();
-      ctx.moveTo(rollerBack + 0.15, y);
-      ctx.lineTo(rollerTip - 0.15, y);
+      ctx.roundRect(rollerBack, cy - halfW, dia, C.INTAKE_ROLLER_W, 0.45);
+      ctx.fill();
       ctx.stroke();
     }
   };

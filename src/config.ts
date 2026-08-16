@@ -712,6 +712,16 @@ export const INTAKE_ROLLER_MM = { sloped: 72, vector: 48, triangle: 72 } as cons
 /** fore-aft thickness of the gate-opener tab on each shaft end. A tab on a beam end, not a
  * slab: drawing it the full roller diameter made the front read as one solid block. */
 export const INTAKE_OPENER_THICK = 0.9; // in
+/**
+ * The roller beam is covered in rollers ALONG ITS WHOLE LENGTH, out to the gate openers that
+ * cap its ends — not a short stack in the middle.
+ *
+ * `wheelSpan = wedge ? throatHalf : mouthHalf` in robot.ts is the SUCTION region (where an
+ * artifact gets drawn toward the throat), not the physical extent of the hardware, and
+ * drawing the rollers to it put a handful of them in the centre with bare beam either side.
+ */
+export const INTAKE_ROLLER_PITCH = 1.6; // in between roller centres
+export const INTAKE_ROLLER_W = 1.3; // in, each roller's width along the beam
 /** roller diameter in inches for a spec */
 export const intakeRollerDia = (spec: { intake: keyof typeof INTAKE_ROLLER_MM }): number =>
   INTAKE_ROLLER_MM[spec.intake] / 25.4;

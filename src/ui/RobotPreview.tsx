@@ -1,5 +1,5 @@
 import type { RobotSpec } from '../types';
-import { INTAKE_PRESETS, INTAKE_OPENER_THICK, intakeRollerDia, TURRET_OFFSET_FRAC, WHEEL_INSET, intakeMouth } from '../config';
+import { INTAKE_PRESETS, INTAKE_OPENER_THICK, INTAKE_ROLLER_PITCH, INTAKE_ROLLER_W, intakeRollerDia, TURRET_OFFSET_FRAC, WHEEL_INSET, intakeMouth } from '../config';
 import {
   CHAIN_DEFAULT_INTAKE,
   CHAIN_DEFAULT_SCORE_MODE,
@@ -90,15 +90,13 @@ export function RobotPreview({
   // the width of the mouth covers the whole reach and buries the funnel, and the slopes are
   // the identity of these presets. Gaps between wheels let them read through, which is also
   // what the real thing looks like from above.
-  // The compliant roller sits at the THROAT on a funnel preset (that is where the sim draws
-  // artifacts in), drawn as ONE rounded body with wheel divisions — at 72mm, separate wheels
-  // read as fingers off the front. The SHAFT spans the mouth; the gate opener is a THIN tab
-  // on its ends, not a slab the full roller diameter.
-  const rollHalf = wedge ? throatHalf : mouthHalf;
-  const nDiv = Math.max(1, Math.round(rollHalf / 1.1));
+  // ROLLERS along the WHOLE beam, out to the gate-opener tabs that cap its ends.
+  // `wheelSpan` in robot.ts is the SUCTION region, not the hardware.
+  const nRoll = Math.max(1, Math.round(mouthHalf / INTAKE_ROLLER_PITCH));
+  const rollHalfW = INTAKE_ROLLER_W / 2;
   const roller = (
     <g>
-      <rect x={-mouthHalf} y={rollerTipY + rollerDia / 2 - 0.3} width={mouthHalf * 2} height={0.6} fill={accent} opacity={0.55} />
+      <rect x={-mouthHalf} y={rollerTipY + rollerDia / 2 - 0.28} width={mouthHalf * 2} height={0.56} fill={accent} opacity={0.55} />
       {halfW > mouthHalf + 0.05 &&
         ([1, -1] as const).map((sgn) => (
           <rect
@@ -114,27 +112,21 @@ export function RobotPreview({
             strokeOpacity={0.8}
           />
         ))}
-      <rect
-        x={-rollHalf}
-        y={rollerTipY}
-        width={rollHalf * 2}
-        height={rollerDia}
-        rx={Math.min(0.9, rollHalf)}
-        fill={accent}
-        opacity={0.85}
-      />
-      {Array.from({ length: nDiv * 2 - 1 }, (_, k) => k - nDiv + 1).map((i) => (
-        <line
-          key={i}
-          x1={(i * rollHalf) / nDiv}
-          y1={rollerTipY + 0.15}
-          x2={(i * rollHalf) / nDiv}
-          y2={rollerTipY + rollerDia - 0.15}
-          stroke={accent}
-          strokeWidth={0.22}
-          strokeOpacity={0.55}
-        />
-      ))}
+      {Array.from({ length: nRoll * 2 + 1 }, (_, k) => k - nRoll)
+        .map((i) => ({ i, cy: (i * mouthHalf) / (nRoll + 0.35) }))
+        .filter(({ cy }) => Math.abs(cy) + rollHalfW <= mouthHalf + 0.01)
+        .map(({ i, cy }) => (
+          <rect
+            key={i}
+            x={cy - rollHalfW}
+            y={rollerTipY}
+            width={INTAKE_ROLLER_W}
+            height={rollerDia}
+            rx={0.45}
+            fill={accent}
+            opacity={Math.abs(i) <= Math.max(1, nRoll / 3) ? 0.95 : 0.7}
+          />
+        ))}
     </g>
   );
   let intakeEl: JSX.Element;
