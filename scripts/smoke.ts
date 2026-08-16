@@ -1267,7 +1267,7 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   // a handful, and a tap used to empty EVERY column up to six. A tap is worth a few
   // artifacts, and how many depends on how the column happens to be packed.
   {
-    const tapDrain = (n: number, spread: number) => {
+    const tapDrain = (n: number, spread: number, tapS = 0.3, standoff = 7) => {
       const w = mkWorld('match', 'blue', 42);
       startMatch(w);
       for (let i = 0; i < n; i++) {
@@ -1281,32 +1281,43 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
       }
       const r = w.robots[0];
       const z = gateZone('blue');
-      r.pos = { x: z.x1 + 7, y: (z.y0 + z.y1) / 2 };
+      r.pos = { x: z.x1 + standoff, y: (z.y0 + z.y1) / 2 };
       r.heading = Math.PI;
       r.fieldCentric = false;
       r.vel = { x: 0, y: 0 };
-      run(w, cmd({ driveY: 1 }), 0.3);
+      run(w, cmd({ driveY: 1 }), tapS);
       r.pos = { x: 0, y: -30 };
-      run(w, cmd({}), 10);
+      run(w, cmd({}), 12);
       return n - w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length;
     };
-    const depths = [7, 8, 9];
-    const got = depths.map((n) => tapDrain(n, 0));
-    const emptied = depths.filter((n, i) => got[i] === n);
-    // A tap is worth about six artifacts. It will therefore clear a SHALLOW ramp, which is
-    // fine and is not what the complaint was about — "the gate always empties all" was a
-    // full ramp going in one tap. What must stay true is that a LOADED ramp cannot be, so
-    // this is asserted from 7 up (RAMP_SLOTS is 9). Raising the yield past this point
-    // empties 7-deep ramps too, which is the line back into the old behaviour.
+    // WHAT A TAP IS WORTH IS A RANGE, NOT A DOSE: "it should empty up to maximum 9, but as
+    // low as like 4 or 5". So this asserts the SPREAD across the conditions a driver
+    // actually varies — how packed the column is, how long the tap was, how much run-up
+    // there was — rather than a number at one setting. Sweeping only packing at a fixed tap
+    // reads as a flat 6 and hides the whole distribution; that is how an earlier version of
+    // this check convinced me the yield was a constant when it was not.
+    const yields: number[] = [];
+    for (const spread of [0, 2, 5]) {
+      for (const tapS of [0.15, 0.3, 0.5]) {
+        for (const standoff of [4, 7, 11]) yields.push(tapDrain(9, spread, tapS, standoff));
+      }
+    }
+    const lo = Math.min(...yields);
+    const hi = Math.max(...yields);
     check(
-      'ONE TAP NEVER EMPTIES A LOADED RAMP (7+)',
-      emptied.length === 0,
-      `${depths.map((n, i) => `${got[i]}/${n}`).join(' ')}${emptied.length ? ` — emptied ${emptied.join(',')}` : ''}`,
+      'a tap can give out EARLY — the flow does not always carry the ramp',
+      lo <= 5,
+      `worst tap over ${yields.length} conditions: ${lo} of 9`,
     );
     check(
-      '...and it is worth a useful haul, not a trickle',
-      got.every((g) => g >= 5),
-      `${got.join(', ')} artifacts per tap at depth 7/8/9`,
+      '...and can carry the WHOLE ramp when the flow holds up',
+      hi >= RAMP_SLOTS,
+      `best tap: ${hi} of 9`,
+    );
+    check(
+      '...so the yield is a spread, not a fixed dose',
+      new Set(yields).size >= 4,
+      `${[...new Set(yields)].sort((a, b) => a - b).join(',')} seen across ${yields.length} conditions`,
     );
     // ...and what a tap is worth is situational, not a fixed dose. Sampled out to +8in:
     // loosening a 5.1in pitch by a couple of inches barely changes the momentum arriving at

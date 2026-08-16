@@ -1008,7 +1008,7 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.017; // open fraction per in/s (≈24 in/s to stay passable)
+export const GATE_SHOULDER_LIFT = 0.019; // open fraction per in/s (≈21 in/s to stay passable)
 /**
  * WHAT A TAP IS WORTH is set by three constants together — GATE_SHOULDER_LIFT (momentum
  * needed to keep the gate passable), GATE_FLOW_CUSHION (flow needed to suspend the fall)
@@ -1016,19 +1016,22 @@ export const GATE_SHOULDER_LIFT = 0.017; // open fraction per in/s (≈24 in/s t
  * does nothing, because the drain ends when the arm crosses the pass line and all three
  * govern when that happens.
  *
- * The yield does not vary smoothly with them — it comes in steps, because the drain ends
- * on a whole artifact. Swept:
+ * IT IS A RANGE, NOT A DOSE — "it should empty up to maximum 9, but as low as like 4 or 5".
+ * On a full ramp, across the conditions a driver actually varies (packing, tap length,
+ * run-up), this setting yields every value from 4 to 9. The spread comes from the flow
+ * itself: a dense column arriving fast holds the arm up and carries the whole ramp, while
+ * one that has spread out lets the arm settle and gives out early.
  *
- *     0.0125 / 62 / 1.65  ->  4 per tap, empties nothing 5-9
- *     0.014  / 55 / 1.55  ->  5,        empties a 5-deep ramp
- *     0.017  / 46 / 1.42  ->  6,        empties 5 and 6      <- here
- *     0.018  / 42 / 1.35  ->  7,        empties 5, 6 and 7
+ * MEASURING ONLY PACKING AT A FIXED TAP HIDES ALL OF THIS. Swept that way it reads as a
+ * flat 6 at every depth, which is what convinced an earlier pass that the yield was a
+ * constant and sent it hunting for variance that was already there. Vary the tap and the
+ * run-up too, or the number means nothing.
  *
- * Six is the most that keeps a LOADED ramp (7+) un-clearable in one tap, which is the line
- * the "the gate always empties all" complaint was actually about. Past it, a 7-deep ramp
- * goes in one tap and the old behaviour is back.
- */
-/** rolling resistance the paddle's weight imposes on the artifact it is resting on, at
+ *     0.0125 / 62 / 1.65  ->  4 flat        (no spread at all)
+ *     0.017  / 46 / 1.42  ->  4..8
+ *     0.019  / 42 / 1.34  ->  4..9          <- here
+ *     0.020  / 40 / 1.30  ->  5..9          (floor lifts; it stops giving out early)
+ *//** rolling resistance the paddle's weight imposes on the artifact it is resting on, at
  * full sag (arm down). Scaled by (1 − gatePos), so a fully-lifted arm — held up by a
  * robot — costs the flow nothing at all, which is what makes a held gate stream. */
 export const GATE_PADDLE_DRAG = 5.5; // 1/s at full sag
@@ -1155,7 +1158,7 @@ export const GATE_GRAVITY = 22; // 1/s^2 on gatePos: gravity swinging the releas
  * the travel). Terminal-limited instead, so the time is very nearly proportional to how far
  * open it was — "how fast it closes is determined by the initial position of the gate".
  */
-export const GATE_CLOSE_MAX = 1.42; // 1/s: terminal swing speed as it falls closed
+export const GATE_CLOSE_MAX = 1.34; // 1/s: terminal swing speed as it falls closed
 /**
  * How much momentum in the flow it takes to hold the falling arm up.
  *
@@ -1166,7 +1169,7 @@ export const GATE_CLOSE_MAX = 1.42; // 1/s: terminal swing speed as it falls clo
  * gravity. This is a RATE cushion and is separate from the height floor the same artifacts
  * set via GATE_SHOULDER_LIFT — that says how low it may go, this says how fast it gets there.
  */
-export const GATE_FLOW_CUSHION = 46; // in/s of down-ramp flow that fully suspends the fall
+export const GATE_FLOW_CUSHION = 42; // in/s of down-ramp flow that fully suspends the fall
 export const GATE_PASS_FRAC = 0.4; // arm must be at least this lifted for an ARTIFACT to pass
 export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement (manual 9.8.3)
 /** the gate is a class-1 LEVER (manual Figure 9-15) hinged at the CLASSIFIER EDGE — where
