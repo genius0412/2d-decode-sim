@@ -4073,6 +4073,59 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- the gate opener rides ABOVE the artifacts, so it must not push them -----------
+// It is solid to walls, robots and the gate lever — that is `footprintExtents`, untouched —
+// but the roller and the opener blocks on its beam ends sit high in z, so artifacts pass
+// underneath. This only became reachable when the roller grew to 72mm: at 1in deep the
+// wedge covered essentially the whole reach and the drawing and the collision agreed, but
+// the wedge now stops a roller-radius short and the band in front of it was still solid.
+// Measured before the fix: an artifact placed dead centre of the block was ejected 4.2in.
+{
+  for (const key of ['sloped', 'triangle'] as const) {
+    const width = 18; // widest chassis -> the biggest opener block
+    const spec = { ...DEFAULT_SPEC, intake: key, length: INTAKE_PRESETS[key].maxLength, width };
+    const mo = intakeMouth(spec);
+    const hl = spec.length / 2;
+    const hw = width / 2;
+    const tip = hl + INTAKE_PRESETS[key].reach;
+    const wedgeFront = tip - intakeRollerDia(spec) / 2;
+    const w = mkWorld('match', 'blue', 7, spec);
+    startMatch(w);
+    const r = w.robots[0];
+    r.pos = { x: 0, y: 0 };
+    r.heading = 0; // robot frame == world frame
+    r.vel = { x: 0, y: 0 };
+    r.angVel = 0;
+    for (const b of w.balls) {
+      b.state = { kind: 'ground' };
+      b.pos = { x: FIELD_HALF - 6, y: -FIELD_HALF + 6 };
+      b.vel = { x: 0, y: 0 };
+      b.z = 0;
+      b.vz = 0;
+    }
+    const t = w.balls[0];
+    // forward of BOTH the chassis and the wedge front — the opener's REAR half sits above
+    // the wedge, which is floor-level structure and legitimately solid
+    t.pos = { x: Math.max(hl + BALL_RADIUS + 0.05, wedgeFront + 0.3), y: (mo.mouthHalf + hw) / 2 };
+    const p0 = { ...t.pos };
+    for (let i = 0; i < Math.round(1 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({})]]));
+      for (const b of w.balls) {
+        if (b.id !== t.id && b.state.kind === 'ground') {
+          b.pos = { x: FIELD_HALF - 6, y: -FIELD_HALF + 6 };
+          b.vel = { x: 0, y: 0 };
+        }
+      }
+    }
+    const moved = hyp(t.pos.x - p0.x, t.pos.y - p0.y);
+    check(
+      `${key}: an artifact under the gate opener is not pushed by it`,
+      moved < 0.05,
+      `moved ${moved.toFixed(3)}in (4.2in before the fix)`,
+    );
+  }
+}
+
 // ---- the roller and its GATE OPENER match the collision box exactly ---------------
 // The gate opener is not decoration and it is not a new collider either: footprintExtents
 // already makes the whole front solid out to width/2 and forward to length/2 + reach, which

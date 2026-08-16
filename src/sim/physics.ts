@@ -890,7 +890,22 @@ function ballRobotContact(
     return toWorld(0, -1, R + db, local.x, -half);
   }
 
-  if (local.x > tip) return null; // under the roller front (high in z) — open to balls
+  if (local.x > tip) return null; // past the roller front — nothing there at all
+
+  /**
+   * THE ROLLER BAND RIDES ABOVE THE BALLS. The floor-level structure of a funnel intake is
+   * the WEDGE, and it ends at the roller's axle; forward of that there is only the roller
+   * itself and the GATE OPENER blocks on its beam ends, both of which sit high in z. Balls
+   * pass underneath, so this band is open to them — it is solid to walls, robots and the
+   * gate lever (that is `footprintExtents`, unchanged), just not to artifacts.
+   *
+   * This only became visible when the roller grew to 72mm. At 1in deep the wedge covered
+   * essentially the whole reach and the two agreed; now the wedge stops a roller-radius
+   * short, and without this a ball sitting dead centre of the opener block was ejected
+   * 4.2in by a plate that is not there at ball height.
+   */
+  const wedgeFront = tip - C.intakeRollerDia(r.spec) / 2;
+  if (mouth.wedge && local.x > wedgeFront && Math.abs(local.y) > mh) return null;
 
   // ---- intake region hl < x <= tip ----
   const ay = Math.abs(local.y);
@@ -903,6 +918,9 @@ function ballRobotContact(
       const pen = R - (ay - half); // flank side wall — no side intake
       return pen > 0 ? toWorld(0, s, pen, local.x, s * half) : null;
     }
+    // The FUNNEL runs the full reach — narrowing it to the wedge's own depth is not needed
+    // and costs guidance: it slowed the outermost sloped capture from 0.33s to 0.43s against
+    // main. Only the OPENER's own footprint (beyond the wedge, outboard of the mouth) opens.
     const reach = tip - hl;
     const L = hyp(reach, mh - th);
     const nsx = (mh - th) / L;
