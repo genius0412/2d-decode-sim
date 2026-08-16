@@ -226,6 +226,22 @@ function applyContactTorque(
 
 /** how deep a world point sits inside the robot's OBB (incl. intake);
  * negative = outside */
+/**
+ * Signed depth of a point inside the robot's CHASSIS only — the intake reach excluded.
+ *
+ * `pointDepthInRobot` uses `robotExtents`, which grows the box forward by the intake's
+ * reach. That is the right box for robot-vs-world collision, and the wrong one for asking
+ * "is an artifact inside this robot": the mouth is open to artifacts by design (product
+ * decision #10) and the artifact solve already builds its chassis collider from
+ * length/width for the same reason. Matches that collider exactly.
+ */
+export function pointDepthInChassis(r: RobotState, p: Vec2): number {
+  const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);
+  const hl = r.spec.length / 2;
+  const hw = r.spec.width / 2;
+  return Math.min(Math.min(local.x + hl, hl - local.x), Math.min(local.y + hw, hw - local.y));
+}
+
 export function pointDepthInRobot(r: RobotState, p: Vec2): number {
   const e = robotExtents(r);
   const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);

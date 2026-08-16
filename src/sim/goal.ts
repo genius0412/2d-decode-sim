@@ -13,7 +13,7 @@ import {
 } from './field';
 import { addClassified, addOverflow } from './scoring';
 import { approach, nextRandom, hyp, rot } from '../math';
-import { pointDepthInRobot, robotExtents, robotIntersectsRect } from './physics';
+import { pointDepthInChassis, pointDepthInRobot, robotExtents, robotIntersectsRect } from './physics';
 
 export const ZERO_CMD: RobotCommand = {
   driveX: 0,
@@ -415,7 +415,13 @@ function railBlock(
     // Fixed step, deterministic, and well under an artifact radius so nothing slips through.
     let reach = -Infinity;
     for (let s = C.RAIL_EXIT_S; s <= top; s += C.RAIL_BLOCK_STEP) {
-      if (pointDepthInRobot(r, railPos(a, s)) > -C.BALL_RADIUS) reach = s + C.RAIL_BLOCK_STEP;
+      // CHASSIS, not the intake-extended footprint. `robotExtents` grows the box forward by
+      // the intake's reach — that box is what the ROBOT collides with, but to an artifact
+      // the mouth is open (product decision #10), and the artifact solve already excludes it
+      // for exactly this reason. Using it here meant a robot holding the gate open by
+      // pressing its INTAKE at the classifier read as its BODY lying across the outflow, so
+      // it blocked the drain it was opening.
+      if (pointDepthInChassis(r, railPos(a, s)) > -C.BALL_RADIUS) reach = s + C.RAIL_BLOCK_STEP;
     }
     if (reach > best) {
       best = reach;
@@ -632,6 +638,20 @@ export function updateRails(world: World, dt: number): void {
         // ...and clambering is still lossy in a way a ramp is not
         st.v *= Math.max(0, 1 - C.OVERFLOW_DRAG * dt);
         st.v = Math.max(st.v, -C.RAIL_TERMINAL);
+      } else if (st.overflow && b.z > C.RAMP_SURFACE_Z + 0.05) {
+        /**
+         * IT HAS RUN OUT OF COLUMN AND IS DROPPING OFF THE END, and landing costs it speed.
+         *
+         * This is where the variety in the overflow lane comes from, and it needs no
+         * randomising: the scallop means artifacts leave the pile anywhere between a hollow
+         * and a crest, so they begin the drop from different heights and are still falling
+         * for different lengths of time. One rule, a different outcome each.
+         *
+         * Without it every overflow artifact converged on the drag terminal and left at the
+         * same speed — 34.2..35.4 in/s across six, a spread of 1.2 against the classified
+         * lane's 17.1 — which is what made them file out in a line.
+         */
+        st.v *= Math.max(0, 1 - C.OVERFLOW_LAND_LOSS * dt);
       }
       // THE PADDLE HAS WEIGHT, and an artifact passing under an arm that is resting on it
       // carries that weight. The bear is (1 − gatePos): a robot holding the arm fully
@@ -859,6 +879,10 @@ export function updateRails(world: World, dt: number): void {
            * supposed to STALL the column (railBlock already says so). So the column stops
            * shoving and simply waits, which is what it does behind any other obstruction.
            */
+          // FULL FOOTPRINT here, unlike railBlock: this asks "can this artifact go anywhere",
+          // and one wedged under an intake against the gate cannot. The mouth being open to
+          // CAPTURE does not mean an artifact can be shoved out through it. Using the chassis
+          // box here brought the buzz straight back — 60 reversals in two seconds.
           const pinned = world.robots.some(
             (rb) => pointDepthInRobot(rb, ahead.pos) > -C.BALL_RADIUS * C.EXIT_PIN_FRAC,
           );
