@@ -1127,9 +1127,19 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   run(w, cmd({ driveY: 1 }), 0.3); // tap: a brief push opens the arm...
   r.pos = { x: 0, y: -30 }; // ...and drive away immediately
   run(w, cmd({}), 4);
-  check('tapped gate kept draining (flow holds it open)', ramped >= 2 && slotCount(w, 'blue') === 0, `slots ${ramped} -> ${slotCount(w, 'blue')}`);
-  check('gate re-closed after the column cleared', !w.goals.blue.gateOpen);
-  check('gate arm fell fully closed (gatePos 0) after draining', w.goals.blue.gatePos === 0, `gatePos ${w.goals.blue.gatePos.toFixed(3)}`);
+  // A tap drains SOME of the column and then gives out — it must not empty the ramp (see
+  // the tap-depth sweep). What is left stays retained.
+  check('a tapped gate drains part of the column', ramped >= 2 && slotCount(w, 'blue') < ramped, `slots ${ramped} -> ${slotCount(w, 'blue')}`);
+  check('gate re-closed once the drain gave out', !w.goals.blue.gateOpen);
+  // NOT "gatePos === 0". The arm comes to rest on WHAT IS UNDER IT, so with artifacts still
+  // on the ramp it correctly seats on one (at GATE_SEAT_FRAC or below) rather than falling
+  // flat. Flat is only right when the gateway is genuinely empty. What matters either way is
+  // that it is no longer passable.
+  check(
+    'the arm ends NOT passable — flat if the gateway is empty, seated on an artifact if not',
+    w.goals.blue.gatePos < GATE_PASS_FRAC && w.goals.blue.gatePos <= GATE_SEAT_FRAC + 1e-9,
+    `gatePos ${w.goals.blue.gatePos.toFixed(3)} (pass ${GATE_PASS_FRAC}, seat ${GATE_SEAT_FRAC})`,
+  );
 }
 
 // ---- HELD open streams; TAPPED open meters, and can give out ---------------------
@@ -1291,6 +1301,80 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
     );
   }
 
+  // THE ARM MUST OFTEN COME TO REST ON A BALL, not always thread between two.
+  // It never did, and that was forced by three constants rather than by tuning: the paddle's
+  // reach is 2R = 5.0in wide, RAIL_PITCH is 5.1in, and the solver snapped the column's floor
+  // to the constant GATE_STOP_S — which is exactly one radius from the gate line, i.e. the
+  // paddle's tangent. So the artifact behind it landed on the OTHER tangent and the paddle
+  // threaded precisely between them, every single time. gateStopS makes the block follow the
+  // paddle down instead, so a descending arm catches the artifact where it is.
+  {
+    let onBall = 0;
+    let total = 0;
+    for (const n of [4, 6, 8]) {
+      for (const spread of [0, 0.4, 0.8, 1.2, 1.6, 2.4]) {
+        const w = mkWorld('match', 'blue', 42);
+        startMatch(w);
+        for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+        for (let i = 0; i < n; i++) {
+          const b = w.balls[i];
+          const s = GATE_STOP_S + i * (RAIL_PITCH + spread);
+          b.state = { kind: 'rail', goal: 'blue', s, v: 0, overflow: false };
+          b.pos = railPos('blue', s);
+          b.vel = { x: 0, y: 0 };
+          b.z = RAMP_SURFACE_Z;
+          b.vz = 0;
+        }
+        const r = w.robots[0];
+        const z = gateZone('blue');
+        r.pos = { x: z.x1 + 7, y: (z.y0 + z.y1) / 2 };
+        r.heading = Math.PI;
+        r.fieldCentric = false;
+        r.vel = { x: 0, y: 0 };
+        run(w, cmd({ driveY: 1 }), 0.3);
+        r.pos = { x: 0, y: -30 };
+        run(w, cmd({}), 10);
+        total++;
+        if (w.goals.blue.gatePos > 0.001) onBall++;
+      }
+    }
+    check(
+      'the arm often comes to rest ON an artifact, not always between two',
+      onBall >= total / 4,
+      `${onBall}/${total} stalls left the arm seated on one`,
+    );
+  }
+
+  // ...AND NOTHING UP-RAMP OF THE PADDLE PROPS IT OPEN. The gateway was asked with
+  // GATE_CLOSE_CLEAR (8.5in, d from -3.5 to +5.0) rather than the paddle's actual reach,
+  // so an artifact a FULL DIAMETER clear of the gate — one that has not reached it and
+  // cannot be touching it — held the arm up and kept the flow going.
+  {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.robots[0].pos = { x: 0, y: -40 };
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    // ONE artifact, parked well up-ramp of the gate line and held there, nothing below it
+    const b = w.balls[0];
+    const s = GATE_LINE_S + BALL_RADIUS + 1.5; // clear of the paddle's reach
+    b.state = { kind: 'rail', goal: 'blue', s, v: 0, overflow: false };
+    b.pos = railPos('blue', s);
+    b.vel = { x: 0, y: 0 };
+    b.z = RAMP_SURFACE_Z;
+    b.vz = 0;
+    const g = w.goals.blue;
+    g.gatePos = 1;
+    g.gateVel = 0;
+    g.gateLatch = 0;
+    g.gateOpen = true;
+    run(w, cmd({}), 3);
+    check(
+      'an artifact up-ramp of the paddle does not prop the gate open',
+      !g.gateOpen,
+      `gatePos ${g.gatePos.toFixed(3)}`,
+    );
+  }
+
   // ...and it must be a STALL, not a deadlock: tap again and the rest comes out.
   {
     const w = tapped.w;
@@ -1385,10 +1469,13 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
     !wedged.out,
     `gatePos ${wedged.gatePos.toFixed(3)}`,
   );
+  // ...and the arm shuts behind it. Not necessarily to ZERO: the trailing artifact follows
+  // down and the arm comes to rest on THAT, which is the whole point — it lands on what is
+  // under it. What must be true is that it is no longer passable.
   check(
-    "landing on the UPHILL face squeezes it out and the arm shuts behind it",
-    past.out && past.gatePos === 0,
-    `out=${past.out} gatePos ${past.gatePos.toFixed(3)}`,
+    'landing on the UPHILL face squeezes it out and the arm shuts behind it',
+    past.out && past.gatePos < GATE_PASS_FRAC,
+    `out=${past.out} gatePos ${past.gatePos.toFixed(3)} (pass ${GATE_PASS_FRAC})`,
   );
   // ...and beyond the artifact's edge the paddle genuinely misses: a column packed against
   // a shut gate rests at GATE_STOP_S, one radius clear, and must not hold the arm up at all

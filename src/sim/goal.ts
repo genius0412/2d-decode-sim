@@ -109,6 +109,47 @@ function paddleBearsOn(goal: World['goals'][Alliance], d: number): boolean {
   return goal.gatePos <= rest + 1e-9; // settled onto it, not riding above it
 }
 
+/** is the artifact at offset `d` inside the paddle's swept region at all — i.e. close
+ * enough that the arm coming down would meet it? This is ONE ball diameter wide, and it is
+ * the window every "what is under the arm" question has to use. The gateway used to be
+ * asked with GATE_CLOSE_CLEAR (8.5in, d from −3.5 to +5.0), which counts an artifact a
+ * FULL DIAMETER up-ramp of the gate — one that has not reached it and cannot be touching
+ * it — as propping the arm open. That is "no balls below the gate yet it still flows". */
+function underPaddle(d: number): boolean {
+  return Math.abs(d) < C.BALL_RADIUS;
+}
+
+/**
+ * HOW FAR DOWN-RAMP AN ARTIFACT CAN GET, given how far open the arm is. The inverse of
+ * `gateRestOn`, and the reason the arm stopped landing on anything.
+ *
+ * The solver used to snap the column's floor to the constant GATE_STOP_S the instant
+ * `gateOpen` went false. GATE_STOP_S is one radius from the gate line — exactly the paddle's
+ * tangent point — and RAIL_PITCH (5.1in) is one ball diameter, so the artifact behind it
+ * lands exactly at the OTHER tangent. The paddle therefore threaded precisely between two
+ * artifacts every single time, touching neither. That is not a coincidence to be tuned away;
+ * it is forced by those three constants, and no amount of adjusting the ride height moved it.
+ *
+ * The block is not a constant — it is where the paddle physically is. Reading the paddle's
+ * lower edge as `u = 2R · gatePos / GATE_SEAT_FRAC` (0 at shut, a full artifact height when
+ * seated on one):
+ *  · u ≤ R — the edge is below the artifact's centre, so it meets the paddle's FACE and
+ *    stops one radius out: d = R, i.e. exactly GATE_STOP_S. The shut case is unchanged.
+ *  · R < u < 2R — the artifact noses UNDER the rising edge until its surface meets it, at
+ *    d = sqrt(R² − (u−R)²), which shrinks to nothing as the arm approaches a full diameter.
+ *
+ * So an arm descending onto a moving column no longer lets the artifact escape into the gap
+ * ahead of it: the block follows the paddle down, the artifact is caught where it is, and
+ * the arm comes to rest ON it — which is the case the user says should be common and was
+ * impossible.
+ */
+export function gateStopS(gatePos: number): number {
+  const R = C.BALL_RADIUS;
+  const u = Math.min(2 * R, (2 * R * gatePos) / C.GATE_SEAT_FRAC); // paddle's lower edge
+  if (u <= R) return C.GATE_LINE_S + R; // against the face — the classic GATE_STOP_S
+  return C.GATE_LINE_S + Math.sqrt(Math.max(0, R * R - (u - R) * (u - R)));
+}
+
 /** the open fraction the PHYSICAL handle collider should use THIS tick. buildGateArms
  * (in physicsEngine solveRobots) runs one step BEFORE updateGates mutates gatePos, so
  * without this it would build the handle from last tick's (still-closed) gatePos and
@@ -467,7 +508,11 @@ export function updateRails(world: World, dt: number): void {
     // dropped in BELOW the gate line became the reference for everything behind it, its
     // `s + RAIL_PITCH` sat under GATE_STOP_S, and the entire retained column cascaded out
     // through a shut gate.
-    const gateBase = canLeave ? -Infinity : goal.gateOpen ? C.RAIL_EXIT_S : C.GATE_STOP_S;
+    // ...and where a SHUT (or part-shut) gate stops it is WHERE THE PADDLE IS, not a
+    // constant. GATE_STOP_S is the paddle's tangent point and RAIL_PITCH is one diameter,
+    // so snapping to it put the whole column exactly between the paddle's two tangents —
+    // see gateStopS.
+    const gateBase = canLeave ? -Infinity : goal.gateOpen ? C.RAIL_EXIT_S : gateStopS(goal.gatePos);
     // A ROBOT BLOCKS THE ELEVATED LANE TOO. Overflow rides over the retained column, not over
     // a robot: an artifact on top of the stack still runs into the bumper of anything parked
     // across the channel, so the same floor applies to both lanes.
@@ -542,12 +587,8 @@ export function updateRails(world: World, dt: number): void {
       // HELD gate streams and a merely-tapped one, with the paddle settled onto the flow
       // at GATE_RIDE_FRAC, meters it. Overflow rides over the top of the gate (9.8.3) and
       // never meets the paddle at all.
-      if (
-        !elevated &&
-        st.s > C.GATE_CLOSE_CLEAR_LO &&
-        st.s < C.GATE_CLOSE_CLEAR_HI &&
-        goal.gatePos < 1
-      ) {
+      const dGate = st.s - C.GATE_LINE_S;
+      if (!elevated && underPaddle(dGate) && goal.gatePos < 1) {
         st.v *= Math.max(0, 1 - C.GATE_PADDLE_DRAG * (1 - goal.gatePos) * dt);
         /**
          * ...AND WHERE ON THE ARTIFACT IT LANDED DECIDES WHAT HAPPENS NEXT.
@@ -566,9 +607,8 @@ export function updateRails(world: World, dt: number): void {
          * Gated on the arm actually being IN CONTACT: it bears on this artifact only if it
          * has settled to the height this artifact holds it at, not merely passed nearby.
          */
-        const d = st.s - C.GATE_LINE_S;
-        if (d < 0 && paddleBearsOn(goal, d)) {
-          st.v += ((C.GATE_PADDLE_SHOVE * d) / C.BALL_RADIUS) * dt; // d < 0 ⇒ down-ramp
+        if (dGate < 0 && paddleBearsOn(goal, dGate)) {
+          st.v += ((C.GATE_PADDLE_SHOVE * dGate) / C.BALL_RADIUS) * dt; // d < 0 ⇒ down-ramp
         }
       }
       st.s += st.v * dt;
@@ -878,10 +918,11 @@ export function updateGates(
     let gatewayRest = 0;
     for (const b of world.balls) {
       if (b.state.kind !== 'rail' || b.state.goal !== a) continue;
-      if (b.state.s <= C.GATE_CLOSE_CLEAR_LO || b.state.s >= C.GATE_CLOSE_CLEAR_HI) continue;
+      if (b.state.overflow) continue; // rides OVER the gate (9.8.3) — never under the paddle
+      // ONLY WHAT IS ACTUALLY UNDER THE PADDLE. Nothing else can be holding it up.
+      if (!underPaddle(b.state.s - C.GATE_LINE_S)) continue;
       const down = -b.state.v; // v is negative down-ramp
       if (down > gatewaySpeed) gatewaySpeed = down;
-      if (b.state.overflow) continue; // rides OVER the gate (9.8.3) — never under the paddle
       const rest = gateRestOn(b.state.s - C.GATE_LINE_S);
       if (rest > gatewayRest) gatewayRest = rest; // whichever holds it highest is the one bearing it
     }
