@@ -213,6 +213,31 @@ into a wall clump with the intake running, while the hopper ended with a legal t
 
 5 MINORs → 0, hopper still filling, and every existing G408 check still passes.
 
+### ...and then it never fired at all (uncommitted)
+
+*"I never get overpossession pen anymore."* The mouth carve-out above is right in principle
+and was written as a **REGION**: everything anywhere in front of the chassis, unbounded in
+count, for as long as the intake button was held. Drivers hold that button essentially all
+the time, so the rule stopped existing. Measured, identical drive into an identical
+six-artifact pile on open floor:
+
+| | intake OFF | intake ON |
+| --- | --- | --- |
+| full hopper, 6 artifacts | 7 MINORs | **0** |
+| empty hopper, 9 artifacts | — | **0** |
+
+The carve-out is about the artifact being **ACQUIRED**, and the reasoning that justifies it
+("HOPPER_CAPACITY and POSSESSION_LIMIT are the same 3, so the slot already charges it")
+justifies exactly as many artifacts as there are slots. So it is capped at
+`HOPPER_CAPACITY − hopper.length`, nearest the chassis first (deterministic, id breaks
+ties). A FULL robot with the intake spinning has room 0 and is excused nothing — which is
+correct and is the clearest over-possession there is: it has nowhere to put any of it.
+
+Now 7 / 5 respectively, wall-clump-with-intake still 0, and every earlier G408 check still
+green. **That block ran green through the whole regression** because every G408 check either
+had the intake off or put the clump on a wall; the distinguishing case — full hopper, open
+floor, button held — is now checked both ways and asserted equal.
+
 **A velocity test was tried FIRST and is wrong** — worth knowing, since it is the obvious
 idea and the user suggested it. "Moves with the robot ⇒ controlled" gets both cases
 backwards: a wall clump slips a median **3.5 in/s** against the robot while a **herded**

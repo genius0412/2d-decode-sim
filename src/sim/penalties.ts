@@ -416,26 +416,51 @@ function controlledArtifacts(
 
   /**
    * AN ARTIFACT BEING DRAWN IN IS NOT A FOURTH ARTIFACT — it is the one about to be the
-   * third, and the count already has a slot for it.
+   * third, and the count already has a slot for it. But only AS MANY as there are slots.
    *
-   * POSSESSION_LIMIT and HOPPER_CAPACITY are the same number (3). A robot with a full
-   * hopper that is intaking cannot KEEP what is in its mouth — it has to fire something
-   * first — so counting the in-flight artifact on top of a full hopper charges the same
-   * limit twice, and every approach to a clump with three aboard read as controlling four.
-   * Measured on "drive into a wall clump with the intake running": 173 of 272 confirmed
-   * frames were artifacts sitting in the mouth, queued to be swallowed.
+   * POSSESSION_LIMIT and HOPPER_CAPACITY are the same number (3), so an artifact on its way
+   * into the hopper is already charged against the limit by the slot waiting for it, and
+   * counting it in the mouth as well charges that limit twice. That is a real carve-out and
+   * it is the manual's own ("inadvertent contact ... while attempting to acquire a SCORING
+   * ELEMENT"), but it is about the artifact being ACQUIRED — and it was written here as a
+   * REGION: everything anywhere in front of the chassis, unbounded in count, for as long as
+   * the intake button was held.
+   *
+   * Drivers hold that button essentially all the time, so the rule stopped existing.
+   * Measured, identical drive into an identical six-artifact pile on open floor:
+   *
+   *     intake OFF  ->  7 MINORs        intake ON  ->  0
+   *     ...and 9 artifacts, empty hopper, intake ON  ->  0
+   *
+   * A FULL robot with the intake spinning is the clearest over-possession there is: it has
+   * nowhere to put any of it, so every artifact in its mouth is being plowed, not acquired.
+   * The exemption is therefore capped at the room actually left in the hopper — nearest the
+   * chassis first, since those are the ones next to be swallowed. Full hopper ⇒ room 0 ⇒
+   * nothing is exempt, which restores exactly the case the user is missing, while an empty
+   * robot scooping up a legal three still gets the carve-out it is entitled to.
    *
    * Gated on the intake actually RUNNING. With it off, artifacts held in the mouth are
    * being scooped and carried, which is control in the ordinary sense and still counts.
    */
   const mouthFront = r.spec.length / 2;
+  const mouthRoom = Math.max(0, C.HOPPER_CAPACITY - r.hopper.length);
+  const excused = new Set<number>();
+  if (intaking && mouthRoom > 0) {
+    const inMouth: { id: number; x: number }[] = [];
+    for (const b of ground) {
+      if (jammed.has(b.id)) continue;
+      const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+      if (loc.x > mouthFront) inMouth.push({ id: b.id, x: loc.x });
+    }
+    // deepest into the mouth first (smallest local x is nearest the chassis); id breaks
+    // ties so the choice is deterministic
+    inMouth.sort((p, q) => p.x - q.x || p.id - q.id);
+    for (const m of inMouth.slice(0, mouthRoom)) excused.add(m.id);
+  }
   const held = new Set<number>();
   for (const b of ground) {
     if (jammed.has(b.id)) continue; // the field is holding it, not the robot
-    if (intaking) {
-      const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
-      if (loc.x > mouthFront) continue; // in the mouth, on its way to the hopper
-    }
+    if (excused.has(b.id)) continue; // on its way to a hopper slot that is already counted
     const cp = closestPointOnRobot(r, b.pos);
     if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach) held.add(b.id);
   }

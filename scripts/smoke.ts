@@ -3589,6 +3589,54 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   check('...and it actually intaked (the test is not vacuous)', r.hopper.length > 0, `hopper=${r.hopper.length}`);
 }
 
+// ---- G408: HOLDING THE INTAKE BUTTON DOES NOT MAKE PLOWING LEGAL ------------
+// Reported next session as "I never get overpossession pen anymore", and the carve-out
+// above is why: it was written as a REGION (everything in front of the chassis, unbounded
+// in count, for as long as the button was held) rather than as the artifacts being
+// ACQUIRED. Drivers hold intake essentially all the time, so the rule stopped existing.
+//
+// This whole block ran green through that regression because EVERY G408 check either had
+// the intake off or put the clump on a wall. The distinguishing case is a FULL hopper on
+// OPEN floor: nowhere to put any of it, so every artifact in the mouth is being plowed —
+// and the count must come out the same whether the button is held or not.
+{
+  const herd = (intake: boolean) => {
+    const w = mkWorld('match', 'blue', 31);
+    startMatch(w);
+    w.balls.length = 0;
+    for (let i = 0; i < 6; i++) {
+      w.balls.push({
+        id: 900 + i,
+        color: 'purple',
+        state: { kind: 'ground' },
+        pos: { x: -6 + (i % 3) * 5.2, y: -10 + Math.floor(i / 3) * 5.0 }, // open floor
+        vel: { x: 0, y: 0 },
+        z: 0,
+        vz: 0,
+      });
+    }
+    const r = w.robots[0];
+    r.pos = { x: 0, y: -22 };
+    r.heading = Math.PI / 2; // facing the pile, driving into it
+    r.fieldCentric = false;
+    r.hopper = ['green', 'green', 'green']; // FULL — it cannot acquire anything
+    run(w, cmd({ driveY: 1, intake }), 8);
+    return w.match.fouls.blue.minor;
+  };
+  const off = herd(false);
+  const on = herd(true);
+  check(
+    'herding a pile on open floor with a FULL hopper is over-possession (G408 fires)',
+    off > 0,
+    `intake off: ${off} MINORs`,
+  );
+  check(
+    'holding the intake button does not excuse it — a full robot acquires nothing',
+    on === off,
+    `intake on: ${on} vs off: ${off}`,
+  );
+}
+
 // ---- G408: the plow test is CONTACT + CARRIED, not proximity ----------------
 // The lenient model only counts a loose ball the robot is genuinely bulldozing:
 // touching, ahead along the direction of travel, and moving WITH the robot. A ball
