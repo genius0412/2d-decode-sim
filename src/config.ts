@@ -249,6 +249,28 @@ export const POSSESSION_LEAK = 0.5;
  * themselves. Identity is the signal — which artifacts, not how many.
  */
 export const POSSESSION_CONFIRM = 0.35; // s, per artifact
+/**
+ * How long an artifact may sit in a RUNNING intake's mouth before it stops counting as
+ * "being acquired" and starts counting as being PLOUGHED.
+ *
+ * The acquire carve-out is the manual's ("inadvertent contact ... while attempting to
+ * acquire a SCORING ELEMENT") and it is real, but it used to be bounded by HOPPER ROOM,
+ * which is the wrong axis entirely. An empty robot excused HOPPER_CAPACITY artifacts, and
+ * a clump you would actually push around is 3-6 — so with the intake held, which is what a
+ * driver does, ploughing one across open floor drew NOTHING at any size:
+ *
+ *     clump of   3   4   5   6   8
+ *     intake ON  0   0   2   0   0
+ *     intake off 0   1   6   5   7
+ *
+ * Time is the axis that separates the cases, because it is what "transporting" actually
+ * means. An intake takes what is in its mouth in well under a second, so:
+ *   · nose in, collect, back off  — contact is brief, excused, no foul;
+ *   · clip a clump in passing     — briefer still, no foul;
+ *   · push it across the field    — contact runs for seconds, and past this it counts.
+ * Hopper room does not enter into it: a full robot ploughs exactly as hard as an empty one.
+ */
+export const POSSESSION_ACQUIRE_S = 0.4; // s of grace per artifact in the mouth
 
 /**
  * G408's YELLOW CARD, and the manual defines "excessive" rather than leaving it to taste:

@@ -443,26 +443,25 @@ function controlledArtifacts(
    * being scooped and carried, which is control in the ordinary sense and still counts.
    */
   const mouthFront = r.spec.length / 2;
-  const mouthRoom = Math.max(0, C.HOPPER_CAPACITY - r.hopper.length);
-  const excused = new Set<number>();
-  if (intaking && mouthRoom > 0) {
-    const inMouth: { id: number; x: number }[] = [];
-    for (const b of ground) {
-      if (jammed.has(b.id)) continue;
-      const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
-      if (loc.x > mouthFront) inMouth.push({ id: b.id, x: loc.x });
-    }
-    // deepest into the mouth first (smallest local x is nearest the chassis); id breaks
-    // ties so the choice is deterministic
-    inMouth.sort((p, q) => p.x - q.x || p.id - q.id);
-    for (const m of inMouth.slice(0, mouthRoom)) excused.add(m.id);
-  }
+  const hasRoom = r.hopper.length < C.HOPPER_CAPACITY;
+  const inMouth = new Set<number>();
   const held = new Set<number>();
   for (const b of ground) {
     if (jammed.has(b.id)) continue; // the field is holding it, not the robot
-    if (excused.has(b.id)) continue; // on its way to a hopper slot that is already counted
     const cp = closestPointOnRobot(r, b.pos);
-    if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach) held.add(b.id);
+    if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) > reach) continue;
+    // Mouth artifacts stay in `held` so their hold clocks keep RUNNING — that clock is the
+    // whole test for acquiring-versus-ploughing, and excluding them outright let it decay
+    // and the grace never expire.
+    held.add(b.id);
+    // GATED on having somewhere to put it, but NOT capped by how many fit. A full robot is
+    // acquiring nothing, so it gets no grace at all and ploughs exactly as hard with the
+    // button held as without. Capping the COUNT by hopper room was the old mistake: an
+    // empty robot excused three artifacts outright, and a clump you would actually push is
+    // three to six, so holding the intake made ploughing free at every realistic size.
+    if (!intaking || !hasRoom) continue;
+    const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+    if (loc.x > mouthFront) inMouth.add(b.id);
   }
   /**
    * THE CONFIRM GATE — an artifact counts only once IT has been with this robot long enough.
@@ -523,9 +522,16 @@ function controlledArtifacts(
    */
   const controlled = new Set<number>();
   for (const b of ground) {
-    if ((pen.ballHold[`${r.id}:${b.id}`] ?? 0) >= C.POSSESSION_CONFIRM && held.has(b.id)) {
-      controlled.add(b.id);
-    }
+    if (!held.has(b.id)) continue;
+    const hold = pen.ballHold[`${r.id}:${b.id}`] ?? 0;
+    if (hold < C.POSSESSION_CONFIRM) continue;
+    // ...and an artifact the intake is still plausibly ACQUIRING does not count. Past
+    // POSSESSION_ACQUIRE_S it has had every chance to take it, so whatever it is doing it
+    // is not acquiring — it is carrying it along. Not capped by hopper room: a full robot
+    // ploughs exactly as hard as an empty one, and capping it by room is what let a driver
+    // holding the intake push a whole clump for free.
+    if (inMouth.has(b.id) && hold < C.POSSESSION_CONFIRM + C.POSSESSION_ACQUIRE_S) continue;
+    controlled.add(b.id);
   }
   for (let grew = true; grew; ) {
     grew = false;

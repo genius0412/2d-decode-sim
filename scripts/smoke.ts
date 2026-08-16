@@ -4159,6 +4159,70 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   check('...and it actually intaked (the test is not vacuous)', r.hopper.length > 0, `hopper=${r.hopper.length}`);
 }
 
+// ---- G408: pushing a clump in the open fouls even with the intake held ------------
+// "I was just pushing a clump out in the open" - and it drew nothing. The acquire carve-out
+// was bounded by HOPPER ROOM, which is the wrong axis: an EMPTY robot excused
+// HOPPER_CAPACITY artifacts outright, and a clump you would actually push around is three
+// to six, so with the intake held (which is what a driver does) ploughing one was free at
+// every realistic size:
+//
+//     clump of   3   4   5   6   8
+//     intake ON  0   0   2   0   0
+//     intake off 0   1   6   5   7
+//
+// Time is the axis that separates acquiring from carrying. Note the hold clocks PLATEAU
+// around 1.2-1.35s because the station test re-anchors as artifacts shuffle along the
+// bumper, so POSSESSION_ACQUIRE_S has to sit well under that or it excuses everything - at
+// 1.0s it was completely inert, which is how the plateau got noticed.
+{
+  const clump = (n: number, drive: (t: number) => RobotCommand, secs: number, cy = -10, ry = -22) => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    const r = w.robots[0];
+    r.hopper = [];
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    let k = 0;
+    for (const b of w.balls) {
+      if (b.state.kind !== 'ground' || k >= n) continue;
+      b.pos = { x: -5 + (k % 3) * 5.1, y: cy + Math.floor(k / 3) * 5.1 };
+      b.vel = { x: 0, y: 0 };
+      b.z = 0;
+      b.vz = 0;
+      k++;
+    }
+    r.pos = { x: 0, y: ry };
+    r.heading = Math.PI / 2;
+    r.fieldCentric = false;
+    for (let i = 0; i < Math.round(secs / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, drive(i * SIM_DT)]]));
+    }
+    return w.match.fouls.blue.minor;
+  };
+  const push = () => cmd({ driveY: 1, intake: true });
+  check(
+    'pushing a clump across open floor fouls even with the intake held',
+    clump(5, push, 8) > 0 && clump(6, push, 8) > 0,
+    `5-clump ${clump(5, push, 8)} MINORs, 6-clump ${clump(6, push, 8)}`,
+  );
+  // ...and the three cases that must stay clean, all previously reported
+  check(
+    '...while clipping one in passing still does not',
+    clump(6, (t) => (t < 0.9 ? cmd({ driveY: 1, intake: true }) : cmd({ driveX: 1, intake: true })), 4) === 0,
+    'brief contact is bulldozing',
+  );
+  check(
+    '...nor nosing in briefly and backing off',
+    clump(4, (t) => (t < 1.2 ? cmd({ driveY: 1, intake: true }) : cmd({ driveY: -1, intake: true })), 5) === 0,
+    'acquiring is not controlling',
+  );
+  check(
+    '...nor a clump jammed against a wall',
+    clump(6, push, 8, FIELD_HALF - BALL_RADIUS - 5, FIELD_HALF - 30) === 0,
+    'the field is holding it, not the robot',
+  );
+}
+
 // ---- G408: HOLDING THE INTAKE BUTTON DOES NOT MAKE PLOWING LEGAL ------------
 // Reported next session as "I never get overpossession pen anymore", and the carve-out
 // above is why: it was written as a REGION (everything in front of the chassis, unbounded
