@@ -986,7 +986,7 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.016; // open fraction per in/s (≈25 in/s to stay passable)
+export const GATE_SHOULDER_LIFT = 0.011; // open fraction per in/s (≈36 in/s to stay passable)
 /** rolling resistance the paddle's weight imposes on the artifact it is resting on, at
  * full sag (arm down). Scaled by (1 − gatePos), so a fully-lifted arm — held up by a
  * robot — costs the flow nothing at all, which is what makes a held gate stream. */
@@ -1028,7 +1028,38 @@ export const GATE_LINE_S = GATE_STOP_S - BALL_RADIUS;
  *  · d ≈ 0 is the balance point: the arm sits squarely on top at GATE_SEAT_FRAC, which is
  *    not passable, so it stays there until something works the lever or shoves it.
  */
-export const GATE_PADDLE_SHOVE = 34; // in/s² down-ramp, at the artifact's equator
+export const GATE_PADDLE_SHOVE = 120; // in/s² at the artifact's equator
+/**
+ * THE APEX IS NOT A RESTING PLACE — the ramp is tilted, so "dead on top" is not dead on top.
+ *
+ * The sideways push is proportional to `d`, so at d = 0 it is exactly zero — and `gateStopS`
+ * blocks an artifact at exactly d = 0 when the arm is at GATE_SEAT_FRAC. Those two agree, so
+ * the pair is a perfect equilibrium and the gate parks on the artifact's apex forever:
+ * measured, the arm was left seated in 18 of 48 stalls, every one of them at gatePos 0.340,
+ * which is GATE_SEAT_FRAC to three decimals.
+ *
+ * On an inclined ramp the contact normal is not vertical, so the paddle's weight keeps a
+ * down-ramp component even at the geometric apex. That shifts the neutral point up-ramp to
+ * `d = GATE_APEX_BIAS · R`, and — this is the part that matters — leaves it UNSTABLE: below
+ * it the artifact is pushed further out, above it further in. There is no longer anywhere
+ * for the gate to come to rest on an artifact.
+ */
+export const GATE_APEX_BIAS = 0.25; // of BALL_RADIUS, up-ramp of the gate line
+/**
+ * MINIMUM decisiveness of that push, as a lean magnitude.
+ *
+ * The push is proportional to how far off-centre the paddle landed, which means it fades to
+ * nothing near the neutral point — and `gateStopS` (where the arm blocks) and `gateRestOn`
+ * (how high an artifact holds it) are exact INVERSES, so the pair is neutrally stable at
+ * EVERY offset. Wherever the artifact stops, the arm settles to precisely the height that
+ * blocks it right there, and it sits forever: measured d = 1.30, v = 0.0, rest = 0.315 =
+ * gatePos, tick after tick. A proportional push cannot break that near the neutral point.
+ *
+ * So the paddle always pushes with at least this much lean, and only the DIRECTION comes
+ * from which side of neutral it landed. GATE_PADDLE_SHOVE × this must exceed RAIL_ACCEL, or
+ * the up-ramp push loses to gravity and the artifact simply slides back under the arm.
+ */
+export const GATE_SHOVE_MIN = 0.75; // × GATE_PADDLE_SHOVE must beat RAIL_ACCEL
 /** GATE as a PHYSICAL push-to-open arm (manual 9.8.3): a robot shoves the arm the
  * ~2in open, and it is "closed by gravity" — after release it does NOT snap shut but
  * SWINGS closed, starting slow and accelerating (a hinged arm falling), so a tap
@@ -1045,7 +1076,28 @@ export const GATE_OPEN_RATE = 10; // 1/s: BASE lift rate for a gentle push (ligh
 export const GATE_OPEN_RATE_SPEED = 1.2; // extra 1/s of lift per in/s of ram speed
 export const GATE_OPEN_RATE_MAX = 66; // 1/s cap (~fully open in one tick at a hard ram)
 export const GATE_GRAVITY = 22; // 1/s^2 on gatePos: gravity swinging the released arm shut
-export const GATE_CLOSE_MAX = 9; // 1/s: terminal swing speed as it falls closed
+/**
+ * Terminal swing speed as the arm falls closed.
+ *
+ * This was 9/s, which the arm never got near — from fully open it reached 0 in 0.30s under
+ * GATE_GRAVITY alone, still accelerating the whole way. Two consequences, both wrong: it
+ * shut too fast, and because it never hit terminal the time went as the SQUARE ROOT of the
+ * starting height (1.00 -> 0.300s but 0.40 -> 0.183s, barely different for less than half
+ * the travel). Terminal-limited instead, so the time is very nearly proportional to how far
+ * open it was — "how fast it closes is determined by the initial position of the gate".
+ */
+export const GATE_CLOSE_MAX = 1.8; // 1/s: terminal swing speed as it falls closed
+/**
+ * How much momentum in the flow it takes to hold the falling arm up.
+ *
+ * The other half of "how fast it closes is determined by the momentum of the balls coming
+ * down": artifacts streaming under the paddle are knocking it up as fast as gravity brings
+ * it down, so the descent is scaled by `1 − gatewaySpeed/GATE_FLOW_CUSHION`. A brisk stream
+ * nearly suspends it; a faltering one barely slows it; an empty gateway lets it fall at full
+ * gravity. This is a RATE cushion and is separate from the height floor the same artifacts
+ * set via GATE_SHOULDER_LIFT — that says how low it may go, this says how fast it gets there.
+ */
+export const GATE_FLOW_CUSHION = 70; // in/s of down-ramp flow that fully suspends the fall
 export const GATE_PASS_FRAC = 0.4; // arm must be at least this lifted for an ARTIFACT to pass
 export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement (manual 9.8.3)
 /** the gate is a class-1 LEVER (manual Figure 9-15) hinged at the CLASSIFIER EDGE — where

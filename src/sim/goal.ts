@@ -567,6 +567,8 @@ export function updateRails(world: World, dt: number): void {
     let overAhead = -Infinity;
     let overFloorV = exitFloorV;
     let retainedBelow = 0;
+    // set when the paddle shoves an artifact back UP the ramp — see the relaxation pass
+    let pushedUp = false;
 
     // the ramp-level artifacts, for deciding what is riding on what
     const retainedS = rail
@@ -638,33 +640,78 @@ export function updateRails(world: World, dt: number): void {
       // at GATE_RIDE_FRAC, meters it. Overflow rides over the top of the gate (9.8.3) and
       // never meets the paddle at all.
       const dGate = st.s - C.GATE_LINE_S;
+      // <0 = the paddle is squeezing this artifact OUT from under itself, >0 = shoving it
+      // back up into the classifier. Hoisted because the gate's own floor has to know: an
+      // artifact the paddle is EXPELLING is not an artifact the paddle is blocking.
+      let paddleLean = 0;
+      let paddleOn = false;
       if (!elevated && underPaddle(dGate) && goal.gatePos < 1) {
         st.v *= Math.max(0, 1 - C.GATE_PADDLE_DRAG * (1 - goal.gatePos) * dt);
         /**
-         * ...AND WHERE ON THE ARTIFACT IT LANDED DECIDES WHAT HAPPENS NEXT.
+         * THE GATE NEVER COMES TO REST ON AN ARTIFACT. It pushes it off, one way or the other.
          *
-         * The paddle bearing down off-centre does not only press, it pushes sideways — the
-         * contact normal is tilted by exactly as much as the artifact is off the gate line.
-         * `d < 0` means the arm came down on the artifact's UPHILL face, behind it, so that
-         * component points down-ramp: the arm squeezes it out from under itself and falls
-         * shut behind it, with no robot involved. Scaled by d/R, so it is nothing dead on
-         * top (the balance point) and strongest out at the equator.
+         * The paddle bearing down off-centre does not only press, it pushes sideways, and the
+         * direction falls straight out of the contact normal. The contact sits at horizontal
+         * offset −d from the artifact's centre, so the normal is (−d, +sqrt(R²−d²))/R and the
+         * paddle presses along −normal: the horizontal component is `+d`. One expression,
+         * both outcomes:
+         *   · d < 0 — the arm landed on the artifact's UPHILL face, behind it. The push is
+         *     down-ramp: it squeezes the artifact OUT from under itself and falls shut behind
+         *     it, no robot involved.
+         *   · d > 0 — the arm landed on its DOWNHILL face, in front of it. The push is
+         *     up-ramp: it shoves the artifact back INTO the classifier and then closes.
          *
-         * Only the downhill half is applied. `d > 0` is the arm resting on the artifact's
-         * downhill face, wedging it — and that block is already the solver's gate floor; an
-         * up-ramp force here would fight the "never push it back UP" invariant instead.
+         * The up-ramp half used to be suppressed and replaced with a WEDGE that froze the
+         * artifact where it was — which is precisely "the gate closed on top of a ball and
+         * stayed there". A hinged arm with weight on it does not do that; it resolves.
+         *
+         * Shoving up-ramp has to carry the column above it, which the descent solver will not
+         * do (its constraints only ever stop an artifact, never raise it), so `pushedUp`
+         * flags it for the relaxation pass at the end of the tick.
          *
          * Gated on the arm actually being IN CONTACT: it bears on this artifact only if it
          * has settled to the height this artifact holds it at, not merely passed nearby.
          */
-        if (dGate < 0 && paddleBearsOn(goal, dGate)) {
-          st.v += ((C.GATE_PADDLE_SHOVE * dGate) / C.BALL_RADIUS) * dt; // d < 0 ⇒ down-ramp
+        if (paddleBearsOn(goal, dGate)) {
+          // ...offset by GATE_APEX_BIAS, because the ramp is tilted and the apex is therefore
+          // not a resting place. Without it d = 0 is a zero push AND exactly where gateStopS
+          // blocks the artifact when the arm is seated — a perfect equilibrium, and the gate
+          // parked on the apex in 18 of 48 stalls.
+          paddleOn = true;
+          // direction from which side of neutral it landed; magnitude never below
+          // GATE_SHOVE_MIN, so it is always decisive enough to actually move the artifact
+          const raw = dGate / C.BALL_RADIUS - C.GATE_APEX_BIAS;
+          paddleLean = Math.sign(raw) * Math.max(Math.abs(raw), C.GATE_SHOVE_MIN);
+          st.v += C.GATE_PADDLE_SHOVE * paddleLean * dt;
+          if (paddleLean > 0) pushedUp = true;
         }
       }
       st.s += st.v * dt;
 
       const ahead = elevated ? overAhead : rampAhead;
-      const base = elevated ? overBase : rampBase;
+      /**
+       * ...EXCEPT FOR THE ARTIFACT THE PADDLE IS ON. The paddle cannot be both the thing
+       * moving an artifact and the floor underneath it.
+       *
+       * `gateStopS` (where the arm blocks) and `gateRestOn` (how high an artifact holds it)
+       * are exact INVERSES, so the pair is neutrally stable at EVERY offset: wherever the
+       * artifact happens to stop, the arm settles to exactly the height that blocks it right
+       * there, and it stays forever. Measured, the gate parked on an artifact in 19 of 48
+       * stalls; adding the apex bias only moved where the shove is zero and left the block
+       * pinning it anyway — still 6, all at the gateStopS/gateRestOn fixed point (d = 1.30,
+       * v = 0.0, rest = 0.315 = gatePos, tick after tick after tick).
+       *
+       * So while the paddle bears on it, the gate is no floor for it — its motion is decided
+       * by the shove and by gravity, and it resolves one way or the other. gateStopS still
+       * governs every OTHER artifact, which is what stops the column at the gate.
+       */
+      // The paddle is no floor for an artifact it is EXPELLING (down-ramp) — it is the thing
+      // moving it. It very much is one for an artifact it is shoving back UP into the
+      // classifier: that artifact is arriving into a closing gate, and blocking it is the
+      // gate doing its job. Dropping the floor in both directions let every arriving artifact
+      // nose under the arm and squirt out, and the gate stopped stopping anything at all
+      // (GATE_SHOULDER_LIFT swept 0.016 -> 0.007 changed the drain by literally nothing).
+      const base = elevated ? overBase : paddleOn && paddleLean < 0 ? -Infinity : rampBase;
       // THE BASE CANNOT REACH BACK UP FOR SOMETHING ALREADY PAST IT. An overflow artifact that
       // rode over the column and dropped in below the gate line is BELOW the gate stop; without
       // this the gate reached up and froze it there (measured: stranded at s=-1.1, velocity
@@ -729,24 +776,6 @@ export function updateRails(world: World, dt: number): void {
         st.s = Math.min(solid, wasS + C.RAIL_PUSH_RATE * dt);
         st.v = mouth.s > exitFloor ? 0 : wasV;
       }
-      /**
-       * WEDGED: the paddle came down on this artifact's DOWNHILL face and is now physically
-       * in front of it. It cannot descend — not because the gate is "shut" (it is resting on
-       * this artifact, part-open, and `gateOpen` may be either) but because there is a plate
-       * in the way.
-       *
-       * The solver's gate floor does not cover this. That floor sits at GATE_STOP_S, where a
-       * retained column packs, and an artifact the arm has landed on is BELOW it and hence
-       * exempted by `wasS >= base` — so without this it simply rolled on out from under a
-       * paddle resting on it. Frozen where it is until somebody works the lever, which is
-       * the whole point of the distinction: land on the uphill face and it squeezes itself
-       * out (GATE_PADDLE_SHOVE above); land on the downhill face and it is stuck.
-       */
-      const dw = wasS - C.GATE_LINE_S; // where the paddle met it, at the START of the tick
-      if (!elevated && dw > 0 && paddleBearsOn(goal, dw) && st.s < wasS) {
-        st.s = wasS;
-        st.v = 0;
-      }
 
       if (elevated) {
         overAhead = st.s + C.RAIL_PITCH;
@@ -760,6 +789,35 @@ export function updateRails(world: World, dt: number): void {
       b.pos.y = C.CLASSIFIER_Y0 + st.s;
       b.pos.x = approach(b.pos.x, railX, C.RAIL_BLEND_SPEED * dt);
       b.z = approach(b.z, elevated ? surfaceZ : C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
+    }
+
+    /**
+     * THE SHOVE CARRIES THE COLUMN, or it is not a shove.
+     *
+     * The descent solver's constraints only ever STOP an artifact — `st.s = Math.min(floor,
+     * wasS)` deliberately refuses to raise one, because a floor that moves must never yank
+     * the column (that bug dragged the whole ramp up and down in time with a robot's
+     * steering). So an artifact the paddle pushes back up-ramp would simply be driven into
+     * the one behind it and overlap.
+     *
+     * When the paddle has actually pushed, relax the retained column UPWARD from the bottom:
+     * nobody may sit closer than RAIL_PITCH to the artifact below. Rate-limited to
+     * RAIL_PUSH_RATE, the same ceiling a robot leaning into the channel gets, so the column
+     * visibly shifts up its ramp rather than teleporting.
+     */
+    if (pushedUp) {
+      const packed = rail
+        .filter((b) => !(b.state as { overflow: boolean }).overflow)
+        .sort((p, q) => (p.state as { s: number }).s - (q.state as { s: number }).s);
+      for (let i = 1; i < packed.length; i++) {
+        const below = packed[i - 1].state as { s: number };
+        const me = packed[i].state as { s: number; v: number };
+        const min = below.s + C.RAIL_PITCH;
+        if (me.s >= min) continue;
+        me.s = Math.min(min, me.s + C.RAIL_PUSH_RATE * dt);
+        if (me.v < 0) me.v = 0; // it has been stopped and lifted, not rolled
+        packed[i].pos.y = C.CLASSIFIER_Y0 + me.s;
+      }
     }
 
     // Balls past the exit roll out onto the floor from where they are — the LOWEST first, and
@@ -995,7 +1053,15 @@ export function updateGates(
       // only hold the paddle that high if it is actually moving (GATE_SHOULDER_LIFT) —
       // a faltering artifact lets the arm settle onto it and the drain stops there.
       const wasPos = goal.gatePos;
-      goal.gateVel = Math.max(goal.gateVel - C.GATE_GRAVITY * dt, -C.GATE_CLOSE_MAX);
+      // FLOW MOMENTUM CUSHIONS THE FALL. Artifacts streaming under the paddle knock it back
+      // up as fast as gravity brings it down, so a brisk stream nearly suspends the descent
+      // and an empty gateway lets it fall at full gravity. Separate from the height floor
+      // below: that says how LOW it may go, this says how FAST it gets there.
+      const cushion = Math.max(0, 1 - gatewaySpeed / C.GATE_FLOW_CUSHION);
+      goal.gateVel = Math.max(
+        goal.gateVel - C.GATE_GRAVITY * cushion * dt,
+        -C.GATE_CLOSE_MAX * cushion,
+      );
       goal.gatePos = Math.max(0, goal.gatePos + goal.gateVel * dt);
       // What is under the arm holds it up two ways, and it comes to rest on the higher:
       // a MOVING artifact keeps knocking it up (speed), and one that has STOPPED simply

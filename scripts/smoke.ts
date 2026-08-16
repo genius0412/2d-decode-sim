@@ -1294,22 +1294,31 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
       emptied.length === 0,
       `${depths.map((n, i) => `${got[i]}/${n}`).join(' ')}${emptied.length ? ` — emptied ${emptied.join(',')}` : ''}`,
     );
-    // ...and what a tap is worth is situational, not a fixed dose
-    const spreads = [0, 1.5, 3, 5].map((sp) => tapDrain(9, sp));
+    // ...and what a tap is worth is situational, not a fixed dose. Sampled out to +8in:
+    // loosening a 5.1in pitch by a couple of inches barely changes the momentum arriving at
+    // the gate, so a narrow sweep reads as a fixed dose when it is not.
+    const spreads = [0, 3, 6, 8].map((sp) => tapDrain(9, sp));
     check(
       '...and how much a tap is worth depends on how the column is packed',
       new Set(spreads).size > 1,
-      `spacing +0/1.5/3/5in -> ${spreads.join(' ')}`,
+      `spacing +0/3/6/8in -> ${spreads.join(' ')}`,
     );
   }
 
-  // THE ARM MUST OFTEN COME TO REST ON A BALL, not always thread between two.
-  // It never did, and that was forced by three constants rather than by tuning: the paddle's
-  // reach is 2R = 5.0in wide, RAIL_PITCH is 5.1in, and the solver snapped the column's floor
-  // to the constant GATE_STOP_S — which is exactly one radius from the gate line, i.e. the
-  // paddle's tangent. So the artifact behind it landed on the OTHER tangent and the paddle
-  // threaded precisely between them, every single time. gateStopS makes the block follow the
-  // paddle down instead, so a descending arm catches the artifact where it is.
+  // THE GATE NEVER COMES TO REST ON AN ARTIFACT. It LANDS on one often — the paddle's reach
+  // is 2R wide against a 5.1in pitch, so it nearly always meets something — but landing is
+  // not resting: its weight has a sideways component, so it pushes the artifact off, either
+  // OUT past the gate or back UP into the classifier, and then closes.
+  //
+  // Getting to "never" took three goes and the reason is worth keeping. gateStopS (where the
+  // arm blocks) and gateRestOn (how high an artifact holds it) are exact INVERSES, so the
+  // pair is neutrally stable at EVERY offset: wherever the artifact stops, the arm settles to
+  // precisely the height that blocks it right there, and it sits forever (measured d = 1.30,
+  // v = 0.0, rest = 0.315 = gatePos, tick after tick). A proportional push cannot break that
+  // near its own neutral point, so the shove carries a minimum magnitude (GATE_SHOVE_MIN) and
+  // takes only its DIRECTION from which side it landed. And the paddle is no floor for an
+  // artifact it is EXPELLING — though it very much is one for an artifact it is shoving back
+  // up, which is just the gate doing its job.
   {
     let onBall = 0;
     let total = 0;
@@ -1337,12 +1346,12 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
         r.pos = { x: 0, y: -30 };
         run(w, cmd({}), 10);
         total++;
-        if (w.goals.blue.gatePos > 0.001) onBall++;
+        if (w.goals.blue.gatePos > 0.001 && w.goals.blue.gatePos < GATE_PASS_FRAC) onBall++;
       }
     }
     check(
-      'the arm often comes to rest ON an artifact, not always between two',
-      onBall >= total / 4,
+      'the gate NEVER comes to rest on an artifact — it always resolves',
+      onBall === 0,
       `${onBall}/${total} stalls left the arm seated on one`,
     );
   }
@@ -1395,6 +1404,89 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
       `${before} left -> ${after}`,
     );
   }
+}
+
+// ---- how fast the arm closes: initial position, and the flow's momentum -----------
+// "gate also closes up too quickly. how fast it closes up is determined by the momentum of
+// the balls coming down and the initial position of the gate."
+{
+  const closeFrom = (p0: number) => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.robots[0].pos = { x: 0, y: -40 };
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    const g = w.goals.blue;
+    g.gatePos = p0;
+    g.gateVel = 0;
+    g.gateLatch = 0;
+    g.gateOpen = p0 >= GATE_PASS_FRAC;
+    for (let i = 0; i < Math.round(4 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({})]]));
+      if (g.gatePos === 0) return (i + 1) * SIM_DT;
+    }
+    return Infinity;
+  };
+  const full = closeFrom(1);
+  const half = closeFrom(0.5);
+  check(
+    'the arm no longer slams shut',
+    full > 0.45,
+    `${full.toFixed(3)}s from fully open`,
+  );
+  // GATE_CLOSE_MAX used to be 9/s, which the arm never got near — it was still accelerating
+  // when it hit 0, so the time went as the SQUARE ROOT of the height and half the travel cost
+  // barely less (1.00 -> 0.300s vs 0.40 -> 0.183s). Terminal-limited, it is near-proportional.
+  check(
+    '...and how long it takes scales with how far open it was, not with its square root',
+    Math.abs(half / full - 0.5) < 0.15,
+    `half/full = ${(half / full).toFixed(2)} (0.50 = proportional, 0.71 = sqrt)`,
+  );
+  // ...and the flow cushions it: artifacts streaming under the paddle knock it back up as
+  // fast as gravity brings it down.
+  const withFlow = (() => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.robots[0].pos = { x: 0, y: -40 };
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    for (let i = 0; i < 6; i++) {
+      const b = w.balls[i];
+      const cs = GATE_LINE_S + i * RAIL_PITCH;
+      b.state = { kind: 'rail', goal: 'blue', s: cs, v: -40, overflow: false, pending: false };
+      b.pos = railPos('blue', cs);
+      b.vel = { x: 0, y: 0 };
+      b.z = RAMP_SURFACE_Z;
+      b.vz = 0;
+    }
+    const g = w.goals.blue;
+    g.gatePos = 1;
+    g.gateVel = 0;
+    g.gateLatch = 0;
+    g.gateOpen = true;
+    let lowest = 1;
+    for (let i = 0; i < Math.round(0.35 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({})]]));
+      lowest = Math.min(lowest, g.gatePos);
+    }
+    return lowest;
+  })();
+  const noFlowAt035 = (() => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.robots[0].pos = { x: 0, y: -40 };
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    const g = w.goals.blue;
+    g.gatePos = 1;
+    g.gateVel = 0;
+    g.gateLatch = 0;
+    g.gateOpen = true;
+    run(w, cmd({}), 0.35);
+    return g.gatePos;
+  })();
+  check(
+    'a stream of artifacts under the paddle slows its fall',
+    withFlow > noFlowAt035 + 0.05,
+    `after 0.35s: with flow ${withFlow.toFixed(3)} vs empty gateway ${noFlowAt035.toFixed(3)}`,
+  );
 }
 
 // ---- the arm comes to rest ON an artifact, never between two -----------------------
@@ -1461,15 +1553,18 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
 
   const wedged = settle(1.2);
   const past = settle(-1.2);
+  // It used to WEDGE this one — frozen with the arm perched on it, which is precisely "the
+  // gate closed on top of a ball". A hinged arm with its weight on an artifact does not do
+  // that; it shoves it back into the classifier and then shuts.
   check(
-    'the arm comes to REST on a stopped artifact instead of falling through it',
-    Math.abs(wedged.gatePos - gateRestOn(1.2)) < 0.05 && wedged.gatePos > 0,
-    `rests at ${wedged.gatePos.toFixed(3)}, geometry says ${gateRestOn(1.2).toFixed(3)}`,
+    'landing on the DOWNHILL face leaves the arm perched on NOTHING',
+    wedged.gatePos === 0 || wedged.gatePos >= GATE_PASS_FRAC,
+    `gatePos ${wedged.gatePos.toFixed(3)} (perched would be ~${gateRestOn(1.2).toFixed(3)})`,
   );
   check(
-    'landing on the DOWNHILL face wedges the artifact — it stays put',
+    '...and the artifact is shoved back INTO the classifier, not let out',
     !wedged.out,
-    `gatePos ${wedged.gatePos.toFixed(3)}`,
+    `left=${wedged.out}`,
   );
   // ...and the arm shuts behind it. Not necessarily to ZERO: the trailing artifact follows
   // down and the arm comes to rest on THAT, which is the whole point — it lands on what is
