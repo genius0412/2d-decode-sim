@@ -61,6 +61,9 @@ import {
   GATE_SEAT_FRAC,
   RAIL_OPEN_S,
   RAMP_SLOTS,
+  GATE_PADDLE_SHOVE,
+  GATE_SHOVE_MIN,
+  RAIL_ACCEL,
   ROBOT_MIN_WIDTH,
   GATE_LINE_S,
   GATE_RIDE_FRAC,
@@ -1405,6 +1408,28 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
       `${before} left -> ${after}`,
     );
   }
+}
+
+// ---- the arm's WEIGHT is a coherent set, and two of it are load-bearing ------------
+// There is no single mass constant: the paddle's weight shows up in the drag it puts on
+// what passes under it, the momentum needed to shoulder it, how readily a push eases it
+// open, and how fast it settles. Making it "lighter" means moving all of those together.
+// Two of them cannot be lightened freely, and this states why so a future tweak trips here
+// rather than in a play session.
+{
+  check(
+    'the paddle shove still beats gravity, or the gate can rest on an artifact again',
+    GATE_PADDLE_SHOVE * GATE_SHOVE_MIN > RAIL_ACCEL,
+    `${GATE_PADDLE_SHOVE} x ${GATE_SHOVE_MIN} = ${(GATE_PADDLE_SHOVE * GATE_SHOVE_MIN).toFixed(0)} vs RAIL_ACCEL ${RAIL_ACCEL}`,
+  );
+  // gateStopS and gateRestOn are exact inverses, so the pair is neutrally stable at EVERY
+  // offset — only a shove that outruns gravity breaks it. Lightening GATE_PADDLE_SHOVE
+  // without raising GATE_SHOVE_MIN to compensate puts the gate back on top of artifacts.
+  check(
+    'a seated arm is still below the pass line (seat < pass), so being under it is not being past it',
+    GATE_SEAT_FRAC < GATE_PASS_FRAC,
+    `seat ${GATE_SEAT_FRAC} vs pass ${GATE_PASS_FRAC}`,
+  );
 }
 
 // ---- how fast the arm closes: initial position, and the flow's momentum -----------

@@ -986,11 +986,39 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.011; // open fraction per in/s (≈36 in/s to stay passable)
+export const GATE_SHOULDER_LIFT = 0.0125; // open fraction per in/s (≈32 in/s to stay passable)
 /** rolling resistance the paddle's weight imposes on the artifact it is resting on, at
  * full sag (arm down). Scaled by (1 − gatePos), so a fully-lifted arm — held up by a
  * robot — costs the flow nothing at all, which is what makes a held gate stream. */
-export const GATE_PADDLE_DRAG = 7; // 1/s at full sag
+export const GATE_PADDLE_DRAG = 5.5; // 1/s at full sag
+/**
+ * HOW HEAVY THE ARM IS, as a set. There is no single mass constant — the paddle's weight
+ * shows up in several places at once, and "lighter" means moving all of them together or
+ * the model stops being self-consistent:
+ *
+ *   GATE_PADDLE_DRAG    how hard it presses on what passes under it        7    -> 5.5
+ *   GATE_SHOULDER_LIFT  momentum needed to hold it passable          36 in/s -> 32
+ *   GATE_FLOW_CUSHION   flow needed to suspend its fall              70 in/s -> 62
+ *   GATE_PADDLE_SHOVE   the sideways component of its weight             120  -> 105
+ *   GATE_OPEN_RATE      how readily a gentle push eases it open            10  -> 12
+ *   GATE_CLOSE_MAX      terminal fall speed (damping does not scale
+ *                       with mass, so a lighter arm settles slower)      1.8  -> 1.65
+ *
+ * TWO OF THESE ARE LOAD-BEARING and cannot be lightened on their own:
+ *
+ *  · GATE_PADDLE_SHOVE × GATE_SHOVE_MIN must stay above RAIL_ACCEL (80). That product is
+ *    what stops the gate coming to rest on an artifact — gateStopS and gateRestOn are exact
+ *    inverses, so the pair is neutrally stable at every offset and only a shove that beats
+ *    gravity breaks it. The shove was lightened 120 -> 105 with the minimum lean raised
+ *    0.75 -> 0.86 to hold the product at 90.
+ *  · GATE_SHOULDER_LIFT and GATE_FLOW_CUSHION both make the gate EASIER to hold open, which
+ *    means a tap drains more. They are the direct trade against "one tap never empties the
+ *    ramp", and were moved only as far as that invariant tolerates.
+ *
+ * Verified after the change: 0/48 stalls leave the arm seated, a tap takes 4 at every depth
+ * 5-9 and empties none of them, a held gate still empties all, and the held stream is
+ * unchanged at a 0.323s mean gap.
+ */
 /**
  * WHERE THE PADDLE'S EDGE COMES DOWN, in rail `s`. A retained column rests packed against
  * the shut gate with its first artifact centred at GATE_STOP_S, so the barrier it is
@@ -1028,7 +1056,7 @@ export const GATE_LINE_S = GATE_STOP_S - BALL_RADIUS;
  *  · d ≈ 0 is the balance point: the arm sits squarely on top at GATE_SEAT_FRAC, which is
  *    not passable, so it stays there until something works the lever or shoves it.
  */
-export const GATE_PADDLE_SHOVE = 120; // in/s² at the artifact's equator
+export const GATE_PADDLE_SHOVE = 105; // in/s² at the artifact's equator
 /**
  * THE APEX IS NOT A RESTING PLACE — the ramp is tilted, so "dead on top" is not dead on top.
  *
@@ -1059,14 +1087,14 @@ export const GATE_APEX_BIAS = 0.25; // of BALL_RADIUS, up-ramp of the gate line
  * from which side of neutral it landed. GATE_PADDLE_SHOVE × this must exceed RAIL_ACCEL, or
  * the up-ramp push loses to gravity and the artifact simply slides back under the arm.
  */
-export const GATE_SHOVE_MIN = 0.75; // × GATE_PADDLE_SHOVE must beat RAIL_ACCEL
+export const GATE_SHOVE_MIN = 0.86; // × GATE_PADDLE_SHOVE must beat RAIL_ACCEL
 /** GATE as a PHYSICAL push-to-open arm (manual 9.8.3): a robot shoves the arm the
  * ~2in open, and it is "closed by gravity" — after release it does NOT snap shut but
  * SWINGS closed, starting slow and accelerating (a hinged arm falling), so a tap
  * "may or may not stay open" long enough to clear the ramp. `gatePos` is the arm's
  * physical open fraction 0 (down/closed) .. 1 (fully lifted); `gateVel` is its swing
  * rate. `gateOpen` (a ball can pass) is DERIVED = gatePos >= GATE_PASS_FRAC. */
-export const GATE_OPEN_RATE = 10; // 1/s: BASE lift rate for a gentle push (light nudge still eases the arm open over several ticks)
+export const GATE_OPEN_RATE = 12; // 1/s: BASE lift rate for a gentle push (a light arm eases open readily)
 /** the lift rate SCALES with how hard you ram the handle (ramSpeed = in/s toward the
  * wall): rate = GATE_OPEN_RATE + GATE_OPEN_RATE_SPEED·ramSpeed, capped at
  * GATE_OPEN_RATE_MAX. A near-full-speed ram lifts the arm ~fully in a single tick, so
@@ -1086,7 +1114,7 @@ export const GATE_GRAVITY = 22; // 1/s^2 on gatePos: gravity swinging the releas
  * the travel). Terminal-limited instead, so the time is very nearly proportional to how far
  * open it was — "how fast it closes is determined by the initial position of the gate".
  */
-export const GATE_CLOSE_MAX = 1.8; // 1/s: terminal swing speed as it falls closed
+export const GATE_CLOSE_MAX = 1.65; // 1/s: terminal swing speed as it falls closed
 /**
  * How much momentum in the flow it takes to hold the falling arm up.
  *
@@ -1097,7 +1125,7 @@ export const GATE_CLOSE_MAX = 1.8; // 1/s: terminal swing speed as it falls clos
  * gravity. This is a RATE cushion and is separate from the height floor the same artifacts
  * set via GATE_SHOULDER_LIFT — that says how low it may go, this says how fast it gets there.
  */
-export const GATE_FLOW_CUSHION = 70; // in/s of down-ramp flow that fully suspends the fall
+export const GATE_FLOW_CUSHION = 62; // in/s of down-ramp flow that fully suspends the fall
 export const GATE_PASS_FRAC = 0.4; // arm must be at least this lifted for an ARTIFACT to pass
 export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement (manual 9.8.3)
 /** the gate is a class-1 LEVER (manual Figure 9-15) hinged at the CLASSIFIER EDGE — where
