@@ -59,44 +59,51 @@ export function drawRobot(
    */
   const drawRoller = () => {
     const axis = rollerTip - dia / 2;
-    // The compliant WHEELS sit at the THROAT on a funnel preset — that is where the sim
-    // captures (robot.ts: `wheelSpan = wedge ? throatHalf : mouthHalf`). Drawing them across
-    // the whole mouth buried the slopes, which are the identity of these presets. The SHAFT
-    // still spans the mouth, because the gate opener hangs off its ends.
-    const wheelHalf = m.wedge ? m.throatHalf : rw;
-    ctx.fillStyle = intakeOn ? '#166534' : '#333a45';
-    ctx.fillRect(axis - 0.28, -rw, 0.56, rw * 2);
-    // GATE OPENER: a block on each end of the shaft out to the chassis edge. The collision
-    // box is already solid here for robots/walls/the gate lever (footprintExtents spans the
-    // full half-width); artifacts pass UNDER it (see ballRobotContact).
+    // The compliant roller sits at the THROAT on a funnel preset — that is where the sim
+    // draws artifacts in and captures them (robot.ts: `wheelSpan = wedge ? throatHalf :
+    // mouthHalf`). Drawn as ONE rounded body with wheel divisions rather than separate
+    // rects: at 72mm, separate wheels read as fingers sticking off the front.
+    const rollHalf = m.wedge ? m.throatHalf : rw;
+    // shaft across the mouth — the gate opener hangs off its ends
+    ctx.fillStyle = intakeOn ? '#166534' : '#475569';
+    ctx.fillRect(axis - 0.3, -rw, 0.6, rw * 2);
+    // GATE OPENER: a THIN tab on each shaft end out to the chassis edge. Solid to robots,
+    // walls and the gate lever (footprintExtents); artifacts pass UNDER it.
     if (hw > rw + 0.05) {
       for (const sg of [1, -1] as const) {
         const y0 = sg === 1 ? rw : -hw;
-        ctx.fillStyle = intakeOn ? '#14532d' : '#2c333e';
-        ctx.fillRect(rollerBack, y0, dia, hw - rw);
+        ctx.fillStyle = intakeOn ? '#14532d' : '#334155';
+        ctx.fillRect(axis - C.INTAKE_OPENER_THICK / 2, y0, C.INTAKE_OPENER_THICK, hw - rw);
         ctx.strokeStyle = color;
         ctx.lineWidth = 0.8;
-        ctx.strokeRect(rollerBack, y0, dia, hw - rw);
+        ctx.strokeRect(axis - C.INTAKE_OPENER_THICK / 2, y0, C.INTAKE_OPENER_THICK, hw - rw);
       }
     }
-    // FIXED PITCH, so there is always a visible gap between wheels. Scaling the count with
-    // the span (one per inch) gave a 0.95in pitch for 1.1in wheels — a NEGATIVE gap, so they
-    // merged back into the solid bar this was meant to break up.
-    const n = Math.max(1, Math.floor(wheelHalf / 1.9));
-    for (let i = -n; i <= n; i++) {
-      const cy = (i * wheelHalf) / (n + 0.35);
-      const center = Math.abs(i) <= Math.max(1, n / 3);
-      ctx.fillStyle = center ? (intakeOn ? '#22c55e' : '#6b7280') : intakeOn ? '#15803d' : '#4b5563';
-      ctx.fillRect(rollerBack, cy - 0.6, dia, 1.2);
+    // the roller body, front face flush with the collision front
+    ctx.fillStyle = intakeOn ? '#22c55e' : '#6b7280';
+    ctx.beginPath();
+    const rr = Math.min(0.9, rollHalf);
+    ctx.roundRect(rollerBack, -rollHalf, dia, rollHalf * 2, rr);
+    ctx.fill();
+    ctx.strokeStyle = intakeOn ? '#15803d' : '#4b5563';
+    ctx.lineWidth = 0.5;
+    const nd = Math.max(1, Math.round(rollHalf / 1.1));
+    for (let i = -nd + 1; i < nd; i++) {
+      const y = (i * rollHalf) / nd;
+      ctx.beginPath();
+      ctx.moveTo(rollerBack + 0.15, y);
+      ctx.lineTo(rollerTip - 0.15, y);
+      ctx.stroke();
     }
   };
   if (m.wedge) {
     const th = m.throatHalf;
     // funnel mouth: opening at the (recessed) wedge line, narrowing to the throat
+    // the mouth opening: wide at the roller axle, narrowing to the throat
     ctx.fillStyle = mouthOn;
     ctx.beginPath();
-    ctx.moveTo(wedgeTip, -hw);
-    ctx.lineTo(wedgeTip, hw);
+    ctx.moveTo(wedgeTip, -rw);
+    ctx.lineTo(wedgeTip, rw);
     ctx.lineTo(hl, th);
     ctx.lineTo(hl, -th);
     ctx.closePath();
@@ -106,11 +113,15 @@ export function drawRobot(
     ctx.fillStyle = fill;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
-    for (const s of [1, -1] as const) {
+    // wedge body per side: outer edge forward to the axle, then a LONG slope from the
+    // mouth edge back in to the throat. Running the slope to the mouth edge (rw) rather
+    // than straight to the chassis corner is what makes it read as a funnel at all.
+    for (const sg of [1, -1] as const) {
       ctx.beginPath();
-      ctx.moveTo(hl, s * hw);
-      ctx.lineTo(wedgeTip, s * hw);
-      ctx.lineTo(hl, s * th);
+      ctx.moveTo(hl, sg * hw);
+      ctx.lineTo(wedgeTip, sg * hw);
+      ctx.lineTo(wedgeTip, sg * rw);
+      ctx.lineTo(hl, sg * th);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();

@@ -1,5 +1,5 @@
 import type { RobotSpec } from '../types';
-import { INTAKE_PRESETS, intakeRollerDia, TURRET_OFFSET_FRAC, WHEEL_INSET, intakeMouth } from '../config';
+import { INTAKE_PRESETS, INTAKE_OPENER_THICK, intakeRollerDia, TURRET_OFFSET_FRAC, WHEEL_INSET, intakeMouth } from '../config';
 import {
   CHAIN_DEFAULT_INTAKE,
   CHAIN_DEFAULT_SCORE_MODE,
@@ -90,41 +90,49 @@ export function RobotPreview({
   // the width of the mouth covers the whole reach and buries the funnel, and the slopes are
   // the identity of these presets. Gaps between wheels let them read through, which is also
   // what the real thing looks like from above.
-  // The compliant WHEELS sit at the THROAT on a funnel preset (robot.ts captures there);
-  // the SHAFT still spans the mouth because the gate opener hangs off its ends. FIXED pitch
-  // so there is always a gap — scaling the count with the span made them overlap into a bar.
-  const wheelSpanHalf = wedge ? throatHalf : mouthHalf;
-  const wheelN = Math.max(1, Math.floor(wheelSpanHalf / 1.9));
+  // The compliant roller sits at the THROAT on a funnel preset (that is where the sim draws
+  // artifacts in), drawn as ONE rounded body with wheel divisions — at 72mm, separate wheels
+  // read as fingers off the front. The SHAFT spans the mouth; the gate opener is a THIN tab
+  // on its ends, not a slab the full roller diameter.
+  const rollHalf = wedge ? throatHalf : mouthHalf;
+  const nDiv = Math.max(1, Math.round(rollHalf / 1.1));
   const roller = (
     <g>
-      <rect x={-mouthHalf} y={rollerTipY + rollerDia / 2 - 0.28} width={mouthHalf * 2} height={0.56} fill={accent} opacity={0.5} />
-      {/* GATE OPENER: a block on each end of the shaft out to the chassis edge. Solid to
-          robots/walls/the gate lever (footprintExtents); artifacts pass UNDER it. */}
+      <rect x={-mouthHalf} y={rollerTipY + rollerDia / 2 - 0.3} width={mouthHalf * 2} height={0.6} fill={accent} opacity={0.55} />
       {halfW > mouthHalf + 0.05 &&
         ([1, -1] as const).map((sgn) => (
           <rect
             key={`opener${sgn}`}
             x={sgn === 1 ? mouthHalf : -halfW}
-            y={rollerTipY}
+            y={rollerTipY + rollerDia / 2 - INTAKE_OPENER_THICK / 2}
             width={halfW - mouthHalf}
-            height={rollerDia}
+            height={INTAKE_OPENER_THICK}
             fill={accent}
-            opacity={0.32}
+            opacity={0.4}
             stroke={accent}
-            strokeWidth={0.3}
-            strokeOpacity={0.7}
+            strokeWidth={0.25}
+            strokeOpacity={0.8}
           />
         ))}
-      {Array.from({ length: wheelN * 2 + 1 }, (_, k) => k - wheelN).map((i) => (
-        <rect
+      <rect
+        x={-rollHalf}
+        y={rollerTipY}
+        width={rollHalf * 2}
+        height={rollerDia}
+        rx={Math.min(0.9, rollHalf)}
+        fill={accent}
+        opacity={0.85}
+      />
+      {Array.from({ length: nDiv * 2 - 1 }, (_, k) => k - nDiv + 1).map((i) => (
+        <line
           key={i}
-          x={(i * wheelSpanHalf) / (wheelN + 0.35) - 0.6}
-          y={rollerTipY}
-          width={1.2}
-          height={rollerDia}
-          rx={0.45}
-          fill={accent}
-          opacity={Math.abs(i) <= Math.max(1, wheelN / 3) ? 0.95 : 0.6}
+          x1={(i * rollHalf) / nDiv}
+          y1={rollerTipY + 0.15}
+          x2={(i * rollHalf) / nDiv}
+          y2={rollerTipY + rollerDia - 0.15}
+          stroke={accent}
+          strokeWidth={0.22}
+          strokeOpacity={0.55}
         />
       ))}
     </g>
@@ -142,7 +150,7 @@ export function RobotPreview({
       <g>
         {/* funnel mouth: opening at the wedge line narrowing to the throat */}
         <polygon
-          points={`${-halfW},${wedgeTipY} ${halfW},${wedgeTipY} ${throatHalf},${frontY} ${-throatHalf},${frontY}`}
+          points={`${-mouthHalf},${wedgeTipY} ${mouthHalf},${wedgeTipY} ${throatHalf},${frontY} ${-throatHalf},${frontY}`}
           fill={accent}
           opacity={0.28}
           stroke={accent}
@@ -152,7 +160,7 @@ export function RobotPreview({
         {[1, -1].map((s) => (
           <polygon
             key={s}
-            points={`${s * halfW},${frontY} ${s * halfW},${wedgeTipY} ${s * throatHalf},${frontY}`}
+            points={`${s * halfW},${frontY} ${s * halfW},${wedgeTipY} ${s * mouthHalf},${wedgeTipY} ${s * throatHalf},${frontY}`}
             fill={accent}
             opacity={0.6}
           />

@@ -709,6 +709,9 @@ export const INTAKE_WHEEL_STICKOUT = 1.3;
  * keeps a visible mouth in front of them.
  */
 export const INTAKE_ROLLER_MM = { sloped: 72, vector: 48, triangle: 72 } as const;
+/** fore-aft thickness of the gate-opener tab on each shaft end. A tab on a beam end, not a
+ * slab: drawing it the full roller diameter made the front read as one solid block. */
+export const INTAKE_OPENER_THICK = 0.9; // in
 /** roller diameter in inches for a spec */
 export const intakeRollerDia = (spec: { intake: keyof typeof INTAKE_ROLLER_MM }): number =>
   INTAKE_ROLLER_MM[spec.intake] / 25.4;
