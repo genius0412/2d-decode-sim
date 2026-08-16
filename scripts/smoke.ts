@@ -65,6 +65,9 @@ import {
   GATE_SHOVE_MIN,
   RAIL_ACCEL,
   ROBOT_MIN_WIDTH,
+  INTAKE_ROLLER_MM,
+  intakeRollerDia,
+  intakeMouth,
   GATE_LINE_S,
   GATE_RIDE_FRAC,
   GATE_TAPE_Y,
@@ -4067,6 +4070,53 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     w.match.fouls.blue.minor + w.match.fouls.blue.major >= 1 &&
       w.match.fouls.red.minor + w.match.fouls.red.major === 0,
     `blue=${w.match.fouls.blue.minor}/${w.match.fouls.blue.major} red=${w.match.fouls.red.minor}/${w.match.fouls.red.major}`,
+  );
+}
+
+// ---- the roller and its GATE OPENER match the collision box exactly ---------------
+// The gate opener is not decoration and it is not a new collider either: footprintExtents
+// already makes the whole front solid out to width/2 and forward to length/2 + reach, which
+// is what lets an intake work the gate lever at all. The funnel presets' roller only spans
+// mouthHalf, so the drawing showed nothing at the corners while the collision box was solid
+// there. These assert the drawn geometry lands ON the footprint rather than near it — if a
+// renderer drifts, the robot's picture stops matching what it collides with.
+{
+  for (const key of ['sloped', 'vector', 'triangle'] as const) {
+    const spec = {
+      ...DEFAULT_SPEC,
+      intake: key,
+      length: INTAKE_PRESETS[key].maxLength,
+      width: Math.max(ROBOT_MIN_WIDTH, INTAKE_PRESETS[key].minWidth),
+    };
+    const e = footprintExtents(spec);
+    const dia = intakeRollerDia(spec);
+    // the roller's FRONT FACE is the collision front — growing the diameter must never
+    // push the drawing past the box the robot actually collides with
+    check(
+      `${key}: the roller front face is exactly the collision front`,
+      Math.abs(e.front - (spec.length / 2 + INTAKE_PRESETS[key].reach)) < 1e-9,
+      `front ${e.front.toFixed(2)} = length/2 + reach`,
+    );
+    // ...and it grows BACKWARD into the mouth, so it must still fit inside the reach
+    check(
+      `${key}: a ${INTAKE_ROLLER_MM[key]}mm roller still fits within the intake's reach`,
+      dia <= INTAKE_PRESETS[key].reach + 1e-9,
+      `${dia.toFixed(2)}in roller vs ${INTAKE_PRESETS[key].reach}in reach`,
+    );
+    // the opener spans from the roller beam's end out to the chassis edge
+    const openerHalf = e.half - intakeMouth(spec).mouthHalf;
+    check(
+      `${key}: the gate opener reaches the chassis edge (${openerHalf <= 0.05 ? 'flush — none needed' : 'block drawn'})`,
+      openerHalf >= -1e-9,
+      `mouthHalf ${intakeMouth(spec).mouthHalf.toFixed(2)} vs footprint half ${e.half.toFixed(2)}`,
+    );
+  }
+  // vector's roller row already spans the full chassis, so it has no opener to draw
+  const vs = { ...DEFAULT_SPEC, intake: 'vector' as const, width: 13, length: 13 };
+  check(
+    'vector needs no gate opener — its roller already spans the chassis',
+    Math.abs(intakeMouth(vs).mouthHalf - vs.width / 2) < 1e-9,
+    `mouthHalf ${intakeMouth(vs).mouthHalf} = width/2 ${vs.width / 2}`,
   );
 }
 

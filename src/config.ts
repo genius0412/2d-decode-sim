@@ -699,6 +699,29 @@ export const INTAKE_WHEEL_STICKOUT = 1.3;
  *               (vector: compliant center fast, vectoring sides slow)
  *   clumpInterval  swallow cadence while 2+ balls sit at the mouth
  *   dual        capture TWO balls per cycle from a clump (triangle's 2 front slots) */
+/**
+ * INTAKE ROLLER diameters, in mm to match how they are actually bought. The funnel presets
+ * run a big 72mm compliant roller; the vector's wheel row is a smaller 48mm.
+ *
+ * The roller's FRONT FACE is the intake's reach — `footprintExtents` already puts the
+ * collision front at `length/2 + reach` — so growing the diameter grows it BACKWARD into
+ * the mouth and changes no physics at all. The wedges meet it at its axle, so the funnel
+ * keeps a visible mouth in front of them.
+ */
+export const INTAKE_ROLLER_MM = { sloped: 72, vector: 48, triangle: 72 } as const;
+/** roller diameter in inches for a spec */
+export const intakeRollerDia = (spec: { intake: keyof typeof INTAKE_ROLLER_MM }): number =>
+  INTAKE_ROLLER_MM[spec.intake] / 25.4;
+/**
+ * GATE OPENER: a block on each end of the roller beam, filling out to the chassis edge.
+ *
+ * It is not decoration and it is not a new collider either — `footprintExtents` already
+ * makes the whole front of the robot solid out to `width/2` and forward to `length/2 +
+ * reach`, which is what lets an intake work the gate lever at all. The funnel presets'
+ * roller only spans `mouthHalf`, so the drawing showed nothing out at the corners while the
+ * collision box was solid there. This is the part that was missing from the picture, and
+ * `npm test` asserts it lands exactly on the footprint corner rather than near it.
+ */
 export const INTAKE_PRESETS = {
   /** SLOPED: two side slopes funnel artifacts into the compliant wheels at the
    * throat — no flat front. maxLength = 18 − reach (the roller counts toward the

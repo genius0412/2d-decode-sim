@@ -43,12 +43,30 @@ export function drawRobot(
   const preset = C.INTAKE_PRESETS[r.spec.intake];
   const m = C.intakeMouth(r.spec); // vector's mouth spans the chassis width
   const rw = m.mouthHalf;
-  const wedgeTip = hl + preset.reach - 0.5; // wedge/plate front — just behind the roller
-  const rollerTip = hl + preset.reach + 0.5; // shaft + wheels ride out just past the wedges
+  // The roller's FRONT FACE is the intake's reach, so it matches `footprintExtents` exactly
+  // and a bigger diameter grows BACKWARD into the mouth rather than past the collision box.
+  const dia = C.intakeRollerDia(r.spec);
+  const rollerTip = hl + preset.reach;
+  const rollerBack = rollerTip - dia;
+  const wedgeTip = rollerTip - dia / 2; // wedges meet the roller at its axle
   const mouthOn = intakeOn ? 'rgba(34,197,94,0.85)' : '#2a303c';
   const drawRoller = () => {
     ctx.fillStyle = intakeOn ? '#166534' : '#333a45';
-    ctx.fillRect(wedgeTip, -rw, rollerTip - wedgeTip, rw * 2);
+    ctx.fillRect(rollerBack, -rw, dia, rw * 2);
+    // GATE OPENER: a block on each end of the roller beam out to the chassis edge. The
+    // collision box is already solid here (footprintExtents spans the full half-width) —
+    // this is the geometry that was missing from the picture, not new physics.
+    if (hw > rw + 0.05) {
+      ctx.fillStyle = intakeOn ? '#14532d' : '#2c333e';
+      for (const s of [1, -1] as const) {
+        ctx.fillRect(rollerBack, s === 1 ? rw : -hw, dia, hw - rw);
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 0.8;
+      for (const s of [1, -1] as const) {
+        ctx.strokeRect(rollerBack, s === 1 ? rw : -hw, dia, hw - rw);
+      }
+    }
     for (let i = -3; i <= 3; i++) {
       const center = Math.abs(i) <= 1;
       ctx.fillStyle = center ? (intakeOn ? '#22c55e' : '#6b7280') : intakeOn ? '#15803d' : '#4b5563';

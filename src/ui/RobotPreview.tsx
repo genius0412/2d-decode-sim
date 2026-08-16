@@ -1,5 +1,5 @@
 import type { RobotSpec } from '../types';
-import { INTAKE_PRESETS, TURRET_OFFSET_FRAC, WHEEL_INSET, intakeMouth } from '../config';
+import { INTAKE_PRESETS, intakeRollerDia, TURRET_OFFSET_FRAC, WHEEL_INSET, intakeMouth } from '../config';
 import {
   CHAIN_DEFAULT_INTAKE,
   CHAIN_DEFAULT_SCORE_MODE,
@@ -38,8 +38,11 @@ export function RobotPreview({
   const halfW = w / 2;
 
   const frontY = -len / 2; // chassis front edge (top) = the throat
-  const wedgeTipY = frontY - (reach - 0.5); // wedge/plate front — just behind the roller
-  const rollerTipY = frontY - (reach + 0.5); // shaft + wheels ride out just past the wedges
+  // The roller's FRONT FACE is the intake's reach, matching `footprintExtents`, so a bigger
+  // diameter grows BACKWARD into the mouth rather than past the collision box.
+  const rollerDia = intakeRollerDia(spec);
+  const rollerTipY = frontY - reach; // roller front face = the collision front
+  const wedgeTipY = rollerTipY + rollerDia / 2; // wedges meet the roller at its axle
   // turret sits behind center of rotation, scaled by chassis length
   const turretY = -TURRET_OFFSET_FRAC * len;
   const turretR = Math.min(w, len) * 0.2;
@@ -85,7 +88,25 @@ export function RobotPreview({
   // front); the flat (vector) preset shows an open mouth to the chassis front.
   const roller = (
     <g>
-      <rect x={-mouthHalf} y={rollerTipY} width={mouthHalf * 2} height={wedgeTipY - rollerTipY} fill={accent} opacity={0.45} />
+      <rect x={-mouthHalf} y={rollerTipY} width={mouthHalf * 2} height={rollerDia} fill={accent} opacity={0.45} />
+      {/* GATE OPENER: a block on each end of the roller beam out to the chassis edge. The
+          collision box is already solid out here (footprintExtents spans the full
+          half-width) — this is the geometry that was missing from the picture. */}
+      {halfW > mouthHalf + 0.05 &&
+        ([1, -1] as const).map((sgn) => (
+          <rect
+            key={`opener${sgn}`}
+            x={sgn === 1 ? mouthHalf : -halfW}
+            y={rollerTipY}
+            width={halfW - mouthHalf}
+            height={rollerDia}
+            fill={accent}
+            opacity={0.32}
+            stroke={accent}
+            strokeWidth={0.3}
+            strokeOpacity={0.7}
+          />
+        ))}
       {[-3, -2, -1, 0, 1, 2, 3].map((i) => (
         <rect
           key={i}
