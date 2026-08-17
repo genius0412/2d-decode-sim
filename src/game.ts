@@ -104,6 +104,9 @@ export interface IntroPlayer {
 }
 
 export interface HudSnapshot {
+  /** ALPHA ONLY (config.DEBUG_POSE_READOUT): live robot pose for reporting geometry.
+   * null when the flag is off. Must not reach main. */
+  pose: { x: number; y: number; heading: number; gatePos: number } | null;
   /** which game is being played — drives which score HUD GameView renders */
   game: GameId;
   /** Chain Reaction scoring readout (present only for CR) */
@@ -1175,6 +1178,10 @@ export class GameController {
           ? this.matchOverAt + C.MATCH_RESULT_REVEAL_MS
           : null,
       toasts: [...this.toasts],
+      // ALPHA ONLY (DEBUG_POSE_READOUT) — see config
+      pose: C.DEBUG_POSE_READOUT
+        ? { x: r.pos.x, y: r.pos.y, heading: (r.heading * 180) / Math.PI, gatePos: goal.gatePos }
+        : null,
       net: this.session ? this.session.status() : null,
       spectators: this.session?.spectatorCount?.() ?? 0,
       rematch: this.coop ? (this.session?.rematchVote?.() ?? null) : null,

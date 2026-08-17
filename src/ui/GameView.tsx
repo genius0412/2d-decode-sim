@@ -662,6 +662,17 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
               <span className="chip">{hud.butterflyMode === 'tank' ? 'TRACTION' : 'MECANUM'}</span>
             )}
             <span className={`chip ${hud.gamepadConnected ? 'on' : 'off'}`}>🎮</span>
+            {/* ALPHA ONLY (config.DEBUG_POSE_READOUT) — live pose, so a geometry report can
+                be an exact pose rather than a description. Must not reach main. */}
+            {hud.pose && (
+              <span
+                className="chip"
+                title="Robot pose — x, y (inches, origin at field centre), heading (degrees, 0 = +x / audience right), and the gate arm's open fraction"
+                style={{ fontVariantNumeric: 'tabular-nums' }}
+              >
+                {`x ${hud.pose.x.toFixed(1)}  y ${hud.pose.y.toFixed(1)}  ${(((hud.pose.heading % 360) + 360) % 360).toFixed(0)}°  gate ${hud.pose.gatePos.toFixed(2)}`}
+              </span>
+            )}
             {hud.net && (
               <span className={`chip ${hud.net.peers > 0 ? 'on' : 'warn'}`}>
                 NET {hud.net.peers + 1}P

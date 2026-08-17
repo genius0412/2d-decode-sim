@@ -713,6 +713,18 @@ export const INTAKE_ROLLER_MM = { sloped: 72, vector: 48, triangle: 72 } as cons
  * slab: drawing it the full roller diameter made the front read as one solid block. */
 export const INTAKE_OPENER_THICK = 0.9; // in
 /**
+ * ALPHA ONLY — a live pose readout (x, y, heading) on the in-match chip row.
+ *
+ * Added to settle a disagreement about geometry with measurements instead of argument: a
+ * search over 792 robot poses found essentially none that could intake off the gate
+ * outflow, and the user does it routinely, so the search is wrong somewhere and the pose
+ * that works has to come from the game rather than from me guessing at it.
+ *
+ * MUST NOT REACH MAIN. This branch is never merged (standing rule in CLAUDE.md), but if
+ * that ever changes, set this to false first — it is a debug overlay, not a feature.
+ */
+export const DEBUG_POSE_READOUT = true;
+/**
  * The roller beam is covered in rollers ALONG ITS WHOLE LENGTH, out to the gate openers that
  * cap its ends — not a short stack in the middle.
  *
