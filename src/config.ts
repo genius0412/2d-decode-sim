@@ -959,6 +959,16 @@ export const GATE_STOP_S = 2; // lowest rest position against the closed gate
 // the basin. One pitch below the entry keeps proper spacing but drains ~2× faster.
 export const RAIL_ENTRY_BLOCK_S = 50;
 export const RAIL_EXIT_S = -4; // past the gate: ball drops out to the floor
+/**
+ * An artifact on the ramp is drawn RAMP_SURFACE_Z up in the air, which is true while it is on
+ * the ramp and false the moment it clears the channel mouth — past the wall it is out on the
+ * open apron with nothing under it. It used to hold that height across the whole exit stretch
+ * and then pop to the floor on release, so it crossed open ground ten inches up and rode over
+ * any robot standing there: "balls skip over the chassis when they come down from the
+ * classifier". It now descends across that stretch, reaching the floor exactly where the
+ * release already puts it, so the drop is continuous instead of a snap.
+ */
+export const RAIL_DROP_S = 2.5; // inches of travel past the mouth to reach the floor
 /** step used to walk a robot's body along the rail line when deciding where it stops the
  * column. Well under an artifact radius, so nothing slips past; a robot is only ~18in long,
  * so the walk is a few dozen samples. Fixed, because the rail must stay deterministic. */
@@ -1355,6 +1365,8 @@ export const CLASSIFIER_GATE_Y = GATE_TAPE_Y;
  * room took artifacts straight off the rail into its hopper.
  */
 export const RAIL_OPEN_S = CLASSIFIER_GATE_Y - CLASSIFIER_Y0;
+
+
 /** where released/overflow balls emerge onto the floor, on the goal's wall */
 export const TUNNEL_EXIT = { x: 68, y: -3 };
 /**

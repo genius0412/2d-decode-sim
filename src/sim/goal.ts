@@ -881,7 +881,24 @@ export function updateRails(
       b.pos.y = C.CLASSIFIER_Y0 + st.s;
       const lane = railX + goalSide(a) * railWander(st.s, b.id, elevated);
       b.pos.x = approach(b.pos.x, lane, C.RAIL_BLEND_SPEED * dt);
-      b.z = approach(b.z, elevated ? surfaceZ : C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
+      // Height follows the STRUCTURE, not the state: on the ramp it rides at the ramp's
+      // surface, and past the channel mouth there is no ramp under it any more, so it comes
+      // down to the floor over RAIL_DROP_S of travel — reaching 0 right where the release
+      // already lands it. Without this it crossed the open apron at full ramp height and
+      // sailed over any robot standing on the outflow.
+      const rideZ = elevated ? surfaceZ : C.RAMP_SURFACE_Z;
+      if (st.s >= C.RAIL_OPEN_S) {
+        // still on the ramp: ease onto the ride height, so joining the rail never snaps
+        b.z = approach(b.z, rideZ, C.RAIL_BLEND_SPEED * dt);
+      } else {
+        // past the wall the height is pure geometry, so it is ASSIGNED, not eased toward.
+        // Easing cannot keep up: the artifact crosses this stretch in about 0.08s and
+        // RAIL_BLEND_SPEED only buys 2.5in of fall in that time, so it left the wall at 10in,
+        // arrived at the exit still 4.5in up, and snapped the rest — which is the sail-over
+        // this is meant to remove. `min` keeps it monotonic so it can never bob back up.
+        const fall = Math.min(1, Math.max(0, (C.RAIL_OPEN_S - st.s) / C.RAIL_DROP_S));
+        b.z = Math.min(b.z, rideZ * (1 - fall));
+      }
     }
 
     /**

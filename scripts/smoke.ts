@@ -2061,6 +2061,45 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- an artifact comes DOWN as it leaves the ramp ----------------------------------
+// Reported: "still skipping over the chassis when the balls come down from the classifier".
+// An artifact on the ramp rides RAMP_SURFACE_Z up, which is true inside the channel and false
+// past the mouth — out there it is on the open apron with nothing under it, and robots stand
+// there. It used to hold full ramp height across that whole stretch and snap to the floor only
+// at release, so it crossed open ground ten inches up and rode over anything in the way.
+{
+  const w = mkWorld('match', 'blue', 5);
+  startMatch(w);
+  w.match.phase = 'teleop';
+  fillBlueRail(w);
+  w.robots[0].pos = { x: 0, y: -40 };
+  const byS = new Map<number, number>();
+  for (let i = 0; i < 400; i++) {
+    w.goals.blue.gatePos = 1;
+    w.goals.blue.gateOpen = true;
+    w.goals.blue.gateLatch = 1;
+    step(w, SIM_DT, new Map());
+    for (const b of w.balls) {
+      if (b.state.kind !== 'rail') continue;
+      const sNow = (b.state as { s: number }).s;
+      if (sNow < RAIL_OPEN_S + 0.2) byS.set(Math.round(sNow * 2) / 2, b.z);
+    }
+  }
+  const atMouth = byS.get(RAIL_OPEN_S) ?? 0;
+  const atExit = byS.get(RAIL_EXIT_S) ?? 99;
+  const mid = byS.get(Math.round(((RAIL_OPEN_S + RAIL_EXIT_S) / 2) * 2) / 2) ?? 99;
+  check(
+    'an artifact leaves the ramp at ramp height and reaches the floor by the exit',
+    atMouth > RAMP_SURFACE_Z - 0.5 && atExit < 0.5,
+    `mouth z=${atMouth.toFixed(1)} exit z=${atExit.toFixed(1)}`,
+  );
+  check(
+    'and it gets there continuously, not by snapping at the exit',
+    mid > 2 && mid < RAMP_SURFACE_Z - 2,
+    `half way out it is z=${mid.toFixed(1)}, between the ${RAMP_SURFACE_Z} it left and the 0 it lands on`,
+  );
+}
+
 // ---- the chassis is not transparent to an artifact in the air ----------------------
 // Reported: "artifacts sometimes jump over the chassis". `collideBallRobot` skipped the
 // chassis outright on the grounds that Rapier had already resolved it — but Rapier only
