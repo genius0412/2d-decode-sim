@@ -1074,7 +1074,7 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.023; // open fraction per in/s (≈17 in/s to stay passable)
+export const GATE_SHOULDER_LIFT = 0.013; // open fraction per in/s (≈31 in/s to stay passable)
 /**
  * WHAT A TAP IS WORTH is set by three constants together — GATE_SHOULDER_LIFT (momentum
  * needed to keep the gate passable), GATE_FLOW_CUSHION (flow needed to suspend the fall)
@@ -1224,7 +1224,7 @@ export const GATE_GRAVITY = 22; // 1/s^2 on gatePos: gravity swinging the releas
  * the travel). Terminal-limited instead, so the time is very nearly proportional to how far
  * open it was — "how fast it closes is determined by the initial position of the gate".
  */
-export const GATE_CLOSE_MAX = 1.22; // 1/s: terminal swing speed as it falls closed
+export const GATE_CLOSE_MAX = 1.6; // 1/s: terminal swing speed as it falls closed
 /**
  * How much momentum in the flow it takes to hold the falling arm up.
  *
@@ -1235,7 +1235,7 @@ export const GATE_CLOSE_MAX = 1.22; // 1/s: terminal swing speed as it falls clo
  * gravity. This is a RATE cushion and is separate from the height floor the same artifacts
  * set via GATE_SHOULDER_LIFT — that says how low it may go, this says how fast it gets there.
  */
-export const GATE_FLOW_CUSHION = 38; // in/s of down-ramp flow that fully suspends the fall
+export const GATE_FLOW_CUSHION = 55; // in/s of down-ramp flow that fully suspends the fall
 export const GATE_PASS_FRAC = 0.4; // arm must be at least this lifted for an ARTIFACT to pass
 export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement (manual 9.8.3)
 /** the gate is a class-1 LEVER (manual Figure 9-15) hinged at the CLASSIFIER EDGE — where

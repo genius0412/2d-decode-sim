@@ -569,7 +569,26 @@ export function updateRails(
      * point, i.e. a stream. Only while the gate is OPEN: against a shut gate the floor is
      * the paddle, which is not going anywhere.
      */
-    const exitFloorV = goal.gateOpen && doorway ? Math.min(0, doorway.vel.y) : 0;
+    /**
+     * THE COLUMN PUSHES THE QUEUE, NOT THE OTHER WAY ROUND.
+     *
+     * Seeding the floor velocity from the doorway artifact capped the whole column at
+     * whatever the QUEUE outside was doing — and that queue is nudged at a fixed 22.4 in/s,
+     * so the ramp could never discharge faster than that no matter how far the artifacts
+     * had fallen. Worse, it is a feedback loop: a slower column exits slower, so the
+     * artifacts travel less, so the queue packs tighter against the mouth, so the column is
+     * capped lower again. Measured across one drain, the ramp fell from 23 in/s to 13
+     * against a free-flow speed of 46.
+     *
+     * With the gate fully OPEN the artifacts are not forcing anything — nothing is taking
+     * their momentum, so they should arrive at the exit with the speed the ramp gave them.
+     * -Infinity is "no cap": `Math.max(st.v, floorV)` leaves the artifact's own gravity-
+     * driven speed alone. The artifact AHEAD still constrains it (that is `rampAhead`, and
+     * it is what stops them overlapping); only the exit stops dictating the pace.
+     *
+     * A SHUT gate is different and still caps at 0 — the column is resting on the paddle.
+     */
+    const exitFloorV = goal.gateOpen ? -Infinity : 0;
     let rampAhead = -Infinity;
     let rampFloorV = exitFloorV;
     // ...and the same pair for an ELEVATED artifact: never stopped by the gate, only by the exit
@@ -928,7 +947,13 @@ export function updateRails(
             return !taking && pointDepthInRobot(rb, ahead.pos) > -C.BALL_RADIUS * C.EXIT_PIN_FRAC;
           });
           if (!pinned) {
-            const target = mag * C.EXIT_NUDGE;
+            // ...and it is shoved at the speed of the artifact arriving behind it, not at a
+            // constant. `EXIT_NUDGE`'s own note says "the queue moves at the speed of the
+            // flow that is pushing it"; a fixed 22.4 in/s is only that speed by coincidence,
+            // and it becomes the ceiling for the whole drain. The constant stays as a FLOOR
+            // for a column that has stalled and has no speed to lend.
+            const flow = Math.abs((b.state as { v: number }).v);
+            const target = Math.max(mag * C.EXIT_NUDGE, flow);
             const along = ahead.vel.x * ux + ahead.vel.y * uy;
             if (along < target) {
               ahead.vel.x += ux * (target - along);
