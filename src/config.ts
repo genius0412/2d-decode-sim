@@ -1019,6 +1019,13 @@ export const RAIL_BLEND_SPEED = 30; // in/s
  * channel's half-inch of slop over a long, lazy roll rather than vibrating. See `railWander`.
  */
 export const RAIL_WANDER_K = 0.42;
+/**
+ * How much of the channel's lateral slop a TRACKED artifact actually uses, as a fraction.
+ * The channel is a marble track — it guides what is in it — so this is deliberately small:
+ * enough that a resting column is not one ruled line, not enough to read as wobble. Artifacts
+ * riding OVER the column (overflow) are not in the groove and use the full slop instead.
+ */
+export const RAIL_WANDER_AMP = 0.25;
 
 export const GATE_OPEN_HOLD = 0; // s of push before the gate arm starts to lift. ZERO so the lift (and the handle-collider retract that rides on it, see gateColliderPos) begins on the very tick you contact it — no debounce means no jam against the closed stub. The push gate (pushingGate: a STRAIGHT ram, not a graze) already prevents accidental opens.
 /**

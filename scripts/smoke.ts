@@ -86,6 +86,7 @@ import {
   LOAD_ZONE_SIZE,
   BALL_RADIUS,
   CLASSIFIER_W,
+  RAIL_WANDER_AMP,
   HP_INITIAL_STOCK,
   HP_PLACE_DELAY,
   BALANCE_VERSION,
@@ -2131,13 +2132,15 @@ function queueTenth(w: World): void {
   const spread = Math.max(...offs) - Math.min(...offs);
   check(
     'artifacts on the ramp do not sit on one ruled line',
-    rail.length >= 6 && spread > slop * 0.5,
+    rail.length >= 6 && spread > 0.08,
     `${rail.length} artifacts spread over ${spread.toFixed(2)}in`,
   );
+  // ...but the channel is a MARBLE TRACK, so it is a hint of offset and not a wobble. The
+  // first cut used most of the slop and read as balls rolling around in there.
   check(
-    'and none of them leaves the channel doing it',
-    offs.every((o) => Math.abs(o) <= slop + 1e-6),
-    `worst offset ${Math.max(...offs.map(Math.abs)).toFixed(2)}in of ${slop.toFixed(2)}in slop`,
+    'and they stay in the groove doing it — a track guides, it does not wobble',
+    offs.every((o) => Math.abs(o) <= slop * RAIL_WANDER_AMP + 1e-6),
+    `worst offset ${Math.max(...offs.map(Math.abs)).toFixed(2)}in, bound ${(slop * RAIL_WANDER_AMP).toFixed(2)}in`,
   );
 }
 

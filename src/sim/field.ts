@@ -630,18 +630,20 @@ export function railPos(a: Alliance, s: number): Vec2 {
  * The ramp flow is solved in 1D along `s`, so every artifact used to be placed on the exact
  * centreline and the column came out as a ruled line of perfectly collinear artifacts, all at
  * the identical angle. Single file is correct — the channel is CLASSIFIER_W across and an
- * artifact is a diameter wide, so two cannot pass — but a ruled line is not: what is actually
- * left over is
+ * artifact is a diameter wide, so two cannot pass — and so is running near-straight: the
+ * channel is a MARBLE TRACK, a groove that guides what is in it. So a tracked artifact gets
+ * only a hint of offset (RAIL_WANDER_AMP of the slop), enough that the stack is not laser
+ * straight, nowhere near enough to read as wobble.
  *
- *     slop = CLASSIFIER_W / 2 - BALL_RADIUS
+ * An ELEVATED artifact is the exception, and for a physical reason: it is riding over the
+ * bumpy tops of the column, NOT down the groove, so nothing is guiding it. It gets the full
+ * slop the channel allows, and a shorter wavelength, because it is being deflected by every
+ * artifact it rolls over.
  *
- * of room on each side, and a rolling ball uses it. So each artifact gets its own path across
- * the channel: a slow weave whose PHASE comes from the artifact id, evaluated at its position
- * down the ramp. Being a function of `s` and not of time is what makes it behave — a resting
- * column is still (they are at rest, they should not shimmer), each artifact resting at its own
- * offset so the stack reads as ragged rather than ruled, and an artifact only weaves while it
- * is actually rolling. An ELEVATED artifact is riding over the bumpy tops of the column rather
- * than running along a smooth channel floor, so it weaves harder and shorter.
+ * Each artifact's path has its PHASE from its id and is evaluated at its position down the
+ * ramp. Being a function of `s` and not of time is what makes it behave — a resting column is
+ * still (they are at rest, they should not shimmer), each artifact settled at its own offset,
+ * and an artifact only moves across the track while it is actually rolling.
  *
  * Deterministic and stateless: `dsin` and integer ids only, no clock and no PRNG draw.
  */
@@ -650,6 +652,6 @@ export function railWander(s: number, id: number, elevated: boolean): number {
   // an irrational-ish stride keeps neighbouring ids from landing in phase with each other
   const phase = (id % 16) * 2.399963;
   const k = elevated ? C.RAIL_WANDER_K * 2.3 : C.RAIL_WANDER_K;
-  const amp = elevated ? slop : slop * 0.8;
+  const amp = slop * (elevated ? 1 : C.RAIL_WANDER_AMP);
   return amp * dsin(phase + s * k);
 }
