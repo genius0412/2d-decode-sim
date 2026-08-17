@@ -20,6 +20,7 @@ import { aimSolution, robotInLaunchZone } from '../src/sim/robot';
 import { updateHumanPlayers } from '../src/sim/humanPlayer';
 import { startMatch } from '../src/sim/match';
 import { gateColliderPos, gateRestOn, pushingGate } from '../src/sim/goal';
+import { pointDepthInChassis } from '../src/sim/physics';
 import {
   inLaunchZone,
   gateZone,
@@ -4071,6 +4072,60 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       w.match.fouls.red.minor + w.match.fouls.red.major === 0,
     `blue=${w.match.fouls.blue.minor}/${w.match.fouls.blue.major} red=${w.match.fouls.red.minor}/${w.match.fouls.red.major}`,
   );
+}
+
+// ---- a drained artifact never passes THROUGH a robot -------------------------------
+// The doorway artifact is exempted from the artifacts a robot is CARRYING (they step aside
+// for something being expelled), and exempting it from the CHASSIS too let it travel
+// straight through a parked robot. The chassis is never optional.
+{
+  for (const ry of [-8, -12]) {
+    for (const hopper of [0, 3]) {
+      const w = mkWorld('match', 'red', 42, { intake: 'vector', width: 17.5, length: 14.5 });
+      startMatch(w);
+      w.match.phase = 'teleop';
+      const r = w.robots[0];
+      for (const b of w.balls) {
+        if (b.state.kind !== 'held') continue;
+        b.state = { kind: 'ground' };
+        b.pos = { x: -FIELD_HALF + 6, y: -FIELD_HALF + 6 };
+        b.vel = { x: 0, y: 0 };
+        b.z = 0;
+        b.vz = 0;
+      }
+      r.hopper = Array.from({ length: hopper }, () => 'green' as const);
+      for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: -FIELD_HALF + 6, y: -FIELD_HALF + 6 };
+      for (let i = 0; i < 9; i++) {
+        const b = w.balls[i];
+        const cs = GATE_STOP_S + i * RAIL_PITCH;
+        b.state = { kind: 'rail', goal: 'red', s: cs, v: 0, overflow: false, pending: false };
+        b.pos = railPos('red', cs);
+        b.vel = { x: 0, y: 0 };
+        b.z = RAMP_SURFACE_Z;
+        b.vz = 0;
+      }
+      r.pos = { x: railPos('red', RAIL_EXIT_S).x, y: ry };
+      r.heading = Math.PI / 2;
+      r.fieldCentric = false;
+      r.vel = { x: 0, y: 0 };
+      let worst = 0;
+      for (let i = 0; i < Math.round(10 / SIM_DT); i++) {
+        w.goals.red.gatePos = 1;
+        w.goals.red.gateOpen = true;
+        w.goals.red.gateLatch = 1;
+        step(w, SIM_DT, new Map([[0, cmd({})]]));
+        for (const b of w.balls) {
+          if (b.state.kind !== 'ground' || b.pos.x < 0) continue;
+          worst = Math.max(worst, pointDepthInChassis(r, b.pos));
+        }
+      }
+      check(
+        `a drained artifact does not pass through a robot on the outflow (y=${ry}, hopper ${hopper})`,
+        worst < 0.6,
+        `deepest inside the chassis ${worst.toFixed(2)}in`,
+      );
+    }
+  }
 }
 
 // ---- GATE INTAKING with a FULL hopper still drains ---------------------------------

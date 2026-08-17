@@ -923,7 +923,23 @@ export const BASIN_ENTRY_KEEP_V = 0.45; // entry velocity retained (splash energ
 // classifier rail (1D flow, contact stacking)
 export const RAIL_S_MAX = 55; // rail length: SQUARE at the top (y = CLASSIFIER_Y0 + s), at the goal's inner exit
 export const RAIL_ACCEL = 80; // in/s^2 down-ramp
-export const RAIL_TERMINAL = 46; // in/s max flow speed
+/**
+ * Terminal flow speed down the ramp — the speed at which the incline's pull (RAIL_ACCEL) is
+ * balanced by rolling resistance.
+ *
+ * This is what sets the SHAPE of a drain, not just its speed, because it decides whether the
+ * column is still accelerating when it reaches the exit. The column starts from rest packed
+ * against a shut gate, so the first artifact has to cover one RAIL_PITCH from a standstill —
+ * 0.36s, unavoidable. If terminal is high, everything behind it is still speeding up and the
+ * drain reads as a lag and then a dump:
+ *
+ *     terminal 46 -> at speed after 13.2in, gaps 0.20 0.13 0.13 0.12 0.13 0.12 0.13 0.13
+ *     terminal 30 -> at speed after  5.6in, gaps 0.22 0.20 0.20 0.20 0.22 0.23 0.23 0.22
+ *
+ * Reaching terminal within about ONE PITCH is the condition for the first gap to match the
+ * rest, and that is what makes it read as a steady stream. 9 artifacts clear in 2.1s.
+ */
+export const RAIL_TERMINAL = 30; // in/s max flow speed
 export const RAIL_PITCH = 5.1; // ball contact spacing on the stack
 export const GATE_STOP_S = 2; // lowest rest position against the closed gate
 // entrance blocked only while a ball is still within ~one pitch of the top entry
@@ -1074,7 +1090,7 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.013; // open fraction per in/s (≈31 in/s to stay passable)
+export const GATE_SHOULDER_LIFT = 0.017; // open fraction per in/s (≈24 in/s to stay passable)
 /**
  * WHAT A TAP IS WORTH is set by three constants together — GATE_SHOULDER_LIFT (momentum
  * needed to keep the gate passable), GATE_FLOW_CUSHION (flow needed to suspend the fall)

@@ -140,8 +140,9 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // are deliberately non-physical. Iterated so a robot→ball→(wall/ball) chain
   // converges instead of tunnelling in a single pass.
   /**
-   * THE ARTIFACT IN A GATE'S DOORWAY IS BEING EXPELLED — nothing on the robot may push it
-   * back, and that includes the artifacts the robot is CARRYING.
+   * THE ARTIFACT IN A GATE'S DOORWAY IS BEING EXPELLED — the artifacts a robot is CARRYING
+   * step aside for it. The CHASSIS never does: excluding an expelled artifact from the robot
+   * passes as well as the held ones let it travel straight THROUGH a robot.
    *
    * `updateRails` floors its outward velocity at the end of the tick; the bespoke robot
    * passes undo that at the start of the next, to the third decimal. The stalemate only
@@ -167,11 +168,11 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   for (let pass = 0; pass < C.BALL_SOLVER_ITERATIONS; pass++) {
     for (const b of world.balls) {
       if (b.state.kind !== 'ground') continue;
-      if (!expelling.has(b.id)) {
-        for (const r of world.robots) collideBallRobot(b, r);
-        // held balls physically occupy the intake — incoming balls pile up on them
-        for (const h of heldBalls) collideBallHeld(b, h);
-      }
+      // The CHASSIS is always solid — excluding an expelled artifact from this let it pass
+      // straight through a robot. Only the artifacts a robot is CARRYING step aside for it.
+      for (const r of world.robots) collideBallRobot(b, r);
+      // held balls physically occupy the intake — incoming balls pile up on them
+      if (!expelling.has(b.id)) for (const h of heldBalls) collideBallHeld(b, h);
     }
   }
   // hard field clamp: Rapier's soft contacts (and the bespoke ball↔robot push)
@@ -217,10 +218,8 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
       // push one INTO a robot and nothing takes it back out — and since the next tick's
       // robot pass runs BEFORE this one, a pressed clump walks artifacts straight through a
       // chassis. Measured before this line: 2.77in of penetration on a 2.5in radius.
-      if (!expelling.has(b.id)) {
-        for (const r of world.robots) evictBallFromRobot(b, r);
-        for (const h of heldBalls) collideBallHeld(b, h);
-      }
+      for (const r of world.robots) evictBallFromRobot(b, r);
+      if (!expelling.has(b.id)) for (const h of heldBalls) collideBallHeld(b, h);
       const from = ballFrom.get(b.id);
       collideBallRect(b, classifierRect('red'), C.BALL_WALL_RESTITUTION, from);
       collideBallRect(b, classifierRect('blue'), C.BALL_WALL_RESTITUTION, from);
