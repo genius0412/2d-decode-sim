@@ -1486,10 +1486,14 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   };
   const full = closeFrom(1);
   const half = closeFrom(0.5);
+  // The bar moved once the knock-up existed: "the gate should close faster with no momentum
+  // going in". An EMPTY gateway is now the fast case on purpose — this only asserts it is
+  // still a swing and not a snap. What keeps it from slamming when it matters is the cushion,
+  // checked below, and the flowing case is still ~4x slower than this one.
   check(
-    'the arm no longer slams shut',
-    full > 0.45,
-    `${full.toFixed(3)}s from fully open`,
+    'the arm still swings shut rather than snapping',
+    full > 0.25,
+    `${full.toFixed(3)}s from fully open with an empty gateway`,
   );
   // GATE_CLOSE_MAX used to be 9/s, which the arm never got near — it was still accelerating
   // when it hit 0, so the time went as the SQUARE ROOT of the height and half the travel cost
@@ -1807,11 +1811,11 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
 
 // fill the blue rail with 9 retained balls by direct placement (bypasses
 // scoring — counters stay 0)
-function fillBlueRail(w: World): void {
+function fillBlueRail(w: World, v = 0): void {
   for (let i = 0; i < 9; i++) {
     const b = w.balls[i];
     const s = GATE_STOP_S + i * RAIL_PITCH;
-    b.state = { kind: 'rail', goal: 'blue', s, v: 0, overflow: false };
+    b.state = { kind: 'rail', goal: 'blue', s, v, overflow: false };
     b.pos = railPos('blue', s);
     b.vel = { x: 0, y: 0 };
     b.z = RAMP_SURFACE_Z;
@@ -2062,6 +2066,38 @@ function queueTenth(w: World): void {
     'no artifact rides the rail below the exit (that is off the field)',
     belowExit === 0,
     `${belowExit} ball-frames below RAIL_EXIT_S`,
+  );
+}
+
+// ---- with nothing coming down, the arm shuts briskly -------------------------------
+// "the gate should close faster with no momentum going in". The two cases are governed by
+// different constants on purpose: GATE_CLOSE_MAX sets how fast a free arm can swing, and
+// GATE_FLOW_CUSHION decides how much of that the flow takes away. So the empty gateway got
+// quick without the flowing one changing much — it is still the flow that meters a drain.
+{
+  const shutTime = (withFlow: boolean): number => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    if (withFlow) fillBlueRail(w, -RAIL_TERMINAL);
+    const g = w.goals.blue;
+    g.gatePos = 1;
+    g.gateOpen = true;
+    g.gateLatch = 0;
+    g.gateVel = 0;
+    w.robots[0].pos = { x: 0, y: -40 };
+    for (let i = 0; i < Math.round(6 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map());
+      if (g.gatePos <= 0) return i * SIM_DT;
+    }
+    return Infinity;
+  };
+  const empty = shutTime(false);
+  const flowing = shutTime(true);
+  check(
+    'an empty gateway lets the arm shut much faster than a flowing one does',
+    empty < 0.45 && flowing > empty * 2.5,
+    `empty ${empty.toFixed(2)}s vs flowing ${flowing.toFixed(2)}s (${(flowing / empty).toFixed(1)}x)`,
   );
 }
 
