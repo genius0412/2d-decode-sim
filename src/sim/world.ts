@@ -250,7 +250,7 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // ---- goals: basin jumble, rail flow, gate ---------------------------------
   updateGates(world, dt, actualCommands);
   updateBasins(world, dt);
-  updateRails(world, dt);
+  updateRails(world, dt, actualCommands);
   updateHumanPlayers(world);
 
   // ---- match flow ----------------------------------------------------------

@@ -457,7 +457,11 @@ function doorwayArtifact(world: World, a: Alliance): Artifact | null {
 
 /** 1D flow down the classifier rail with contact stacking against the gate
  * (or the ball ahead). Overflow balls ride over everything and always exit. */
-export function updateRails(world: World, dt: number): void {
+export function updateRails(
+  world: World,
+  dt: number,
+  commands: Map<number, RobotCommand>,
+): void {
   for (const a of ['red', 'blue'] as Alliance[]) {
     const goal = world.goals[a];
 
@@ -879,18 +883,51 @@ export function updateRails(world: World, dt: number): void {
            * supposed to STALL the column (railBlock already says so). So the column stops
            * shoving and simply waits, which is what it does behind any other obstruction.
            */
-          // FULL FOOTPRINT here, unlike railBlock: this asks "can this artifact go anywhere",
-          // and one wedged under an intake against the gate cannot. The mouth being open to
-          // CAPTURE does not mean an artifact can be shoved out through it. Using the chassis
-          // box here brought the buzz straight back — 60 reversals in two seconds.
-          const pinned = world.robots.some(
-            (rb) => pointDepthInRobot(rb, ahead.pos) > -C.BALL_RADIUS * C.EXIT_PIN_FRAC,
-          );
+          const push = tunnelExitVel(a);
+          const mag = hyp(push.x, push.y);
+          const ux = push.x / mag;
+          const uy = push.y / mag;
+          /**
+           * PINNED MEANS "CANNOT GO WHERE IT IS BEING PUSHED", not "is near a robot".
+           *
+           * This asked whether the artifact was inside a robot's footprint at all, which is
+           * true of every artifact a robot is intaking off the gate — GATE INTAKING, holding
+           * the lever with a front corner while the mouth eats the outflow, is a standard
+           * technique and the guard throttled it to a crawl. Measured, holding the gate with
+           * the drain running: 5 of 9 artifacts in 14s with the guard, 9 of 9 at a 0.323s
+           * mean gap without it, which is the no-robot rate.
+           *
+           * So probe the position it is being nudged TOWARD. If that is still buried in a
+           * robot the artifact genuinely has nowhere to go and shoving it just fights the
+           * chassis (the doorway buzz: 60 reversals in two seconds). If the way out is
+           * clear — a robot beside the gate, or its open mouth ahead of the artifact — the
+           * nudge does what it is for.
+           */
+          /**
+           * DO NOT SHOVE AN ARTIFACT INTO SOMETHING THAT WILL NOT TAKE IT.
+           *
+           * Two different situations look identical to a proximity test, and neither a
+           * footprint test nor a chassis test separates them on its own — both were tried:
+           *
+           *  · the CHASSIS is about to shove it back. `solveBalls` gives a robot exactly one
+           *    collider and it is the chassis, so this is the only thing that can fight the
+           *    nudge. Re-flooring the velocity against it every tick is the doorway buzz:
+           *    60 reversals in two seconds, peaking at 67 in/s.
+           *  · it is sitting in an IDLE intake mouth. Nothing will move it, and shoving it
+           *    deeper only starts the same fight against the eviction pass.
+           *
+           * A RUNNING intake is the case that must not be suppressed, and it is the common
+           * one: GATE INTAKING — holding the lever with a front corner while the mouth eats
+           * the outflow — puts an artifact in the mouth on every single release. Treating
+           * that as pinned throttled it to 5 of 9 artifacts in 14s, against 9 of 9 at a
+           * 0.32s mean gap (the no-robot rate) once the nudge is allowed to do its job.
+           */
+          const pinned = world.robots.some((rb) => {
+            if (pointDepthInChassis(rb, ahead.pos) > -C.BALL_RADIUS * C.EXIT_PIN_FRAC) return true;
+            const taking = (commands.get(rb.id)?.intake ?? false) || rb.autoIntake;
+            return !taking && pointDepthInRobot(rb, ahead.pos) > -C.BALL_RADIUS * C.EXIT_PIN_FRAC;
+          });
           if (!pinned) {
-            const push = tunnelExitVel(a);
-            const mag = hyp(push.x, push.y);
-            const ux = push.x / mag;
-            const uy = push.y / mag;
             const target = mag * C.EXIT_NUDGE;
             const along = ahead.vel.x * ux + ahead.vel.y * uy;
             if (along < target) {

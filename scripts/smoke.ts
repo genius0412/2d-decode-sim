@@ -4073,6 +4073,72 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- GATE INTAKING drains at full speed ---------------------------------------------
+// "holding the gate open with the front left or right while simultaneously intaking balls
+// that come out of the classifier is called gate intaking and it is very common. When I do
+// this though, the balls come down at a slower cadence."
+//
+// They did: the doorway nudge was suppressed whenever the artifact sat inside ANY robot's
+// footprint, which is true on every single release of this manoeuvre. 5 of 9 artifacts in
+// 14s, against 9 of 9 at a 0.32s mean gap once the nudge is allowed to work — and 0.32s is
+// the rate with no robot there at all, so there is nothing left to win.
+{
+  const gateHold = (intake: boolean) => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    for (let i = 0; i < 9; i++) {
+      const b = w.balls[i];
+      const cs = GATE_STOP_S + i * RAIL_PITCH;
+      b.state = { kind: 'rail', goal: 'blue', s: cs, v: 0, overflow: false, pending: false };
+      b.pos = railPos('blue', cs);
+      b.vel = { x: 0, y: 0 };
+      b.z = RAMP_SURFACE_Z;
+      b.vz = 0;
+    }
+    const r = w.robots[0];
+    const ar = gateArmRect('blue');
+    // FIELD-CENTRIC: driveY=1 resolves to field −x for blue, i.e. straight INTO the lever.
+    // Driving along the wall does not open it (pushingGate is one-directional), so a probe
+    // that gets this wrong measures a gate that never opened rather than a slow drain.
+    r.pos = { x: ar.x1 + 7, y: (ar.y0 + ar.y1) / 2 };
+    r.heading = Math.PI;
+    r.fieldCentric = true;
+    r.vel = { x: 0, y: 0 };
+    r.hopper = [];
+    const left = () => w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length;
+    let prev = left();
+    const times: number[] = [];
+    for (let i = 0; i < Math.round(14 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: 1, intake })]]));
+      const n = left();
+      if (n < prev) {
+        for (let k = 0; k < prev - n; k++) times.push(i * SIM_DT);
+        prev = n;
+      }
+    }
+    const gaps = times.slice(1).map((t, i) => t - times[i]);
+    return { out: 9 - left(), mean: gaps.length ? gaps.reduce((p, q) => p + q, 0) / gaps.length : 0 };
+  };
+  const on = gateHold(true);
+  check(
+    'GATE INTAKING: holding the lever while intaking drains the whole ramp',
+    on.out === 9,
+    `${on.out}/9 out at a ${on.mean.toFixed(3)}s mean gap (was 5/9)`,
+  );
+  check(
+    '...at the same cadence as no robot being there at all',
+    on.mean < 0.45,
+    `${on.mean.toFixed(3)}s vs the no-robot rate of ~0.32s`,
+  );
+  // The IDLE-intake counterpart is deliberately NOT asserted here: whether an artifact ends
+  // up inside an idle mouth depends on exactly where the robot came to rest against the
+  // lever (5/9 at x=-58, 9/9 at x=-56), so it is a fragile thing to pin a check to. The
+  // behaviour that matters — not shoving an artifact into something that will not take it —
+  // is already covered by the doorway-buzz check.
+}
+
 // ---- the gate opener rides ABOVE the artifacts, so it must not push them -----------
 // It is solid to walls, robots and the gate lever — that is `footprintExtents`, untouched —
 // but the roller and the opener blocks on its beam ends sit high in z, so artifacts pass
