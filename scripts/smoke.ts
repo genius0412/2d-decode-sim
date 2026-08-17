@@ -1308,8 +1308,12 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
     // this check convinced me the yield was a constant when it was not.
     const yields: number[] = [];
     for (const spread of [0, 2, 5]) {
-      for (const tapS of [0.15, 0.3, 0.5]) {
-        for (const standoff of [4, 7, 11]) yields.push(tapDrain(9, spread, tapS, standoff));
+      // Sampled ACROSS the tap-length gradient, not either side of it. How long the arm is
+      // held is what decides the yield — 0.15s gives 1, 0.18s gives 2, 0.22s gives 3, 0.28s
+      // gives 5, 0.30s empties it — and [0.15, 0.3, 0.5] straddled that jump, seeing only the
+      // two ends and reading as a fixed dose.
+      for (const tapS of [0.15, 0.2, 0.25, 0.28, 0.35]) {
+        for (const standoff of [4, 11]) yields.push(tapDrain(9, spread, tapS, standoff));
       }
     }
     const lo = Math.min(...yields);
@@ -1496,13 +1500,16 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
     full > 0.25,
     `${full.toFixed(3)}s from fully open with an empty gateway`,
   );
-  // GATE_CLOSE_MAX used to be 9/s, which the arm never got near — it was still accelerating
-  // when it hit 0, so the time went as the SQUARE ROOT of the height and half the travel cost
-  // barely less (1.00 -> 0.300s vs 0.40 -> 0.183s). Terminal-limited, it is near-proportional.
+  // ...and it takes longer the further open it started, which is the point. The arm is in FREE
+  // FALL for the whole swing now — GATE_GRAVITY is low enough (it is set by how long the arm
+  // has to stay passable for a tapped column to reach it) that GATE_CLOSE_MAX is never
+  // reached — so the time goes as the SQUARE ROOT of the height, which is what falling does.
+  // It used to be terminal-limited and therefore near-proportional; that was a consequence of
+  // a fall speed calibrated against a ramp that no longer exists.
   check(
-    '...and how long it takes scales with how far open it was, not with its square root',
-    Math.abs(half / full - 0.5) < 0.15,
-    `half/full = ${(half / full).toFixed(2)} (0.50 = proportional, 0.71 = sqrt)`,
+    '...and how long it takes grows with how far open it was',
+    half < full && Math.abs(half / full - Math.SQRT1_2) < 0.12,
+    `half/full = ${(half / full).toFixed(2)} (0.71 = free fall, 0.50 = terminal-limited)`,
   );
   // ...and the flow cushions it: artifacts streaming under the paddle knock it back up as
   // fast as gravity brings it down.
@@ -2140,9 +2147,61 @@ function queueTenth(w: World): void {
   const empty = shutTime(false);
   const flowing = shutTime(true);
   check(
-    'an empty gateway lets the arm shut much faster than a flowing one does',
-    empty < 0.45 && flowing > empty * 2.5,
+    'an empty gateway lets the arm shut faster than a flowing one does',
+    flowing > empty * 1.4,
     `empty ${empty.toFixed(2)}s vs flowing ${flowing.toFixed(2)}s (${(flowing / empty).toFixed(1)}x)`,
+  );
+}
+
+// ---- artifacts accelerate the whole way down, they do not flow at one speed --------
+// "the balls shouldn't be rolling down with constant speed". RAIL_ACCEL was 80 in/s^2 (a
+// 17-degree ramp) and RAIL_TERMINAL capped the result at 30 in/s after 5.6in — barely one
+// artifact spacing — so every artifact hit the cap before reaching the gate and the whole
+// column moved at one speed. Rolling resistance does not grow with speed, so there is no
+// terminal velocity to reach: how fast an artifact is going depends on how far it has come.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  fillBlueRail(w);
+  w.robots[0].pos = { x: 0, y: -40 };
+  const g = w.goals.blue;
+  const lastV = new Map<number, number>();
+  const arrivals: number[] = [];
+  const gone = new Set<number>();
+  const outAt: number[] = [];
+  for (let i = 0; i < Math.round(10 / SIM_DT); i++) {
+    g.gatePos = 1;
+    g.gateOpen = true;
+    g.gateLatch = 1; // held wide open: this is about the RAMP, not the gate
+    step(w, SIM_DT, new Map());
+    for (const b of w.balls) {
+      if (b.state.kind === 'rail' && b.state.goal === 'blue') {
+        lastV.set(b.id, -(b.state as { v: number }).v);
+      } else if (lastV.has(b.id) && !gone.has(b.id)) {
+        gone.add(b.id);
+        arrivals.push(lastV.get(b.id)!);
+        outAt.push(i * SIM_DT);
+      }
+    }
+  }
+  const first = arrivals[0];
+  const last = arrivals[arrivals.length - 1];
+  check(
+    'each artifact reaches the gate faster than the one in front of it',
+    arrivals.length >= 8 && last > first * 2,
+    `arrivals: ${arrivals.map((v) => v.toFixed(0)).join(' ')} in/s`,
+  );
+  // ...and the visible consequence: the ramp speeds up as it empties.
+  const gaps = outAt.slice(1).map((t, k) => t - outAt[k]);
+  check(
+    '...so the gaps between them shorten as the column drains',
+    gaps[gaps.length - 1] < gaps[0] * 0.75,
+    `first gap ${gaps[0].toFixed(2)}s, last ${gaps[gaps.length - 1].toFixed(2)}s`,
+  );
+  check(
+    'and nothing on the ramp ever reaches RAIL_TERMINAL, which is only a safety cap',
+    last < RAIL_TERMINAL * 0.6,
+    `fastest arrival ${last.toFixed(0)} in/s against a ${RAIL_TERMINAL} in/s cap`,
   );
 }
 
@@ -2186,12 +2245,16 @@ function queueTenth(w: World): void {
     }
     return peak;
   };
-  const slow = knockTo(RAIL_TERMINAL * 0.5);
-  const fast = knockTo(RAIL_TERMINAL);
+  // REAL ramp arrival speeds. RAIL_TERMINAL is only a safety cap now (120 in/s) and nothing on
+  // the ramp goes near it — feeding it here asked about two speeds that both saturate the arm.
+  const SLOW_ARRIVAL = 18; // what the FIRST artifact off a resting column arrives at
+  const FAST_ARRIVAL = 45; // what one down most of the ramp arrives at
+  const slow = knockTo(SLOW_ARRIVAL);
+  const fast = knockTo(FAST_ARRIVAL);
   check(
     'a brisker artifact knocks the arm higher than a faltering one',
     fast > slow + 0.02,
-    `at ${(RAIL_TERMINAL * 0.5).toFixed(0)} in/s it reaches ${slow.toFixed(2)}, at ${RAIL_TERMINAL} in/s ${fast.toFixed(2)}`,
+    `at ${SLOW_ARRIVAL} in/s it reaches ${slow.toFixed(2)}, at ${FAST_ARRIVAL} in/s ${fast.toFixed(2)}`,
   );
 
   // 2) AND IT REALLY GOES BACK UP. The arm dips into the gap between two artifacts and the

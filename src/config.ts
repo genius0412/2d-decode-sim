@@ -940,7 +940,22 @@ export const BASIN_ENTRY_KEEP_V = 0.45; // entry velocity retained (splash energ
 
 // classifier rail (1D flow, contact stacking)
 export const RAIL_S_MAX = 55; // rail length: SQUARE at the top (y = CLASSIFIER_Y0 + s), at the goal's inner exit
-export const RAIL_ACCEL = 80; // in/s^2 down-ramp
+/**
+ * Down-ramp acceleration, and an artifact is under it for the WHOLE descent.
+ *
+ * 386 in/s^2 of gravity on a shallow ramp, less the rolling loss: g*sin(th)*5/7 puts 25 in/s^2
+ * at about 5 degrees, which is the sort of slope a classifier channel has.
+ *
+ * It used to be 80, which is a 17-degree ramp, and it was survivable only because RAIL_TERMINAL
+ * capped the result at 30 in/s after 5.6in of travel — barely one artifact spacing. Every
+ * artifact was therefore at the cap before it reached the gate and the whole column flowed at
+ * one speed. Nothing on a ramp does that: rolling resistance does not grow with speed, so there
+ * is no terminal velocity to reach, and how fast an artifact is going depends on how far it has
+ * come. Now it does: down a full ramp they arrive at 17, 26, 31, 36, 40, 44, 48, 51, 54 in/s,
+ * each with more runway than the one in front, so the gaps between arrivals SHORTEN as the
+ * column drains and the ramp visibly speeds up as it empties.
+ */
+export const RAIL_ACCEL = 25; // in/s^2 down-ramp
 /**
  * Terminal flow speed down the ramp — the speed at which the incline's pull (RAIL_ACCEL) is
  * balanced by rolling resistance.
@@ -957,7 +972,12 @@ export const RAIL_ACCEL = 80; // in/s^2 down-ramp
  * Reaching terminal within about ONE PITCH is the condition for the first gap to match the
  * rest, and that is what makes it read as a steady stream. 9 artifacts clear in 2.1s.
  */
-export const RAIL_TERMINAL = 30; // in/s max flow speed
+/**
+ * A SAFETY CAP, not a shaping constant — nothing in a normal drain gets near it (the fastest
+ * arrival down a full ramp is about 54 in/s). It exists so a pathological state cannot launch
+ * an artifact down the rail at an unbounded speed, not to give the ramp a flow speed.
+ */
+export const RAIL_TERMINAL = 120; // in/s safety cap
 export const RAIL_PITCH = 5.1; // ball contact spacing on the stack
 export const GATE_STOP_S = 2; // lowest rest position against the closed gate
 // entrance blocked only while a ball is still within ~one pitch of the top entry
@@ -1294,7 +1314,7 @@ export const GATE_OPEN_RATE = 12; // 1/s: BASE lift rate for a gentle push (a li
  * you touch it: it "opens faster the harder you drive into it", with no bounce-off jolt. */
 export const GATE_OPEN_RATE_SPEED = 1.2; // extra 1/s of lift per in/s of ram speed
 export const GATE_OPEN_RATE_MAX = 66; // 1/s cap (~fully open in one tick at a hard ram)
-export const GATE_GRAVITY = 22; // 1/s^2 on gatePos: gravity swinging the released arm shut
+export const GATE_GRAVITY = 6; // 1/s^2 on gatePos: gravity swinging the released arm shut
 /**
  * Terminal swing speed as the arm falls closed.
  *
