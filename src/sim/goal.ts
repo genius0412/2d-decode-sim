@@ -1130,8 +1130,18 @@ export function updateGates(
       if (s > ram) ram = s;
     }
     const pushing = ram > 0;
-    // a robot merely TOUCHING the (already-open) arm keeps it up — see the latch below
-    const touching = world.robots.some((r) => robotIntersectsRect(r, gateArmRect(a)));
+    // A robot merely TOUCHING the (already-open) arm keeps it up — see the latch below.
+    //
+    // The CHASSIS touches it, not the intake-extended footprint. `robotIntersectsRect` grows
+    // the box forward by the intake reach, and gate intaking parks exactly that reach across
+    // the arm — so the mouth alone re-armed the latch every tick and pinned the arm at fully
+    // open no matter what was under it. Measured: 10 of 12 gate-intaking poses held the arm
+    // with the INTAKE only, gatePos stuck at 1.00 for four seconds over a completely stalled
+    // column. The technique is holding the arm with a front CORNER, which is the bumper; the
+    // mouth is an open frame and the lifted arm sits over it.
+    const touching = world.robots.some((r) =>
+      convexOverlap(chassisCorners(r), rectCorners(gateArmRect(a))),
+    );
     const wasOpen = goal.gateOpen;
 
     /**

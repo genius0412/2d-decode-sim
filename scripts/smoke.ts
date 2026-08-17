@@ -57,6 +57,8 @@ import type { Alliance, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpe
 import {
   SIM_DT,
   PRE_COUNTDOWN as C_PRE_COUNTDOWN,
+  GATE_LINE_S,
+  GATE_OPEN_LATCH_S,
   GATE_STOP_S,
   GATE_OPEN_LATCH_S,
   GATE_PASS_FRAC,
@@ -2059,6 +2061,59 @@ function queueTenth(w: World): void {
     'no artifact rides the rail below the exit (that is off the field)',
     belowExit === 0,
     `${belowExit} ball-frames below RAIL_EXIT_S`,
+  );
+}
+
+// ---- the intake mouth does not hold the gate open ----------------------------------
+// Reported: "when i gate intake and the ball flow is stalled in a position where the gate is
+// in between two artifacts perfectly, the gate should be closing but its not". Touch-hold
+// tested the INTAKE-EXTENDED footprint, and gate intaking parks exactly that reach across the
+// arm — so the mouth re-armed the latch every tick and pinned the arm fully open over a
+// completely stalled column. Holding the arm is done with a front CORNER, which is bumper.
+{
+  const rests: number[] = [];
+  for (const y0 of [-12, -10, -8, -6]) {
+    for (const headDeg of [19, 45, 70]) {
+      const w = mkWorld('match', 'red', 5, { intake: 'vector', width: 17.5, length: 14.5 });
+      startMatch(w);
+      w.match.phase = 'teleop';
+      for (const b of w.balls) {
+        b.state = { kind: 'ground' };
+        b.pos = { x: -40, y: -60 };
+        b.vel = { x: 0, y: 0 };
+        b.z = 0;
+        b.vz = 0;
+      }
+      // a STALLED column, parked so the arm sits in the gap between two artifacts
+      for (let i = 0; i < 9; i++) {
+        const b = w.balls[i];
+        const cs = GATE_LINE_S + BALL_RADIUS + 0.6 + i * RAIL_PITCH;
+        b.state = { kind: 'rail', goal: 'red', s: cs, v: 0, overflow: false, pending: false };
+        b.pos = railPos('red', cs);
+        b.vel = { x: 0, y: 0 };
+        b.z = RAMP_SURFACE_Z;
+        b.vz = 0;
+      }
+      const r = w.robots[0];
+      r.pos = { x: 57.3, y: y0 };
+      r.heading = (headDeg * Math.PI) / 180;
+      r.hopper = ['green', 'green', 'green'];
+      r.fieldCentric = false;
+      r.vel = { x: 0, y: 0 };
+      const g = w.goals.red;
+      g.gatePos = 1;
+      g.gateOpen = true;
+      g.gateLatch = GATE_OPEN_LATCH_S;
+      for (let i = 0; i < Math.round(4 / SIM_DT); i++) {
+        step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+      }
+      rests.push(g.gatePos);
+    }
+  }
+  check(
+    'a stalled column lets the arm come down even while a robot is intaking the outflow',
+    rests.every((p) => p < 1),
+    `resting gatePos: ${rests.map((p) => p.toFixed(2)).join(' ')}`,
   );
 }
 
