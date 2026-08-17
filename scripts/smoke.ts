@@ -87,6 +87,7 @@ import {
   BALL_RADIUS,
   CLASSIFIER_W,
   RAIL_WANDER_AMP,
+  ROBOT_HEIGHT,
   HP_INITIAL_STOCK,
   HP_PLACE_DELAY,
   BALANCE_VERSION,
@@ -2057,6 +2058,60 @@ function queueTenth(w: World): void {
     'no artifact rides the rail below the exit (that is off the field)',
     belowExit === 0,
     `${belowExit} ball-frames below RAIL_EXIT_S`,
+  );
+}
+
+// ---- the chassis is not transparent to an artifact in the air ----------------------
+// Reported: "artifacts sometimes jump over the chassis". `collideBallRobot` skipped the
+// chassis outright on the grounds that Rapier had already resolved it — but Rapier only
+// solves GROUND artifacts. Anything in `flight` state got no chassis at all, and `flight` is
+// not just a shot in the air: a landed artifact keeps bouncing in that state until its vz
+// falls below the settle threshold, so an artifact hopping across the floor sailed straight
+// through a robot. Measured 12 of 15 low approaches crossing, 7.3in deep, one of them at z=0.
+{
+  let crossed = 0;
+  let total = 0;
+  let over = 0;
+  for (const z0 of [0, 2, 5, 9, 13]) {
+    for (const vz0 of [0, 30, 60]) {
+      const w = mkWorld('match', 'red', 5);
+      startMatch(w);
+      w.match.phase = 'teleop';
+      for (const b of w.balls) {
+        b.state = { kind: 'ground' };
+        b.pos = { x: -40, y: -60 };
+        b.vel = { x: 0, y: 0 };
+        b.z = 0;
+        b.vz = 0;
+      }
+      const r = w.robots[0];
+      r.pos = { x: 0, y: 0 };
+      r.heading = Math.PI / 2;
+      r.vel = { x: 0, y: 0 };
+      r.hopper = [];
+      const b = w.balls[0];
+      b.state = { kind: 'flight' };
+      b.pos = { x: -30, y: 0 };
+      b.vel = { x: 90, y: 0 };
+      b.z = z0;
+      b.vz = vz0;
+      let peak = z0;
+      for (let i = 0; i < 90; i++) {
+        step(w, SIM_DT, new Map());
+        peak = Math.max(peak, b.z);
+      }
+      total++;
+      if (b.pos.x > 12) {
+        // crossing is only legitimate if it actually cleared the robot's height
+        if (peak > ROBOT_HEIGHT) over++;
+        else crossed++;
+      }
+    }
+  }
+  check(
+    'an artifact in the air cannot pass through a chassis it never cleared',
+    crossed === 0,
+    `${crossed}/${total} crossed below robot height (${over} legitimately went over)`,
   );
 }
 

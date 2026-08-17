@@ -1063,7 +1063,14 @@ export function collideBallRobot(b: Artifact, r: RobotState): void {
   if (!contact) return;
   const { nx, ny, pen, cp } = contact;
   const localX = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading).x;
-  if (localX <= r.spec.length / 2) return; // chassis — Rapier already resolved it
+  // The chassis is skipped ONLY for artifacts Rapier actually solved, which is ground
+  // artifacts and nothing else. Skipping it unconditionally made the chassis transparent to
+  // anything in FLIGHT — and "flight" is not just a shot in the air: an artifact that lands
+  // keeps bouncing in that state until its vz falls below the settle threshold. So an
+  // artifact rolling and hopping across the floor sailed straight through a robot, which is
+  // what "artifacts sometimes jump over the chassis" looks like. Measured 12 of 15 low
+  // approaches crossing, 7.3in deep, including one at z = 0.
+  if (b.state.kind === 'ground' && localX <= r.spec.length / 2) return;
   const c = clampBallPosToStatics({ x: b.pos.x + nx * pen, y: b.pos.y + ny * pen });
   b.pos.x = c.x;
   b.pos.y = c.y;

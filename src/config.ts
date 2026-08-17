@@ -315,6 +315,17 @@ export const BALL_BOUNCE_H_RETAIN = 0.8; // horizontal speed kept on ground boun
 export const GRAVITY = 386; // in/s^2
 /** light foam ball off a heavy chassis: nearly inelastic — the ball inherits
  * the chassis surface speed but gains almost no extra bounce */
+/**
+ * How tall a robot is to an artifact in the air, in inches.
+ *
+ * An artifact BELOW this hits the robot; above it, it clears. It was two unnamed numbers (14
+ * for the robot, 16 for the classifier) at the flight collision sites, which is fine until the
+ * question "should this have gone over?" actually comes up.
+ */
+export const ROBOT_HEIGHT = 14;
+/** the classifier structure stands a little proud of a robot */
+export const CLASSIFIER_HEIGHT = 16;
+
 export const BALL_ROBOT_RESTITUTION = 0.05;
 /** ground-ball mass (lb) for the Rapier ball solve (`solveBalls`). Balls only
  * meet other balls (equal mass ⇒ value cancels) and the immovable static field

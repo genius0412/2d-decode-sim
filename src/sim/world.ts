@@ -263,12 +263,12 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
       }
     }
     for (const b of activeFlight) {
-      if (b.z > 14) continue;
+      if (b.z > C.ROBOT_HEIGHT) continue;
       for (const r of world.robots) collideBallRobot(b, r);
     }
   }
   for (const b of activeFlight) {
-    if (b.z > 16) continue;
+    if (b.z > C.CLASSIFIER_HEIGHT) continue;
     collideBallRect(b, classifierRect('red'));
     collideBallRect(b, classifierRect('blue'));
   }
