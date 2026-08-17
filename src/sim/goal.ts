@@ -928,12 +928,7 @@ export function updateRails(
             return !taking && pointDepthInRobot(rb, ahead.pos) > -C.BALL_RADIUS * C.EXIT_PIN_FRAC;
           });
           if (!pinned) {
-            // shoving it past a robot needs more than nudging it down an open tunnel — the
-            // artifact has stopped against a chassis instead of rolling away on its own
-            const blocked = world.robots.some(
-              (rb) => pointDepthInRobot(rb, ahead.pos) > -C.BALL_RADIUS * 1.6,
-            );
-            const target = mag * (blocked ? C.EXIT_NUDGE_BLOCKED : C.EXIT_NUDGE);
+            const target = mag * C.EXIT_NUDGE;
             const along = ahead.vel.x * ux + ahead.vel.y * uy;
             if (along < target) {
               ahead.vel.x += ux * (target - along);
