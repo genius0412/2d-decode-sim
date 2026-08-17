@@ -57,6 +57,7 @@ import type { Alliance, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpe
 import {
   SIM_DT,
   PRE_COUNTDOWN as C_PRE_COUNTDOWN,
+  GATE_APPROACH_S,
   GATE_LINE_S,
   GATE_OPEN_LATCH_S,
   GATE_STOP_S,
@@ -2069,6 +2070,45 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- a FULL classifier tapped mostly drains, but not always ------------------------
+// The clarification behind the "closes up too quickly" complaint: it was about a FULL
+// classifier being tapped. A packed column is its own momentum — every artifact arrives before
+// the arm can fall past the pass line — so the flow carries it and the tap empties the ramp.
+// That is the case that must NOT peter out. But "full" is not a guarantee either ("full
+// shouldnt drain all always"): the run-up and how briefly the arm was struck still decide it,
+// so a firm tap on a packed ramp usually empties it and sometimes gives out partway.
+{
+  const yields: number[] = [];
+  for (const tapS of [0.15, 0.3, 0.5]) {
+    for (const standoff of [4, 7, 11]) {
+      const w = mkWorld('match', 'blue', 42);
+      startMatch(w);
+      fillBlueRail(w); // PACKED at RAIL_PITCH — a full classifier
+      const r = w.robots[0];
+      const z = gateZone('blue');
+      r.pos = { x: z.x1 + standoff, y: (z.y0 + z.y1) / 2 };
+      r.heading = Math.PI;
+      r.fieldCentric = false;
+      r.vel = { x: 0, y: 0 };
+      run(w, cmd({ driveY: 1 }), tapS);
+      r.pos = { x: 0, y: -30 };
+      run(w, cmd({}), 12);
+      yields.push(9 - w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length);
+    }
+  }
+  const most = yields.filter((y) => y === 9).length;
+  check(
+    'a tap on a FULL classifier usually empties it — the flow carries itself',
+    most >= yields.length / 2,
+    `${most} of ${yields.length} taps emptied the ramp: ${yields.join(',')}`,
+  );
+  check(
+    '...but not always, and it never peters out early',
+    yields.some((y) => y < 9) && Math.min(...yields) >= 4,
+    `worst full-column tap gave ${Math.min(...yields)} of 9`,
+  );
+}
+
 // ---- with nothing coming down, the arm shuts briskly -------------------------------
 // "the gate should close faster with no momentum going in". The two cases are governed by
 // different constants on purpose: GATE_CLOSE_MAX sets how fast a free arm can swing, and
@@ -2108,31 +2148,41 @@ function queueTenth(w: World): void {
 // to come to rest on something but never be LIFTED by it, so a tap was a plain timed fall and
 // the yield came out bimodal — the whole ramp, or almost none of it.
 {
-  // 1) THE HEIGHT TRACKS THE SPEED. A brisker column holds the arm higher; that IS the
-  //    momentum term, measured directly.
-  const restAt = (speed: number): number => {
+  // 1) THE HEIGHT TRACKS THE SPEED. A brisker artifact knocks the arm higher; that IS the
+  //    momentum term. It has to be measured with a SINGLE artifact passing under a
+  //    part-closed arm — feed it a slow COLUMN instead and the artifacts simply stack up and
+  //    hold the arm at their own surface height, which is the geometric term, and both speeds
+  //    then report the same number for a reason that has nothing to do with momentum.
+  const knockTo = (speed: number): number => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
-    fillBlueRail(w);
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    const b0 = w.balls[0];
+    const s0 = GATE_LINE_S + GATE_APPROACH_S * 0.8;
+    b0.state = { kind: 'rail', goal: 'blue', s: s0, v: -speed, overflow: false, pending: false };
+    b0.pos = railPos('blue', s0);
+    b0.vel = { x: 0, y: 0 };
+    b0.z = RAMP_SURFACE_Z;
+    b0.vz = 0;
     const g = w.goals.blue;
-    g.gatePos = 1;
+    g.gatePos = GATE_PASS_FRAC + 0.01; // part closed, but still enough gap to get under
     g.gateOpen = true;
     g.gateLatch = 0;
     g.gateVel = 0;
-    for (const b of w.balls) {
-      if (b.state.kind === 'rail' && b.state.goal === 'blue') b.state.v = -speed;
-    }
     w.robots[0].pos = { x: 0, y: -40 };
-    // where it SETTLES, not the peak — it starts at 1 and falls onto the flow
-    for (let i = 0; i < 45; i++) step(w, SIM_DT, new Map());
-    return g.gatePos;
+    let peak = g.gatePos;
+    for (let i = 0; i < 40; i++) {
+      step(w, SIM_DT, new Map());
+      peak = Math.max(peak, g.gatePos);
+    }
+    return peak;
   };
-  const slow = restAt(RAIL_TERMINAL * 0.4);
-  const fast = restAt(RAIL_TERMINAL);
+  const slow = knockTo(RAIL_TERMINAL * 0.5);
+  const fast = knockTo(RAIL_TERMINAL);
   check(
-    'a brisker column holds the arm higher than a faltering one',
-    fast > slow,
-    `at ${(RAIL_TERMINAL * 0.4).toFixed(0)} in/s it sits at ${slow.toFixed(2)}, at ${RAIL_TERMINAL} in/s at ${fast.toFixed(2)}`,
+    'a brisker artifact knocks the arm higher than a faltering one',
+    fast > slow + 0.02,
+    `at ${(RAIL_TERMINAL * 0.5).toFixed(0)} in/s it reaches ${slow.toFixed(2)}, at ${RAIL_TERMINAL} in/s ${fast.toFixed(2)}`,
   );
 
   // 2) AND IT REALLY GOES BACK UP. The arm dips into the gap between two artifacts and the

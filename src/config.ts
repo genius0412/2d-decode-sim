@@ -1131,7 +1131,7 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.0155; // open fraction per in/s (knock-up per unit artifact speed)
+export const GATE_SHOULDER_LIFT = 0.0165; // open fraction per in/s (knock-up per unit artifact speed)
 /**
  * How far UP-RAMP of the gate line an artifact still counts as "arriving" for the knock-up.
  *
