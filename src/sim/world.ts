@@ -123,7 +123,13 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // can walk an artifact back along the path it took instead of shoving it out the nearest
   // face by depth+radius. One Vec2 per ground artifact.
   const ballFrom = new Map<number, Vec2>();
+  // ...and where EVERY artifact started, whatever state it was in. The jam rule below needs a
+  // previous position for an artifact the ramp releases mid-tick too: that artifact is not yet
+  // `ground` here, so it would have no entry in `ballFrom` and would spend its first ground
+  // tick — the one where it is right on top of a robot working the gate — unprotected.
+  const wasPos = new Map<number, Vec2>();
   for (const b of world.balls) {
+    wasPos.set(b.id, { x: b.pos.x, y: b.pos.y });
     if (b.state.kind !== 'ground') continue;
     ballFrom.set(b.id, { x: b.pos.x, y: b.pos.y });
     stepGroundBall(b, dt);
@@ -236,36 +242,42 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
    * field wall the sequence is: eviction pushes it out of the robot, the clamp refuses that
    * push and puts it straight back, and it ends the tick still overlapping — not stopped, just
    * overlapping — and the flow carries it on through. Measured: a 5in artifact passing a 4.0in
-   * gap between a robot's corner and the wall while gate intaking, three of them per drain.
+   * gap between a robot's corner and the wall while gate intaking.
    *
    * Neither constraint can fix this alone, because each one is individually satisfied; what is
    * wrong is that the artifact MOVED while it was unable to fit. So that is what is checked,
-   * and the rule is the honest one for a jam: if it could not be separated, it does not
-   * advance. It stays where it began the tick — still stuck, still touching, and
-   * `ballRobotFeedback` still stalls the robot against it — so a jam reads as a jam rather than
-   * as a squeeze. Reverting rather than inventing a new position keeps it deterministic, and
-   * it cannot teleport anywhere it has not already been.
+   * and the rule is the honest one for a jam: a wall pinch has no valid resolution, so the
+   * artifact does not advance. It stays where it began the tick — still stuck, still touching,
+   * and `ballRobotFeedback` still stalls the robot against it — so a jam reads as a jam rather
+   * than as a squeeze. Reverting rather than inventing a position keeps it deterministic, and
+   * it can never appear anywhere it has not already been.
+   *
+   * This does NOT stop a robot shoving an artifact around in the open, because out there the
+   * artifact separates and ends the tick under BALL_JAM_SLOP, so it never reaches this rule at
+   * all. The rule only bites when separation is impossible.
+   *
+   * Two narrower versions were tried and neither held. Refusing the move only when the artifact
+   * had been CLEAR at the start of the tick disabled itself exactly when it was needed: in real
+   * play the robot is driving, so it advances onto the artifact and the artifact is already
+   * overlapping when the next tick begins. Keeping the separating (normal) part of the motion
+   * and dropping only the tangential slide failed too — the wall clamp immediately puts the
+   * tangential motion back, because sliding along the wall is precisely how the clamp resolves
+   * being pushed into it.
    *
    * The CHASSIS only. The intake mouth is open to artifacts by design, and an artifact being
    * swallowed is deep inside that box on purpose.
    */
   for (const b of ground) {
-    const was = ballFrom.get(b.id);
+    const was = wasPos.get(b.id);
     if (!was) continue;
     let jammed = false;
     for (const r of world.robots) {
       if (pointDepthInChassis(r, b.pos) + C.BALL_RADIUS > C.BALL_JAM_SLOP) jammed = true;
     }
     if (!jammed) continue;
-    // only refuse the MOVE — if it was already overlapping before it moved, it is being
-    // legitimately shoved by a robot and Rapier owns that.
-    let wasClear = true;
-    for (const r of world.robots) {
-      if (pointDepthInChassis(r, was) + C.BALL_RADIUS > C.BALL_JAM_SLOP) wasClear = false;
-    }
-    if (!wasClear) continue;
     b.pos.x = was.x;
     b.pos.y = was.y;
+    clampGroundBall(b);
   }
 
 
