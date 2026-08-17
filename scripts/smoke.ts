@@ -20,6 +20,7 @@ import { aimSolution, robotInLaunchZone } from '../src/sim/robot';
 import { updateHumanPlayers } from '../src/sim/humanPlayer';
 import { startMatch } from '../src/sim/match';
 import { gateColliderPos, gateRestOn, pushingGate } from '../src/sim/goal';
+import { chassisCorners } from '../src/sim/physics';
 import { pointDepthInChassis } from '../src/sim/physics';
 import {
   inLaunchZone,
@@ -2058,6 +2059,76 @@ function queueTenth(w: World): void {
     'no artifact rides the rail below the exit (that is off the field)',
     belowExit === 0,
     `${belowExit} ball-frames below RAIL_EXIT_S`,
+  );
+}
+
+// ---- nothing squeezes through a gap it does not fit in -----------------------------
+// Reported: artifacts "squeezing through the small gap with the top right corner of the robot
+// and the field wall when gate intaking". Each constraint in the tick was individually
+// satisfied — the eviction pushed the artifact out of the chassis, the wall clamp refused that
+// push and put it back — so it ended the tick overlapping but not stopped, and the flow
+// carried it through. Measured: a 5in artifact through a 4.0in gap, three per drain.
+{
+  const diameter = 2 * BALL_RADIUS;
+  const results: { gap: number; through: number }[] = [];
+  for (const want of [4.6, 4.0, 3.4, 2.8]) {
+    const w = mkWorld('match', 'red', 5, { intake: 'vector', width: 17.5, length: 14.5 });
+    startMatch(w);
+    w.match.phase = 'teleop';
+    for (const b of w.balls) {
+      b.state = { kind: 'ground' };
+      b.pos = { x: -40, y: -60 };
+      b.vel = { x: 0, y: 0 };
+      b.z = 0;
+      b.vz = 0;
+    }
+    const ids: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      const b = w.balls[i];
+      const cs = GATE_STOP_S + i * RAIL_PITCH;
+      b.state = { kind: 'rail', goal: 'red', s: cs, v: 0, overflow: false, pending: false };
+      b.pos = railPos('red', cs);
+      b.vel = { x: 0, y: 0 };
+      b.z = RAMP_SURFACE_Z;
+      b.vz = 0;
+      ids.push(b.id);
+    }
+    const r = w.robots[0];
+    r.heading = (19 * Math.PI) / 180;
+    r.hopper = [];
+    r.fieldCentric = false;
+    r.pos = { x: 50, y: -10 };
+    // bisect the robot's x for the requested corner-to-wall gap
+    let lo = 40;
+    let hi = FIELD_HALF;
+    for (let it = 0; it < 40; it++) {
+      const mid = (lo + hi) / 2;
+      r.pos.x = mid;
+      if (FIELD_HALF - Math.max(...chassisCorners(r).map((c) => c.x)) > want) lo = mid;
+      else hi = mid;
+    }
+    r.pos.x = lo;
+    const ry = r.pos.y;
+    for (let i = 0; i < Math.round(10 / SIM_DT); i++) {
+      r.pos.x = lo;
+      r.pos.y = ry;
+      r.vel = { x: 0, y: 0 };
+      w.goals.red.gatePos = 1;
+      w.goals.red.gateOpen = true;
+      w.goals.red.gateLatch = 1;
+      step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+    }
+    let through = 0;
+    for (const b of w.balls) {
+      if (!ids.includes(b.id) || b.state.kind !== 'ground') continue;
+      if (b.pos.x > 64 && b.pos.y < ry - 10) through++;
+    }
+    results.push({ gap: FIELD_HALF - Math.max(...chassisCorners(r).map((c) => c.x)), through });
+  }
+  check(
+    'an artifact does not pass between a robot corner and the wall through a gap it cannot fit',
+    results.every((x) => x.through === 0),
+    results.map((x) => `${x.gap.toFixed(1)}in:${x.through}`).join(' ') + ` (artifact is ${diameter}in)`,
   );
 }
 

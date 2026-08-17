@@ -7,6 +7,7 @@ import {
   collideBallRect,
   ballRobotFeedback,
   collideBallRobot,
+  pointDepthInChassis,
   collideBallStatic,
   separateBalls,
   evictBallFromRobot,
@@ -226,6 +227,47 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
       clampGroundBall(b);
     }
   }
+
+  /**
+   * NOTHING SQUEEZES THROUGH A GAP IT DOES NOT FIT IN.
+   *
+   * Every mover in this tick resolves ONE constraint and hands the result to the next, and the
+   * last word belongs to the wall clamp. So for an artifact pinched between a chassis and the
+   * field wall the sequence is: eviction pushes it out of the robot, the clamp refuses that
+   * push and puts it straight back, and it ends the tick still overlapping — not stopped, just
+   * overlapping — and the flow carries it on through. Measured: a 5in artifact passing a 4.0in
+   * gap between a robot's corner and the wall while gate intaking, three of them per drain.
+   *
+   * Neither constraint can fix this alone, because each one is individually satisfied; what is
+   * wrong is that the artifact MOVED while it was unable to fit. So that is what is checked,
+   * and the rule is the honest one for a jam: if it could not be separated, it does not
+   * advance. It stays where it began the tick — still stuck, still touching, and
+   * `ballRobotFeedback` still stalls the robot against it — so a jam reads as a jam rather than
+   * as a squeeze. Reverting rather than inventing a new position keeps it deterministic, and
+   * it cannot teleport anywhere it has not already been.
+   *
+   * The CHASSIS only. The intake mouth is open to artifacts by design, and an artifact being
+   * swallowed is deep inside that box on purpose.
+   */
+  for (const b of ground) {
+    const was = ballFrom.get(b.id);
+    if (!was) continue;
+    let jammed = false;
+    for (const r of world.robots) {
+      if (pointDepthInChassis(r, b.pos) + C.BALL_RADIUS > C.BALL_JAM_SLOP) jammed = true;
+    }
+    if (!jammed) continue;
+    // only refuse the MOVE — if it was already overlapping before it moved, it is being
+    // legitimately shoved by a robot and Rapier owns that.
+    let wasClear = true;
+    for (const r of world.robots) {
+      if (pointDepthInChassis(r, was) + C.BALL_RADIUS > C.BALL_JAM_SLOP) wasClear = false;
+    }
+    if (!wasClear) continue;
+    b.pos.x = was.x;
+    b.pos.y = was.y;
+  }
+
 
   // ---- balls: FLIGHT (ground balls resolved above) -------------------------
   // Flight stays bespoke: ballistic arc + z axis (Rapier 2D has no z), goal-face

@@ -326,6 +326,13 @@ export const ROBOT_HEIGHT = 14;
 /** the classifier structure stands a little proud of a robot */
 export const CLASSIFIER_HEIGHT = 16;
 
+/**
+ * How much overlap with a chassis an artifact may end a tick with before it is treated as
+ * JAMMED rather than merely in contact. Rapier's soft contacts leave about 0.2in, so this sits
+ * clear of that and well under the ~1in of give the squeeze was exploiting.
+ */
+export const BALL_JAM_SLOP = 0.35;
+
 export const BALL_ROBOT_RESTITUTION = 0.05;
 /** ground-ball mass (lb) for the Rapier ball solve (`solveBalls`). Balls only
  * meet other balls (equal mass ⇒ value cancels) and the immovable static field
