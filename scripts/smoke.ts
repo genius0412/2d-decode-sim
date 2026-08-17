@@ -85,6 +85,7 @@ import {
   TUNNEL_STRIP_LEN,
   LOAD_ZONE_SIZE,
   BALL_RADIUS,
+  CLASSIFIER_W,
   HP_INITIAL_STOCK,
   HP_PLACE_DELAY,
   BALANCE_VERSION,
@@ -2055,6 +2056,88 @@ function queueTenth(w: World): void {
     'no artifact rides the rail below the exit (that is off the field)',
     belowExit === 0,
     `${belowExit} ball-frames below RAIL_EXIT_S`,
+  );
+}
+
+// ---- a robot OUTSIDE the channel cannot touch what is inside it --------------------
+// Reported: "i can still interact with the balls in the classifier. i can push them around
+// with the corner of the chassis". `railBlock` measures distance from a chassis to the rail
+// CENTRELINE and cannot see the classifier wall in between — and the centreline sits
+// RAMP_RAIL_INSET (3in) from that wall, less than an artifact radius. So a robot leaning on
+// the OUTSIDE of the classifier came within a radius of artifacts it was walled off from, and
+// drove the column up-ramp at RAIL_PUSH_RATE: measured as far as s=22.4, two feet up a channel
+// the robot was never in.
+{
+  let worstUp = 0;
+  let where = '';
+  for (const py of [-12, -5, 1, 3]) {
+    for (const head of [0.5, 1.0, 2.2]) {
+      const w = mkWorld('match', 'blue', 42);
+      startMatch(w);
+      w.match.phase = 'teleop';
+      fillBlueRail(w);
+      const r = w.robots[0];
+      r.pos = { x: -55, y: py };
+      r.heading = head;
+      r.fieldCentric = false;
+      r.hopper = [];
+      r.vel = { x: 0, y: 0 };
+      const above = () =>
+        new Map(
+          w.balls
+            .filter((b) => b.state.kind === 'rail' && (b.state as { s: number }).s > RAIL_OPEN_S)
+            .map((b) => [b.id, (b.state as { s: number }).s] as const),
+        );
+      for (let i = 0; i < 30; i++) step(w, SIM_DT, new Map([[0, cmd({})]]));
+      const start = above();
+      // jam in and out of the gate zone, the motion that produced the report
+      for (let i = 0; i < Math.round(5 / SIM_DT); i++) {
+        const push = Math.floor(i / 40) % 2 === 0 ? 1 : -1;
+        step(w, SIM_DT, new Map([[0, cmd({ driveY: push, driveX: 0.4 * push })]]));
+        for (const [id, sNow] of above()) {
+          const s0 = start.get(id);
+          if (s0 === undefined) continue;
+          if (sNow - s0 > worstUp) {
+            worstUp = sNow - s0;
+            where = `y${py} h${head.toFixed(1)}`;
+          }
+        }
+      }
+    }
+  }
+  check(
+    'a robot working the gate zone never drives the column up inside the classifier',
+    worstUp < 0.1,
+    `worst net up-move above the mouth ${worstUp.toFixed(2)}in ${where}`,
+  );
+}
+
+// ---- the column is single file, but it is not a ruled line -------------------------
+// Reported: "the balls come down all in a single file line at the same tilted angle which is
+// uncanny". The flow is solved in 1D along `s`, so every artifact used to be placed on the
+// exact centreline. Single file is right (the channel is one artifact wide); perfectly
+// collinear is not — see `railWander`.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  w.match.phase = 'teleop';
+  fillBlueRail(w);
+  w.robots[0].pos = { x: 0, y: -40 };
+  for (let i = 0; i < 120; i++) step(w, SIM_DT, new Map());
+  const rail = w.balls.filter((b) => b.state.kind === 'rail');
+  const centre = railPos('blue', 0).x;
+  const offs = rail.map((b) => b.pos.x - centre);
+  const slop = CLASSIFIER_W / 2 - BALL_RADIUS;
+  const spread = Math.max(...offs) - Math.min(...offs);
+  check(
+    'artifacts on the ramp do not sit on one ruled line',
+    rail.length >= 6 && spread > slop * 0.5,
+    `${rail.length} artifacts spread over ${spread.toFixed(2)}in`,
+  );
+  check(
+    'and none of them leaves the channel doing it',
+    offs.every((o) => Math.abs(o) <= slop + 1e-6),
+    `worst offset ${Math.max(...offs.map(Math.abs)).toFixed(2)}in of ${slop.toFixed(2)}in slop`,
   );
 }
 

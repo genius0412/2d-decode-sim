@@ -7,13 +7,23 @@ import {
   goalFaceNormal,
   goalLineValue,
   goalSide,
+  classifierRect,
+  convexOverlap,
   railPos,
+  railWander,
+  rectCorners,
   tunnelExitVel,
   viewAngleOf,
 } from './field';
 import { addClassified, addOverflow } from './scoring';
 import { approach, nextRandom, hyp, rot } from '../math';
-import { pointDepthInChassis, pointDepthInRobot, robotExtents, robotIntersectsRect } from './physics';
+import {
+  chassisCorners,
+  pointDepthInChassis,
+  pointDepthInRobot,
+  robotExtents,
+  robotIntersectsRect,
+} from './physics';
 
 export const ZERO_CMD: RobotCommand = {
   driveX: 0,
@@ -413,8 +423,45 @@ function railBlock(
     // of overlap, because a radius along the rail is not a radius along the surface normal of
     // a robot sitting at an angle to it.
     // Fixed step, deterministic, and well under an artifact radius so nothing slips through.
+    /**
+     * THE WALK CANNOT SEE THE CLASSIFIER WALL, so it must be told where the wall is.
+     *
+     * It measures distance from a chassis to a point on the rail centreline and nothing else.
+     * That centreline sits RAMP_RAIL_INSET in from the wall, which is less than an artifact
+     * radius — so a chassis merely LEANING on the outside of the classifier came within a
+     * radius of centreline points it was completely walled off from, read as a block, and
+     * shoved the column up-ramp: measured a robot at y=1, never in the channel, driving
+     * artifacts up at RAIL_PUSH_RATE as far as s=22.4.
+     *
+     * Above the mouth an artifact is behind a wall, so the only robot that can touch it is one
+     * that is itself inside the channel. That is not a depth threshold on the sample (a
+     * chassis face resting exactly on the centreline is a real block at any depth) — it is a
+     * question about the ROBOT, asked once: does its CHASSIS actually overlap the channel.
+     * If not, its reach stops at the mouth no matter how close the centreline looks. (An x
+     * reach past the channel's field-side face is not enough on its own — the gateway BELOW
+     * the mouth is open field at the same x, so a robot legally working the doorway has
+     * corners in there and would fail an x-only test.) A robot squeezed bodily into the channel still walks the full length, which is
+     * what keeps the pinned-pose case from stacking the column inside a chassis.
+     */
+    const chan = classifierRect(a);
+    // How far INTO the channel a chassis has to be before it can touch anything: the rail
+    // centreline sits RAMP_RAIL_INSET from the wall and an artifact is a radius wide, so this
+    // is the exact reach at which contact becomes possible. It matters because a robot leaning
+    // hard on the outside of the classifier does sink slightly into it — measured 0.46in at
+    // worst, just under the 0.50in it would need — and without the inset that touch read as
+    // being inside the channel.
+    const bite = C.RAMP_RAIL_INSET - C.BALL_RADIUS;
+    const g = goalSide(a);
+    const inner = {
+      x0: g > 0 ? chan.x0 + bite : chan.x0,
+      x1: g > 0 ? chan.x1 : chan.x1 - bite,
+      y0: chan.y0 + bite,
+      y1: chan.y1,
+    };
+    const inChannel = convexOverlap(chassisCorners(r), rectCorners(inner));
+    const ceiling = inChannel ? top : Math.min(top, C.RAIL_OPEN_S);
     let reach = -Infinity;
-    for (let s = C.RAIL_EXIT_S; s <= top; s += C.RAIL_BLOCK_STEP) {
+    for (let s = C.RAIL_EXIT_S; s <= ceiling; s += C.RAIL_BLOCK_STEP) {
       // CHASSIS, not the intake-extended footprint. `robotExtents` grows the box forward by
       // the intake's reach — that box is what the ROBOT collides with, but to an artifact
       // the mouth is open (product decision #10), and the artifact solve already excludes it
@@ -828,9 +875,12 @@ export function updateRails(
         rampFloorV = st.v;
         retainedBelow++;
       }
-      // glide smoothly onto the rail line — no positional snapping
+      // glide smoothly onto the rail line — no positional snapping. The target is the
+      // centreline plus this artifact's own path across the channel's slop (`railWander`),
+      // so the column is single file without being a ruled line.
       b.pos.y = C.CLASSIFIER_Y0 + st.s;
-      b.pos.x = approach(b.pos.x, railX, C.RAIL_BLEND_SPEED * dt);
+      const lane = railX + goalSide(a) * railWander(st.s, b.id, elevated);
+      b.pos.x = approach(b.pos.x, lane, C.RAIL_BLEND_SPEED * dt);
       b.z = approach(b.z, elevated ? surfaceZ : C.RAMP_SURFACE_Z, C.RAIL_BLEND_SPEED * dt);
     }
 

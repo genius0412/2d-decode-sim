@@ -242,6 +242,21 @@ export function pointDepthInChassis(r: RobotState, p: Vec2): number {
   return Math.min(Math.min(local.x + hl, hl - local.x), Math.min(local.y + hw, hw - local.y));
 }
 
+/** the four corners of the CHASSIS box (no intake reach) — see `pointDepthInChassis` */
+export function chassisCorners(r: RobotState): Vec2[] {
+  const hl = r.spec.length / 2;
+  const hw = r.spec.width / 2;
+  return [
+    { x: hl, y: hw },
+    { x: hl, y: -hw },
+    { x: -hl, y: -hw },
+    { x: -hl, y: hw },
+  ].map((p) => {
+    const w = rot(p, r.heading);
+    return { x: r.pos.x + w.x, y: r.pos.y + w.y };
+  });
+}
+
 export function pointDepthInRobot(r: RobotState, p: Vec2): number {
   const e = robotExtents(r);
   const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);

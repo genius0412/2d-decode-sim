@@ -1013,6 +1013,12 @@ export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
 export const OVERFLOW_DRAG = 2.2; // 1/s — terminal ride speed ~RAIL_ACCEL/OVERFLOW_DRAG
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s
+/**
+ * Spatial frequency of an artifact's weave across the channel (radians per inch travelled).
+ * 0.42 is a wavelength of about 15in — three artifact diameters — so a ball crosses the
+ * channel's half-inch of slop over a long, lazy roll rather than vibrating. See `railWander`.
+ */
+export const RAIL_WANDER_K = 0.42;
 
 export const GATE_OPEN_HOLD = 0; // s of push before the gate arm starts to lift. ZERO so the lift (and the handle-collider retract that rides on it, see gateColliderPos) begins on the very tick you contact it — no debounce means no jam against the closed stub. The push gate (pushingGate: a STRAIGHT ram, not a graze) already prevents accidental opens.
 /**
