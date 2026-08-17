@@ -4123,6 +4123,75 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- ...and it drains at least as FAST as nobody being there ----------------------
+// The count is not the point — the RATE is. The doorway paces the drain: the next artifact
+// cannot leave until the last one is a diameter clear, and down an empty tunnel that happens
+// on its own. With a robot parked on the outflow the artifact stops against the chassis and
+// every release waits on the nudge alone: 0.367s mean gap against 0.317s free, with the late
+// gaps blowing out to 0.58s. EXIT_NUDGE_BLOCKED applies only where the artifact is actually
+// obstructed — raising EXIT_NUDGE itself speeds up the FREE drain too (0.317 -> 0.175s),
+// which makes a tap empty the whole ramp and undoes the gate tuning.
+{
+  const drainGaps = (gateIntake: boolean) => {
+    const w = mkWorld('match', 'red', 42, { intake: 'vector', width: 17.5, length: 14.5 });
+    startMatch(w);
+    w.match.phase = 'teleop';
+    const r = w.robots[0];
+    for (const b of w.balls) {
+      if (b.state.kind !== 'held') continue;
+      b.state = { kind: 'ground' };
+      b.pos = { x: -FIELD_HALF + 6, y: -FIELD_HALF + 6 };
+      b.vel = { x: 0, y: 0 };
+      b.z = 0;
+      b.vz = 0;
+    }
+    r.hopper = [];
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: -FIELD_HALF + 6, y: -FIELD_HALF + 6 };
+    for (let i = 0; i < 9; i++) {
+      const b = w.balls[i];
+      const cs = GATE_STOP_S + i * RAIL_PITCH;
+      b.state = { kind: 'rail', goal: 'red', s: cs, v: 0, overflow: false, pending: false };
+      b.pos = railPos('red', cs);
+      b.vel = { x: 0, y: 0 };
+      b.z = RAMP_SURFACE_Z;
+      b.vz = 0;
+    }
+    if (gateIntake) {
+      r.pos = { x: 57.3, y: -10.0 };
+      r.heading = (19 * Math.PI) / 180;
+    } else {
+      r.pos = { x: 0, y: -40 };
+      r.heading = 0;
+    }
+    r.fieldCentric = false;
+    const left = () => w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'red').length;
+    let prev = left();
+    const t: number[] = [];
+    for (let i = 0; i < Math.round(20 / SIM_DT); i++) {
+      if (!gateIntake) {
+        w.goals.red.gatePos = 1;
+        w.goals.red.gateOpen = true;
+        w.goals.red.gateLatch = 1;
+      }
+      step(w, SIM_DT, new Map([[0, gateIntake ? cmd({ driveY: 1, intake: true }) : cmd({})]]));
+      const n = left();
+      if (n < prev) {
+        for (let j = 0; j < prev - n; j++) t.push(i * SIM_DT);
+        prev = n;
+      }
+    }
+    const gaps = t.slice(1).map((x, i) => x - t[i]);
+    return gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : Infinity;
+  };
+  const free = drainGaps(false);
+  const gating = drainGaps(true);
+  check(
+    'GATE INTAKING drains at least as fast as an unobstructed gate',
+    gating <= free + 0.02,
+    `${gating.toFixed(3)}s gate-intaking vs ${free.toFixed(3)}s free (was 0.367 vs 0.317)`,
+  );
+}
+
 // ---- GATE INTAKING drains at full speed ---------------------------------------------
 // "holding the gate open with the front left or right while simultaneously intaking balls
 // that come out of the classifier is called gate intaking and it is very common. When I do

@@ -983,6 +983,21 @@ export const EXIT_CLEARANCE = 1.0; // in, on top of a full artifact diameter
  */
 export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
 /**
+ * EXIT_NUDGE, but for an artifact the column has to shove PAST A ROBOT.
+ *
+ * The doorway is what paces the drain: the next artifact cannot leave until the last one is
+ * a diameter clear. Down an empty tunnel that happens on its own — the artifact keeps the
+ * speed the ramp gave it and is gone. With a robot parked on the outflow (GATE INTAKING) it
+ * hits the chassis, stops, and every release then waits on the nudge alone. Measured at the
+ * reported pose: 0.367s mean gap against 0.317s with nobody there, and the late gaps
+ * blowing out to 0.58s once the hopper filled.
+ *
+ * Raising EXIT_NUDGE itself is the wrong lever and was tried: it speeds up the FREE drain
+ * too (0.317 -> 0.175s), which makes a tap empty the whole ramp every time and undoes the
+ * gate tuning. This applies only where the artifact is actually obstructed.
+ */
+export const EXIT_NUDGE_BLOCKED = 2.2;
+/**
  * Rolling resistance an artifact carries while it is riding ON TOP of the retained column
  * instead of on the ramp — the bumpy business of climbing over one artifact, dropping between
  * it and the next, and climbing again.
