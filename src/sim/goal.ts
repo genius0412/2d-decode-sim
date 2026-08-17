@@ -1193,10 +1193,17 @@ export function updateGates(
       if (b.state.kind !== 'rail' || b.state.goal !== a) continue;
       if (b.state.overflow) continue; // rides OVER the gate (9.8.3) — never under the paddle
       // ONLY WHAT IS ACTUALLY UNDER THE PADDLE. Nothing else can be holding it up.
-      if (!underPaddle(b.state.s - C.GATE_LINE_S)) continue;
-      const down = -b.state.v; // v is negative down-ramp
-      if (down > gatewaySpeed) gatewaySpeed = down;
-      const rest = gateRestOn(b.state.s - C.GATE_LINE_S);
+      const d = b.state.s - C.GATE_LINE_S;
+      // SPEED is sampled over the ARRIVING artifact — the one reaching the arm, up to
+      // GATE_APPROACH_S up-ramp — because that is the momentum that does the knocking, and it
+      // has to be read before the arm gets a chance to slow it.
+      if (d > -C.BALL_RADIUS && d < C.GATE_APPROACH_S) {
+        const down = -b.state.v; // v is negative down-ramp
+        if (down > gatewaySpeed) gatewaySpeed = down;
+      }
+      // GEOMETRY is only ever about what is genuinely under the paddle.
+      if (!underPaddle(d)) continue;
+      const rest = gateRestOn(d);
       if (rest > gatewayRest) gatewayRest = rest; // whichever holds it highest is the one bearing it
     }
 
@@ -1226,21 +1233,37 @@ export function updateGates(
         -C.GATE_CLOSE_MAX * cushion,
       );
       goal.gatePos = Math.max(0, goal.gatePos + goal.gateVel * dt);
-      // What is under the arm holds it up two ways, and it comes to rest on the higher:
-      // a MOVING artifact keeps knocking it up (speed), and one that has STOPPED simply
-      // holds it at whatever height the paddle landed on it (geometry).
-      const rest = Math.max(
-        Math.min(C.GATE_RIDE_FRAC, gatewaySpeed * C.GATE_SHOULDER_LIFT),
-        gatewayRest,
-      );
-      // IT CAN COME TO REST ON SOMETHING; IT CANNOT BE LIFTED BY IT. Same shape as the rail
-      // solver's `wasS >= base`: a floor may stop the arm where it already is, never reach
-      // up and raise it. This is what keeps "a ball reaching an almost-closed gate must not
-      // reopen it" true now that the floor is geometric rather than gated on `gateOpen` —
-      // an artifact rolling under a shut arm finds it below its own rest height and is
-      // simply blocked, while one the arm descends ONTO stops it dead.
-      if (wasPos >= rest && goal.gatePos < rest) {
-        goal.gatePos = rest;
+      /**
+       * AN ARRIVING ARTIFACT KNOCKS THE ARM BACK UP. This is the mechanism, not a detail:
+       *
+       *   a tap throws the arm fully open, it falls back a little, and then the momentum of
+       *   the next artifact forces it open again by an amount that depends on how fast that
+       *   artifact is going — UNLESS the arm has already come down too far, in which case
+       *   there is no getting under it and the artifact is simply stopped.
+       *
+       * The arm therefore BOBS: open, settle, knocked up, settle, knocked up — and a drain
+       * ends when one artifact arrives a little too late to catch it. That is where the spread
+       * in how many a tap yields comes from, and it is why the same tap does not always give
+       * the same number.
+       *
+       * This used to read "it can come to rest on something; it cannot be LIFTED by it" — a
+       * floor that could stop the arm but never raise it — so the arm only ever descended and
+       * a tap was a plain timed fall.
+       */
+      const lift = Math.min(C.GATE_RIDE_FRAC, gatewaySpeed * C.GATE_SHOULDER_LIFT);
+      // Whether an artifact can get under the arm at all is the SAME line that decides whether
+      // one can pass: below it there is no gap to enter, so it cannot lift what it cannot
+      // reach. This is what keeps "an artifact reaching an almost-closed gate must not reopen
+      // it — only a robot push can" true while momentum is otherwise free to raise it.
+      if (wasPos >= C.GATE_PASS_FRAC && goal.gatePos < lift) {
+        goal.gatePos = lift;
+        goal.gateVel = 0;
+      }
+      // GEOMETRY IS A FLOOR, NOT A LIFT. An artifact that has STOPPED under the arm holds it
+      // at whatever height the paddle landed on it — but it must never reach up and raise the
+      // arm, or a stalled artifact would prop open a gate that had already shut past it.
+      if (wasPos >= gatewayRest && goal.gatePos < gatewayRest) {
+        goal.gatePos = gatewayRest;
         goal.gateVel = 0;
       }
       if (goal.gatePos === 0) goal.gateVel = 0;

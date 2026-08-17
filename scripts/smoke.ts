@@ -76,6 +76,7 @@ import {
   GATE_RIDE_FRAC,
   GATE_TAPE_Y,
   RAIL_PITCH,
+  RAIL_TERMINAL,
   HOPPER_CAPACITY,
   RAIL_EXIT_S,
   RAIL_S_MAX,
@@ -2061,6 +2062,77 @@ function queueTenth(w: World): void {
     'no artifact rides the rail below the exit (that is off the field)',
     belowExit === 0,
     `${belowExit} ball-frames below RAIL_EXIT_S`,
+  );
+}
+
+// ---- an arriving artifact knocks the arm back UP -----------------------------------
+// Stated mechanism: "the gate opens fully, then closes slightly until the momentum of the next
+// ball forces it back open a certain amount... the momentum of the next ball is not enough to
+// force it back open if the gate is already closed too much". The arm BOBS. It used to be able
+// to come to rest on something but never be LIFTED by it, so a tap was a plain timed fall and
+// the yield came out bimodal — the whole ramp, or almost none of it.
+{
+  // 1) THE HEIGHT TRACKS THE SPEED. A brisker column holds the arm higher; that IS the
+  //    momentum term, measured directly.
+  const restAt = (speed: number): number => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    fillBlueRail(w);
+    const g = w.goals.blue;
+    g.gatePos = 1;
+    g.gateOpen = true;
+    g.gateLatch = 0;
+    g.gateVel = 0;
+    for (const b of w.balls) {
+      if (b.state.kind === 'rail' && b.state.goal === 'blue') b.state.v = -speed;
+    }
+    w.robots[0].pos = { x: 0, y: -40 };
+    // where it SETTLES, not the peak — it starts at 1 and falls onto the flow
+    for (let i = 0; i < 45; i++) step(w, SIM_DT, new Map());
+    return g.gatePos;
+  };
+  const slow = restAt(RAIL_TERMINAL * 0.4);
+  const fast = restAt(RAIL_TERMINAL);
+  check(
+    'a brisker column holds the arm higher than a faltering one',
+    fast > slow,
+    `at ${(RAIL_TERMINAL * 0.4).toFixed(0)} in/s it sits at ${slow.toFixed(2)}, at ${RAIL_TERMINAL} in/s at ${fast.toFixed(2)}`,
+  );
+
+  // 2) AND IT REALLY GOES BACK UP. The arm dips into the gap between two artifacts and the
+  //    next one lifts it again — only observable while it is still above the pass line, which
+  //    is exactly the condition stated for the lift being possible at all.
+  let rises = 0;
+  for (const spacing of [0, 2, 4, 6]) {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    for (let i = 0; i < 9; i++) {
+      const b = w.balls[i];
+      const cs = GATE_STOP_S + i * (RAIL_PITCH + spacing);
+      b.state = { kind: 'rail', goal: 'blue', s: cs, v: -RAIL_TERMINAL, overflow: false, pending: false };
+      b.pos = railPos('blue', cs);
+      b.vel = { x: 0, y: 0 };
+      b.z = RAMP_SURFACE_Z;
+      b.vz = 0;
+    }
+    const g = w.goals.blue;
+    g.gatePos = 1;
+    g.gateOpen = true;
+    g.gateLatch = 0;
+    g.gateVel = 0;
+    w.robots[0].pos = { x: 0, y: -40 };
+    let prev = g.gatePos;
+    for (let i = 0; i < Math.round(8 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map());
+      if (g.gateLatch <= 0 && g.gatePos > prev + 1e-6) rises++;
+      prev = g.gatePos;
+    }
+  }
+  check(
+    'a released arm is knocked back up by the artifacts passing under it',
+    rises > 0,
+    `${rises} tick(s) where the arm rose with nobody touching it`,
   );
 }
 

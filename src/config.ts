@@ -1131,7 +1131,16 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.017; // open fraction per in/s (≈24 in/s to stay passable)
+export const GATE_SHOULDER_LIFT = 0.0155; // open fraction per in/s (knock-up per unit artifact speed)
+/**
+ * How far UP-RAMP of the gate line an artifact still counts as "arriving" for the knock-up.
+ *
+ * The lift comes from the momentum of the artifact reaching the arm, and that has to be
+ * sampled BEFORE the arm slows it down. Counting only what was already under the paddle made
+ * the two terms chase each other — the arm settles onto the flow, the flow slows, the slower
+ * flow lifts less, so the arm settles further — and the arm only ever descended.
+ */
+export const GATE_APPROACH_S = RAIL_PITCH;
 /**
  * WHAT A TAP IS WORTH is set by three constants together — GATE_SHOULDER_LIFT (momentum
  * needed to keep the gate passable), GATE_FLOW_CUSHION (flow needed to suspend the fall)
