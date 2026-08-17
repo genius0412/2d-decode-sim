@@ -446,7 +446,7 @@ function railBlock(
 
 /** the artifact still sitting in the gate's doorway, if any — the one the column has to
  * push out of the way before the next can leave. */
-function doorwayArtifact(world: World, a: Alliance): Artifact | null {
+export function doorwayArtifact(world: World, a: Alliance): Artifact | null {
   const p = railPos(a, C.RAIL_EXIT_S);
   for (const b of world.balls) {
     if (b.state.kind !== 'ground') continue;

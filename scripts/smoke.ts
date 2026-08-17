@@ -4073,6 +4073,56 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- GATE INTAKING with a FULL hopper still drains ---------------------------------
+// "release rate is slower than normal when gate intaking" — it did not slow, it STOPPED.
+// While the intake is swallowing, the doorway clears itself and the ramp actually drains
+// FASTER than with nobody there (0.169s vs 0.350s). But a full robot carries three held
+// artifacts physically sitting in its mouth, and `collideBallHeld` shoved the doorway
+// artifact straight back into the gate — cancelling the outward nudge to the third decimal,
+// every tick. At the stall the gate is open, the robot is NOT blocking the mouth
+// (mouth.s = -Infinity) and an artifact waits at s = -4.00: the doorway is the only false
+// condition. 4 of 9 out and a dead stop; 9 of 9 once nothing on the robot may push back the
+// artifact it is expelling.
+{
+  const w = mkWorld('match', 'red', 42, { intake: 'vector', width: 17.5, length: 14.5 });
+  startMatch(w);
+  w.match.phase = 'teleop';
+  const r = w.robots[0];
+  // clear the PRELOADS — the hopper array AND the physical held artifacts. Leaving those in
+  // the mouth silently blocks the intake and makes any gate-intaking probe measure nothing
+  // but its own preloads; that mistake cost a whole investigation.
+  for (const b of w.balls) {
+    if (b.state.kind !== 'held') continue;
+    b.state = { kind: 'ground' };
+    b.pos = { x: -FIELD_HALF + 6, y: -FIELD_HALF + 6 };
+    b.vel = { x: 0, y: 0 };
+    b.z = 0;
+    b.vz = 0;
+  }
+  r.hopper = [];
+  for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: -FIELD_HALF + 6, y: -FIELD_HALF + 6 };
+  for (let i = 0; i < 9; i++) {
+    const b = w.balls[i];
+    const cs = GATE_STOP_S + i * RAIL_PITCH;
+    b.state = { kind: 'rail', goal: 'red', s: cs, v: 0, overflow: false, pending: false };
+    b.pos = railPos('red', cs);
+    b.vel = { x: 0, y: 0 };
+    b.z = RAMP_SURFACE_Z;
+    b.vz = 0;
+  }
+  // the reported pose, verbatim off the in-game readout
+  r.pos = { x: 57.3, y: -10.0 };
+  r.heading = (19 * Math.PI) / 180;
+  r.fieldCentric = false;
+  run(w, cmd({ driveY: 1, intake: true }), 16);
+  const left = w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'red').length;
+  check(
+    'GATE INTAKING: the ramp still drains once the hopper is FULL',
+    left === 0,
+    `${9 - left}/9 out, hopper ${r.hopper.length} (was 4/9 and stuck)`,
+  );
+}
+
 // ---- GATE INTAKING drains at full speed ---------------------------------------------
 // "holding the gate open with the front left or right while simultaneously intaking balls
 // that come out of the classifier is called gate intaking and it is very common. When I do

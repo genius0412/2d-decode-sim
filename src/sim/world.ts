@@ -20,7 +20,7 @@ import { solveBalls, solveRobots } from './physicsEngine';
 import { decodeColliders } from '../games/decode/colliders';
 import { classifierRect } from './field';
 import { intakeClaims, updateRobot, updateRobotActions } from './robot';
-import { checkGoalEntry, gateColliderPos, updateBasins, updateGates, updateRails } from './goal';
+import { checkGoalEntry, doorwayArtifact, gateColliderPos, updateBasins, updateGates, updateRails } from './goal';
 import { updateHumanPlayers } from './humanPlayer';
 import { robotsEnabled, stepMatch } from './match';
 import { updateProvisionalPattern } from './scoring';
@@ -139,13 +139,39 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // ball↔robot stays bespoke (see solveRobots): the pin stall + outflow-no-shove
   // are deliberately non-physical. Iterated so a robot→ball→(wall/ball) chain
   // converges instead of tunnelling in a single pass.
+  /**
+   * THE ARTIFACT IN A GATE'S DOORWAY IS BEING EXPELLED — nothing on the robot may push it
+   * back, and that includes the artifacts the robot is CARRYING.
+   *
+   * `updateRails` floors its outward velocity at the end of the tick; the bespoke robot
+   * passes undo that at the start of the next, to the third decimal. The stalemate only
+   * bites once the hopper FILLS: while the intake is swallowing, the doorway clears itself,
+   * but a full robot has three held artifacts physically sitting in its mouth and
+   * `collideBallHeld` shoves the doorway artifact straight back into the gate.
+   *
+   * Measured gate-intaking a full ramp at the reported pose: 9/9 out with the hopper kept
+   * clear, 4/9 and a dead stop once it fills — "the release rate is slower than normal when
+   * gate intaking". At the stall the gate is open, the robot is NOT blocking the mouth
+   * (mouth.s = -Infinity) and an artifact is sitting ready at s = -4.00; the only false
+   * condition is the doorway.
+   *
+   * Scoped to the ONE artifact per goal actually in the doorway, so the intake's slopes and
+   * the held-artifact stack keep working normally for everything else.
+   */
+  const expelling = new Set<number>();
+  for (const a of ['red', 'blue'] as const) {
+    const d = doorwayArtifact(world, a);
+    if (d) expelling.add(d.id);
+  }
   const heldBalls = world.balls.filter((b) => b.state.kind === 'held');
   for (let pass = 0; pass < C.BALL_SOLVER_ITERATIONS; pass++) {
     for (const b of world.balls) {
       if (b.state.kind !== 'ground') continue;
-      for (const r of world.robots) collideBallRobot(b, r);
-      // held balls physically occupy the intake — incoming balls pile up on them
-      for (const h of heldBalls) collideBallHeld(b, h);
+      if (!expelling.has(b.id)) {
+        for (const r of world.robots) collideBallRobot(b, r);
+        // held balls physically occupy the intake — incoming balls pile up on them
+        for (const h of heldBalls) collideBallHeld(b, h);
+      }
     }
   }
   // hard field clamp: Rapier's soft contacts (and the bespoke ball↔robot push)
@@ -191,8 +217,10 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
       // push one INTO a robot and nothing takes it back out — and since the next tick's
       // robot pass runs BEFORE this one, a pressed clump walks artifacts straight through a
       // chassis. Measured before this line: 2.77in of penetration on a 2.5in radius.
-      for (const r of world.robots) evictBallFromRobot(b, r);
-      for (const h of heldBalls) collideBallHeld(b, h);
+      if (!expelling.has(b.id)) {
+        for (const r of world.robots) evictBallFromRobot(b, r);
+        for (const h of heldBalls) collideBallHeld(b, h);
+      }
       const from = ballFrom.get(b.id);
       collideBallRect(b, classifierRect('red'), C.BALL_WALL_RESTITUTION, from);
       collideBallRect(b, classifierRect('blue'), C.BALL_WALL_RESTITUTION, from);
