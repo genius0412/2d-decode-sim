@@ -1182,7 +1182,7 @@ export function updateGates(
     // reaching an almost-closed gate must NOT lift it back open (only a robot push does).
     // (LOCALS, deliberately — GoalState rides the network snapshot, and both are
     // recomputed from world state every tick anyway)
-    let gatewaySpeed = 0;
+    let arrivalSpeed = 0;
     // ...and how high the artifacts physically sitting under the arm hold it, which is a
     // question about GEOMETRY and not about speed: the paddle's edge lands where the
     // vertical at the gate line meets an artifact's surface (gateRestOn). Without this the
@@ -1194,12 +1194,22 @@ export function updateGates(
       if (b.state.overflow) continue; // rides OVER the gate (9.8.3) — never under the paddle
       // ONLY WHAT IS ACTUALLY UNDER THE PADDLE. Nothing else can be holding it up.
       const d = b.state.s - C.GATE_LINE_S;
-      // SPEED is sampled over the ARRIVING artifact — the one reaching the arm, up to
-      // GATE_APPROACH_S up-ramp — because that is the momentum that does the knocking, and it
-      // has to be read before the arm gets a chance to slow it.
-      if (d > -C.BALL_RADIUS && d < C.GATE_APPROACH_S) {
-        const down = -b.state.v; // v is negative down-ramp
-        if (down > gatewaySpeed) gatewaySpeed = down;
+      /**
+       * ONE KNOCK PER ARTIFACT, on the tick it ARRIVES.
+       *
+       * The impulse has to be an event, not a condition. Applying it on every tick an artifact
+       * was anywhere near the arm is not a collision, it is a sustained lift: with a packed
+       * column something is always within reach, so the arm was held at fully open forever and
+       * the drain never metered at all (every tap emptied the ramp, at any strength of knock).
+       *
+       * Arrival is the artifact's leading surface reaching the paddle — `d` crossing
+       * BALL_RADIUS on its way down — and it is detected from the artifact's own motion this
+       * tick, so it needs no stored per-artifact state and stays snapshot-safe.
+       */
+      const dPrev = d - b.state.v * dt; // v is negative down-ramp, so it was higher up
+      if (dPrev > C.BALL_RADIUS && d <= C.BALL_RADIUS) {
+        const speed = -b.state.v;
+        if (speed > arrivalSpeed) arrivalSpeed = speed;
       }
       // GEOMETRY is only ever about what is genuinely under the paddle.
       if (!underPaddle(d)) continue;
@@ -1223,45 +1233,44 @@ export function updateGates(
       // only hold the paddle that high if it is actually moving (GATE_SHOULDER_LIFT) —
       // a faltering artifact lets the arm settle onto it and the drain stops there.
       const wasPos = goal.gatePos;
-      // FLOW MOMENTUM CUSHIONS THE FALL. Artifacts streaming under the paddle knock it back
-      // up as fast as gravity brings it down, so a brisk stream nearly suspends the descent
-      // and an empty gateway lets it fall at full gravity. Separate from the height floor
-      // below: that says how LOW it may go, this says how FAST it gets there.
-      const cushion = Math.max(0, 1 - gatewaySpeed / C.GATE_FLOW_CUSHION);
-      goal.gateVel = Math.max(
-        goal.gateVel - C.GATE_GRAVITY * cushion * dt,
-        -C.GATE_CLOSE_MAX * cushion,
-      );
-      goal.gatePos = Math.max(0, goal.gatePos + goal.gateVel * dt);
+      // GRAVITY, at full strength and undamped. Nothing about a stream of artifacts makes the
+      // arm heavier or lighter; what a stream does is keep hitting it, which is the impulse
+      // below. GATE_FLOW_CUSHION used to scale this down in proportion to the flow — a second
+      // knob for the same physical fact, double-counting with the knock-up.
+      goal.gateVel = Math.max(goal.gateVel - C.GATE_GRAVITY * dt, -C.GATE_CLOSE_MAX);
+
       /**
-       * AN ARRIVING ARTIFACT KNOCKS THE ARM BACK UP. This is the mechanism, not a detail:
+       * AN ARRIVING ARTIFACT HANDS THE ARM SWING SPEED, and gravity decides how far up that
+       * gets it. This is the mechanism the whole drain rests on:
        *
-       *   a tap throws the arm fully open, it falls back a little, and then the momentum of
-       *   the next artifact forces it open again by an amount that depends on how fast that
-       *   artifact is going — UNLESS the arm has already come down too far, in which case
-       *   there is no getting under it and the artifact is simply stopped.
+       *   a tap throws the arm fully open, gravity brings it back down, and each artifact
+       *   reaching it knocks it up again by an amount set by how fast that artifact is going
+       *   — unless the arm has already come down too far to get under, in which case the
+       *   artifact is simply stopped and the drain ends there.
        *
-       * The arm therefore BOBS: open, settle, knocked up, settle, knocked up — and a drain
-       * ends when one artifact arrives a little too late to catch it. That is where the spread
-       * in how many a tap yields comes from, and it is why the same tap does not always give
-       * the same number.
-       *
-       * This used to read "it can come to rest on something; it cannot be LIFTED by it" — a
-       * floor that could stop the arm but never raise it — so the arm only ever descended and
-       * a tap was a plain timed fall.
+       * WHY A PACKED COLUMN CARRIES AND A GAPPY ONE DOES NOT, which is the actual question and
+       * has nothing to do with a full ramp "having more momentum" — every artifact on the ramp
+       * accelerates down the same incline at the same rate and arrives at the same terminal
+       * speed, packed or not. What differs is only WHEN they arrive. After a knock the arm
+       * starts falling immediately, and it has GATE_PASS_FRAC of height to lose before nothing
+       * can get under it any more. So a drain is a race between the arm's fall and the gap
+       * between arrivals, and that gap is (spacing / speed). Packed at RAIL_PITCH the next
+       * artifact lands while the arm is still high; spread wider it arrives to find the arm
+       * already shut. That is the whole of it.
        */
-      const lift = Math.min(C.GATE_RIDE_FRAC, gatewaySpeed * C.GATE_SHOULDER_LIFT);
-      // Whether an artifact can get under the arm at all is the SAME line that decides whether
-      // one can pass: below it there is no gap to enter, so it cannot lift what it cannot
-      // reach. This is what keeps "an artifact reaching an almost-closed gate must not reopen
-      // it — only a robot push can" true while momentum is otherwise free to raise it.
-      if (wasPos >= C.GATE_PASS_FRAC && goal.gatePos < lift) {
-        goal.gatePos = lift;
+      if (wasPos >= C.GATE_PASS_FRAC && arrivalSpeed > 0) {
+        goal.gateVel = Math.max(goal.gateVel, arrivalSpeed * C.GATE_KNOCK);
+      }
+
+      goal.gatePos = Math.max(0, goal.gatePos + goal.gateVel * dt);
+      if (goal.gatePos >= 1) {
+        goal.gatePos = 1;
         goal.gateVel = 0;
       }
-      // GEOMETRY IS A FLOOR, NOT A LIFT. An artifact that has STOPPED under the arm holds it
-      // at whatever height the paddle landed on it — but it must never reach up and raise the
-      // arm, or a stalled artifact would prop open a gate that had already shut past it.
+      // A STALLED ARTIFACT UNDER THE PADDLE IS A FLOOR, NOT A LIFT. It bears the arm's weight
+      // at whatever height its surface offers (gateRestOn, always below GATE_PASS_FRAC — a
+      // paddle seated on a ball is exactly what blocks that ball), but it must never reach up
+      // and raise the arm, or a stalled artifact would prop open a gate already shut past it.
       if (wasPos >= gatewayRest && goal.gatePos < gatewayRest) {
         goal.gatePos = gatewayRest;
         goal.gateVel = 0;

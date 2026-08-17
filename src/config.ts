@@ -1131,14 +1131,29 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * gave out. The drain is meant to be marginal as the column spreads and artifacts start
  * arriving slower; that is the whole "it randomly stops" behaviour.
  */
-export const GATE_SHOULDER_LIFT = 0.0165; // open fraction per in/s (knock-up per unit artifact speed)
 /**
- * How far UP-RAMP of the gate line an artifact still counts as "arriving" for the knock-up.
+ * How much SWING SPEED an arriving artifact hands the arm, per in/s of its own speed.
  *
- * The lift comes from the momentum of the artifact reaching the arm, and that has to be
- * sampled BEFORE the arm slows it down. Counting only what was already under the paddle made
- * the two terms chase each other — the arm settles onto the flow, the flow slows, the slower
- * flow lifts less, so the arm settles further — and the arm only ever descended.
+ * This is an IMPULSE, and that is the whole point of it. It used to be a height — the arm was
+ * teleported to `speed x constant` — which is not a collision, it is a lookup table, and it
+ * made the arm's rise linear in speed when a struck lever's rise goes as the SQUARE of the
+ * speed it is struck at (the artifact hands over momentum, the arm converts it to height
+ * against gravity: h = v^2 / 2g). Handing over a velocity and letting GATE_GRAVITY decide how
+ * high it gets makes that automatic, and it is why the same tap does not give the same result
+ * twice: the height now depends on where in the arm's own swing the artifact happens to arrive.
+ *
+ * It also replaced GATE_FLOW_CUSHION, which damped gravity in proportion to the flow. That was
+ * a second, separate knob for the same physical fact, and the two double-counted: the flow
+ * holds the arm up because artifacts keep knocking it up, not because a stream of artifacts
+ * makes gravity weaker.
+ */
+export const GATE_KNOCK = 0.06; // (1/s of gatePos) per in/s of artifact speed
+/**
+ * How far UP-RAMP of the gate line an artifact still counts as arriving at the arm.
+ *
+ * The impulse comes from the artifact reaching the paddle, and its speed has to be read before
+ * the arm slows it. Sampling only what was already under the paddle made the arm and the flow
+ * chase each other down — arm settles onto the flow, flow slows, slower flow lifts less.
  */
 export const GATE_APPROACH_S = RAIL_PITCH;
 /**
@@ -1291,17 +1306,6 @@ export const GATE_GRAVITY = 22; // 1/s^2 on gatePos: gravity swinging the releas
  * open it was — "how fast it closes is determined by the initial position of the gate".
  */
 export const GATE_CLOSE_MAX = 3.6; // 1/s: terminal swing speed as it falls closed
-/**
- * How much momentum in the flow it takes to hold the falling arm up.
- *
- * The other half of "how fast it closes is determined by the momentum of the balls coming
- * down": artifacts streaming under the paddle are knocking it up as fast as gravity brings
- * it down, so the descent is scaled by `1 − gatewaySpeed/GATE_FLOW_CUSHION`. A brisk stream
- * nearly suspends it; a faltering one barely slows it; an empty gateway lets it fall at full
- * gravity. This is a RATE cushion and is separate from the height floor the same artifacts
- * set via GATE_SHOULDER_LIFT — that says how low it may go, this says how fast it gets there.
- */
-export const GATE_FLOW_CUSHION = 40; // in/s of down-ramp flow that fully suspends the fall
 export const GATE_PASS_FRAC = 0.4; // arm must be at least this lifted for an ARTIFACT to pass
 export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement (manual 9.8.3)
 /** the gate is a class-1 LEVER (manual Figure 9-15) hinged at the CLASSIFIER EDGE — where
