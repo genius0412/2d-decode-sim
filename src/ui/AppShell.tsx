@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { cmpEnabled, showConsentSettings } from '../ads/adsense';
-import { APP_NAME, seasonFor, LINKS } from '../seasons';
+import { APP_NAME, seasonFor } from '../seasons';
 import { SUPPORT_ENABLED } from '../net/env';
 import type { GameId } from '../games/types';
 import { MenuAd } from './AdSlot';
@@ -175,7 +175,10 @@ export function AppShell({
           {APP_NAME} · {season.name} {season.years}
         </span>
         <span className="ds-foot-links">
-          <button className="ds-foot-link" onClick={onDownload}>
+          <button className="ds-foot-link bold" onClick={onChangelog}>
+            Changes
+          </button>
+          <button className="ds-foot-link bold" onClick={onDownload}>
             Download
           </button>
           <button className="ds-foot-link" onClick={onContributors}>
@@ -196,14 +199,6 @@ export function AppShell({
             Terms
           </button>
           <ConsentLink />
-          {/* main replaced the bare GitHub link with Changes — keep that, plus
-              monetization's Support/Privacy/Terms destinations */}
-          <button className="ds-foot-link bold" onClick={onChangelog}>
-            Changes
-          </button>
-          <a href={LINKS.discord} target="_blank" rel="noreferrer">
-            Discord
-          </a>
         </span>
       </footer>
     </div>
@@ -233,7 +228,7 @@ function ConsentLink() {
         if (!showConsentSettings()) setGone(true);
       }}
     >
-      Privacy &amp; cookie settings
+      Privacy &amp; Cookie Settings
     </button>
   );
 }

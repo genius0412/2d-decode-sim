@@ -3390,21 +3390,6 @@ a.ds-cta {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 14px;
 }
-.ds-bind-block {
-  border: 1px solid var(--ds-line);
-  border-radius: var(--ds-round);
-  background: var(--ds-panel);
-  padding: 13px 15px;
-  box-shadow: var(--ds-block);
-}
-.ds-bind-block h3 {
-  margin: 0 0 11px;
-  font-family: var(--ds-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ds-mut);
-}
 .ds-bind-grid {
   display: flex;
   flex-direction: column;
@@ -3486,14 +3471,6 @@ button.ds-key:active {
   cursor: default;
   background: var(--ds-panel);
 }
-.ds-bind-foot {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-top: 12px;
-  flex-wrap: wrap;
-}
-
 /* ---- lobby roster ---------------------------------------------------- */
 .ds-players {
   display: flex;
@@ -3996,6 +3973,9 @@ button.ds-key:active {
 }
 .ds-qcount.bar {
   margin-right: 2px;
+  /* the bar's other text (the presence chip) is 13px sans; match it so the queue
+     indicator doesn't read as a different, smaller UI element */
+  font-size: 13px;
 }
 
 /* ---- background ranked queue bar (QueueBar.tsx) -----------------------

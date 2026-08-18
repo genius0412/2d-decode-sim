@@ -565,7 +565,7 @@ No Discord OAuth or avatar data exists anywhere in this codebase (auth is Neon A
 `server/auth.ts` has no Discord fields). A contributor's Discord avatar/links are **not**
 derivable from the account system, so this needs a small hand-maintained static config,
 cross-referenced with the existing `CONTRIBUTORS.md` (currently: Dohun Kim as owner, plus
-4 pre-CLA contributors — Baron/@BaronClaps, Shaan Sridhara, testimonies, therealkingcob):
+4 pre-CLA contributors — Baron/@BaronClaps, Shaan Sridhara, Felix D, therealkingcob):
 
 ```ts
 export interface Contributor {

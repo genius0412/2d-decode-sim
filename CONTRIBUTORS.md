@@ -11,6 +11,7 @@ Format:
 ## Signed
 
 - Dohun Kim (Project Owner) <genius0412.tech@gmail.com> — GitHub @genius0412 — Owner
+- Felix D <eslbrine@gmail.com> — GitHub @crescent
 
 <!--
   New contributors: add your line above this comment in the same PR as your first
@@ -27,5 +28,4 @@ contributions) or have their contributions confirmed / removed.
 
 - Baron — GitHub @BaronClaps — pending
 - Shaan Sridhara — pending
-- testimonies <eslbrine@gmail.com> — pending
 - therealkingcob — GitHub @therealkingcob — pending

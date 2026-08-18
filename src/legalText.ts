@@ -169,7 +169,7 @@ also tagged as being for users below the age of consent for advertising purposes
 If you are in the UK, the EEA, or Switzerland you will be asked for your
 advertising choices through a Google-certified consent tool before any ads are
 personalised, and you can reopen that choice at any time from the "Privacy &
-cookie settings" link in the site footer.
+Cookie Settings" link in the site footer.
 
 You can also review and change Google's ad settings at
 [Google's Ads Settings](https://adssettings.google.com), and read how Google uses

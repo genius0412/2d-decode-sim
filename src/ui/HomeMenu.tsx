@@ -70,7 +70,7 @@ export function HomeMenu({
             <span className="ds-brand">{season.presenter}</span>
           </>
         )}
-        {' · '}
+        <br />
         {APP_TAGLINE}
       </p>
       <h1 className="ds-home-title">{APP_NAME}</h1>

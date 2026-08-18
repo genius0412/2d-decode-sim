@@ -137,162 +137,179 @@ export function ControlsSection({ bindings, onChange, onEditTouchControls }: Pro
   );
 
   return (
-    <section className="ds-sec">
-      <h2>Controls</h2>
-      <div className="ds-bind-block" style={{ marginBottom: 18 }}>
-        <h3>Touch controls</h3>
-        <button className="ds-btn" onClick={onEditTouchControls}>
-          Customize touch controls
-        </button>
+    <section className="ds-panel">
+      <div className="ds-panel-h">
+        <span className="ds-panel-title">Controls</span>
       </div>
-      <div className="ds-binds">
-        <div className="ds-bind-block">
-          <h3>Keyboard</h3>
-          <div className="ds-bind-grid">
-            {KEY_ACTIONS.map((a) => (
-              <div className="ds-bind-row" key={a}>
-                <span className="ds-bind-label">{KEY_LABELS[a]}</span>
-                <span className="ds-keys">
-                  {bindings.keys[a].map((k, i) =>
-                    keycap(
-                      keyLabel(k),
-                      capture?.kind === 'key' && capture.action === a && capture.slot === i,
-                      false,
-                      () => setCapture({ kind: 'key', action: a, slot: i }),
-                      i,
-                    ),
-                  )}
-                  {bindings.keys[a].length === 0 &&
-                    keycap(
-                      'UNBOUND',
-                      capture?.kind === 'key' && capture.action === a,
-                      true,
-                      () => setCapture({ kind: 'key', action: a, slot: 0 }),
+      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div className="ds-binds">
+          <section className="ds-sec ds-bind-block">
+            <h2>Keyboard</h2>
+            <div className="ds-bind-grid">
+              {KEY_ACTIONS.map((a) => (
+                <div className="ds-bind-row" key={a}>
+                  <span className="ds-bind-label">{KEY_LABELS[a]}</span>
+                  <span className="ds-keys">
+                    {bindings.keys[a].map((k, i) =>
+                      keycap(
+                        keyLabel(k),
+                        capture?.kind === 'key' && capture.action === a && capture.slot === i,
+                        false,
+                        () => setCapture({ kind: 'key', action: a, slot: i }),
+                        i,
+                      ),
                     )}
+                    {bindings.keys[a].length === 0 &&
+                      keycap(
+                        'UNBOUND',
+                        capture?.kind === 'key' && capture.action === a,
+                        true,
+                        () => setCapture({ kind: 'key', action: a, slot: 0 }),
+                      )}
+                  </span>
+                </div>
+              ))}
+              <div className="ds-bind-row">
+                <span className="ds-bind-label">Menu</span>
+                <span className="ds-keys">
+                  <span className="ds-key fixed">ESC</span>
                 </span>
               </div>
-            ))}
-            <div className="ds-bind-row">
-              <span className="ds-bind-label">Menu</span>
-              <span className="ds-keys">
-                <span className="ds-key fixed">ESC</span>
-              </span>
             </div>
-          </div>
+          </section>
+
+          <section className="ds-sec ds-bind-block">
+            <h2>Gamepad</h2>
+            <div className="ds-bind-grid">
+              <div className="ds-bind-row">
+                <span className="ds-bind-label">Drive stick</span>
+                <span className="ds-keys">
+                  <button
+                    className={`ds-key ${bindings.pad.driveStick === 'left' ? 'selected' : ''}`}
+                    onClick={() =>
+                      onChange({ ...cloneBindings(bindings), pad: { ...bindings.pad, driveStick: 'left' } })
+                    }
+                  >
+                    LEFT
+                  </button>
+                  <button
+                    className={`ds-key ${bindings.pad.driveStick === 'right' ? 'selected' : ''}`}
+                    onClick={() =>
+                      onChange({ ...cloneBindings(bindings), pad: { ...bindings.pad, driveStick: 'right' } })
+                    }
+                  >
+                    RIGHT
+                  </button>
+                </span>
+              </div>
+              <div className="ds-bind-row">
+                <span className="ds-bind-label">Turn stick</span>
+                <span className="ds-keys">
+                  <span className="ds-key fixed">
+                    {bindings.pad.driveStick === 'left' ? 'RIGHT (X axis)' : 'LEFT (X axis)'}
+                  </span>
+                </span>
+              </div>
+              <div className="ds-bind-row">
+                <span className="ds-bind-label">Stick deadzone {Math.round(bindings.pad.deadzone * 100)}%</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={0.4}
+                  step={0.01}
+                  value={bindings.pad.deadzone}
+                  style={rangeFill(bindings.pad.deadzone, 0, 0.4)}
+                  onChange={(e) =>
+                    onChange({ ...cloneBindings(bindings), pad: { ...bindings.pad, deadzone: Number(e.target.value) } })
+                  }
+                />
+              </div>
+              <div className="ds-bind-row">
+                <span className="ds-bind-label">
+                  Sensitivity curve {bindings.pad.curve.toFixed(1)}
+                  {bindings.pad.curve === 1 ? ' (linear)' : ''}
+                </span>
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.1}
+                  value={bindings.pad.curve}
+                  style={rangeFill(bindings.pad.curve, 1, 3)}
+                  onChange={(e) =>
+                    onChange({ ...cloneBindings(bindings), pad: { ...bindings.pad, curve: Number(e.target.value) } })
+                  }
+                />
+              </div>
+              <div className="ds-bind-row">
+                <span className="ds-bind-label">
+                  Trigger threshold {Math.round(bindings.pad.triggerThreshold * 100)}%
+                </span>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={0.9}
+                  step={0.05}
+                  value={bindings.pad.triggerThreshold}
+                  style={rangeFill(bindings.pad.triggerThreshold, 0.1, 0.9)}
+                  onChange={(e) =>
+                    onChange({
+                      ...cloneBindings(bindings),
+                      pad: { ...bindings.pad, triggerThreshold: Number(e.target.value) },
+                    })
+                  }
+                />
+              </div>
+              {PAD_ACTIONS.map((a) => (
+                <div className="ds-bind-row" key={a}>
+                  <span className="ds-bind-label">{PAD_LABELS[a]}</span>
+                  <span className="ds-keys">
+                    {bindings.pad.buttons[a].map((idx, i) =>
+                      keycap(
+                        padButtonLabel(idx),
+                        capture?.kind === 'pad' && capture.action === a && capture.slot === i,
+                        false,
+                        () => setCapture({ kind: 'pad', action: a, slot: i }),
+                        i,
+                      ),
+                    )}
+                    {bindings.pad.buttons[a].length === 0 &&
+                      keycap(
+                        'UNBOUND',
+                        capture?.kind === 'pad' && capture.action === a,
+                        true,
+                        () => setCapture({ kind: 'pad', action: a, slot: 0 }),
+                      )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
 
-        <div className="ds-bind-block">
-          <h3>Gamepad</h3>
-          <div className="ds-bind-grid">
-            <div className="ds-bind-row">
-              <span className="ds-bind-label">Drive stick</span>
-              <span className="ds-keys">
-                <button
-                  className={`ds-key ${bindings.pad.driveStick === 'left' ? 'selected' : ''}`}
-                  onClick={() =>
-                    onChange({ ...cloneBindings(bindings), pad: { ...bindings.pad, driveStick: 'left' } })
-                  }
-                >
-                  LEFT
-                </button>
-                <button
-                  className={`ds-key ${bindings.pad.driveStick === 'right' ? 'selected' : ''}`}
-                  onClick={() =>
-                    onChange({ ...cloneBindings(bindings), pad: { ...bindings.pad, driveStick: 'right' } })
-                  }
-                >
-                  RIGHT
-                </button>
-              </span>
-            </div>
-            <div className="ds-bind-row">
-              <span className="ds-bind-label">Turn stick</span>
-              <span className="ds-keys">
-                <span className="ds-key fixed">
-                  {bindings.pad.driveStick === 'left' ? 'RIGHT (X axis)' : 'LEFT (X axis)'}
-                </span>
-              </span>
-            </div>
-            <div className="ds-bind-row">
-              <span className="ds-bind-label">Stick deadzone {Math.round(bindings.pad.deadzone * 100)}%</span>
-              <input
-                type="range"
-                min={0}
-                max={0.4}
-                step={0.01}
-                value={bindings.pad.deadzone}
-                style={rangeFill(bindings.pad.deadzone, 0, 0.4)}
-                onChange={(e) =>
-                  onChange({ ...cloneBindings(bindings), pad: { ...bindings.pad, deadzone: Number(e.target.value) } })
+        <div className="ds-binds" style={{ marginTop: 10 }}>
+          <section className="ds-sec ds-bind-block">
+            <h2>Touch</h2>
+            <button className="ds-btn" style={{ width: '100%' }} onClick={onEditTouchControls}>
+              Customize touch controls
+            </button>
+          </section>
+
+          <section className="ds-sec ds-bind-block">
+            <h2>Reset</h2>
+            <button
+              className="ds-btn"
+              style={{ width: '100%' }}
+              onClick={() => {
+                if (confirm('Reset all keyboard and gamepad bindings to defaults?')) {
+                  onChange(cloneBindings(DEFAULT_BINDINGS));
                 }
-              />
-            </div>
-            <div className="ds-bind-row">
-              <span className="ds-bind-label">
-                Sensitivity curve {bindings.pad.curve.toFixed(1)}
-                {bindings.pad.curve === 1 ? ' (linear)' : ''}
-              </span>
-              <input
-                type="range"
-                min={1}
-                max={3}
-                step={0.1}
-                value={bindings.pad.curve}
-                style={rangeFill(bindings.pad.curve, 1, 3)}
-                onChange={(e) =>
-                  onChange({ ...cloneBindings(bindings), pad: { ...bindings.pad, curve: Number(e.target.value) } })
-                }
-              />
-            </div>
-            <div className="ds-bind-row">
-              <span className="ds-bind-label">
-                Trigger threshold {Math.round(bindings.pad.triggerThreshold * 100)}%
-              </span>
-              <input
-                type="range"
-                min={0.1}
-                max={0.9}
-                step={0.05}
-                value={bindings.pad.triggerThreshold}
-                style={rangeFill(bindings.pad.triggerThreshold, 0.1, 0.9)}
-                onChange={(e) =>
-                  onChange({
-                    ...cloneBindings(bindings),
-                    pad: { ...bindings.pad, triggerThreshold: Number(e.target.value) },
-                  })
-                }
-              />
-            </div>
-            {PAD_ACTIONS.map((a) => (
-              <div className="ds-bind-row" key={a}>
-                <span className="ds-bind-label">{PAD_LABELS[a]}</span>
-                <span className="ds-keys">
-                  {bindings.pad.buttons[a].map((idx, i) =>
-                    keycap(
-                      padButtonLabel(idx),
-                      capture?.kind === 'pad' && capture.action === a && capture.slot === i,
-                      false,
-                      () => setCapture({ kind: 'pad', action: a, slot: i }),
-                      i,
-                    ),
-                  )}
-                  {bindings.pad.buttons[a].length === 0 &&
-                    keycap(
-                      'UNBOUND',
-                      capture?.kind === 'pad' && capture.action === a,
-                      true,
-                      () => setCapture({ kind: 'pad', action: a, slot: 0 }),
-                    )}
-                </span>
-              </div>
-            ))}
-          </div>
+              }}
+            >
+              RESET TO DEFAULTS
+            </button>
+          </section>
         </div>
-      </div>
-      <div className="ds-bind-foot">
-        <button className="ds-btn" onClick={() => onChange(cloneBindings(DEFAULT_BINDINGS))}>
-          RESET TO DEFAULTS
-        </button>
       </div>
     </section>
   );

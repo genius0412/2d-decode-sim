@@ -47,8 +47,9 @@ export const CONTRIBUTORS: Contributor[] = [
     githubUrl: 'https://github.com/genius0412',
   },
   {
-    fallbackName: 'testimonies',
-    githubUrl: 'https://github.com/testimonies',
+    fallbackName: 'Felix D',
+    inGameUsername: 'felix',
+    githubUrl: 'https://github.com/crescent',
   },
   {
     fallbackName: 'Baron',

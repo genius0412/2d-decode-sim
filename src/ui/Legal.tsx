@@ -14,12 +14,11 @@ import { APP_NAME } from '../seasons';
  * A live privacy policy is a prerequisite for the AdSense application, so this page
  * must stay reachable without an account and without JavaScript-gated routing.
  */
-function LegalPage({ title, sub, body }: { title: string; sub: string; body: string }) {
+function LegalPage({ title, body }: { title: string; body: string }) {
   return (
     <>
       <p className="ds-eyebrow">{APP_NAME} · Legal</p>
-      <h1 className="ds-h1">{title}</h1>
-      <p className="ds-sub">{sub}</p>
+      <h1 className="ds-h1" style={{ marginBottom: 24 }}>{title}</h1>
 
       <section className="ds-panel">
         <div className="ds-panel-h">
@@ -36,11 +35,7 @@ function LegalPage({ title, sub, body }: { title: string; sub: string; body: str
 
 export function Privacy() {
   return (
-    <LegalPage
-      title="Privacy Policy"
-      sub="What DSIM collects, why, and how to get rid of it."
-      body={PRIVACY_MD}
-    />
+    <LegalPage title="Privacy Policy" body={PRIVACY_MD} />
   );
 }
 
@@ -60,11 +55,7 @@ export function Terms() {
           question about your account or a payment.
         </p>
       )}
-      <LegalPage
-        title="Terms of Use"
-        sub="The rules for using the sim, the servers, and supporter memberships."
-        body={TERMS_MD}
-      />
+      <LegalPage title="Terms of Use" body={TERMS_MD} />
     </>
   );
 }
