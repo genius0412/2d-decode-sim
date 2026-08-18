@@ -1286,6 +1286,8 @@ export function updateGates(
     // ...and how high the arm has to be for that artifact to get UNDER the paddle at all,
     // rather than meeting its face. See the knock below.
     let arrivalRest = Infinity;
+    // ...and WHICH artifact it was, because a strike costs the striker (see the knock).
+    let striker: Artifact | null = null;
     // ...and how high the artifacts physically sitting under the arm hold it, which is a
     // question about GEOMETRY and not about speed: the paddle's edge lands where the
     // vertical at the gate line meets an artifact's surface (gateRestOn). Without this the
@@ -1315,6 +1317,7 @@ export function updateGates(
         if (speed > arrivalSpeed) {
           arrivalSpeed = speed;
           arrivalRest = gateRestOn(d);
+          striker = b;
         }
       }
       // GEOMETRY is only ever about what is genuinely under the paddle.
@@ -1388,6 +1391,23 @@ export function updateGates(
        */
       if (arrivalSpeed > 0 && wasPos >= arrivalRest) {
         goal.gateVel = Math.max(goal.gateVel, arrivalSpeed * C.GATE_KNOCK);
+        /**
+         * ...AND THE STRIKE COSTS THE STRIKER. A collision moves momentum, it does not mint
+         * it, and this is the half that was missing: the arm was thrown up for free, so a
+         * knock hard enough to matter was also a knock that could never run out, and the only
+         * thing keeping a tap from emptying the ramp was the knock being too weak to reopen a
+         * sagging arm at all. That is a dial with a cliff in it — a tap was worth one artifact
+         * or all nine, decided by a fifth of a second on the lever.
+         *
+         * Paying for the lift out of the artifact's own speed puts the meter where the physics
+         * already is: the arm's weight is what the flow spends itself against, every artifact
+         * through the gateway arrives a little slower than it otherwise would, and a drain
+         * gives out when the column can no longer pay. `st.v` is negative down-ramp, so this
+         * scales the magnitude.
+         */
+        if (striker && striker.state.kind === 'rail') {
+          (striker.state as { v: number }).v *= 1 - C.GATE_STRIKE_LOSS;
+        }
       }
 
       goal.gatePos = Math.max(0, goal.gatePos + goal.gateVel * dt);

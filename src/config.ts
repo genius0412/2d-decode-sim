@@ -1197,7 +1197,12 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * holds the arm up because artifacts keep knocking it up, not because a stream of artifacts
  * makes gravity weaker.
  */
-export const GATE_KNOCK = 0.06; // (1/s of gatePos) per in/s of artifact speed
+export const GATE_KNOCK = 0.12; // (1/s of gatePos) per in/s of artifact speed
+/**
+ * WHAT THE STRIKE COSTS THE ARTIFACT — the fraction of its down-ramp speed it spends
+ * throwing the arm up. A collision moves momentum; it does not mint it.
+ */
+export const GATE_STRIKE_LOSS = 0.45;
 /**
  * How far UP-RAMP of the gate line an artifact still counts as arriving at the arm.
  *

@@ -2343,7 +2343,7 @@ function queueTenth(w: World): void {
   //    part-closed arm — feed it a slow COLUMN instead and the artifacts simply stack up and
   //    hold the arm at their own surface height, which is the geometric term, and both speeds
   //    then report the same number for a reason that has nothing to do with momentum.
-  const knockTo = (speed: number): number => {
+  const knockTo = (speed: number, startPos = GATE_RIDE_FRAC): number => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
     for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
@@ -2359,7 +2359,7 @@ function queueTenth(w: World): void {
     // started a hair above GATE_PASS_FRAC drops below it within a couple of ticks and the
     // artifact arrives to find nothing it can get under — which measures the engagement rule,
     // not the impulse this check is about.
-    g.gatePos = GATE_RIDE_FRAC;
+    g.gatePos = startPos;
     g.gateOpen = true;
     g.gateLatch = 0;
     g.gateVel = 0;
@@ -2371,16 +2371,35 @@ function queueTenth(w: World): void {
     }
     return peak;
   };
-  // REAL ramp arrival speeds. RAIL_TERMINAL is only a safety cap now (120 in/s) and nothing on
-  // the ramp goes near it — feeding it here asked about two speeds that both saturate the arm.
-  const SLOW_ARRIVAL = 18; // what the FIRST artifact off a resting column arrives at
-  const FAST_ARRIVAL = 45; // what one down most of the ramp arrives at
-  const slow = knockTo(SLOW_ARRIVAL);
-  const fast = knockTo(FAST_ARRIVAL);
+  /**
+   * ...measured on a SAGGING arm, which is the only place the impulse is legible.
+   *
+   * A real ramp arrival (18-45 in/s) throws an arm at GATE_RIDE_FRAC straight to fully open,
+   * so comparing two of them there asks about two speeds that both saturate and reports the
+   * same 1.00 twice. The mechanism lives at the bottom of the swing: an arm that has sagged
+   * to where a passing artifact's own surface would hold it (gateRestOn at first contact) is
+   * exactly the arm a drain is deciding the fate of.
+   */
+  // an arm that has sagged BELOW the pass line but is still high enough for an artifact to
+  // reach the paddle at all — below gateStopS's block the artifact never gets there, and the
+  // pair (gateStopS/gateRestOn) simply parks: the arm settles at exactly the height the
+  // artifact it stopped holds it at, and neither moves again.
+  const SAG = (GATE_SEAT_FRAC + GATE_PASS_FRAC) / 2 - 0.06;
+  const falter = knockTo(5, SAG);
+  const steady = knockTo(10, SAG);
+  const brisk = knockTo(18, SAG);
   check(
     'a brisker artifact knocks the arm higher than a faltering one',
-    fast > slow + 0.02,
-    `at ${SLOW_ARRIVAL} in/s it reaches ${slow.toFixed(2)}, at ${FAST_ARRIVAL} in/s ${fast.toFixed(2)}`,
+    brisk > steady + 0.02 && steady > falter + 0.02,
+    `from ${SAG.toFixed(2)}: 5 in/s -> ${falter.toFixed(2)}, 10 -> ${steady.toFixed(2)}, 18 -> ${brisk.toFixed(2)}`,
+  );
+  // ...and THAT is what a tap is worth: the artifact coming out lifts the arm back over the
+  // pass line, or it does not and the drain ends there. Reported as "a tap only lets out one
+  // ball now, because a ball coming out is not lifting the gate back up".
+  check(
+    '...and a brisk one lifts a sagging arm back over the pass line, a faltering one does not',
+    brisk > GATE_PASS_FRAC && falter < GATE_PASS_FRAC,
+    `brisk ${brisk.toFixed(2)} vs pass ${GATE_PASS_FRAC}, faltering ${falter.toFixed(2)}`,
   );
 
   // 2) AND IT REALLY GOES BACK UP. The arm dips into the gap between two artifacts and the
