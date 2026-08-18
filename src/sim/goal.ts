@@ -686,13 +686,45 @@ export function updateRails(
      *
      * A SHUT gate is different and still caps at 0 — the column is resting on the paddle.
      */
+    /**
+     * ...AND THE PRICE OF "NO CAP" IS THAT NOTHING RECONCILED THE SPEED AN ARTIFACT CLAIMS
+     * WITH THE DISTANCE IT COVERS.
+     *
+     * An open gate whose mouth is OCCUPIED still stops the column, and with no cap the
+     * artifacts stood still while gravity went on adding to `v`, tick after tick, forever.
+     * Measured against a held-open gate with a robot parked on the outflow: the column pinned
+     * at s = -4.0, 1.1, 6.2 ... with v marching -5, -10, -15 ... to the RAIL_TERMINAL safety
+     * cap of 120 in/s in 4.8s, and the instant the doorway cleared they left at up to 86 in/s
+     * and the whole ramp emptied in one burst — "after ball flow resumes after being stalled,
+     * it shoots down extremely quickly". RAIL_TERMINAL is a SAFETY cap; it was being used as
+     * a flow speed, which is the one thing its own note says it must not be.
+     *
+     * A BLOCKED ARTIFACT IS NOT BEING ACCELERATED. Whatever holds it up — the paddle, a
+     * bumper, the artifact ahead, the queue in the doorway — pushes back exactly as hard as
+     * gravity pulls, so the tick's gravity does no work. It does not lose the momentum it
+     * ARRIVED with either (the exit lip has always said so, see the solid-floor clamp below);
+     * it simply stops gaining. So `wasV` — its speed BEFORE this tick's gravity — is a cap in
+     * its own right, and it applies alongside the floor's: `Math.max` of the two takes
+     * whichever binds tighter, since down-ramp is negative.
+     *
+     * That is the whole fix, and it is one line. It leaves a FLOWING drain untouched, because
+     * an artifact in a moving column is only ever in contact for a tick at a time — the
+     * artifact ahead has more runway, accelerates harder, and the gap opens on its own.
+     * Capping at the DOORWAY artifact's speed instead was tried and is a different bug: that
+     * queue is nudged along at ~22 in/s, so the whole ramp is throttled to it and the stream
+     * becomes a metronome again (measured: mean release gap 0.58s against 0.32s, and a held
+     * gate no longer emptied the ramp).
+     */
     const exitFloorV = goal.gateOpen ? -Infinity : 0;
     let rampAhead = -Infinity;
     let rampFloorV = exitFloorV;
     // ...and the same pair for an ELEVATED artifact: never stopped by the gate, only by the exit
-    // being physically occupied or by another elevated artifact ahead of it
+    // being physically occupied or by another elevated artifact ahead of it. A SHUT gate is
+    // therefore no floor for it and must not zero its speed the way it does the ramp lane's —
+    // what stops an elevated artifact is the mouth, and a robot's bumper there is handled by
+    // the solid-floor clamp below.
     let overAhead = -Infinity;
-    let overFloorV = exitFloorV;
+    let overFloorV = -Infinity;
     let retainedBelow = 0;
     // set when the paddle shoves an artifact back UP the ramp — see the relaxation pass
     let pushedUp = false;
@@ -879,7 +911,9 @@ export function updateRails(
         // time with the steering. Clamping to min(floor, wasS) lets a constraint STOP an
         // artifact, never reverse it.
         st.s = Math.min(floor, wasS);
-        st.v = Math.max(st.v, floorV); // move WITH whatever is ahead, so the column drains packed
+        // move WITH whatever is ahead (so the column drains packed), and no faster than it was
+        // already going (so being held is never an acceleration) — see the note above
+        st.v = Math.max(st.v, floorV, wasV);
         if (st.pending) {
           st.pending = false;
           goal.classifiedCount++;

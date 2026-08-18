@@ -1447,6 +1447,84 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   }
 }
 
+// ---- a STALLED column does not wind up ------------------------------------------
+// Reported: "after ball flow resumes after being stalled, it shoots down extremely quickly".
+// A blocked artifact is not being accelerated — whatever holds it up pushes back exactly as
+// hard as gravity pulls — but the solver went on adding RAIL_ACCEL to `v` every tick it stood
+// still, because the only cap on a blocked artifact's speed was the floor's, and an OPEN gate
+// declares "no cap". Measured: a column pinned by a robot on the outflow marched to the
+// RAIL_TERMINAL safety cap of 120 in/s in 4.8s and then left at up to 86 in/s the moment the
+// robot moved, emptying the whole ramp in one burst. RAIL_TERMINAL is a safety cap, not a
+// flow speed.
+{
+  const w = mkWorld('match', 'blue', 5);
+  startMatch(w);
+  w.match.phase = 'teleop';
+  fillBlueRail(w);
+  // parked ON the outflow: the gate is wide open and the drain is blocked anyway
+  const r = w.robots[0];
+  const z = gateZone('blue');
+  r.pos = { x: z.x1 + 5, y: (z.y0 + z.y1) / 2 };
+  r.heading = Math.PI;
+  r.fieldCentric = false;
+  const railV = () =>
+    w.balls
+      .filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue')
+      .map((b) => Math.abs((b.state as { v: number }).v));
+  const press = new Map([[0, cmd({ driveY: 1 })]]);
+  const perTick: number[] = [];
+  let stalledLeft = 0;
+  for (let i = 0; i < Math.round(6 / SIM_DT); i++) {
+    w.goals.blue.gatePos = 1;
+    w.goals.blue.gateOpen = true;
+    w.goals.blue.gateLatch = 1;
+    step(w, SIM_DT, press);
+    perTick.push(Math.max(0, ...railV()));
+    stalledLeft = railV().length;
+  }
+  // the front of the column arrives with real speed and KEEPS it, so this is not a check that
+  // the ramp is at rest — it is that standing still buys nothing. Compare a window two seconds
+  // into the stall against the last second of it: the wind-up added a flat RAIL_ACCEL every
+  // second, so it moved this by +25 in/s and had reached the safety cap by 4.8s.
+  const windowMax = (t0: number, t1: number) =>
+    Math.max(...perTick.slice(Math.round(t0 / SIM_DT), Math.round(t1 / SIM_DT)));
+  const midMax = windowMax(2, 3);
+  const lateMax = windowMax(5, 6);
+  // a stalled column carries the momentum it ARRIVED with and not a bit more. Nothing on this
+  // ramp starts above rest, so five seconds of standing still must not manufacture any speed.
+  check(
+    'a column held against a block does not accumulate speed while it waits',
+    stalledLeft >= 5 && lateMax <= midMax + 1e-6,
+    `${stalledLeft} still on the ramp, max |v| ${midMax.toFixed(1)} in/s at 2s -> ${lateMax.toFixed(1)} at 6s (the wind-up reached ${RAIL_TERMINAL}, the safety cap)`,
+  );
+  // ...and when the block clears they leave at a speed the ramp could actually have given
+  // them: RAIL_ACCEL over the length of the ramp, sqrt(2*a*s), and no artifact here has more
+  // than a few pitches of runway left.
+  const ceiling = Math.sqrt(2 * RAIL_ACCEL * (RAIL_S_MAX - RAIL_EXIT_S));
+  r.pos = { x: 0, y: -40 };
+  const exits: number[] = [];
+  const onRail = new Set(
+    w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').map((b) => b.id),
+  );
+  for (let i = 0; i < Math.round(6 / SIM_DT); i++) {
+    w.goals.blue.gatePos = 1;
+    w.goals.blue.gateOpen = true;
+    w.goals.blue.gateLatch = 1;
+    step(w, SIM_DT, new Map());
+    for (const b of w.balls) {
+      if (!onRail.has(b.id) || b.state.kind === 'rail') continue;
+      onRail.delete(b.id);
+      exits.push(hyp(b.vel.x, b.vel.y));
+    }
+  }
+  const fastest = exits.length ? Math.max(...exits) : 0;
+  check(
+    'and it resumes at ramp speed rather than shooting out of the gate',
+    exits.length >= 3 && fastest < ceiling,
+    `${exits.length} out, fastest ${fastest.toFixed(1)} in/s (ramp ceiling ${ceiling.toFixed(1)})`,
+  );
+}
+
 // ---- the arm's WEIGHT is a coherent set, and two of it are load-bearing ------------
 // There is no single mass constant: the paddle's weight shows up in the drag it puts on
 // what passes under it, the momentum needed to shoulder it, how readily a push eases it
@@ -2450,7 +2528,18 @@ function queueTenth(w: World): void {
   w.match.phase = 'teleop';
   fillBlueRail(w);
   w.robots[0].pos = { x: 0, y: -40 };
-  const byS = new Map<number, number>();
+  // sampled PER ARTIFACT as it crosses each landmark, never bucketed by `s`. Bucketing was
+  // aliased: the height across this stretch falls four inches of z per inch of s, so a
+  // half-inch bucket spans two inches of height, and which artifact happened to write the
+  // bucket last decided whether the check passed. A column that BACKS UP against the queue
+  // outside now comes to rest part way down that stretch, which is correct and made the
+  // aliasing visible.
+  const halfWay = (RAIL_OPEN_S + RAIL_EXIT_S) / 2;
+  let atMouth = 0;
+  let atExit = 99;
+  let mid = 99;
+  const seenMouth = new Set<number>();
+  const seenMid = new Set<number>();
   for (let i = 0; i < 400; i++) {
     w.goals.blue.gatePos = 1;
     w.goals.blue.gateOpen = true;
@@ -2459,12 +2548,17 @@ function queueTenth(w: World): void {
     for (const b of w.balls) {
       if (b.state.kind !== 'rail') continue;
       const sNow = (b.state as { s: number }).s;
-      if (sNow < RAIL_OPEN_S + 0.2) byS.set(Math.round(sNow * 2) / 2, b.z);
+      if (sNow <= RAIL_OPEN_S && !seenMouth.has(b.id)) {
+        seenMouth.add(b.id);
+        atMouth = Math.max(atMouth, b.z); // the height it LEAVES the channel at
+      }
+      if (sNow <= halfWay && !seenMid.has(b.id)) {
+        seenMid.add(b.id);
+        mid = Math.min(mid, b.z);
+      }
+      if (sNow <= RAIL_EXIT_S) atExit = Math.min(atExit, b.z);
     }
   }
-  const atMouth = byS.get(RAIL_OPEN_S) ?? 0;
-  const atExit = byS.get(RAIL_EXIT_S) ?? 99;
-  const mid = byS.get(Math.round(((RAIL_OPEN_S + RAIL_EXIT_S) / 2) * 2) / 2) ?? 99;
   check(
     'an artifact leaves the ramp at ramp height and reaches the floor by the exit',
     atMouth > RAMP_SURFACE_Z - 0.5 && atExit < 0.5,
