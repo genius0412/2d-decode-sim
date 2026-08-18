@@ -788,8 +788,12 @@ export function updateRails(
         // gravity along the LOCAL slope: descending into a hollow speeds it up, cresting
         // the next artifact slows it down
         st.v -= C.OVERFLOW_BUMP * slope * dt;
-        // ...and clambering is still lossy in a way a ramp is not
-        st.v *= Math.max(0, 1 - C.OVERFLOW_DRAG * dt);
+        // ...and clambering is still lossy in a way a ramp is not. A CONSTANT deceleration
+        // opposing the motion, the same shape as the ramp's own rolling loss (see
+        // RAIL_ACCEL): rolling resistance does not grow with speed, so the ride has no
+        // terminal either and its speed is still a consequence of how far it has come.
+        const loss = C.OVERFLOW_ROLL_LOSS * dt;
+        st.v = st.v > 0 ? Math.max(0, st.v - loss) : Math.min(0, st.v + loss);
         st.v = Math.max(st.v, -C.RAIL_TERMINAL);
       } else if (st.overflow && b.z > C.RAMP_SURFACE_Z + 0.05) {
         /**

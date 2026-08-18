@@ -899,7 +899,26 @@ export const OVERFLOW_Z = RAMP_SURFACE_Z + 2 * BALL_RADIUS;
  * terminal (1 → 13 → 21 → 26 → 29 → 31 → 33 → 34 in/s, dead smooth) and the artifacts held
  * a tidy second row at exactly RAIL_PITCH, which is not what rolling over a pile looks like.
  */
-export const OVERFLOW_BUMP = 40; // in/s² per unit slope
+/**
+ * ...AND IT MUST STAY UNDER THE RAMP'S OWN PULL, or the scallop stops being a texture and
+ * becomes a TRAP. The crest between two artifacts is a real potential barrier: if the bump
+ * can cancel `RAIL_ACCEL` the artifact simply parks in a hollow and never comes out.
+ *
+ * This was 40 against a RAIL_ACCEL of 80 — half of gravity, a lurch. RAIL_ACCEL is now 25
+ * (the ramp accelerates the whole way down instead of running at a capped flow speed) and
+ * this was not rescaled with it, so the bump was 1.6x the pull that is supposed to drive the
+ * ride. Measured with four overflow artifacts dropped onto a full column: three of them
+ * stuck on the pile FOREVER — one at s=52.4 held at v=+5 in/s, i.e. being pushed steadily
+ * back UP the ramp — and the fourth crept out at 16 in/s after four seconds. The note under
+ * OVERFLOW_LAND_LOSS had already recorded the shape of this ("past 100 the ride limit-cycles
+ * and nothing exits at all"); dropping RAIL_ACCEL is what walked the ratio into it.
+ *
+ * So it is now a FRACTION of the net pull, and the invariant is one line of arithmetic:
+ * RAIL_ACCEL - OVERFLOW_ROLL_LOSS - OVERFLOW_BUMP * OVERFLOW_SLOPE_MAX > 0, i.e. the ride
+ * always accelerates down-ramp, hardest into a hollow and barely at all over a crest. Smoke
+ * asserts it, because it is the difference between a lurch and a stall.
+ */
+export const OVERFLOW_BUMP = 12; // in/s² per unit slope
 /** cap on that slope — the geometry diverges at the point where one sphere hands over to
  * the next, and an unbounded kick there would fling artifacts off the ramp */
 export const OVERFLOW_SLOPE_MAX = 1.0;
@@ -1053,12 +1072,23 @@ export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
  *
  * This REPLACED a fixed OVERFLOW_FLOW_SPEED. A constant speed made overflow a mode rather
  * than a situation: it could not rejoin the column when the gate opened, and its pace was a
- * number to be argued about instead of a consequence. As a drag it is neither — gravity still
- * drives it, the ramp still sets the scale, and terminal speed while riding is simply
- * RAIL_ACCEL / OVERFLOW_DRAG. Drop onto a drained ramp and it accelerates away like anything
- * else, because nothing about it was ever special except its height.
+ * number to be argued about instead of a consequence. Gravity drives it, the ramp sets the
+ * scale, and nothing about it was ever special except its height.
+ *
+ * IT IS A DECELERATION, NOT A DRAG, for exactly the reason RAIL_ACCEL gives for the ramp:
+ * rolling resistance does not grow with speed, so there is no terminal velocity to reach and
+ * how fast an artifact is going depends on how far it has come. It was a 2.2/s velocity drag,
+ * which pinned the ride at RAIL_ACCEL / 2.2 — 36 in/s when RAIL_ACCEL was 80, and then 11
+ * in/s once it became 25, a crawl beside a ramp lane running 17..54. That is the "overflow
+ * flow is weird and slightly slow": one lane accelerating the whole way down and the other
+ * held at a fifth of it by a constant that was never rescaled.
+ *
+ * As a constant loss the two lanes are the same physics and the ratio is fixed and readable:
+ * over the same stretch an elevated artifact reaches sqrt((RAIL_ACCEL - this) / RAIL_ACCEL)
+ * of the ramp lane's speed — 0.8 — because climbing over a pile costs it, not because it is
+ * a different kind of thing.
  */
-export const OVERFLOW_DRAG = 2.2; // 1/s — terminal ride speed ~RAIL_ACCEL/OVERFLOW_DRAG
+export const OVERFLOW_ROLL_LOSS = 9; // in/s² — net ride pull is RAIL_ACCEL minus this
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s
 /**

@@ -81,7 +81,9 @@ import {
   HOPPER_CAPACITY,
   RAIL_EXIT_S,
   RAIL_S_MAX,
-  OVERFLOW_DRAG,
+  OVERFLOW_ROLL_LOSS,
+  OVERFLOW_SLOPE_MAX,
+  OVERFLOW_BUMP,
   RAIL_ACCEL,
   OVERFLOW_Z,
   BASIN_FLOOR_Z,
@@ -1925,11 +1927,12 @@ function queueTenth(w: World): void {
   startMatch(w);
   fillBlueRail(w);
   queueTenth(w);
-  // long enough for an OVERFLOW artifact to clamber the length of the ramp. It rides over
-  // the retained column rather than rolling a clear ramp, so it is slow (OVERFLOW_FLOW_SPEED)
-  // — the window has to follow that constant rather than a number tuned to an older one.
-  // terminal ride speed while clambering the column is RAIL_ACCEL / OVERFLOW_DRAG
-  run(w, cmd({}), (RAIL_S_MAX / (RAIL_ACCEL / OVERFLOW_DRAG)) * 2.5);
+  // long enough for an OVERFLOW artifact to clamber the length of the ramp. It rides over the
+  // retained column rather than rolling a clear ramp, so it is slower than the ramp lane —
+  // the window follows the ride's own physics rather than a number tuned to an older one.
+  // Clambering accelerates at RAIL_ACCEL - OVERFLOW_ROLL_LOSS, so the trip takes
+  // sqrt(2*s/a); doubled for the lurch over the scallops and the landing at the end.
+  run(w, cmd({}), Math.sqrt((2 * RAIL_S_MAX) / (RAIL_ACCEL - OVERFLOW_ROLL_LOSS)) * 2);
   const g = w.goals.blue;
   check(
     '10th ball meeting a full column overflows (1 pt)',
@@ -5631,14 +5634,87 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     zHi - zLo > 0.3,
     `z ${zLo.toFixed(2)}..${zHi.toFixed(2)} (span ${(zHi - zLo).toFixed(2)}in)`,
   );
-  // the ride is only mildly bumpy BY GEOMETRY: on a packed column the spheres are touching,
-  // so a rider dips just 0.7in between crests. It must not be perfectly monotonic, though.
-  let stalls = 0;
-  for (let i = 1; i < speeds.length; i++) if (speeds[i] < speeds[i - 1] - 1e-9) stalls++;
+  /**
+   * ...and the ride LURCHES: the rate it gains speed at swings by several times over one
+   * artifact, hardest dropping into a hollow and least climbing the next crest.
+   *
+   * This used to assert the rider LOSES speed on a crest, which it did — but from the
+   * velocity drag that has since been replaced, not from the geometry. A bump strong enough
+   * to actually reverse the gain is also strong enough to STRAND the rider on the uphill
+   * shoulder of the topmost artifact, where nothing above it can ever push it back on: swept
+   * over 26 starting states, that begins at OVERFLOW_BUMP 19 against a net pull of 16 and it
+   * never gets better. On a packed column the crests are 0.7in deep, so what a rider can
+   * honestly do is surge and hesitate.
+   */
+  const accels: number[] = [];
+  for (let i = 1; i < speeds.length; i++) accels.push((speeds[i] - speeds[i - 1]) / SIM_DT);
+  const gainLo = Math.min(...accels);
+  const gainHi = Math.max(...accels);
   check(
-    '...and it loses speed cresting each artifact instead of accelerating monotonically',
-    stalls > 0,
-    `${stalls} decelerating ticks over ${speeds.length}`,
+    '...and it LURCHES over the spheres rather than gaining speed at one steady rate',
+    accels.length > 30 && gainHi > gainLo * 2 + 1,
+    `gain ${gainLo.toFixed(1)}..${gainHi.toFixed(1)} in/s² over ${accels.length} ticks`,
+  );
+  // ...which is exactly the invariant that keeps it a lurch and not a trap.
+  check(
+    'the scallop never cancels the ramp: OVERFLOW_BUMP * slope stays under the net ride pull',
+    OVERFLOW_BUMP * OVERFLOW_SLOPE_MAX < RAIL_ACCEL - OVERFLOW_ROLL_LOSS,
+    `${(OVERFLOW_BUMP * OVERFLOW_SLOPE_MAX).toFixed(0)} vs ${(RAIL_ACCEL - OVERFLOW_ROLL_LOSS).toFixed(0)} in/s²`,
+  );
+}
+
+// ---- the overflow lane FLOWS, and at a speed the ramp explains ------------------
+// Reported: "ball flow for overflow is weird and slightly slow". It was both, and from one
+// cause: OVERFLOW_BUMP 40 and a 2.2/s velocity drag were sized against a RAIL_ACCEL of 80 and
+// were never rescaled when the ramp became 25. The drag pinned the ride at 25/2.2 = 11 in/s
+// against a ramp lane running 17..54, and the bump — now 1.6x the pull meant to drive the
+// ride — turned the scallops into traps: measured, three of four riders dropped onto a full
+// column stuck on it forever, one of them held at v = +5 in/s, being pushed steadily back UP
+// the ramp.
+{
+  const starts = [46, 43.5, 42.8, 40.2, 35, 30, 25, 20, 12];
+  const exits: number[] = [];
+  const times: number[] = [];
+  let stuck = 0;
+  for (const s0 of starts) {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    fillBlueRail(w);
+    w.robots[0].pos = { x: 0, y: -40 };
+    const rider = w.balls[RAMP_SLOTS];
+    rider.state = { kind: 'rail', goal: 'blue', s: s0, v: 0, overflow: true, pending: false };
+    rider.pos = railPos('blue', s0);
+    rider.vel = { x: 0, y: 0 };
+    rider.z = OVERFLOW_Z;
+    rider.vz = 0;
+    let out = 0;
+    for (let i = 0; i < Math.round(8 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({})]]));
+      if (rider.state.kind !== 'rail') {
+        out = (i + 1) * SIM_DT;
+        exits.push(hyp(rider.vel.x, rider.vel.y));
+        times.push(out);
+        break;
+      }
+    }
+    if (!out) stuck++;
+  }
+  check(
+    'every overflow artifact clambers off the column instead of parking on it',
+    stuck === 0,
+    `${stuck} of ${starts.length} still on the pile after 8s`,
+  );
+  // the honest band: the ride accelerates at RAIL_ACCEL - OVERFLOW_ROLL_LOSS the whole way,
+  // so it must land between "the ramp lane's speed" (it is lossier than that) and the crawl a
+  // fixed drag used to impose (RAIL_ACCEL / 2.2 = 11 in/s, which is what read as slow).
+  const slowest = Math.min(...exits);
+  const fastest = Math.max(...exits);
+  const rampLane = Math.sqrt(2 * RAIL_ACCEL * (RAIL_S_MAX - RAIL_EXIT_S));
+  check(
+    '...and leaves the ramp slower than the ramp lane but far above the old drag crawl',
+    slowest > 14 && fastest < rampLane,
+    `exits ${slowest.toFixed(0)}..${fastest.toFixed(0)} in/s in ${Math.min(...times).toFixed(1)}..${Math.max(...times).toFixed(1)}s (ramp lane tops out at ${rampLane.toFixed(0)})`,
   );
 }
 
