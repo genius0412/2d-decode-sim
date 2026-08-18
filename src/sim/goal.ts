@@ -1,5 +1,6 @@
 import type { Alliance, Artifact, RobotCommand, RobotState, World } from '../types';
 import * as C from '../config';
+import type { Rect } from './field';
 import {
   basinFunnelTarget,
   gateArmRect,
@@ -16,7 +17,7 @@ import {
   viewAngleOf,
 } from './field';
 import { addClassified, addOverflow } from './scoring';
-import { approach, nextRandom, hyp, rot } from '../math';
+import { approach, nextRandom, dcos, hyp, rot } from '../math';
 import {
   chassisCorners,
   pointDepthInChassis,
@@ -182,6 +183,56 @@ export function gateColliderPos(
   }
   if (ram <= 0) return goal.gatePos;
   return Math.min(1, goal.gatePos + gateLiftRate(ram) * dt);
+}
+
+/** the handle's footprint at a given open fraction — the SAME cuboid `decodeGateArms` builds */
+function gateArmSweep(a: Alliance, pos: number): Rect | null {
+  const g = goalSide(a);
+  const proj = C.GATE_ARM_SHORT * dcos(pos * C.GATE_LIFT);
+  if (proj <= 0) return null;
+  const pivotX = g * (C.FIELD_HALF - C.CLASSIFIER_W);
+  const x0 = pivotX - g * proj;
+  return {
+    x0: Math.min(pivotX, x0),
+    x1: Math.max(pivotX, x0),
+    y0: C.GATE_TAPE_Y - C.GATE_ARM_THICK / 2,
+    y1: C.GATE_TAPE_Y + C.GATE_ARM_THICK / 2,
+  };
+}
+
+/**
+ * How high a ROBOT standing in the handle's swing holds the arm up.
+ *
+ * THE HANDLE'S REACH GROWS AS IT CLOSES: `proj = GATE_ARM_SHORT * cos(pos * GATE_LIFT)` is
+ * shortest at fully open and longest at shut, because a top-down view of a lever swinging down
+ * is a bar getting longer. That bar is a static in the robot solve, so an arm coming down on a
+ * robot parked in the gate zone pushed it out of the way — measured 3.85in head-on and 6.68in
+ * at an angle. An arm light enough that a bump flicks it open does not move a 20-42lb robot.
+ *
+ * So it does what it already does for an artifact (`gatewayRest`): it comes to REST on what is
+ * under it. The arm is the thing that gives way, not the robot, and because the collider is
+ * built from `gatePos` it then never grows into anyone — the shove is gone at its source rather
+ * than patched in the collider.
+ *
+ * Bisected rather than solved, so the test is exactly the SAT the solve itself uses, with a
+ * fixed iteration count to stay deterministic.
+ */
+function gateRobotRest(world: World, a: Alliance): number {
+  const blocked = (pos: number): boolean => {
+    const rect = gateArmSweep(a, pos);
+    if (!rect) return false;
+    return world.robots.some((r) => robotIntersectsRect(r, rect));
+  };
+  if (!blocked(world.goals[a].gatePos)) return 0;
+  if (blocked(1)) return 1;
+  let lo = world.goals[a].gatePos;
+  let hi = 1;
+  for (let i = 0; i < 12; i++) {
+    const mid = (lo + hi) / 2;
+    if (blocked(mid)) lo = mid;
+    else hi = mid;
+  }
+  return hi;
 }
 
 /** balls of a goal's rail stack (non-overflow), sorted from the gate up */
@@ -1265,6 +1316,16 @@ export function updateGates(
       goal.gatePos = Math.max(0, goal.gatePos + goal.gateVel * dt);
       if (goal.gatePos >= 1) {
         goal.gatePos = 1;
+        goal.gateVel = 0;
+      }
+      // A ROBOT IN THE SWING IS A HARD FLOOR — the arm rests ON it (see `gateRobotRest`). Hard,
+      // not stop-only like the artifact floor below, because the arm has to SIT there stably: a
+      // stop-only version settles to the just-touching height, reads as clear on the next tick,
+      // falls again, and buzzes. A robot cannot arrive under a shut arm and lever it open this
+      // way either — the handle collider is what keeps it out while the arm is down.
+      const robotRest = gateRobotRest(world, a);
+      if (goal.gatePos < robotRest) {
+        goal.gatePos = robotRest;
         goal.gateVel = 0;
       }
       // A STALLED ARTIFACT UNDER THE PADDLE IS A FLOOR, NOT A LIFT. It bears the arm's weight

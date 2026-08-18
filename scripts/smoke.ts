@@ -2294,14 +2294,22 @@ function queueTenth(w: World): void {
   );
 }
 
-// ---- the intake mouth does not hold the gate open ----------------------------------
-// Reported: "when i gate intake and the ball flow is stalled in a position where the gate is
-// in between two artifacts perfectly, the gate should be closing but its not". Touch-hold
-// tested the INTAKE-EXTENDED footprint, and gate intaking parks exactly that reach across the
-// arm — so the mouth re-armed the latch every tick and pinned the arm fully open over a
-// completely stalled column. Holding the arm is done with a front CORNER, which is bumper.
+// ---- the arm comes down on a stalled column, and rests on a robot rather than shoving --
+// Two rules that meet here. "when i gate intake and the ball flow is stalled ... the gate
+// should be closing but its not" — touch-hold tested the INTAKE-EXTENDED footprint, so the
+// open mouth re-armed the latch every tick and pinned the arm fully open; holding the arm is
+// done with a front CORNER, which is bumper, so touch-hold is the chassis.
+//
+// And "my robot is getting pushed back by the gate" — the handle's reach GROWS as it closes
+// (a lever swinging down is a bar getting longer from above), and it is a static in the robot
+// solve, so it shoved a parked robot 3.85in head-on and 6.68in at an angle. The arm is the
+// light thing: it comes to rest ON a robot in its swing, exactly as it does on an artifact.
+//
+// So the arm still comes down whenever it is free to, and where a robot is in the way it stops
+// on the robot instead of moving it.
 {
   const rests: number[] = [];
+  let worstShove = 0;
   for (const y0 of [-12, -10, -8, -6]) {
     for (const headDeg of [19, 45, 70]) {
       const w = mkWorld('match', 'red', 5, { intake: 'vector', width: 17.5, length: 14.5 });
@@ -2334,16 +2342,29 @@ function queueTenth(w: World): void {
       g.gatePos = 1;
       g.gateOpen = true;
       g.gateLatch = GATE_OPEN_LATCH_S;
+      // let it settle against the field first, so spawn overlap is not read as gate shove
+      for (let i = 0; i < 40; i++) {
+        g.gatePos = 1;
+        g.gateLatch = GATE_OPEN_LATCH_S;
+        step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+      }
+      const x0 = r.pos.x;
       for (let i = 0; i < Math.round(4 / SIM_DT); i++) {
         step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+        worstShove = Math.max(worstShove, x0 - r.pos.x);
       }
       rests.push(g.gatePos);
     }
   }
   check(
-    'a stalled column lets the arm come down even while a robot is intaking the outflow',
-    rests.every((p) => p < 1),
-    `resting gatePos: ${rests.map((p) => p.toFixed(2)).join(' ')}`,
+    'the arm comes down on a stalled column when it is free to',
+    rests.some((p) => p < GATE_PASS_FRAC),
+    `resting gatePos across poses: ${rests.map((p) => p.toFixed(2)).join(' ')}`,
+  );
+  check(
+    '...and never shoves the robot to get there — it rests on it instead',
+    worstShove < 1,
+    `worst displacement ${worstShove.toFixed(2)}in (was 3.85in head-on, 6.68in angled)`,
   );
 }
 
