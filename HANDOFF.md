@@ -1,4 +1,86 @@
-# HANDOFF — 2026-08-15 (the classifier: possession, the gate, and the ramp) — alpha only
+# HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
+
+Branch **alpha**, commit `1f95735`. Working tree **CLEAN**. `npm test` ALL PASS ·
+`npm run build` green · `npm run server:check` green. **Not deployed** — production
+`dohun-sim-decode` is still on an older build and still owes the migrations listed
+further down.
+
+Do not merge to main. Standing rule.
+
+## Where this session ended
+
+Two reports, both about the DECODE classifier ramp, both traced to the same kind of thing:
+a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
+was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
+
+### A stalled column no longer winds up (`a653810`)
+
+*"after ball flow resumes after being stalled, it shoots down extremely quickly"* — a
+blocked artifact went on accumulating `RAIL_ACCEL` into `v` every tick it stood still. The
+only cap on a blocked artifact's speed was the floor's, and an OPEN gate declares "no cap"
+(`exitFloorV = -Infinity`), so an open-but-blocked drain — a robot parked on the outflow,
+or the doorway busy — pinned the column in place while `v` marched -5, -10, -15 … to the
+`RAIL_TERMINAL` **safety** cap of 120 in/s in 4.8 s. The instant the block cleared they left
+at up to **86 in/s** and the whole ramp emptied in one burst.
+
+The fix is one line: `wasV` — the artifact's speed BEFORE this tick's gravity — is a cap in
+its own right alongside the floor's, so `st.v = Math.max(st.v, floorV, wasV)`. Whatever
+holds an artifact up pushes back exactly as hard as gravity pulls, so being held is never an
+acceleration; it still keeps the momentum it ARRIVED with, which is what the exit lip has
+always done. A FLOWING drain is untouched — an artifact in a moving column is in contact for
+a tick at a time, because the one ahead has more runway and opens the gap itself.
+
+**Capping at the DOORWAY artifact's speed was tried first and is a different bug**: that
+queue is nudged along at ~22 in/s, so the whole ramp is throttled to it — mean release gap
+0.58 s against 0.32 s, and a held gate stopped emptying the ramp. The note in `updateRails`
+records it so it is not re-attempted.
+
+### The overflow lane flows again (`1f95735`)
+
+*"ball flow for overflow is weird and slightly slow"* — it was both, from two constants:
+
+- **`OVERFLOW_DRAG` → `OVERFLOW_ROLL_LOSS`.** A 2.2/s velocity drag pins the ride at a
+  terminal of `RAIL_ACCEL / 2.2`: 36 in/s under the old ramp, **11 in/s** under this one,
+  against a ramp lane running 17..54. It is now a CONSTANT deceleration (9 in/s²) for the
+  same reason `RAIL_ACCEL`'s own note gives — rolling resistance does not grow with speed,
+  so there is no terminal and speed is a consequence of distance travelled. Both lanes are
+  one physics again and the ratio is readable: `sqrt((RAIL_ACCEL − loss) / RAIL_ACCEL)` = 0.8.
+- **`OVERFLOW_BUMP` 40 → 12.** At 40 the scallop was 1.6× the pull meant to drive the ride,
+  which stops being a texture and becomes a TRAP: four riders dropped onto a full column,
+  three stuck on it forever (one held at **v = +5 in/s**, pushed steadily back UP the ramp)
+  and the fourth creeping out at 16 in/s after four seconds. The invariant is arithmetic —
+  `RAIL_ACCEL − OVERFLOW_ROLL_LOSS − OVERFLOW_BUMP × OVERFLOW_SLOPE_MAX > 0` — and swept
+  over 26 starting states the strandings begin the tick it goes negative (bump 19). At 12
+  the ride gains speed at 4..28 in/s² and every rider comes off: exits 18..29 in/s in
+  1.4..2.9 s.
+
+**A bump strong enough to make the rider DECELERATE on a crest is strong enough to strand
+it** on the uphill shoulder of the topmost artifact, where nothing above can push it back
+on. The old "loses speed cresting each artifact" check was passing off the velocity drag,
+not the geometry; it now asserts the SWING in the rate of gain, plus the invariant itself.
+
+### Checks added
+
+- `a column held against a block does not accumulate speed while it waits` (2 s vs 6 s into
+  a stall, no growth) and `...and it resumes at ramp speed rather than shooting out of the
+  gate` (under the ramp's own `sqrt(2as)` ceiling).
+- `every overflow artifact clambers off the column instead of parking on it` (9 starting
+  heights) and `...and leaves the ramp slower than the ramp lane but far above the old drag
+  crawl`.
+- The `LURCHES` + invariant pair replacing the old crest-deceleration check.
+- The ramp-height check is sampled PER ARTIFACT now: its half-inch `s` buckets spanned two
+  inches of `z`, and a column that comes to REST part way out of the mouth (which it now
+  legitimately does) made the aliasing visible.
+
+## Next steps
+
+1. Play-test the drain by hand — both fixes are measured headlessly, and the feel of a
+   tapped gate against a packed column is the thing worth eyeballing.
+2. The rest of the standing list below is unchanged.
+
+---
+
+# HANDOFF — 2026-08-15 (superseded) (the classifier: possession, the gate, and the ramp) — alpha only
 
 Branch **alpha**, commit `94e08ae` + UNCOMMITTED gate-cadence work (see "Drain cadence, part 2").
 `npm test` ALL PASS (~237 checks) · `npm run build` green · **working tree DIRTY** — the
