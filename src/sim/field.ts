@@ -1,6 +1,6 @@
 import type { Alliance, RobotSpec, StartPose, Vec2 } from '../types';
 import * as C from '../config';
-import { rot, hyp, dsin } from '../math';
+import { rot, hyp, dsin, dcos } from '../math';
 import { intakeMountOf } from '../games/chain/mounts';
 
 export type { StartPose } from '../types';
@@ -168,8 +168,8 @@ export function tunnelExit(a: Alliance): Vec2 {
 }
 
 export function tunnelExitVel(a: Alliance): Vec2 {
-  const g = goalSide(a);
-  return { x: -g * C.TUNNEL_EXIT_VEL.inward, y: -C.TUNNEL_EXIT_VEL.along };
+  void a; // the channel runs down the wall for BOTH alliances — the exit is the same heading
+  return { x: 0, y: -C.TUNNEL_EXIT_VEL.along };
 }
 
 /** the SECRET TUNNEL floor strip beneath a goal's classifier (belongs to the
@@ -654,4 +654,20 @@ export function railWander(s: number, id: number, elevated: boolean): number {
   const k = elevated ? C.RAIL_WANDER_K * 2.3 : C.RAIL_WANDER_K;
   const amp = slop * (elevated ? 1 : C.RAIL_WANDER_AMP);
   return amp * dsin(phase + s * k);
+}
+
+/**
+ * ...and its SLOPE — how far across the channel the weave carries per inch travelled.
+ *
+ * The artifact really is moving sideways as it comes down the groove, a little, and which way
+ * depends on where in its own weave it happens to be. That is the only lateral motion an
+ * artifact leaving the ramp has any right to, and it is what the release hands it: no fan is
+ * synthesised, and unlike a fan it is signed, so a drain does not leave on one diagonal.
+ */
+export function railWanderRate(s: number, id: number, elevated: boolean): number {
+  const slop = C.CLASSIFIER_W / 2 - C.BALL_RADIUS;
+  const phase = (id % 16) * 2.399963;
+  const k = elevated ? C.RAIL_WANDER_K * 2.3 : C.RAIL_WANDER_K;
+  const amp = slop * (elevated ? 1 : C.RAIL_WANDER_AMP);
+  return amp * k * dcos(phase + s * k);
 }

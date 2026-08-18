@@ -1463,24 +1463,27 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   startMatch(w);
   w.match.phase = 'teleop';
   fillBlueRail(w);
-  // parked ON the outflow: the gate is wide open and the drain is blocked anyway
+  // parked ON the outflow, and HELD there every tick: the gate is wide open and the drain is
+  // blocked anyway. Pinned rather than driven, because what is under test is the column's
+  // speed while it waits, not how well a robot can hold a spot against the wall.
   const r = w.robots[0];
-  const z = gateZone('blue');
-  r.pos = { x: z.x1 + 5, y: (z.y0 + z.y1) / 2 };
+  const block = railPos('blue', RAIL_EXIT_S);
+  const park = { x: block.x - 3, y: block.y - 4 };
   r.heading = Math.PI;
   r.fieldCentric = false;
   const railV = () =>
     w.balls
       .filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue')
       .map((b) => Math.abs((b.state as { v: number }).v));
-  const press = new Map([[0, cmd({ driveY: 1 })]]);
   const perTick: number[] = [];
   let stalledLeft = 0;
   for (let i = 0; i < Math.round(6 / SIM_DT); i++) {
     w.goals.blue.gatePos = 1;
     w.goals.blue.gateOpen = true;
     w.goals.blue.gateLatch = 1;
-    step(w, SIM_DT, press);
+    r.pos = { ...park };
+    r.vel = { x: 0, y: 0 };
+    step(w, SIM_DT, new Map());
     perTick.push(Math.max(0, ...railV()));
     stalledLeft = railV().length;
   }
@@ -1504,6 +1507,7 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   // than a few pitches of runway left.
   const ceiling = Math.sqrt(2 * RAIL_ACCEL * (RAIL_S_MAX - RAIL_EXIT_S));
   r.pos = { x: 0, y: -40 };
+  r.vel = { x: 0, y: 0 };
   const exits: number[] = [];
   const onRail = new Set(
     w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').map((b) => b.id),
@@ -2035,6 +2039,47 @@ function queueTenth(w: World): void {
     'the drain settles ALONG the wall, not out on a diagonal',
     offWall.filter((d) => d < 20).length >= 7,
     `off-wall=${offWall.map((d) => d.toFixed(0)).join(',')}`,
+  );
+}
+
+// ---- the ramp discharges STRAIGHT DOWN its own line -----------------------------
+// "All the balls keep coming out of the gate at the same angle" — the release leaned every
+// artifact off the wall by a jittered 5-15 degrees, and because the jitter varied the lean's
+// MAGNITUDE and never its SIGN, the whole drain left on one diagonal. The channel runs down
+// the wall and an artifact rolls off the END of it, so it leaves in the direction it was
+// already going. The only sideways motion it keeps is the weave it was doing across the
+// groove (railWanderRate), which is signed and per artifact.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  w.match.phase = 'teleop';
+  fillBlueRail(w);
+  w.robots[0].pos = { x: 0, y: -40 };
+  const tracked = w.balls.slice(0, 9);
+  const seen = new Set<number>();
+  const angles: number[] = [];
+  for (let i = 0; i < Math.round(12 / SIM_DT); i++) {
+    w.goals.blue.gatePos = 1;
+    w.goals.blue.gateOpen = true;
+    w.goals.blue.gateLatch = 1;
+    step(w, SIM_DT, new Map([[0, cmd({})]]));
+    for (const b of tracked) {
+      if (b.state.kind === 'rail' || seen.has(b.id)) continue;
+      seen.add(b.id);
+      // the heading it leaves on, in degrees off straight-down-tunnel
+      angles.push((Math.atan2(b.vel.x, -b.vel.y) * 180) / Math.PI);
+    }
+  }
+  const worst = Math.max(...angles.map((d) => Math.abs(d)));
+  check(
+    'artifacts leave the gate straight down the tunnel, not on a lean',
+    angles.length >= 7 && worst < 5,
+    `${angles.length} out, worst ${worst.toFixed(1)}deg off straight (the fan was 5-15deg)`,
+  );
+  check(
+    '...and what lean they do have is SIGNED — a drain is not one diagonal',
+    angles.some((d) => d > 0.05) && angles.some((d) => d < -0.05),
+    `headings ${angles.map((d) => d.toFixed(1)).join(',')}`,
   );
 }
 

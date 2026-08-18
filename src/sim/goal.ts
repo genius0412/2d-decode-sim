@@ -12,12 +12,13 @@ import {
   convexOverlap,
   railPos,
   railWander,
+  railWanderRate,
   rectCorners,
   tunnelExitVel,
   viewAngleOf,
 } from './field';
 import { addClassified, addOverflow } from './scoring';
-import { approach, nextRandom, dcos, hyp, rot } from '../math';
+import { approach, dcos, hyp, rot } from '../math';
 import {
   chassisCorners,
   pointDepthInChassis,
@@ -1126,9 +1127,6 @@ export function updateRails(
         goal.classifiedCount++;
         addClassified(world, a);
       }
-      const vel = tunnelExitVel(a);
-      const r1 = nextRandom(world.rngState);
-      world.rngState = r1.state;
       /**
        * MOMENTUM IS CARRIED OFF THE RAMP, not replaced at the bottom of it.
        *
@@ -1148,12 +1146,22 @@ export function updateRails(
        */
       // every artifact now carries its OWN speed off the ramp, overflow included — there is
       // no separate flow constant to substitute in
-      const st0 = b.state as { v: number };
+      const st0 = b.state as { s: number; v: number; overflow: boolean };
       const speed = Math.abs(st0.v);
-      // The fan is a DIRECTION, not a speed: the exit heads down-tunnel with a little
-      // off-the-wall lean, varied per artifact so a drain spreads into a cone instead of
-      // single file. Normalised, so `speed` is the exact magnitude that comes out — the
-      // artifact leaves the ramp at precisely the speed the ramp gave it.
+      /**
+       * ...AND IN THE DIRECTION IT WAS ALREADY GOING. There is no fan.
+       *
+       * The exit used to lean off the wall by a jittered 5-15 degrees. The jitter varied the
+       * lean's MAGNITUDE and never its sign, so every artifact left on the same diagonal and
+       * the drain crossed the floor as one group — "all the balls keep coming out of the gate
+       * at the same angle". A synthesised cone cannot fix that; it only decides how wide the
+       * one diagonal is.
+       *
+       * The channel runs down the wall and the artifact rolls off the END of it, so it just
+       * goes straight down. The spread comes from what it runs into — artifacts carom off
+       * whichever ones stopped first, and the pile in front of the gate is different every
+       * time, which is a real cause rather than a shape applied to all of them.
+       */
       /**
        * IT ROLLS OFF A LIP AND FALLS. The ramp discharges above the floor (manual 9.8.3:
        * the gate's contact area is 3.75-5.5in up), so an artifact leaving it drops, lands,
@@ -1168,8 +1176,6 @@ export function updateRails(
        * scripted, and the scatter comes from where each one happens to land rather than
        * from a fan applied to all of them.
        */
-      const lean = (C.TUNNEL_EXIT_VEL.inward / C.TUNNEL_EXIT_VEL.along) * (0.5 + r1.value);
-      const norm = Math.sqrt(1 + lean * lean);
       /**
        * IT IS ON THE FLOOR THE TICK IT LEAVES, AT THE SPEED THE RAMP GAVE IT.
        *
@@ -1188,7 +1194,12 @@ export function updateRails(
       b.state = { kind: 'ground' };
       b.z = 0;
       b.vz = 0;
-      b.vel = { x: (Math.sign(vel.x) * lean * speed) / norm, y: (-speed) / norm };
+      // ...and the only sideways motion it has any claim to: the weave it was already doing
+      // across the groove. `railWanderRate` is how fast the groove was carrying it across per
+      // inch travelled, so times its own speed it IS that artifact's lateral velocity —
+      // signed, different for each, and a couple of in/s, not a fan.
+      const drift = goalSide(a) * railWanderRate(st0.s, b.id, st0.overflow) * st0.v;
+      b.vel = { x: drift, y: -speed };
     }
   }
 }
@@ -1272,6 +1283,9 @@ export function updateGates(
     // (LOCALS, deliberately — GoalState rides the network snapshot, and both are
     // recomputed from world state every tick anyway)
     let arrivalSpeed = 0;
+    // ...and how high the arm has to be for that artifact to get UNDER the paddle at all,
+    // rather than meeting its face. See the knock below.
+    let arrivalRest = Infinity;
     // ...and how high the artifacts physically sitting under the arm hold it, which is a
     // question about GEOMETRY and not about speed: the paddle's edge lands where the
     // vertical at the gate line meets an artifact's surface (gateRestOn). Without this the
@@ -1298,7 +1312,10 @@ export function updateGates(
       const dPrev = d - b.state.v * dt; // v is negative down-ramp, so it was higher up
       if (dPrev > C.BALL_RADIUS && d <= C.BALL_RADIUS) {
         const speed = -b.state.v;
-        if (speed > arrivalSpeed) arrivalSpeed = speed;
+        if (speed > arrivalSpeed) {
+          arrivalSpeed = speed;
+          arrivalRest = gateRestOn(d);
+        }
       }
       // GEOMETRY is only ever about what is genuinely under the paddle.
       if (!underPaddle(d)) continue;
@@ -1347,7 +1364,29 @@ export function updateGates(
        * artifact lands while the arm is still high; spread wider it arrives to find the arm
        * already shut. That is the whole of it.
        */
-      if (wasPos >= C.GATE_PASS_FRAC && arrivalSpeed > 0) {
+      /**
+       * WHAT THE ARM HAS TO BE ABOVE FOR THE KNOCK TO LAND is the height the ARRIVING
+       * ARTIFACT'S OWN SURFACE offers the paddle, not the pass fraction.
+       *
+       * It was GATE_PASS_FRAC, on the reasoning that an artifact must never lever open a gate
+       * that is already shut — which is right, and is not what that test says. GATE_PASS_FRAC
+       * is where an artifact can get THROUGH; the paddle is reachable from underneath long
+       * before that. So an arm a hair under the pass line was a wall: the artifact behind the
+       * one that just left arrived, found 0.35, and was simply stopped. "A tap only lets out
+       * one ball, because a ball coming out is not lifting the gate back up."
+       *
+       * `gateRestOn(d)` at the moment of contact is the honest threshold — it IS the height
+       * the paddle sits at when it is resting on that artifact's surface. Above it, the ball
+       * is under the paddle edge and its momentum swings the arm; below it, the paddle's face
+       * is in the way and the ball is stopped, which is exactly what a shut gate must do.
+       * A flat arm (0) is therefore still a wall to an artifact arriving at any speed, so a
+       * SHUT gate still retains — the retention checks are what pin this down.
+       *
+       * The knock is still only worth what the artifact is carrying, and that self-limits:
+       * from 0.2 the rise is (speed * GATE_KNOCK)^2 / (2 * GATE_GRAVITY), so ~25 in/s is
+       * needed to reach the pass line and a faltering flow lands short and ends the drain.
+       */
+      if (arrivalSpeed > 0 && wasPos >= arrivalRest) {
         goal.gateVel = Math.max(goal.gateVel, arrivalSpeed * C.GATE_KNOCK);
       }
 

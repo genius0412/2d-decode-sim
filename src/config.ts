@@ -1440,18 +1440,22 @@ export const RAIL_OPEN_S = CLASSIFIER_GATE_Y - CLASSIFIER_Y0;
 /** where released/overflow balls emerge onto the floor, on the goal's wall */
 export const TUNNEL_EXIT = { x: 68, y: -3 };
 /**
- * Gate-release exit DIRECTION (and the magnitude of the doorway nudge). An artifact leaves
- * with whatever speed the ramp gave it, so only the RATIO matters here: `inward/along` is the
- * off-the-wall lean, jittered per artifact into a fan.
+ * THE RAMP DISCHARGES STRAIGHT DOWN ITS OWN LINE. This is the speed of the doorway nudge and
+ * nothing else — there is no direction left to configure.
  *
- * The lean is small because the ramp discharges ALONG the wall — an artifact rolls out of the
- * channel, it is not thrown across the floor. At 8 the fan was 10-29 degrees, which over the
- * ~40in an artifact travels left the drain a median 13in off a 6in-wide tunnel: all of them
- * drifting out on the same diagonal, which is exactly what it looked like. At 4 it is 5-15
- * degrees and the drain settles along the tunnel. The SPREAD does not come from this number
- * anyway — it comes from artifacts caroming off whichever ones stopped first.
+ * There used to be an `inward` term, an off-the-wall lean of 4 against 22, jittered per
+ * artifact into a 5-15 degree fan. Every artifact leaned the SAME WAY (the jitter varied the
+ * magnitude, never the sign), so the whole drain left on one diagonal and crossed the floor
+ * together: "all the balls keep coming out of the gate at the same angle". Widening or
+ * narrowing the fan only changes how wide that one diagonal is.
+ *
+ * The classifier channel runs down the wall and an artifact rolls off the END of it, so the
+ * direction it leaves in is the direction it was already going — straight down the tunnel,
+ * carrying the speed the ramp gave it. Nothing is synthesised. The SPREAD comes from where
+ * they pile up: artifacts carom off whichever ones stopped first, which is a real cause and
+ * fans them differently every time instead of identically every time.
  */
-export const TUNNEL_EXIT_VEL = { along: 22, inward: 4 }; // toward audience, off the wall
+export const TUNNEL_EXIT_VEL = { along: 22 }; // in/s down-tunnel, toward the audience
 
 // ---------------------------------------------------------------- zones ----
 /** small audience-side launch zone: apex (0,-48), base 2 tiles on the wall */
