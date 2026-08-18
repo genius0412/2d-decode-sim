@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `1f95735`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `7d4239d`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,8 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Two reports, both about the DECODE classifier ramp, both traced to the same kind of thing:
+Four reports, all about the DECODE classifier ramp. The first two trace to the same kind of
+thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
 
@@ -71,6 +72,55 @@ not the geometry; it now asserts the SWING in the rate of gain, plus the invaria
 - The ramp-height check is sampled PER ARTIFACT now: its half-inch `s` buckets spanned two
   inches of `z`, and a column that comes to REST part way out of the mouth (which it now
   legitimately does) made the aliasing visible.
+
+### The exit goes straight down (`fb286db`)
+
+*"All the balls keep coming out of the gate at the same angle."* The release leaned every
+artifact 5-15 degrees off the wall, and the jitter varied the lean's MAGNITUDE and never
+its SIGN — so the whole drain left on the same diagonal. A wider or narrower fan only
+changes how wide that one diagonal is, so the fan is gone rather than retuned.
+
+The channel runs down the wall and the artifact rolls off the END of it, so it leaves in
+the direction it was already going. The only sideways motion it has a claim to is the
+weave it was doing across the groove, and `railWanderRate` (new, in field.ts) is exactly
+that — how far the groove carries it per inch travelled, so times its own speed it IS
+that artifact's lateral velocity. Signed, a couple of in/s, different per artifact.
+Measured over a nine-artifact drain: **2.5, -3.0, 1.7, 0.5, -2.4, 3.0, -1.9, -0.2, 2.2
+degrees**. `TUNNEL_EXIT_VEL` keeps only its speed (the doorway nudge's).
+
+### A ball coming out lifts the arm, and pays for it (`7d4239d`)
+
+*"A tap only lets out one ball now… a ball coming out is not lifting the gate back up."*
+Two things, and the second is the interesting one.
+
+- **The knock was gated on `GATE_PASS_FRAC`**, which is where an artifact gets THROUGH, not
+  where it can reach the paddle from underneath. An arm a hair below the pass line was a
+  wall. The threshold is now `gateRestOn` at the moment of contact — the height the paddle
+  sits at when resting on that artifact's surface. A FLAT arm is still a wall at any speed,
+  so retention is untouched.
+- **The knock was FREE.** The arm was thrown up at no cost to the artifact, so a knock hard
+  enough to reopen a sagging arm was also one that could never run out — the yield was a
+  cliff (one artifact, or all nine, decided by a fifth of a second on the lever). A
+  collision moves momentum; it does not mint it. **`GATE_STRIKE_LOSS` (new, 0.45)** charges
+  the lift to the striker, so the arm's weight is what the flow spends itself against and a
+  drain gives out when the column can no longer pay. A LATCHED arm is touching nothing, so
+  holding it still costs the flow nothing.
+
+`GATE_KNOCK` 0.06 → 0.12 with that loss. Packed nine-column, tap length → drained:
+**0.10s 2 · 0.12s 2 · 0.15s 2 · 0.18s 2 · 0.20s 3 · 0.25s 7 · 0.30s 8 · 0.40s 9**, against
+1/1/1/2/2/2/4/9 before. The 27-condition sweep spans every value 1..9.
+
+**The knock-scaling check was measuring two speeds that both saturate the arm** from
+`GATE_RIDE_FRAC` and reported 1.00 twice. It now measures from a SAGGING arm, which is
+where a drain is actually decided: from 0.31, 5 in/s reaches 0.35 and stays shut, 10 in/s
+reaches 0.46 and reopens it, 18 in/s reaches 0.75.
+
+**A note for the next tuning pass.** `RAIL_ACCEL` 80 → 25 (`57a308e`) doubled the time a
+resting column needs to deliver its next artifact — `sqrt(2·RAIL_PITCH/a)` went 0.36s →
+0.64s — while the arm's fall from full lift to the pass line stayed at 0.45s
+(`GATE_GRAVITY` 6). That race is why short taps went bimodal in the first place. The
+strike now bridges it; if it ever needs revisiting, `GATE_GRAVITY` is the constant that
+was never re-derived against the ramp it meters.
 
 ## Next steps
 
