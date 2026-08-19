@@ -1060,6 +1060,39 @@ export function ballRobotFeedback(b: Artifact, r: RobotState, dt: number): void 
  * Returns true while the artifact is on the lid, so the caller keeps it there and lets it
  * roll off the front rather than dropping it in from above.
  */
+/**
+ * The height of the intake roof under a point, or 0 if there is no intake under it.
+ *
+ * Used by the classifier outflow, which does not FALL — an artifact leaving the ramp is
+ * lowered from ramp height to the floor over the last couple of inches of rail and then
+ * released as a ground artifact. With a robot parked on the outflow that lowering ran
+ * straight through its intake and put the artifact on the floor INSIDE the mouth, which is
+ * "once I stand in front of where the balls come out they still get intaken". There is no
+ * floor there: there is an intake, and its roof is where the artifact ends up.
+ */
+export function intakeRoofAt(world: World, p: Vec2): { z: number; robot: RobotState } | null {
+  let best: { z: number; robot: RobotState } | null = null;
+  for (const r of world.robots) {
+    if (!overIntakeRoof(r, p)) continue;
+    const z = C.intakeLidZ(r.spec);
+    if (!best || z > best.z) best = { z, robot: r };
+  }
+  return best;
+}
+
+/** is `p` (an artifact centre) within the intake's roof — see `landOnIntakeLid` */
+function overIntakeRoof(r: RobotState, p: Vec2): boolean {
+  const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);
+  const hl = r.spec.length / 2;
+  const tip = hl + C.INTAKE_PRESETS[r.spec.intake].reach;
+  const mh = C.intakeMouth(r.spec).mouthHalf;
+  return (
+    local.x > hl - C.BALL_RADIUS &&
+    local.x <= tip + C.BALL_RADIUS &&
+    Math.abs(local.y) <= mh + C.BALL_RADIUS
+  );
+}
+
 export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): boolean {
   if (b.state.kind !== 'flight') return false;
   const lid = C.intakeLidZ(r.spec);
@@ -1069,10 +1102,6 @@ export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): bool
   const riding = Math.abs(b.z - lid) < 1e-6 && b.vz <= 0;
   if (!arriving && !riding) return false;
 
-  const local = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
-  const hl = r.spec.length / 2;
-  const tip = hl + C.INTAKE_PRESETS[r.spec.intake].reach;
-  const mh = C.intakeMouth(r.spec).mouthHalf;
   /**
    * The roof covers exactly what the intake can CAPTURE from — `updateIntake`'s window is
    * `local.x > hl - BALL_RADIUS` out to the roller line, so the roof runs from the chassis
@@ -1085,13 +1114,7 @@ export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): bool
    * dropped on the chassis front, every funnel preset still swallowed it. Reaching back a
    * radius means it meets the roof on the way instead.
    */
-  if (
-    local.x <= hl - C.BALL_RADIUS ||
-    local.x > tip + C.BALL_RADIUS ||
-    Math.abs(local.y) > mh + C.BALL_RADIUS
-  ) {
-    return false;
-  }
+  if (!overIntakeRoof(r, b.pos)) return false;
 
   b.z = lid;
   b.vz = 0;

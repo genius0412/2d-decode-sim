@@ -25,6 +25,7 @@ import {
   pointDepthInRobot,
   robotExtents,
   robotIntersectsRect,
+  intakeRoofAt,
 } from './physics';
 
 export const ZERO_CMD: RobotCommand = {
@@ -526,7 +527,26 @@ function railBlock(
       // for exactly this reason. Using it here meant a robot holding the gate open by
       // pressing its INTAKE at the classifier read as its BODY lying across the outflow, so
       // it blocked the drain it was opening.
-      if (pointDepthInChassis(r, railPos(a, s)) > -C.BALL_RADIUS) reach = s + C.RAIL_BLOCK_STEP;
+      /**
+       * ...AND ITS INTAKE ROOF, which is the other way a robot occupies the outflow.
+       *
+       * The CHASSIS test above is deliberately not the footprint — to an artifact the mouth is
+       * open at ball height, and using the footprint meant a robot holding the gate open with
+       * its intake read as its body lying across the drain it was opening. But "open at ball
+       * height" is only true where the artifact is AT ball height, and the outflow is not: it
+       * comes out at ramp height and is set down over the last couple of inches of rail. Park
+       * an intake in that space and there is nowhere for the artifact to be put down —
+       * reported as "I stand directly in front of where the balls come out, there is no space
+       * for the balls to drop, however it is being intaked still".
+       *
+       * The roof is a much tighter region than the footprint (the mouth, not the whole front
+       * of the robot), so gate intaking is untouched: the arm is at the classifier EDGE and
+       * the rail line runs 3in from the wall, so a robot working the lever is never over it.
+       */
+      const p = railPos(a, s);
+      if (pointDepthInChassis(r, p) > -C.BALL_RADIUS || intakeRoofAt(world, p)?.robot === r) {
+        reach = s + C.RAIL_BLOCK_STEP;
+      }
     }
     if (reach > best) {
       best = reach;
@@ -993,7 +1013,13 @@ export function updateRails(
         // arrived at the exit still 4.5in up, and snapped the rest — which is the sail-over
         // this is meant to remove. `min` keeps it monotonic so it can never bob back up.
         const fall = Math.min(1, Math.max(0, (C.RAIL_OPEN_S - st.s) / C.RAIL_DROP_S));
-        b.z = Math.min(b.z, rideZ * (1 - fall));
+        // ...ONTO WHATEVER IS UNDER IT. Past the wall the artifact is out on the open apron,
+        // and a robot parked on the outflow puts its INTAKE in that space — which is not floor
+        // (see intakeRoofAt). Without this the descent ran straight through the intake and set
+        // the artifact down INSIDE the mouth, at floor level, where it was promptly taken:
+        // "once I stand in front of where the balls come out, it is still being intaked".
+        const roof = intakeRoofAt(world, b.pos);
+        b.z = Math.max(roof?.z ?? 0, Math.min(b.z, rideZ * (1 - fall)));
       }
     }
 
@@ -1197,14 +1223,25 @@ export function updateRails(
        * out over the tunnel the way a ball rolling on foam tile actually stops. The exit is not
        * an event that does something to the artifact — it is just where the ramp ends.
        */
+      // the only sideways motion it has any claim to: the weave it was already doing across
+      // the groove. `railWanderRate` is how fast the groove was carrying it across per inch
+      // travelled, so times its own speed it IS that artifact's lateral velocity — signed,
+      // different for each, and a couple of in/s, not a fan.
+      const drift = goalSide(a) * railWanderRate(st0.s, b.id, st0.overflow) * st0.v;
+      /**
+       * ...ONTO THE FLOOR, and it is only ever reached when there IS floor to put it on.
+       *
+       * A robot parked on the outflow has its intake in the space the artifact would be set
+       * down into, and an intake is not floor. That is answered UP-RAMP, by `railBlock`: the
+       * roof blocks the column exactly as the chassis does, so nothing is released into it in
+       * the first place. Releasing onto the roof instead was tried and is worse — it makes a
+       * flight artifact at ramp height moving at the roller's throw speed, and a flight
+       * artifact is exactly what can sail through a gap it does not fit through (smoke has a
+       * check for that, and it caught this).
+       */
       b.state = { kind: 'ground' };
       b.z = 0;
       b.vz = 0;
-      // ...and the only sideways motion it has any claim to: the weave it was already doing
-      // across the groove. `railWanderRate` is how fast the groove was carrying it across per
-      // inch travelled, so times its own speed it IS that artifact's lateral velocity —
-      // signed, different for each, and a couple of in/s, not a fan.
-      const drift = goalSide(a) * railWanderRate(st0.s, b.id, st0.overflow) * st0.v;
       b.vel = { x: drift, y: -speed };
     }
   }

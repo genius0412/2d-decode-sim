@@ -2311,10 +2311,21 @@ function queueTenth(w: World): void {
       yields.push(9 - w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length);
     }
   }
+  /**
+   * ...AND ONE OF THESE NINE IS NOW A DIFFERENT SCENARIO. At the closest standoff the robot's
+   * INTAKE ends up over the outflow, and an intake occupying the space an artifact is set
+   * down into holds the drain shut (see `railBlock`'s roof test, and the check below). Held
+   * there for the length of the tap, the arm's fall runs while nothing can leave, and that
+   * one condition drops from 9 to 3 — which is the rule working, not the tap failing.
+   *
+   * So this counts against 4 rather than half: a firm tap on a packed ramp usually empties
+   * it, and the ways it does not are both real — parking on your own outflow, and a short
+   * tap that leaves the flow too slow to keep knocking the arm up.
+   */
   const mostly = yields.filter((y) => y >= 7).length;
   check(
     'a tap on a FULL classifier usually drains most of it',
-    mostly >= yields.length / 2,
+    mostly >= 4,
     `${mostly} of ${yields.length} taps drained 7+: ${yields.join(',')}`,
   );
   check(
@@ -2720,6 +2731,59 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- parking ON the outflow blocks it, it does not feed you ----------------------
+// "Once I open the gate and then stand directly in front of where the balls come out, there
+// is no space for the balls to drop, so it would drop on top of the intake. However, it is
+// being intaked, still." The ramp discharges at RAMP_SURFACE_Z and an intake's roof is at
+// about the same height (intakeLidZ), so an artifact leaving the channel with a robot parked
+// under it has nowhere to be set down. The descent used to run straight through the intake
+// and put it on the floor INSIDE the mouth, which is the one place it cannot have got to.
+{
+  const parkRun = (over: number): { taken: number; onRamp: number } => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 300, y: 300 };
+    fillBlueRail(w);
+    const r = w.robots[0];
+    const exit = railPos('blue', RAIL_EXIT_S);
+    const tip = DEFAULT_SPEC.length / 2 + INTAKE_PRESETS[DEFAULT_SPEC.intake].reach;
+    r.heading = Math.PI / 2; // in the tunnel, facing back up at the gate
+    r.fieldCentric = false;
+    r.hopper = [];
+    const park = { x: exit.x, y: exit.y - tip + over };
+    for (let i = 0; i < Math.round(14 / SIM_DT); i++) {
+      r.pos = { ...park };
+      r.vel = { x: 0, y: 0 };
+      w.goals.blue.gatePos = 1;
+      w.goals.blue.gateOpen = true;
+      w.goals.blue.gateLatch = 1;
+      step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+    }
+    const nine = w.balls.slice(0, 9);
+    return {
+      taken: nine.filter((b) => b.state.kind === 'held').length,
+      onRamp: nine.filter((b) => b.state.kind === 'rail').length,
+    };
+  };
+  const on = parkRun(0); // intake tip right on the drop point
+  check(
+    'a robot parked on the outflow takes nothing off it — there is nowhere to put an artifact',
+    on.taken === 0 && on.onRamp === 9,
+    `took ${on.taken}, ${on.onRamp} still on the ramp (took 3 before)`,
+  );
+  // ...and the rule is about the DROP SPACE, not about being near the gate: back off a few
+  // inches and the artifacts land on the floor and roll into the mouth as they should. This
+  // is the same technique the drain cadence work protects (gate intaking), and it must not
+  // be what the check above outlaws.
+  const back = parkRun(-3);
+  check(
+    '...but backed off the drop point it feeds normally, so gate intaking still works',
+    back.taken > 0 && back.onRamp < 9,
+    `3in back: took ${back.taken}, ${back.onRamp} left on the ramp`,
+  );
+}
+
 // ---- an artifact DROPPED on the intake is not swallowed by it ---------------------
 // "The intake should not intake if a ball drops on top of it." The mouth is open at BALL
 // HEIGHT — that is what lets an artifact roll in under the rollers, and why ballRobotContact
@@ -2745,7 +2809,7 @@ function queueTenth(w: World): void {
         r.hopper = [];
         for (const b of w.balls) b.pos = { x: 400, y: 400 };
         const ball = w.balls[0];
-        ball.state = { kind: 'flight', target: { x: 0, y: 0 } };
+        ball.state = { kind: 'flight', target: 'blue' };
         ball.pos = { x: lx, y: ly };
         ball.vel = { x: 0, y: 0 };
         ball.z = 24;
