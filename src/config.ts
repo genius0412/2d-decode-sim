@@ -1197,7 +1197,17 @@ export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, 
  * holds the arm up because artifacts keep knocking it up, not because a stream of artifacts
  * makes gravity weaker.
  */
-export const GATE_KNOCK = 0.12; // (1/s of gatePos) per in/s of artifact speed
+/**
+ * ...and its SIZE decides whether a drain can die in the MIDDLE. Once the column is flowing,
+ * the strike loss puts the arrival speed at a fixed point (v^2 = (1 - loss)^2 * v^2 +
+ * 2 * RAIL_ACCEL * RAIL_PITCH, about 19 in/s), so the arm's rise per knock, (v * this)^2 /
+ * (2 * GATE_GRAVITY), is a CONSTANT compared against a constant fall between arrivals. Set it
+ * high and every drain that survives its first gap runs to the end of the ramp; set it near
+ * that balance and the drain is decided artifact by artifact, which is the spread wanted.
+ * At 0.12 the sweep was 9-or-nothing (12 ones, 36 nines, nothing between); at 0.07 it spans
+ * 1..9 with a mean of 5.
+ */
+export const GATE_KNOCK = 0.07; // (1/s of gatePos) per in/s of artifact speed
 /**
  * WHAT THE STRIKE COSTS THE ARTIFACT — the fraction of its down-ramp speed it spends
  * throwing the arm up. A collision moves momentum; it does not mint it.
@@ -1349,7 +1359,27 @@ export const GATE_OPEN_RATE = 12; // 1/s: BASE lift rate for a gentle push (a li
  * you touch it: it "opens faster the harder you drive into it", with no bounce-off jolt. */
 export const GATE_OPEN_RATE_SPEED = 1.2; // extra 1/s of lift per in/s of ram speed
 export const GATE_OPEN_RATE_MAX = 66; // 1/s cap (~fully open in one tick at a hard ram)
-export const GATE_GRAVITY = 6; // 1/s^2 on gatePos: gravity swinging the released arm shut
+/**
+ * ...AND ITS RATE IS NOT A FEEL CONSTANT — it is set against the RAMP it meters.
+ *
+ * A tap on a resting column is a race between two times:
+ *   the arm's fall from fully open to the pass line   sqrt(2 * (1 - GATE_PASS_FRAC) / this)
+ *   the column's delivery of its next artifact        sqrt(2 * RAIL_PITCH / RAIL_ACCEL)
+ *
+ * The second DOUBLED when the ramp stopped running at a capped flow speed — RAIL_ACCEL 80 ->
+ * 25 moved it from 0.36s to 0.64s — and this was left at 6, a 0.45s fall. The arm was then
+ * always shut before the second artifact could arrive, and no knock can fix that: the first
+ * gap is covered by nothing at all. A tap was worth exactly what was already sitting at the
+ * gate, which is what "a tap only lets out one ball" is.
+ *
+ * At 4 the fall is 0.55s against that 0.64s — marginal, which is the whole point, and it has
+ * a ceiling as well as a floor. Take it to 2.9 and the fall matches the delivery: measured,
+ * the yield is then 9 out of 9 in every one of 50 tap conditions, i.e. the drain can no
+ * longer give out at all. Packed column, tap length -> artifacts drained, at 4: 0.10s 2 ·
+ * 0.15s 3 · 0.20s 5 · 0.25s 9. Loosen the column to +5in and a quick tap is worth 1 again,
+ * which is the situational answer this is supposed to have.
+ */
+export const GATE_GRAVITY = 4; // 1/s^2 on gatePos: gravity swinging the released arm shut
 /**
  * Terminal swing speed as the arm falls closed.
  *

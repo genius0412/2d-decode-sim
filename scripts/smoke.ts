@@ -63,6 +63,7 @@ import {
   GATE_STOP_S,
   GATE_OPEN_LATCH_S,
   GATE_PASS_FRAC,
+  GATE_GRAVITY,
   GATE_SEAT_FRAC,
   RAIL_OPEN_S,
   RAMP_SLOTS,
@@ -1334,6 +1335,42 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
       '...so the yield is a spread, not a fixed dose',
       new Set(yields).size >= 4,
       `${[...new Set(yields)].sort((a, b) => a - b).join(',')} seen across ${yields.length} conditions`,
+    );
+    /**
+     * A QUICK BUMP IS WORTH MORE THAN ONE ARTIFACT. Reported from play: "a tap lets out 1 or
+     * 2." The tap-length gradient above is sampled from 0.15s, which is already a deliberate
+     * press; a driver bumping the lever and coming off it is at 0.10s.
+     */
+    const quick = [0, 1, 2].map((sp) => tapDrain(9, sp, 0.12));
+    check(
+      'a quick bump off the lever is worth more than one artifact',
+      Math.max(...quick) >= 3 && quick.every((y) => y >= 2),
+      `0.12s tap at +0/1/2in packing -> ${quick.join(' ')}`,
+    );
+    /**
+     * ...AND WHY, stated as the arithmetic, because this is the relation that broke it.
+     *
+     * A tap on a RESTING column is a race between two times, and neither is a feel constant:
+     *
+     *   the arm's fall from fully open to the pass line   sqrt(2 * (1 - PASS) / GATE_GRAVITY)
+     *   the column's delivery of its next artifact        sqrt(2 * RAIL_PITCH / RAIL_ACCEL)
+     *
+     * The second one DOUBLED when the ramp stopped running at a capped flow speed (RAIL_ACCEL
+     * 80 -> 25 moved it 0.36s -> 0.64s) and the arm's fall was left at 0.45s. The arm was then
+     * always shut before the second artifact could arrive, and no amount of knock could fix
+     * the first gap — a tap was worth exactly what was already sitting at the gate.
+     *
+     * The ratio is the whole story and it has a floor AND a ceiling. Push the fall past the
+     * delivery and every tap empties the ramp (measured: at GATE_GRAVITY 2.9, fall 0.64s, the
+     * yield is 9 in every one of 50 conditions — the drain can no longer give out at all).
+     * Well under it and nothing ever follows the first artifact out. Marginal is the point.
+     */
+    const armFall = Math.sqrt((2 * (1 - GATE_PASS_FRAC)) / GATE_GRAVITY);
+    const railPitchTime = Math.sqrt((2 * RAIL_PITCH) / RAIL_ACCEL);
+    check(
+      "the arm's fall to the pass line is commensurate with the ramp's own pace",
+      armFall > railPitchTime * 0.75 && armFall < railPitchTime,
+      `fall ${armFall.toFixed(2)}s vs one pitch from rest ${railPitchTime.toFixed(2)}s (ratio ${(armFall / railPitchTime).toFixed(2)}, want 0.75-1.00)`,
     );
     // ...and what a tap is worth is situational, not a fixed dose. Sampled out to +8in:
     // loosening a 5.1in pitch by a couple of inches barely changes the momentum arriving at
