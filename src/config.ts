@@ -1216,7 +1216,6 @@ export const GATE_RIDE_FRAC = 0.62; // open fraction the arm rests at while ridi
  * six artifacts no matter what else was tuned — GATE_RIDE_FRAC swept 0.44→0.62 changed
  * nothing, which is what pointed here.
  */
-export const GATE_SEAT_FRAC = 0.34; // < GATE_PASS_FRAC: seated on an artifact, not passable
 /**
  * Open fraction an artifact in the gateway can shoulder the arm up to, per in/s of its
  * down-ramp speed (capped at GATE_RIDE_FRAC), taken as the higher of this and the seated
@@ -1323,12 +1322,119 @@ export const GATE_PADDLE_DRAG = 5.5; // 1/s at full sag
  * 5-9 and empties none of them, a held gate still empties all, and the held stream is
  * unchanged at a 0.323s mean gap.
  */
+
+// ---- GATE PADDLE GEOMETRY: a stick on a sphere -----------------------------------
+/**
+ * THE HINGE'S HEIGHT ABOVE THE RAMP, and it is the ONE number the paddle-on-artifact
+ * geometry has left to choose. Everything else about "how far does an artifact push the gate
+ * open, and from where" falls out of it — see `gateRestOn`.
+ *
+ * The paddle is a STICK, hinged at the classifier's field edge and lying across the channel,
+ * and an artifact under it is a SPHERE. A stick resting on a sphere is TANGENT to it, and
+ * the tangent angle depends on how high the hinge is: hinge it level with the ramp and a
+ * 5in artifact under a 6in stick stands it almost vertical (rest at the apex works out at
+ * 1.03 of the full swing); hinge it at 5in and the artifact fits underneath without touching
+ * it at all. Between those, the whole range.
+ *
+ * THE MANUAL PICKS IT, not taste: 9.8.3 puts the gate's contact area 3.75-5.5in above the
+ * ramp, and that is exactly where this stick touches the sphere. Solving for the hinge height
+ * that puts the apex contact in the middle of that band gives 3.5in — a ramp-level hinge
+ * would contact at 2.95in, below the band, which is what rules it out.
+ */
+export const GATE_PIVOT_Z = 3.5; // in above the ramp surface
+
+export const GATE_LIFT = 1.35; // rad (~77deg) the paddle swings up from closed to fully open
+
+/**
+ * THE STICK-ON-SPHERE ANGLE, in radians of lift above the paddle's closed (horizontal)
+ * position, for an artifact whose centre is `d` down-ramp of the gate line.
+ *
+ * Hinge at (0, GATE_PIVOT_Z) in the channel cross-section, stick running toward the wall;
+ * the artifact's centre sits `xb` from the hinge across the channel and BALL_RADIUS up. The
+ * stick rests on the sphere when it is TANGENT to it, which (writing W = GATE_PIVOT_Z - R)
+ * is the one line of algebra this whole mechanism reduces to:
+ *
+ *     (xb cos t - W sin t)^2 = xb^2 + d^2 + W^2 - R^2
+ *
+ * i.e. hypot(xb, W) * cos(t + atan2(W, xb)) = sqrt(xb^2 + d^2 + W^2 - R^2).
+ *
+ * Two consequences worth naming, because the old model had neither. The reach is not one
+ * radius: the stick stops touching the artifact where the right-hand side outgrows the left,
+ * which depends on the hinge height. And the profile is not the artifact's surface height —
+ * it is flatter near the apex and falls away much faster near the edge of reach.
+ */
+export function gateRestAngle(d: number): number {
+  const R = BALL_RADIUS;
+  const xb = CLASSIFIER_W - RAMP_RAIL_INSET; // the rail's distance from the hinge
+  const W = GATE_PIVOT_Z - R;
+  const M = Math.hypot(xb, W);
+  const rhs = xb * xb + d * d + W * W - R * R;
+  if (rhs < 0) return GATE_LIFT; // the hinge is inside the artifact — nothing to solve
+  const q = Math.sqrt(rhs) / M;
+  if (q > 1) return 0; // out of reach: the stick falls past it entirely
+  return Math.max(0, Math.acos(q) - Math.atan2(W, xb));
+}
+
+/**
+ * HOW FAR FROM THE GATE LINE THE PADDLE STILL TOUCHES AN ARTIFACT — its reach, and no longer
+ * the artifact's radius. The stick stops meeting the sphere where the tangency runs out, which
+ * depends on the hinge height; solved once here so the sim, the block and the gate line all
+ * quote the same number.
+ */
+export const GATE_PADDLE_REACH = (() => {
+  let lo = 0;
+  let hi = 4 * BALL_RADIUS;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (gateRestAngle(mid) > 0) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+})();
+
+/** the apex case, as a fraction of the full swing — GATE_SEAT_FRAC and GATE_PASS_FRAC both */
+export function gateApexRest(): number {
+  return Math.min(1, gateRestAngle(0) / GATE_LIFT);
+}
+
+/**
+ * WHERE THE ARM SITS WHEN AN ARTIFACT IS DEAD UNDER IT — DERIVED, not chosen.
+ *
+ * It was 0.34, a free constant, against a model that took the paddle to be a vertical edge
+ * coming down at the gate line and read the artifact's surface height there. That is not
+ * what a stick does: a stick hinged off to one side meets the sphere at a TANGENT, and the
+ * angle that takes is a different (and larger) number — 0.44 of the full swing for the
+ * hinge height the manual implies. "The amount and the point at which the gate opens when a
+ * ball forces it open is very off."
+ *
+ * It is also no longer independent of GATE_PASS_FRAC: the lift an artifact needs to get
+ * THROUGH is the highest the stick rides while it passes under, which is this same apex
+ * value. See GATE_PASS_FRAC.
+ */
+export const GATE_SEAT_FRAC = gateApexRest(); // = gateRestOn(0), see goal.ts
+
+/**
+ * THE LIFT AN ARTIFACT NEEDS TO GET THROUGH — the same number, and now for a stated reason.
+ *
+ * It was 0.4 against a seat of 0.34, and the gap was a fudge with a job: "seated under the
+ * arm is not past it", so that a resting column could not hold its own gate open and drain
+ * itself. The geometry says it plainly instead. The stick rides UP as an artifact comes under
+ * it and is highest when the artifact is dead beneath — so the lift needed to pass IS the
+ * apex rest, and the two are one value.
+ *
+ * A resting column still cannot open its own gate, and now by geometry rather than by
+ * margin: the arm only reaches this height when an artifact is EXACTLY at the gate line, and
+ * the artifact it is resting on is held wherever `gateStopS` puts it, which is somewhere
+ * else. GATE_APEX_BIAS is what keeps that apex from being a place to sit.
+ */
+export const GATE_PASS_FRAC = GATE_SEAT_FRAC; // derived: clearing the apex IS passing
+
 /**
  * WHERE THE PADDLE'S EDGE COMES DOWN, in rail `s`. A retained column rests packed against
  * the shut gate with its first artifact centred at GATE_STOP_S, so the barrier it is
  * resting against sits one radius further down.
  */
-export const GATE_LINE_S = GATE_STOP_S - BALL_RADIUS;
+export const GATE_LINE_S = GATE_STOP_S - GATE_PADDLE_REACH;
 
 /**
  * THE ARM STOPS WHERE THE GEOMETRY STOPS IT — it does not come to rest between artifacts.
@@ -1439,7 +1545,6 @@ export const GATE_GRAVITY = 4; // 1/s^2 on gatePos: gravity swinging the release
  * open it was — "how fast it closes is determined by the initial position of the gate".
  */
 export const GATE_CLOSE_MAX = 3.6; // 1/s: terminal swing speed as it falls closed
-export const GATE_PASS_FRAC = 0.4; // arm must be at least this lifted for an ARTIFACT to pass
 export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement (manual 9.8.3)
 /** the gate is a class-1 LEVER (manual Figure 9-15) hinged at the CLASSIFIER EDGE — where
  * the gate-zone tape starts (|x| = FIELD_HALF − CLASSIFIER_W = the classifier's field-side
@@ -1453,7 +1558,10 @@ export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement
  * (`proj = len·cos(gatePos·GATE_LIFT)`); the long paddle greens as it clears the channel. */
 export const GATE_ARM_LONG = CLASSIFIER_W; // in, long paddle: pivot → wall edge (covers the 6in channel)
 export const GATE_ARM_SHORT = 2.5; // in, short handle poking past the field edge into the gate zone
-export const GATE_LIFT = 1.35; // rad (~77deg) the paddle swings up from closed to fully open
+
+
+
+
 /** the handle is a PHYSICAL one-way door: a solid robot collider spanning the SHORT arm's
  * (foreshortened) field-side reach, so a robot CANNOT strafe/drive through it — the only
  * way past is to OPEN it (a straight push, which lifts gatePos and RETRACTS the handle

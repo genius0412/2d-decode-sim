@@ -63,6 +63,7 @@ import {
   GATE_STOP_S,
   GATE_OPEN_LATCH_S,
   GATE_PASS_FRAC,
+  GATE_PADDLE_REACH,
   GATE_GRAVITY,
   GATE_SEAT_FRAC,
   RAIL_OPEN_S,
@@ -1584,10 +1585,25 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   // gateStopS and gateRestOn are exact inverses, so the pair is neutrally stable at EVERY
   // offset — only a shove that outruns gravity breaks it. Lightening GATE_PADDLE_SHOVE
   // without raising GATE_SHOVE_MIN to compensate puts the gate back on top of artifacts.
+  /**
+   * THE SEAT AND THE PASS HEIGHT ARE ONE NUMBER, and that is the geometry speaking rather
+   * than a margin being kept.
+   *
+   * They used to be 0.34 and 0.40, the gap doing a job: "seated under the arm is not past
+   * it", so that a resting column could not hold its own gate open and drain itself. That
+   * gap was needed because the old gateway window was 8.5in against a 5.1in artifact pitch,
+   * so a packed column ALWAYS had something under the arm. A stick tangent to a sphere has
+   * its own, much tighter reach — and the check below is the one that now does the work.
+   */
   check(
-    'a seated arm is still below the pass line (seat < pass), so being under it is not being past it',
-    GATE_SEAT_FRAC < GATE_PASS_FRAC,
-    `seat ${GATE_SEAT_FRAC} vs pass ${GATE_PASS_FRAC}`,
+    'the seat IS the pass height: the stick rides highest at the apex, and clearing it is passing',
+    GATE_SEAT_FRAC === GATE_PASS_FRAC && Math.abs(gateRestOn(0) - GATE_PASS_FRAC) < 1e-9,
+    `seat ${GATE_SEAT_FRAC.toFixed(3)} = pass ${GATE_PASS_FRAC.toFixed(3)} = rest(0) ${gateRestOn(0).toFixed(3)}`,
+  );
+  check(
+    '...and a packed column cannot hold its own gate passable, because the paddle reaches less than one pitch',
+    2 * GATE_PADDLE_REACH < RAIL_PITCH,
+    `paddle window ${(2 * GATE_PADDLE_REACH).toFixed(2)}in vs artifact pitch ${RAIL_PITCH}in`,
   );
 }
 
@@ -1730,17 +1746,27 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   // pass height"), and because the 8.5in gateway window is wider than the 5.1in artifact
   // pitch a packed column always has something under the arm — so merely being under it
   // held the gate permanently passable and a tap drained the entire ramp.
+  /**
+   * THE PROFILE IS A TANGENCY, and it has a shape the old plunger model did not.
+   *
+   * A stick hinged off to one side rides highest when the artifact is dead beneath it and
+   * falls away toward the edge of its reach — and that reach is decided by the tangency, not
+   * by the artifact's radius. At GATE_PIVOT_Z 3.5in it works out SHORTER than a radius, which
+   * is what stops a packed column keeping the arm up.
+   */
+  const profile = [0, 0.5, 1, 1.5, 2].map((d) => gateRestOn(d));
   check(
-    'a seated arm is NOT passable — getting past it takes momentum',
-    GATE_SEAT_FRAC < GATE_PASS_FRAC && gateRestOn(0) < GATE_PASS_FRAC,
-    `seat ${GATE_SEAT_FRAC} vs pass ${GATE_PASS_FRAC}`,
+    'gateRestOn falls monotonically from the apex to nothing at the paddle reach',
+    profile.every((v, i) => i === 0 || v < profile[i - 1]) &&
+      gateRestOn(GATE_PADDLE_REACH * 0.999) > 0 &&
+      gateRestOn(GATE_PADDLE_REACH + 0.01) === 0 &&
+      gateRestOn(-GATE_PADDLE_REACH - 1) === 0,
+    `d=0..2: ${profile.map((v) => v.toFixed(3)).join(' ')}, reach ${GATE_PADDLE_REACH.toFixed(2)}in`,
   );
   check(
-    'gateRestOn: out at the equator it is half that, and past the edge it misses entirely',
-    Math.abs(gateRestOn(BALL_RADIUS * 0.999) - GATE_SEAT_FRAC / 2) < 0.01 &&
-      gateRestOn(BALL_RADIUS) === 0 &&
-      gateRestOn(-BALL_RADIUS - 1) === 0,
-    `equator ${gateRestOn(BALL_RADIUS * 0.999).toFixed(3)}, past edge ${gateRestOn(BALL_RADIUS)}`,
+    '...and the reach is the tangency answer, not the artifact radius',
+    Math.abs(GATE_PADDLE_REACH - BALL_RADIUS) > 0.1,
+    `reach ${GATE_PADDLE_REACH.toFixed(2)}in vs radius ${BALL_RADIUS}in`,
   );
 
   const wedged = settle(1.2);
@@ -1770,7 +1796,8 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
   // a shut gate rests at GATE_STOP_S, one radius clear, and must not hold the arm up at all
   check(
     'a column parked at GATE_STOP_S is clear of the paddle (gate reads fully shut)',
-    gateRestOn(GATE_STOP_S - GATE_LINE_S) === 0,
+    // ...to within the bisection that solved the reach — 1e-16 is zero for every purpose here
+    gateRestOn(GATE_STOP_S - GATE_LINE_S) < 1e-9,
     `d=${(GATE_STOP_S - GATE_LINE_S).toFixed(2)} -> ${gateRestOn(GATE_STOP_S - GATE_LINE_S)}`,
   );
 }

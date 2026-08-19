@@ -84,23 +84,25 @@ export function gateLiftRate(ramSpeed: number): number {
 }
 
 /**
- * HOW HIGH AN ARTIFACT HOLDS THE PADDLE, from where the paddle actually lands on it.
+ * HOW HIGH AN ARTIFACT HOLDS THE PADDLE — a STICK resting on a SPHERE.
  *
- * `d` is the artifact's centre minus GATE_LINE_S: positive = it has not reached the gate
- * line yet, negative = it is already through. The paddle's edge comes down the vertical at
- * the gate line and meets the artifact's surface at height `R + sqrt(R² − d²)` — a full
- * diameter dead on top, one radius at the equator, nothing at all beyond.
+ * `d` is the artifact's centre minus GATE_LINE_S: positive = it has not reached the gate line
+ * yet, negative = it is already through.
  *
- * The full-diameter case maps to GATE_SEAT_FRAC, which is BELOW GATE_PASS_FRAC on purpose:
- * a paddle resting on a ball is the marginal contact, clearance exactly the ball and no
- * more, so being seated under the arm is NOT being past it. Lifting the rest of the way
- * takes momentum. Equating the two is what made a tap empty the whole ramp — see
- * GATE_SEAT_FRAC.
+ * This used to read the artifact's surface height on the vertical at the gate line, as though
+ * the paddle were a plunger coming straight down: `R + sqrt(R² − d²)`, mapped linearly onto a
+ * free constant. The paddle is not a plunger. It is hinged off to one side, so it meets the
+ * artifact at a TANGENT, and the angle that takes is both larger and a different shape — the
+ * profile is flatter near the apex and falls away far faster near the edge of reach, and the
+ * reach itself is no longer one radius. `gateRestAngle` in config.ts is the algebra, and
+ * GATE_PIVOT_Z is the only thing it needs that the rest of the geometry does not already fix.
+ *
+ * The apex value is GATE_SEAT_FRAC, which is now DERIVED from that (0.437 rather than the old
+ * 0.34) and is also GATE_PASS_FRAC: the highest the stick rides while an artifact passes
+ * under it IS the lift that artifact needs to get through.
  */
 export function gateRestOn(d: number): number {
-  const R = C.BALL_RADIUS;
-  if (Math.abs(d) >= R) return 0; // the paddle misses it entirely and falls past
-  return (C.GATE_SEAT_FRAC * (R + Math.sqrt(R * R - d * d))) / (2 * R);
+  return C.gateRestAngle(d) / C.GATE_LIFT;
 }
 
 /**
@@ -129,39 +131,38 @@ function paddleBearsOn(goal: World['goals'][Alliance], d: number): boolean {
  * FULL DIAMETER up-ramp of the gate — one that has not reached it and cannot be touching
  * it — as propping the arm open. That is "no balls below the gate yet it still flows". */
 function underPaddle(d: number): boolean {
-  return Math.abs(d) < C.BALL_RADIUS;
+  return Math.abs(d) < C.GATE_PADDLE_REACH;
 }
 
 /**
- * HOW FAR DOWN-RAMP AN ARTIFACT CAN GET, given how far open the arm is. The inverse of
+ * HOW FAR DOWN-RAMP AN ARTIFACT CAN GET, given how far open the arm is. The exact inverse of
  * `gateRestOn`, and the reason the arm stopped landing on anything.
  *
  * The solver used to snap the column's floor to the constant GATE_STOP_S the instant
- * `gateOpen` went false. GATE_STOP_S is one radius from the gate line — exactly the paddle's
- * tangent point — and RAIL_PITCH (5.1in) is one ball diameter, so the artifact behind it
- * lands exactly at the OTHER tangent. The paddle therefore threaded precisely between two
- * artifacts every single time, touching neither. That is not a coincidence to be tuned away;
- * it is forced by those three constants, and no amount of adjusting the ride height moved it.
+ * `gateOpen` went false. GATE_STOP_S is one radius from the gate line — the plunger model's
+ * tangent point — and RAIL_PITCH is one ball diameter, so the artifact behind it landed
+ * exactly at the OTHER tangent. The paddle therefore threaded precisely between two artifacts
+ * every single time, touching neither. That is not a coincidence to be tuned away; it is
+ * forced by those constants.
  *
- * The block is not a constant — it is where the paddle physically is. Reading the paddle's
- * lower edge as `u = 2R · gatePos / GATE_SEAT_FRAC` (0 at shut, a full artifact height when
- * seated on one):
- *  · u ≤ R — the edge is below the artifact's centre, so it meets the paddle's FACE and
- *    stops one radius out: d = R, i.e. exactly GATE_STOP_S. The shut case is unchanged.
- *  · R < u < 2R — the artifact noses UNDER the rising edge until its surface meets it, at
- *    d = sqrt(R² − (u−R)²), which shrinks to nothing as the arm approaches a full diameter.
- *
- * So an arm descending onto a moving column no longer lets the artifact escape into the gap
- * ahead of it: the block follows the paddle down, the artifact is caught where it is, and
- * the arm comes to rest ON it — which is the case the user says should be common and was
- * impossible.
+ * The block is not a constant — it is where the paddle physically is, and with a stick on a
+ * sphere that is a tangency, not a height lookup. `gateRestOn` is monotonic in |d| over the
+ * paddle's reach (the stick rides higher the closer the artifact is to dead centre), so the
+ * inverse is one bisection; there is no closed form worth the risk of getting wrong.
  */
 export function gateStopS(gatePos: number): number {
-  const R = C.BALL_RADIUS;
-  const u = Math.min(2 * R, (2 * R * gatePos) / C.GATE_SEAT_FRAC); // paddle's lower edge
-  if (u <= R) return C.GATE_LINE_S + R; // against the face — the classic GATE_STOP_S
-  return C.GATE_LINE_S + Math.sqrt(Math.max(0, R * R - (u - R) * (u - R)));
+  if (gatePos <= 0) return C.GATE_LINE_S + C.GATE_PADDLE_REACH; // shut: stopped at the paddle's face
+  if (gatePos >= gateRestOn(0)) return C.GATE_LINE_S; // lifted clear of the apex — nothing blocks
+  let lo = 0; // rest is HIGHEST here
+  let hi = C.GATE_PADDLE_REACH; // ...and zero here
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (gateRestOn(mid) > gatePos) lo = mid;
+    else hi = mid;
+  }
+  return C.GATE_LINE_S + lo;
 }
+
 
 /** the open fraction the PHYSICAL handle collider should use THIS tick. buildGateArms
  * (in physicsEngine solveRobots) runs one step BEFORE updateGates mutates gatePos, so
