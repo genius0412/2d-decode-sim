@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `fb562e1`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `f82044a`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,7 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Nine reports: seven about the DECODE classifier and its gate, two about the intake. The first two trace to the same kind of
+Ten reports, all in the DECODE classifier: the ramp, the gate, and the intake at its outflow. The first two trace to the same kind of
 thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
@@ -289,6 +289,36 @@ yet WEDGE the arm up along the tangency as it advances (the arm's rise is still 
 would make "a ball forces it open" a kinematic consequence — but it also needs the paddle's
 FACE modelled (below the artifact's equator the edge blocks rather than wedges), or a fast
 artifact levers a shut gate open.
+
+### Pressing the lever is not parking on the outflow (`f82044a`)
+
+*"I only get one or two balls from a tap way too often."* It was worse than that: a driver
+who bumped the gate and **stayed** — which is what a driver does — got **nothing**. Measured
+across five tap lengths pressed in close: **0 of 9 every time**, against 2/3/9/9/9 for the
+same taps if the robot backed away.
+
+The cause was the outflow block from `b37f3ba`. Its region carried a radius of slop around
+the mouth, and at the gate that radius is exactly the difference between a robot whose MOUTH
+is over the drain and one merely pressing the lever with the TIP of its intake — the chassis
+front sits at the classifier edge, the intake reaches the rail line, and the padded roof then
+covered the drop point. The standard technique read as parking on your own outflow.
+
+The padding is right for LANDING (an artifact perched on the lip really does overlap the
+roof) and wrong for asking whether the roof is in the way of something else, so
+`intakeRoofAt` takes it as a parameter and the rail block passes **zero**. Parking the mouth
+ON the drop point still blocks (0 taken, 9 left); pressing the lever no longer does (9 at
+every tap length). Both are checks.
+
+Also added: **above the mouth's opening the intake is not open.** `ballRobotContact` leaves
+the mouth's centre clear because the rollers ride high and artifacts pass UNDER them — true
+only of an artifact at ball height. One riding the ROOF is above the opening, where the
+structure is solid; `ballRobotFrontContact` is that case. It matters because a roof-riding
+artifact is in FLIGHT, and flight artifacts are not in the ground solve.
+
+**Do not "release onto the roof" instead of blocking up-ramp.** Tried twice this session. It
+makes a flight artifact beside a robot, and one drifted through a 4.6in gap between a robot's
+corner and the wall — which is a bug report of its own, with a check. The note is in the
+release code.
 
 ## Next steps
 
