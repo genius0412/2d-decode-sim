@@ -2720,6 +2720,61 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- an artifact DROPPED on the intake is not swallowed by it ---------------------
+// "The intake should not intake if a ball drops on top of it." The mouth is open at BALL
+// HEIGHT — that is what lets an artifact roll in under the rollers, and why ballRobotContact
+// returns nothing there — but it was open from ABOVE too, so an artifact dropped on the
+// intake fell through the rollers into the throat and was taken. Measured before: a drop from
+// 24in onto the mouth of all three presets ended up held, as did one onto the front of the
+// CHASSIS, which the contact code ejects forward into the mouth on its way down.
+{
+  let swallowed = 0;
+  let cleared = 0;
+  for (const intake of ['sloped', 'vector', 'triangle'] as const) {
+    const spec = { ...DEFAULT_SPEC, intake };
+    const hl = spec.length / 2;
+    const tip = hl + INTAKE_PRESETS[intake].reach;
+    for (const lx of [hl - 1, (hl + tip) / 2, tip]) {
+      for (const ly of [0, 3]) {
+        const w = mkWorld('free', 'blue', 3, { intake });
+        startMatch(w);
+        const r = w.robots[0];
+        r.pos = { x: 0, y: 0 };
+        r.heading = 0;
+        r.vel = { x: 0, y: 0 };
+        r.hopper = [];
+        for (const b of w.balls) b.pos = { x: 400, y: 400 };
+        const ball = w.balls[0];
+        ball.state = { kind: 'flight', target: { x: 0, y: 0 } };
+        ball.pos = { x: lx, y: ly };
+        ball.vel = { x: 0, y: 0 };
+        ball.z = 24;
+        ball.vz = 0;
+        let held = false;
+        for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+          step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+          if (ball.state.kind === 'held') {
+            held = true;
+            break;
+          }
+        }
+        if (held) swallowed++;
+        else if (rot({ x: ball.pos.x - r.pos.x, y: ball.pos.y - r.pos.y }, -r.heading).x > tip) cleared++;
+      }
+    }
+  }
+  check(
+    'an artifact dropped on the intake is not swallowed by it',
+    swallowed === 0,
+    `${swallowed} of 18 drops taken (was 11 of 18)`,
+  );
+  check(
+    '...it lands on the rollers and is thrown clear in front of the mouth',
+    cleared === 18,
+    `${cleared} of 18 ended up forward of the roller line (was 6)`,
+  );
+}
+
 // ---- the chassis is not transparent to an artifact in the air ----------------------
 // Reported: "artifacts sometimes jump over the chassis". `collideBallRobot` skipped the
 // chassis outright on the grounds that Rapier had already resolved it — but Rapier only

@@ -756,6 +756,34 @@ export const INTAKE_ROLLER_W = 1.3; // in, each roller's width along the beam
 export const intakeRollerDia = (spec: { intake: keyof typeof INTAKE_ROLLER_MM }): number =>
   INTAKE_ROLLER_MM[spec.intake] / 25.4;
 /**
+ * THE INTAKE HAS A ROOF, and it is the same fact the mouth geometry already rests on.
+ *
+ * `ballRobotContact` leaves the centre of the mouth OPEN at ball height on the grounds that
+ * "the wheels ride high in z, so balls pass under them". That is right, and it has an
+ * unstated other half: what rides high in z is SOLID to anything coming DOWN. Without it the
+ * mouth was open from above too, so an artifact dropped on the intake fell through the
+ * rollers to the floor INSIDE the throat and was swallowed — measured, a drop from 24in onto
+ * the mouth of every preset ended up held, as did one onto the front of the CHASSIS, which
+ * the contact code ejects forward into the mouth on its way down.
+ *
+ * The height is the geometry the mouth already implies: the roller's underside has to clear
+ * a full artifact for one to pass under it, so an artifact landing ON the roller sits a
+ * diameter, plus the roller, plus its own radius up.
+ */
+export const intakeLidZ = (spec: { intake: keyof typeof INTAKE_ROLLER_MM }): number =>
+  2 * BALL_RADIUS + intakeRollerDia(spec) + BALL_RADIUS;
+/**
+ * How briskly an artifact that lands on the intake is thrown clear of it, along the robot's
+ * forward axis.
+ *
+ * A roller is a cylinder with its axis across the robot, so what lands on it goes forward or
+ * back, never sideways — and back is the chassis, which is solid. With the intake RUNNING the
+ * roller is spinning and throws it; stopped, the front lip is the low side and it rolls off.
+ * One constant either way: the artifact ends up on the floor in FRONT of the mouth, where an
+ * intake may then legitimately take it, rather than inside the throat where it never was.
+ */
+export const INTAKE_LID_THROW = 24; // in/s
+/**
  * GATE OPENER: a block on each end of the roller beam, filling out to the chassis edge.
  *
  * It is not decoration and it is not a new collider either — `footprintExtents` already

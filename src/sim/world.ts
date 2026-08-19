@@ -7,6 +7,7 @@ import {
   collideBallRect,
   ballRobotFeedback,
   collideBallRobot,
+  landOnIntakeLid,
   pointDepthInChassis,
   collideBallStatic,
   separateBalls,
@@ -290,6 +291,11 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
     const prevZ = b.z;
     stepFlightBall(b, dt);
     if (checkGoalEntry(world, b, prevZ)) continue;
+    // ...and it does not fall THROUGH an intake on the way down. The mouth is open at ball
+    // height so an artifact can roll in under the rollers; from above, the rollers are in
+    // the way. Without this an artifact dropped on the intake landed inside the throat and
+    // was swallowed — which is not a thing an intake can do.
+    for (const r of world.robots) if (landOnIntakeLid(b, r, prevZ)) break;
     if (b.z < C.GOAL_WALL_TOP) collideBallStatic(b);
     if (b.z <= 0 && b.vz < 0) {
       b.z = 0;

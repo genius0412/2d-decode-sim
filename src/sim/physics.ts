@@ -1052,6 +1052,62 @@ export function ballRobotFeedback(b: Artifact, r: RobotState, dt: number): void 
 }
 
 /**
+ * AN ARTIFACT COMING DOWN ONTO THE INTAKE LANDS ON IT — it does not fall through into the
+ * throat. The mouth is open at BALL HEIGHT (that is what lets an artifact roll in under the
+ * rollers, and it is why `ballRobotContact` returns nothing there); from ABOVE, the rollers
+ * and the structure carrying them are in the way. See `intakeLidZ`.
+ *
+ * Returns true while the artifact is on the lid, so the caller keeps it there and lets it
+ * roll off the front rather than dropping it in from above.
+ */
+export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): boolean {
+  if (b.state.kind !== 'flight') return false;
+  const lid = C.intakeLidZ(r.spec);
+  // ON it (rolling off), or arriving onto it this tick — never a rising artifact, and never
+  // one already UNDER it, which is an artifact that came in the way it is supposed to.
+  const arriving = prevZ >= lid && b.z < lid;
+  const riding = Math.abs(b.z - lid) < 1e-6 && b.vz <= 0;
+  if (!arriving && !riding) return false;
+
+  const local = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+  const hl = r.spec.length / 2;
+  const tip = hl + C.INTAKE_PRESETS[r.spec.intake].reach;
+  const mh = C.intakeMouth(r.spec).mouthHalf;
+  /**
+   * The roof covers exactly what the intake can CAPTURE from — `updateIntake`'s window is
+   * `local.x > hl - BALL_RADIUS` out to the roller line, so the roof runs from the chassis
+   * front edge (less a radius, where an artifact straddling the edge already overlaps it)
+   * to a radius past the rollers.
+   *
+   * The back edge matters and is not padding. An artifact dropped on the CHASSIS is ejected
+   * out of its nearest face by `ballRobotContact`, and for anything near the front that face
+   * is the front — which puts it in the throat, a radius forward, still falling. Measured:
+   * dropped on the chassis front, every funnel preset still swallowed it. Reaching back a
+   * radius means it meets the roof on the way instead.
+   */
+  if (
+    local.x <= hl - C.BALL_RADIUS ||
+    local.x > tip + C.BALL_RADIUS ||
+    Math.abs(local.y) > mh + C.BALL_RADIUS
+  ) {
+    return false;
+  }
+
+  b.z = lid;
+  b.vz = 0;
+  // thrown forward off the roller: the axis runs ACROSS the robot, so there is nowhere else
+  // for it to go (back is the chassis). Only ever added to — an artifact already leaving
+  // faster than this keeps its own speed.
+  const fwd = rot({ x: 1, y: 0 }, r.heading);
+  const along = b.vel.x * fwd.x + b.vel.y * fwd.y;
+  if (along < C.INTAKE_LID_THROW) {
+    b.vel.x += fwd.x * (C.INTAKE_LID_THROW - along);
+    b.vel.y += fwd.y * (C.INTAKE_LID_THROW - along);
+  }
+  return true;
+}
+
+/**
  * ARTIFACT-side resolution against the INTAKE only. Its mouth is open by design (product
  * decision #10) and its funnel/slope geometry is per-preset, so Rapier has no collider
  * there. The CHASSIS belongs to Rapier now (see `solveBalls`); resolving it here as well
