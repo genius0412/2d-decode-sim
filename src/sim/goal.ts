@@ -529,23 +529,28 @@ function railBlock(
       // pressing its INTAKE at the classifier read as its BODY lying across the outflow, so
       // it blocked the drain it was opening.
       /**
-       * ...AND ITS INTAKE ROOF, which is the other way a robot occupies the outflow.
+       * ...AND ONLY ITS CHASSIS. The INTAKE is not a plug.
        *
-       * The CHASSIS test above is deliberately not the footprint — to an artifact the mouth is
-       * open at ball height, and using the footprint meant a robot holding the gate open with
-       * its intake read as its body lying across the drain it was opening. But "open at ball
-       * height" is only true where the artifact is AT ball height, and the outflow is not: it
-       * comes out at ramp height and is set down over the last couple of inches of rail. Park
-       * an intake in that space and there is nowhere for the artifact to be put down —
-       * reported as "I stand directly in front of where the balls come out, there is no space
-       * for the balls to drop, however it is being intaked still".
+       * The roof used to block here too, on the reasoning that an intake parked in the drop
+       * space leaves nowhere to set an artifact down. The first half of that is right and is
+       * why the roof exists at all; the conclusion is not. A robot is not a stopper in a
+       * chute — artifacts keep arriving and land ON it. Blocking instead meant a driver who
+       * bumped the lever and stayed there got NOTHING: measured across five tap lengths at
+       * the closest standoff, 0 of 9 every time, against 2/3/9/9/3 for the same taps if the
+       * robot backed away. "I only get one or two balls from a tap way too often."
        *
-       * The roof is a much tighter region than the footprint (the mouth, not the whole front
-       * of the robot), so gate intaking is untouched: the arm is at the classifier EDGE and
-       * the rail line runs 3in from the wall, so a robot working the lever is never over it.
+       * So the column runs and the roof answers for it where it belongs — at the release,
+       * which sets the artifact down on the roof instead of through it.
        */
       const p = railPos(a, s);
-      if (pointDepthInChassis(r, p) > -C.BALL_RADIUS || intakeRoofAt(world, p)?.robot === r) {
+      // ...and the intake ROOF, unpadded: the mouth itself over the outflow, not a radius of
+      // slop around it. With the slop, a robot merely PRESSING THE LEVER — whose intake tip
+      // just reaches the rail line — read as parked on the drain, and a driver who bumped the
+      // gate and stayed there got nothing at all (0 of 9, at every tap length).
+      if (
+        pointDepthInChassis(r, p) > -C.BALL_RADIUS ||
+        intakeRoofAt(world, p, 0)?.robot === r
+      ) {
         reach = s + C.RAIL_BLOCK_STEP;
       }
     }
@@ -1230,15 +1235,17 @@ export function updateRails(
       // different for each, and a couple of in/s, not a fan.
       const drift = goalSide(a) * railWanderRate(st0.s, b.id, st0.overflow) * st0.v;
       /**
-       * ...ONTO THE FLOOR, and it is only ever reached when there IS floor to put it on.
+       * ...ONTO THE FLOOR, and it is only ever reached when there IS floor to put it on: a
+       * robot whose MOUTH is over the outflow blocks the column up-ramp (see `railBlock`), so
+       * nothing is released into an intake in the first place.
        *
-       * A robot parked on the outflow has its intake in the space the artifact would be set
-       * down into, and an intake is not floor. That is answered UP-RAMP, by `railBlock`: the
-       * roof blocks the column exactly as the chassis does, so nothing is released into it in
-       * the first place. Releasing onto the roof instead was tried and is worse — it makes a
-       * flight artifact at ramp height moving at the roller's throw speed, and a flight
-       * artifact is exactly what can sail through a gap it does not fit through (smoke has a
-       * check for that, and it caught this).
+       * Setting it down on the ROOF instead was tried, twice, and it is worse both times. It
+       * makes a FLIGHT artifact beside a robot, and flight artifacts are not in the ground
+       * solve — one drifted through a 4.6in gap between a robot's corner and the wall, which
+       * smoke watches because it was a bug report of its own. Making the mouth solid from
+       * above (ballRobotFrontContact) fixes the notch but not the rest of the window: the
+       * artifact is still airborne for the tumble, and the roller throws it at whatever the
+       * robot happens to be facing, which by the gate is usually the wall.
        */
       b.state = { kind: 'ground' };
       b.z = 0;

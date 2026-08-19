@@ -2758,6 +2758,36 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- ...but PRESSING THE LEVER is not parking on the outflow ---------------------
+// "I only get one or two balls from a tap way too often." The roof's blocking region carried
+// a radius of slop around the mouth, and at the gate that radius is the difference between a
+// robot whose mouth is over the drain and one merely pressing the lever with its intake tip.
+// A driver who bumped the gate and STAYED — which is what a driver does — was reading as
+// parked on their own outflow and got NOTHING: 0 of 9 at every tap length from 0.10s to 0.5s,
+// against 2/3/9/9/9 for the same taps if the robot backed away afterwards.
+{
+  const tapStay = (tapS: number, standoff: number): number => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    fillBlueRail(w);
+    const r = w.robots[0];
+    const z = gateZone('blue');
+    r.pos = { x: z.x1 + standoff, y: (z.y0 + z.y1) / 2 };
+    r.heading = Math.PI;
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    run(w, cmd({ driveY: 1 }), tapS);
+    run(w, cmd({}), 12); // ...and STAYS: no teleport away
+    return 9 - w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'blue').length;
+  };
+  const close = [0.15, 0.3, 0.5].map((t) => tapStay(t, 4));
+  check(
+    'a driver who taps the lever and stays there still gets the drain',
+    Math.max(...close) >= 7 && close.every((y) => y >= 1),
+    `pressed in close, 0.15/0.3/0.5s taps -> ${close.join(' ')} (was 0 0 0)`,
+  );
+}
+
 // ---- parking ON the outflow blocks it, it does not feed you ----------------------
 // "Once I open the gate and then stand directly in front of where the balls come out, there
 // is no space for the balls to drop, so it would drop on top of the intake. However, it is

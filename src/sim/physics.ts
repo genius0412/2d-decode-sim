@@ -1070,27 +1070,34 @@ export function ballRobotFeedback(b: Artifact, r: RobotState, dt: number): void 
  * "once I stand in front of where the balls come out they still get intaken". There is no
  * floor there: there is an intake, and its roof is where the artifact ends up.
  */
-export function intakeRoofAt(world: World, p: Vec2): { z: number; robot: RobotState } | null {
+export function intakeRoofAt(
+  world: World,
+  p: Vec2,
+  pad = C.BALL_RADIUS,
+): { z: number; robot: RobotState } | null {
   let best: { z: number; robot: RobotState } | null = null;
   for (const r of world.robots) {
-    if (!overIntakeRoof(r, p)) continue;
+    if (!overIntakeRoof(r, p, pad)) continue;
     const z = C.intakeLidZ(r.spec);
     if (!best || z > best.z) best = { z, robot: r };
   }
   return best;
 }
 
-/** is `p` (an artifact centre) within the intake's roof — see `landOnIntakeLid` */
-function overIntakeRoof(r: RobotState, p: Vec2): boolean {
+/**
+ * is `p` (an artifact centre) within the intake's roof — see `landOnIntakeLid`.
+ *
+ * `pad` is how far past the roof's own edges an artifact still counts as ON it. A radius is
+ * right for LANDING (an artifact perched on the lip overlaps the roof), and ZERO is right for
+ * asking whether the roof is in the way of something else, where a radius of slop is the
+ * difference between a robot whose mouth is over the outflow and one merely reaching near it.
+ */
+function overIntakeRoof(r: RobotState, p: Vec2, pad = C.BALL_RADIUS): boolean {
   const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);
   const hl = r.spec.length / 2;
   const tip = hl + C.INTAKE_PRESETS[r.spec.intake].reach;
   const mh = C.intakeMouth(r.spec).mouthHalf;
-  return (
-    local.x > hl - C.BALL_RADIUS &&
-    local.x <= tip + C.BALL_RADIUS &&
-    Math.abs(local.y) <= mh + C.BALL_RADIUS
-  );
+  return local.x > hl - pad && local.x <= tip + pad && Math.abs(local.y) <= mh + pad;
 }
 
 export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): boolean {
@@ -1137,8 +1144,55 @@ export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): bool
  * was the bug — two position writes per tick, one driving an artifact into the classifier
  * and the next shoving it back out, 4.5in of jitter at zero velocity.
  */
+/**
+ * OBB contact against the robot's WHOLE front — chassis plus the intake, no open notch.
+ *
+ * The notch in `ballRobotContact` exists because the rollers ride high in z and artifacts pass
+ * UNDER them. That is only true of an artifact at ball height. One riding the intake's ROOF is
+ * above the opening, where the roller and the structure carrying it are solid — and it has to
+ * be, because a roof-riding artifact is in FLIGHT and flight artifacts are not in the ground
+ * solve, so an open notch up there let one drift sideways through a robot-corner gap it could
+ * never fit through (smoke measures exactly that).
+ */
+function ballRobotFrontContact(
+  r: RobotState,
+  p: Vec2,
+): { nx: number; ny: number; pen: number; cp: Vec2 } | null {
+  const R = C.BALL_RADIUS;
+  const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);
+  const hl = r.spec.length / 2;
+  const half = r.spec.width / 2;
+  const front = hl + C.INTAKE_PRESETS[r.spec.intake].reach;
+  const cx = clamp(local.x, -hl, front);
+  const cy = clamp(local.y, -half, half);
+  const dx = local.x - cx;
+  const dy = local.y - cy;
+  const toWorld = (nlx: number, nly: number, pen: number, clx: number, cly: number) => {
+    const n = rot({ x: nlx, y: nly }, r.heading);
+    const c = rot({ x: clx, y: cly }, r.heading);
+    return { nx: n.x, ny: n.y, pen, cp: { x: c.x + r.pos.x, y: c.y + r.pos.y } };
+  };
+  if (dx !== 0 || dy !== 0) {
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= R * R) return null;
+    const d = Math.sqrt(d2);
+    return toWorld(dx / d, dy / d, R - d, cx, cy);
+  }
+  const dl = local.x + hl;
+  const dr = front - local.x;
+  const dt = half - local.y;
+  const db = half + local.y;
+  const mm = Math.min(dl, dr, dt, db);
+  if (mm === dr) return toWorld(1, 0, R + dr, front, local.y);
+  if (mm === dl) return toWorld(-1, 0, R + dl, -hl, local.y);
+  if (mm === dt) return toWorld(0, 1, R + dt, local.x, half);
+  return toWorld(0, -1, R + db, local.x, -half);
+}
+
 export function collideBallRobot(b: Artifact, r: RobotState): void {
-  const contact = ballRobotContact(r, b.pos);
+  // above the mouth's opening the intake is not open — see ballRobotFrontContact
+  const overMouth = b.z >= 2 * C.BALL_RADIUS;
+  const contact = overMouth ? ballRobotFrontContact(r, b.pos) : ballRobotContact(r, b.pos);
   if (!contact) return;
   const { nx, ny, pen, cp } = contact;
   const localX = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading).x;
@@ -1149,7 +1203,7 @@ export function collideBallRobot(b: Artifact, r: RobotState): void {
   // artifact rolling and hopping across the floor sailed straight through a robot, which is
   // what "artifacts sometimes jump over the chassis" looks like. Measured 12 of 15 low
   // approaches crossing, 7.3in deep, including one at z = 0.
-  if (b.state.kind === 'ground' && localX <= r.spec.length / 2) return;
+  if (!overMouth && b.state.kind === 'ground' && localX <= r.spec.length / 2) return;
   const c = clampBallPosToStatics({ x: b.pos.x + nx * pen, y: b.pos.y + ny * pen });
   b.pos.x = c.x;
   b.pos.y = c.y;
