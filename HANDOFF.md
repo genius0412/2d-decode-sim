@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `b37f3ba`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `fb562e1`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,7 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Eight reports: six about the DECODE classifier ramp, two about the intake. The first two trace to the same kind of
+Nine reports: seven about the DECODE classifier and its gate, two about the intake. The first two trace to the same kind of
 thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
@@ -245,6 +245,50 @@ re-attempted.
 One condition of the nine-way tap sweep moves with this: at the closest standoff the robot's
 own intake covers the outflow, so it holds its own drain shut for the length of the tap
 (9 → 3). That is the rule working, and the check says so rather than being tuned around.
+
+### The paddle is a stick resting on a sphere (`fb562e1`)
+
+*"The amount and the point at which the gate opens when a ball forces it open is very off.
+Remember that the gate is a stick that is riding on top of a sphere."*
+
+It was modelled as a **plunger** — the paddle's edge coming straight down the vertical at the
+gate line, reading the artifact's surface height there (`R + sqrt(R² − d²)`) and mapping it
+linearly onto a free constant. The paddle is hinged off to one side of the channel, so it
+meets the artifact at a **tangent**, and a tangent's angle is both larger and a different
+shape. `gateRestAngle` (config.ts) is the algebra:
+
+    hypot(xb, W) · cos(t + atan2(W, xb)) = sqrt(xb² + d² + W² − R²),   W = GATE_PIVOT_Z − R
+
+**The hinge height is the only free number, and the MANUAL picks it.** 9.8.3 puts the gate's
+contact area 3.75–5.5in above the ramp, which is exactly where this stick touches this
+sphere; the height that lands the apex contact mid-band is **3.5in**. A ramp-level hinge
+contacts at 2.95in — below the band — which is what rules out the reading where a 5in
+artifact stands a 6in stick almost vertical (that reading gives an apex rest of 1.03).
+
+| d from the gate line | 0 | 1 | 2 | 2.29 |
+|---|---|---|---|---|
+| plunger (was) | 0.340 | 0.326 | 0.272 | 0.238 |
+| tangency (now) | **0.437** | 0.362 | 0.128 | 0.000 |
+
+The reach is no longer the artifact's radius: the tangency answers **2.29in**, and
+`GATE_LINE_S` is now DERIVED from it so a column still rests packed at `GATE_STOP_S` exactly
+as before.
+
+**`GATE_SEAT_FRAC` and `GATE_PASS_FRAC` are now one derived value.** The 0.34/0.40 gap was a
+fudge doing a job — "seated under the arm is not past it" — and it was needed because the old
+gateway window was 8.5in against a 5.1in artifact pitch, so something was ALWAYS under the
+arm. The stick's own window is 4.58in, less than one pitch, so the geometry does that job:
+the stick rides highest at the apex, and clearing the apex IS passing.
+
+Behaviour holds — a shut gate retains at every arrival speed 10..60 in/s (stopping at exactly
+`GATE_STOP_S`), and the tap sweep still spans 1..9, mean 5.8.
+
+**Still scripted, and the next thing to look at if this is revisited:** an artifact does not
+yet WEDGE the arm up along the tangency as it advances (the arm's rise is still the
+`GATE_KNOCK` impulse). The geometric version is `rest'(d) · v`, needs no constant at all, and
+would make "a ball forces it open" a kinematic consequence — but it also needs the paddle's
+FACE modelled (below the artifact's equator the edge blocks rather than wedges), or a fast
+artifact levers a shut gate open.
 
 ## Next steps
 
