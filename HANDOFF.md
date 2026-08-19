@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `d963c05`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `519f69e`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,7 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Five reports, all about the DECODE classifier ramp. The first two trace to the same kind of
+Six reports, all about the DECODE classifier ramp. The first two trace to the same kind of
 thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
@@ -163,6 +163,27 @@ for the alpha site — so classifier changes are invisible until that app is red
 usable token (`fly auth whoami` → "no access token available", both shells; `~/.fly/
 config.yml` dates from 11 Jul), so a deploy needs `fly auth login` first, then
 `./scripts/fly-deploy.sh --alpha` — never a bare `fly deploy`.
+
+### Nothing on the ramp outruns the ramp (`519f69e`)
+
+*"Sometimes balls come down the ramp extremely fast. Only sometimes. And way too fast."*
+
+An artifact boarded the rail carrying whatever `vel.y` the BASIN had given it, and
+`BASIN_FUNNEL_ACCEL` is 1150 in/s² — three times gravity, a scripted drain aid so the basin
+does not clog, not a slope. Measured over six seeds of a firing robot: **boarding up to
+52 in/s, peaking at 75 on the ramp, 12 of 18 over 60**, against a ramp whose own free-fall
+ceiling over its whole length is 54. The *"sometimes"* was simply whether an artifact dived
+straight at the entrance or jumbled in the basin first.
+
+The channel entrance is a THROAT, not a launcher. Boarding is capped at what the ramp
+itself could have produced by that point — `sqrt(2·RAIL_ACCEL·(RAIL_S_MAX − s))` — floored
+at the new `RAIL_ENTRY_V` (8) so a dribbler still gets under way. After: boarding 8 flat,
+peak 47..55, none over 60. **Throughput is unchanged** (18 scored either way, worst basin
+backlog 3 either way), so the cap costs the drain nothing.
+
+The invariant is now a check: *nothing on the ramp is faster than an artifact released at
+the top of it.* That is the property that makes the flow legible, and it is worth keeping —
+any future "the classifier feels wrong" report should be tested against it first.
 
 ## Next steps
 
