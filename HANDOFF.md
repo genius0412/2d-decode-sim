@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `f82044a`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `5fa9c18`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,7 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Ten reports, all in the DECODE classifier: the ramp, the gate, and the intake at its outflow. The first two trace to the same kind of
+Eleven reports, all in the DECODE classifier: the ramp, the gate, and the intake at its outflow. The first two trace to the same kind of
 thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
@@ -319,6 +319,41 @@ artifact is in FLIGHT, and flight artifacts are not in the ground solve.
 makes a flight artifact beside a robot, and one drifted through a 4.6in gap between a robot's
 corner and the wall — which is a bug report of its own, with a check. The note is in the
 release code.
+
+### The ramp is a 10-degree chute now, and 5-9 per tap is a BENCHMARK (`5fa9c18`)
+
+*"I feel like the initial balls are too slow (or perhaps all of them, in general)."* They
+were, and the first one worst of all: `RAIL_ACCEL` 25 is a **5.2-degree** ramp, so a column
+starting from rest took **0.70s** to put its first artifact out, at 18 in/s. That value was
+set when the ramp stopped running at a capped flow speed — the cap used to hide the slow
+start.
+
+`RAIL_ACCEL` **50** is a 10.5-degree chute, the sort of slope you would build for a gravity
+feed that has to start a stationary ball reliably. First artifact out at **0.48s at 24 in/s**,
+all nine clear in **1.65s** (was 2.37s), arrival gaps 0.25 → 0.10s.
+
+**Three constants that were sized against the old ramp are now DERIVED from it**, so the next
+slope change carries them instead of silently breaking the balance:
+
+| | |
+|---|---|
+| `OVERFLOW_ROLL_LOSS` | `0.36 · RAIL_ACCEL` — the ride keeps its 0.8 speed ratio |
+| `OVERFLOW_BUMP` | `0.48 · RAIL_ACCEL` — the scallop stays under the net pull |
+| `GATE_GRAVITY` | `(1 − PASS) · RAIL_ACCEL / (0.74 · RAIL_PITCH)` |
+
+That last one is the fall-to-pass vs one-pitch-from-rest relation the suite already checks,
+solved for gravity: the ratio stays **0.86 at any slope**, which is what keeps a tap worth
+something.
+
+**THE BENCHMARK — "on a gate tap, 5 to 9 balls must release" — is a check now**, over 30 taps
+(three packings × five tap lengths × two standoffs): worst 6, best 9, mean 8.8. `GATE_KNOCK`
+0.06 → **0.05** is what puts the spread inside the band rather than pinned at 9; at 0.04 the
+worst case falls to 4 and it fails. **Do not tune the gate without re-running it.**
+
+The packing-variety check it replaces asked the yield to depend on how tightly the column was
+packed — true on a 5-degree ramp where the flow was marginal enough for spacing to decide
+whether it sustained. At 10.5 degrees a firm tap carries any column (loosening the pitch by
+8in changes nothing) and what varies is the tap.
 
 ## Next steps
 
