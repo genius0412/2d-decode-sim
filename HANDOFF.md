@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `519f69e`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `ac774db`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,7 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Six reports, all about the DECODE classifier ramp. The first two trace to the same kind of
+Seven reports: six about the DECODE classifier ramp, one about the intake. The first two trace to the same kind of
 thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
@@ -184,6 +184,35 @@ backlog 3 either way), so the cap costs the drain nothing.
 The invariant is now a check: *nothing on the ramp is faster than an artifact released at
 the top of it.* That is the property that makes the flow legible, and it is worth keeping —
 any future "the classifier feels wrong" report should be tested against it first.
+
+### The intake has a roof (`ac774db`)
+
+*"The intake should not intake if a ball drops on top of it."*
+
+The mouth is open at BALL HEIGHT on purpose — that is what lets an artifact roll in under
+the rollers, and it is why `ballRobotContact` returns no contact in the centre of the mouth
+("the wheels ride high in z, so balls pass under them"). **That fact has an unstated other
+half: what rides high in z is solid to anything coming DOWN.** Without it the mouth was open
+from above as well, and an artifact dropped on the intake fell through the rollers into the
+throat and was swallowed — 11 of 18 drops from 24in across the three presets.
+
+`intakeLidZ` is the height the mouth geometry already implies: the roller's underside must
+clear a full artifact for one to pass beneath it, so an artifact landing ON the roller sits
+a diameter, plus the roller, plus its own radius up. `INTAKE_LID_THROW` sends it forward
+along the robot's axis — a roller's axis runs ACROSS the robot, so forward or back is all
+there is, and back is the chassis.
+
+**The roof's BACK edge is load-bearing, not padding.** An artifact dropped on the CHASSIS is
+ejected out of its nearest face by the contact code, and near the front that face is the
+front — which puts it in the throat, a radius forward, still falling. Before the roof was
+extended back a radius (to exactly `updateIntake`'s own capture window) every funnel preset
+still swallowed a chassis-front drop. After: **0 of 18 taken, 18 of 18 on the floor forward
+of the roller line**, where a running intake may then take them the way it is supposed to.
+
+Note what was deliberately NOT done: the CHASSIS did not get a roof at `ROBOT_HEIGHT`. Shots
+pass over robots today (nothing collides above `BALL_RADIUS*4`), and a chassis roof would
+start intercepting them — which would break "the shooter never misses". A ball resting on
+top of a robot also needs a state that does not exist.
 
 ## Next steps
 
