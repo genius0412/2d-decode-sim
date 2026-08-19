@@ -927,26 +927,6 @@ export const OVERFLOW_Z = RAMP_SURFACE_Z + 2 * BALL_RADIUS;
  * terminal (1 → 13 → 21 → 26 → 29 → 31 → 33 → 34 in/s, dead smooth) and the artifacts held
  * a tidy second row at exactly RAIL_PITCH, which is not what rolling over a pile looks like.
  */
-/**
- * ...AND IT MUST STAY UNDER THE RAMP'S OWN PULL, or the scallop stops being a texture and
- * becomes a TRAP. The crest between two artifacts is a real potential barrier: if the bump
- * can cancel `RAIL_ACCEL` the artifact simply parks in a hollow and never comes out.
- *
- * This was 40 against a RAIL_ACCEL of 80 — half of gravity, a lurch. RAIL_ACCEL is now 25
- * (the ramp accelerates the whole way down instead of running at a capped flow speed) and
- * this was not rescaled with it, so the bump was 1.6x the pull that is supposed to drive the
- * ride. Measured with four overflow artifacts dropped onto a full column: three of them
- * stuck on the pile FOREVER — one at s=52.4 held at v=+5 in/s, i.e. being pushed steadily
- * back UP the ramp — and the fourth crept out at 16 in/s after four seconds. The note under
- * OVERFLOW_LAND_LOSS had already recorded the shape of this ("past 100 the ride limit-cycles
- * and nothing exits at all"); dropping RAIL_ACCEL is what walked the ratio into it.
- *
- * So it is now a FRACTION of the net pull, and the invariant is one line of arithmetic:
- * RAIL_ACCEL - OVERFLOW_ROLL_LOSS - OVERFLOW_BUMP * OVERFLOW_SLOPE_MAX > 0, i.e. the ride
- * always accelerates down-ramp, hardest into a hollow and barely at all over a crest. Smoke
- * asserts it, because it is the difference between a lurch and a stall.
- */
-export const OVERFLOW_BUMP = 12; // in/s² per unit slope
 /** cap on that slope — the geometry diverges at the point where one sphere hands over to
  * the next, and an unbounded kick there would fling artifacts off the ramp */
 export const OVERFLOW_SLOPE_MAX = 1.0;
@@ -1002,7 +982,7 @@ export const RAIL_S_MAX = 55; // rail length: SQUARE at the top (y = CLASSIFIER_
  * each with more runway than the one in front, so the gaps between arrivals SHORTEN as the
  * column drains and the ramp visibly speeds up as it empties.
  */
-export const RAIL_ACCEL = 25; // in/s^2 down-ramp
+export const RAIL_ACCEL = 50; // in/s^2 down-ramp
 /**
  * Terminal flow speed down the ramp — the speed at which the incline's pull (RAIL_ACCEL) is
  * balanced by rolling resistance.
@@ -1136,7 +1116,28 @@ export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
  * of the ramp lane's speed — 0.8 — because climbing over a pile costs it, not because it is
  * a different kind of thing.
  */
-export const OVERFLOW_ROLL_LOSS = 9; // in/s² — net ride pull is RAIL_ACCEL minus this
+export const OVERFLOW_ROLL_LOSS = 0.36 * RAIL_ACCEL; // in/s²: net ride pull is the rest
+
+/**
+ * ...AND IT MUST STAY UNDER THE RAMP'S OWN PULL, or the scallop stops being a texture and
+ * becomes a TRAP. The crest between two artifacts is a real potential barrier: if the bump
+ * can cancel `RAIL_ACCEL` the artifact simply parks in a hollow and never comes out.
+ *
+ * This was 40 against a RAIL_ACCEL of 80 — half of gravity, a lurch. RAIL_ACCEL is now 25
+ * (the ramp accelerates the whole way down instead of running at a capped flow speed) and
+ * this was not rescaled with it, so the bump was 1.6x the pull that is supposed to drive the
+ * ride. Measured with four overflow artifacts dropped onto a full column: three of them
+ * stuck on the pile FOREVER — one at s=52.4 held at v=+5 in/s, i.e. being pushed steadily
+ * back UP the ramp — and the fourth crept out at 16 in/s after four seconds. The note under
+ * OVERFLOW_LAND_LOSS had already recorded the shape of this ("past 100 the ride limit-cycles
+ * and nothing exits at all"); dropping RAIL_ACCEL is what walked the ratio into it.
+ *
+ * So it is now a FRACTION of the net pull, and the invariant is one line of arithmetic:
+ * RAIL_ACCEL - OVERFLOW_ROLL_LOSS - OVERFLOW_BUMP * OVERFLOW_SLOPE_MAX > 0, i.e. the ride
+ * always accelerates down-ramp, hardest into a hollow and barely at all over a crest. Smoke
+ * asserts it, because it is the difference between a lurch and a stall.
+ */
+export const OVERFLOW_BUMP = 0.48 * RAIL_ACCEL; // in/s² per unit slope
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s
 /**
@@ -1254,7 +1255,7 @@ export const GATE_RIDE_FRAC = 0.62; // open fraction the arm rests at while ridi
  * At 0.12 the sweep was 9-or-nothing (12 ones, 36 nines, nothing between); at 0.07 it spans
  * 1..9 with a mean of 5.
  */
-export const GATE_KNOCK = 0.07; // (1/s of gatePos) per in/s of artifact speed
+export const GATE_KNOCK = 0.05; // (1/s of gatePos) per in/s of artifact speed
 /**
  * WHAT THE STRIKE COSTS THE ARTIFACT — the fraction of its down-ramp speed it spends
  * throwing the arm up. A collision moves momentum; it does not mint it.
@@ -1533,7 +1534,8 @@ export const GATE_OPEN_RATE_MAX = 66; // 1/s cap (~fully open in one tick at a h
  * 0.15s 3 · 0.20s 5 · 0.25s 9. Loosen the column to +5in and a quick tap is worth 1 again,
  * which is the situational answer this is supposed to have.
  */
-export const GATE_GRAVITY = 4; // 1/s^2 on gatePos: gravity swinging the released arm shut
+export const GATE_GRAVITY =
+  ((1 - GATE_PASS_FRAC) * RAIL_ACCEL) / (0.74 * RAIL_PITCH); // 1/s^2 on gatePos — see above
 /**
  * Terminal swing speed as the arm falls closed.
  *
