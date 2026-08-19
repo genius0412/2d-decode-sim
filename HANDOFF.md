@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `7d4239d`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `d963c05`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,7 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Four reports, all about the DECODE classifier ramp. The first two trace to the same kind of
+Five reports, all about the DECODE classifier ramp. The first two trace to the same kind of
 thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
@@ -121,6 +121,48 @@ resting column needs to deliver its next artifact — `sqrt(2·RAIL_PITCH/a)` we
 (`GATE_GRAVITY` 6). That race is why short taps went bimodal in the first place. The
 strike now bridges it; if it ever needs revisiting, `GATE_GRAVITY` is the constant that
 was never re-derived against the ramp it meters.
+
+### The arm's fall is set against the ramp it meters (`d963c05`)
+
+*"A tap lets out 1 or 2"* — still, after the strike fix, and this is the structural half.
+A tap on a RESTING column is a race between two times:
+
+| | |
+|---|---|
+| the arm's fall from fully open to the pass line | `sqrt(2·(1−GATE_PASS_FRAC)/GATE_GRAVITY)` |
+| the column's delivery of its next artifact | `sqrt(2·RAIL_PITCH/RAIL_ACCEL)` |
+
+The second **doubled** when the ramp stopped running at a capped flow speed (`RAIL_ACCEL`
+80 → 25, `57a308e`): 0.36 s → 0.64 s. `GATE_GRAVITY` stayed at 6, a 0.45 s fall. The arm
+was therefore always shut before the second artifact could arrive, and **no knock can fix
+that** — the first gap is covered by nothing at all.
+
+- **`GATE_GRAVITY` 6 → 4**: fall 0.55 s against the column's 0.64 s. Marginal is the point,
+  and the ratio has a CEILING as well as a floor — at 2.9 the fall matches the delivery and
+  the yield is 9 of 9 in **every one of 50** tap conditions, i.e. the drain can no longer
+  give out at all.
+- **`GATE_KNOCK` 0.12 → 0.07**: with the strike loss a flowing column sits at a fixed-point
+  arrival speed (~19 in/s), so the rise per knock is a constant compared against a constant
+  fall between arrivals. Set high, every drain that survives its first gap runs the whole
+  ramp: at 0.12 the sweep was 9-or-nothing (12 ones, 36 nines, nothing between). At 0.07 it
+  spans 1..9, mean 5.
+
+Packed column, tap length → drained: **0.10s 2 · 0.15s 3 · 0.20s 5 · 0.25s 9**. Loosen the
+column to +5in and a quick tap is worth 1 again, which is the situational answer it is
+supposed to have. Checks: a 0.12 s bump is worth more than one artifact at three packings,
+and the fall/pace RATIO itself, so the next `RAIL_ACCEL` change trips in the suite rather
+than in a play session.
+
+### Where the sim actually runs, which cost half a session
+
+Worth stating because it looked like the fixes were not landing: **a record run is a server
+room** (`RecordRun.tsx` joins a `LobbyClient` room with `kind: 'record'`), as are lobby,
+matchmaking and ranked. In all of those the authoritative sim is the Fly app — `dsim-alpha`
+for the alpha site — so classifier changes are invisible until that app is redeployed. Only
+**Free Drive** (`session: null`) runs the client bundle's sim. `flyctl` on this box has no
+usable token (`fly auth whoami` → "no access token available", both shells; `~/.fly/
+config.yml` dates from 11 Jul), so a deploy needs `fly auth login` first, then
+`./scripts/fly-deploy.sh --alpha` — never a bare `fly deploy`.
 
 ## Next steps
 
