@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `ac774db`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `b37f3ba`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,7 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Seven reports: six about the DECODE classifier ramp, one about the intake. The first two trace to the same kind of
+Eight reports: six about the DECODE classifier ramp, two about the intake. The first two trace to the same kind of
 thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
@@ -213,6 +213,38 @@ Note what was deliberately NOT done: the CHASSIS did not get a roof at `ROBOT_HE
 pass over robots today (nothing collides above `BALL_RADIUS*4`), and a chassis roof would
 start intercepting them — which would break "the shooter never misses". A ball resting on
 top of a robot also needs a state that does not exist.
+
+### Parking on the outflow blocks it (`b37f3ba`)
+
+*"Once I open the gate and then stand directly in front of where the balls come out, there
+is no space for the balls to drop, so it would drop on top of the intake. However, it is
+being intaked, still."*
+
+The intake roof from `ac774db` did not cover this, because **the outflow does not FALL**: an
+artifact leaving the ramp is LOWERED from ramp height to the floor over the last couple of
+inches of rail and then released as a ground artifact. With a robot parked on the drop point
+that lowering ran straight through its intake and set the artifact down INSIDE the mouth, at
+floor level — the one place it could not have reached on its own.
+
+`railBlock`'s chassis test is deliberately not the footprint (a robot holding the gate open
+must not read as blocking the drain it is opening). But *"the mouth is open at ball height"*
+only answers for an artifact that IS at ball height, and the outflow is not — the ramp
+discharges at `RAMP_SURFACE_Z` ≈ where an intake's roof sits. So **the roof blocks the column
+exactly as the chassis does**. It is a far tighter region than the footprint (the mouth, not
+the whole front), and the rail line runs 3in from the wall while the gate arm is at the
+classifier EDGE, so a robot working the lever is never over it.
+
+Parked on the drop point: **0 taken, 9 left on the ramp** (3 taken before). Backed off three
+inches: 3 taken — that is gate intaking and it must keep working; both are checks now.
+
+**Releasing onto the roof instead was tried and is worse** — it makes a flight artifact at
+ramp height carrying the roller's throw speed, and a flight artifact is exactly what can sail
+through a gap it does not fit through. The existing gap check caught it. Noted so it is not
+re-attempted.
+
+One condition of the nine-way tap sweep moves with this: at the closest standoff the robot's
+own intake covers the outflow, so it holds its own drain shut for the length of the tap
+(9 → 3). That is the rule working, and the check says so rather than being tuned around.
 
 ## Next steps
 
