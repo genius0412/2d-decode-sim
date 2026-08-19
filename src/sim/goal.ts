@@ -393,7 +393,13 @@ export function updateBasins(world: World, dt: number): void {
         // hand-off keeps the ball's position: it glides onto the rail while
         // descending (x/z blend happens in updateRails) — no snapping
         const s = b.pos.y - C.CLASSIFIER_Y0;
-        const v = Math.min(b.vel.y, -8);
+        // ...at the ramp's own pace. The basin's funnel pull is a scripted drain aid, not a
+        // slope, and an artifact that dived straight at the entrance used to carry all of it
+        // onto the ramp — boarding at 52 in/s and peaking at 75, past the 54 the ramp itself
+        // can produce over its whole length. See RAIL_ENTRY_V.
+        const rampV = Math.sqrt(2 * C.RAIL_ACCEL * Math.max(0, C.RAIL_S_MAX - s));
+        const cap = Math.max(C.RAIL_ENTRY_V, rampV);
+        const v = Math.max(Math.min(b.vel.y, -C.RAIL_ENTRY_V), -cap);
         b.state = { kind: 'rail', goal: a, s, v, overflow: false, pending: true };
         b.vel = { x: 0, y: 0 };
         b.vz = 0;

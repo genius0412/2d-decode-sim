@@ -81,6 +81,7 @@ import {
   RAIL_TERMINAL,
   HOPPER_CAPACITY,
   RAIL_EXIT_S,
+  RAIL_ENTRY_V,
   RAIL_S_MAX,
   OVERFLOW_ROLL_LOSS,
   OVERFLOW_SLOPE_MAX,
@@ -2076,6 +2077,50 @@ function queueTenth(w: World): void {
     'the drain settles ALONG the wall, not out on a diagonal',
     offWall.filter((d) => d < 20).length >= 7,
     `off-wall=${offWall.map((d) => d.toFixed(0)).join(',')}`,
+  );
+}
+
+// ---- nothing on the ramp outruns the ramp ---------------------------------------
+// "Sometimes balls come down the ramp extremely fast. Only sometimes. And way too fast."
+// An artifact boarded the rail carrying whatever vel.y the BASIN had given it, and the
+// basin's funnel pull is a scripted drain aid (BASIN_FUNNEL_ACCEL, three times gravity, there
+// to stop the basin clogging) rather than a slope. Measured over six seeds of a firing robot:
+// artifacts boarded at up to 52 in/s and peaked at 75 on the ramp, 12 of 18 of them over
+// 60 — against a ramp whose own free-fall ceiling over its whole length is 54. "Sometimes"
+// was whether an artifact happened to dive at the entrance or jumble first.
+{
+  const board: number[] = [];
+  const peak: number[] = [];
+  for (const seed of [7, 19, 42]) {
+    const w = mkWorld('match', 'blue', seed);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    w.robots[0].pos = { x: -20, y: 20 };
+    const seen = new Map<number, number>();
+    for (let i = 0; i < Math.round(30 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({ fire: true, intake: true })]]));
+      for (const b of w.balls) {
+        if (b.state.kind !== 'rail' || b.state.goal !== 'blue') continue;
+        const v = Math.abs((b.state as { v: number }).v);
+        if (!seen.has(b.id)) board.push(v);
+        seen.set(b.id, Math.max(seen.get(b.id) ?? 0, v));
+      }
+    }
+    peak.push(...seen.values());
+  }
+  // the ONE bound, and it is the ramp's own: nothing on it can be moving faster than
+  // something released at the very top of it. A little slack for the tick the paddle shoves.
+  const ceiling = Math.sqrt(2 * RAIL_ACCEL * (RAIL_S_MAX - RAIL_EXIT_S));
+  check(
+    'nothing on the ramp is faster than an artifact released at the top of it',
+    peak.length >= 6 && Math.max(...peak) < ceiling * 1.05,
+    `peak ${Math.min(...peak).toFixed(0)}..${Math.max(...peak).toFixed(0)} in/s over ${peak.length} artifacts, ramp ceiling ${ceiling.toFixed(0)} (was 75)`,
+  );
+  check(
+    '...because boarding the ramp is capped at what the ramp itself could have given it',
+    // + one tick of gravity: the sample is taken after the step that boarded it
+    Math.max(...board) <= RAIL_ENTRY_V + RAIL_ACCEL * SIM_DT + 1e-6,
+    `boarding ${Math.min(...board).toFixed(0)}..${Math.max(...board).toFixed(0)} in/s (was 8..52)`,
   );
 }
 

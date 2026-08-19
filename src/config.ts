@@ -1004,6 +1004,26 @@ export const GATE_STOP_S = 2; // lowest rest position against the closed gate
 // before the next could board — throttling the drain to ~2 balls/s and clogging
 // the basin. One pitch below the entry keeps proper spacing but drains ~2× faster.
 export const RAIL_ENTRY_BLOCK_S = 50;
+/**
+ * The speed an artifact BOARDS the ramp at, and its ceiling.
+ *
+ * The floor (8 in/s) exists so an artifact that dribbles into the entrance still gets under
+ * way. The CEILING is the interesting one: an artifact used to board carrying whatever
+ * `vel.y` the basin had given it, and the basin's funnel pull is a scripted drain aid
+ * (BASIN_FUNNEL_ACCEL, 1150 in/s^2 — three times gravity, there to stop the basin clogging),
+ * not a slope. Measured in a real match, artifacts boarded at up to 52 in/s and peaked at
+ * 75 in/s on the ramp, against a ramp whose OWN free-fall ceiling over its whole length is
+ * 54. It depended entirely on whether an artifact happened to dive straight at the entrance
+ * or jumble first, which is exactly "sometimes balls come down the ramp extremely fast".
+ *
+ * The channel entrance is a THROAT, not a launcher: an artifact turning into a 6in chute
+ * spends most of what it had on the walls. So the boarding speed is capped at what the ramp
+ * ITSELF could have produced by that point — sqrt(2 * RAIL_ACCEL * (RAIL_S_MAX - s)) — and
+ * from there the descent is the ramp's own physics and nothing else's. Nothing on the ramp
+ * can then be faster than something released at the very top, which is the property that
+ * makes the flow legible.
+ */
+export const RAIL_ENTRY_V = 8; // in/s, the minimum an artifact boards the ramp at
 export const RAIL_EXIT_S = -4; // past the gate: ball drops out to the floor
 /**
  * An artifact on the ramp is drawn RAMP_SURFACE_Z up in the air, which is true while it is on
