@@ -2976,11 +2976,40 @@ function queueTenth(w: World): void {
   };
   const tilts = [-12, -6, -3, -1, 1, 3, 6, 12];
   const cases: { label: string; tilt: number; ended: number }[] = [];
+  /**
+   * ...INCLUDING WHEN YOU ARRIVE HARD. "Even if I hit it with a large impact it doesn't turn
+   * me": the impulse a collision hands the chassis was gated on `flushErr > 0.05` and sat
+   * inside an `else if`, so arriving fast and nearly square produced nothing at all. It is its
+   * own term now, and it is guarded by the TILT rather than by the alignment — comparing it
+   * against `align` passes trivially whenever `align` has been zeroed for pointing the wrong
+   * way, which is exactly when the guard is needed.
+   */
+  const hardCases: { tilt: number; ended: number }[] = [];
   for (const t of tilts) cases.push({ label: 'wall', tilt: t, ended: settle(t, 'wall') });
   for (const t of tilts) cases.push({ label: 'gate', tilt: t, ended: settle(t, 'gate') });
   for (const t of [-6, -1, 1, 6]) cases.push({ label: 'gate, hit with one side', tilt: t, ended: settle(t, 'gate', 5) });
   // WORSE means it ended further from flush than it started — the wrong way, by any amount
   const worse = cases.filter((c) => Math.abs(c.ended) > Math.abs(c.tilt) + 0.5);
+  for (const t of [-20, -8, -3, 3, 8, 20]) {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    for (const b of w.balls) b.state = { kind: 'held', robot: 99, slot: 0, lx: 0, ly: 0, side: 0 };
+    const r = w.robots[0];
+    r.pos = { x: 0, y: FIELD_HALF - 9 - 30 }; // a 30in run-up: a real ram, not a lean
+    r.heading = Math.PI / 2 + (t * Math.PI) / 180;
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    run(w, cmd({ driveY: 1 }), 3);
+    const q = Math.PI / 2;
+    let rel = r.heading - Math.PI / 2;
+    rel -= Math.round(rel / q) * q;
+    hardCases.push({ tilt: t, ended: (rel * 180) / Math.PI });
+  }
+  check(
+    'a hard ram squares the chassis up rather than leaving it where it landed',
+    hardCases.every((c) => Math.abs(c.ended) < 1),
+    `run-up rams at ${hardCases.map((c) => `${c.tilt}deg->${c.ended.toFixed(1)}`).join(' ')}`,
+  );
   check(
     'a contact never turns a robot further from flush than it found it',
     worse.length === 0,

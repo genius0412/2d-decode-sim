@@ -254,21 +254,52 @@ function applyContactTorque(
   // chassis is square, so flush poses repeat every 90°). Without this cap the
   // torque bias overshoots each tick and the heading buzzes at the wall.
   let flushErr = Infinity;
+  let relSigned = 0;
   if (squareTo) {
     const q = Math.PI / 2;
     let rel = r.heading - datan2(ny, nx);
     rel -= Math.round(rel / q) * q;
+    relSigned = rel;
     flushErr = Math.abs(rel);
   }
   const cap = Math.min(rate, flushErr);
-  const align = clamp(torque * 0.1 * gain * rateMult, -cap, cap);
+  let align = clamp(torque * 0.1 * gain * rateMult, -cap, cap);
+  /**
+   * A SETTLING RESPONSE SETTLES. It may reduce the tilt against the surface and it may not add
+   * to it — adding to it is what a collision does, and that is the impulse below, which is
+   * free to do so.
+   *
+   * The contact set is corners within half an inch of the surface, and near flush their levers
+   * nearly cancel, so what is left is small and noisy. When the noise came out the wrong way
+   * the alignment ran with it, and because the cap is the remaining tilt, every wrong step
+   * made the next one bigger: measured, a robot 3 degrees off square hitting a wall at speed
+   * ended 13 degrees off, the wrong side, from a torque that should have been ~0.
+   */
+  if (squareTo && align * relSigned > 0) align = 0;
   if (align !== 0) {
     const maxTurn = driveParams(r.spec).maxTurn;
     r.heading += align;
     if (r.angVel * align < 0) {
-      // bleed angular velocity that fights the contact
+      // bleed angular velocity that fights the contact — a surface being pressed does not let
+      // the chassis keep spinning into it
       r.angVel *= 0.9;
-    } else if (flushErr > 0.05) {
+    } else {
+    /**
+     * AN IMPACT IS AN IMPULSE, AND AN IMPULSE IS NOT CAPPED BY FLUSH.
+     *
+     * `align` is a settling: it walks the chassis toward the pose the contact geometry wants,
+     * and it is rightly capped at the tilt that remains, because settling past flush would be
+     * settling into the surface. A CRASH is a different thing — it hands the chassis angular
+     * momentum, and momentum does not care where flush is. Gating it on `flushErr > 0.05`
+     * meant that arriving hard and square-ish produced nothing at all: "even if I hit it with
+     * a large impact it doesn't turn me."
+     *
+     * It is safe to ungate now that `press` is the push actually DELIVERED rather than the
+     * approach still being asked for: a lean delivers a few in/s per tick and adds nothing
+     * worth seeing, while an arrival delivers all of it at once. That is also what stopped
+     * this being re-excited every tick into a 360.
+     */
+    {
       /**
        * a fast off-axis impact converts speed into visible spin — scaled by the actual torque
        * so a dead-centre (torque≈0) contact adds nothing, and gated near flush so it cannot
@@ -289,7 +320,22 @@ function applyContactTorque(
        * "it spins me around like 90 degrees instantly" is: the alignment was slowed to the
        * arm's pace and the flick was not, so the flick was all that was left.
        */
-      r.angVel = clamp(r.angVel + torque * press * C.CONTACT_IMPACT_SPIN * rateMult, -maxTurn, maxTurn);
+      /**
+       * ...AND ONLY THE WAY THE CONTACT IS ALREADY TURNING YOU. A surface cannot spin a robot
+       * INTO itself — that is the same non-penetration argument that caps the alignment, and
+       * an impulse is not exempt from it. Without the guard a hard, nearly-square hit spun the
+       * chassis the wrong way on the noise in a torque that is genuinely near zero there:
+       * measured, 3 degrees off square into a wall at speed came out 13 degrees off, the wrong
+       * side. It costs the honest case nothing, because the honest case is already pointing
+       * that way.
+       */
+      const spin = torque * press * C.CONTACT_IMPACT_SPIN * rateMult;
+      // ...compared against the TILT, not against `align`. When the alignment is zeroed for
+      // pointing the wrong way, `spin * align` is 0 and a wrong-way guard written against it
+      // passes trivially — which is how a hard nearly-square hit still came out 13 degrees off
+      // on the wrong side after both other guards were in place.
+      if (!squareTo || spin * relSigned <= 0) r.angVel = clamp(r.angVel + spin, -maxTurn, maxTurn);
+    }
     }
   }
 }
@@ -562,6 +608,15 @@ export function constrainRobot(r: RobotState): void {
 /** how hard the robot was driving INTO a contact (in/s), from its PRE-solve
  * velocity — scales the square-up torque (a fast hit swings hard; a settled
  * chassis barely turns) */
+/**
+ * How hard the robot is driving INTO the surface, in in/s of refused approach.
+ *
+ * Deliberately the pre-solve APPROACH, not the momentum the solve took out. The delivered-push
+ * reading was tried and it is zero exactly when it is needed: once a robot is resting on a
+ * wall its velocity into the wall is already gone before this pass runs, so the settling
+ * torque vanishes and a robot leaning at an angle stays there. What this measures is the load
+ * the drive is holding against the surface, which is what presses a chassis flat.
+ */
 function pressAlong(preVel: Vec2 | undefined, nx: number, ny: number): number {
   if (!preVel) return 0;
   const vn = preVel.x * nx + preVel.y * ny; // >0 = moving along the push (outward)
