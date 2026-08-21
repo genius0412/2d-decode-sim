@@ -1642,13 +1642,14 @@ export const GATE_ARM_SHORT = 2.5; // in, short handle poking past the field edg
  * ONLY (not the ball solve): released artifacts still roll out beneath the lifted paddle. */
 export const GATE_ARM_THICK = 3; // in, physical thickness (y) of the handle collider
 /**
- * How hard the gate HANDLE squares a robot up, against a wall's own contact torque.
+ * How fast the gate HANDLE squares a robot up, as a fraction of a wall's rate.
  *
- * The INTAKE is part of the contact area, so a robot leaning on the handle feels it — but the
- * handle is a 2.5in hinged bar, not a wall. It nudges a chassis toward flush; it is not meant
- * to wrench one a driver is holding at an angle.
+ * A wall is the field. The handle is a 2.5in hinged bar with a spring's worth of authority, and
+ * at the wall's rate it whipped a robot from 20 degrees to flush in 167ms — "the gate applies
+ * way too much torque way too fast". This scales the RATE only: which way it turns you and the
+ * cap that stops it stepping past flush are geometry and are untouched.
  */
-export const GATE_ARM_TORQUE_MULT = 0.3;
+export const GATE_ARM_TORQUE_MULT = 0.12; // ~1s from 20 degrees, against the wall's 0.17s
 /** the gate does NOT open just because a robot LOITERS in the zone — the arm is a
  * push-to-open mechanism, so the robot must actively PRESS toward it. Detected as
  * a velocity toward the arm (ramming it) OR a drive command toward it (leaning on it

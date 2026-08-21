@@ -209,6 +209,16 @@ function applyContactTorque(
   press: number,
   contacts: { c: Vec2; d: number }[],
   squareTo: boolean,
+  /**
+   * How fast this surface is allowed to turn the robot, against a wall's rate.
+   *
+   * A wall is the field and squares you at its own pace. The GATE ARM is a hinged bar with a
+   * spring's worth of authority, and at the wall's rate it whipped a robot from 20 degrees to
+   * flush in 167ms — "the gate applies way too much torque way too fast". Scaling the rate is
+   * the honest dial: the direction and the flush cap are geometry and stay exactly as they
+   * are, only how quickly it gets there changes.
+   */
+  rateMult = 1,
 ): void {
   let torque = 0;
   for (const { c, d } of contacts) {
@@ -219,7 +229,7 @@ function applyContactTorque(
     torque += ((lx * ny - ly * nx) / lever) * (Math.min(d, 2) + C.CONTACT_BIAS);
   }
   const gain = 1 + press * C.CONTACT_PRESS_GAIN;
-  const rate = Math.min(C.CONTACT_ALIGN_RATE * gain, C.CONTACT_ALIGN_RATE_MAX);
+  const rate = Math.min(C.CONTACT_ALIGN_RATE * gain, C.CONTACT_ALIGN_RATE_MAX) * rateMult;
   // never step PAST flush: cap the correction at the remaining tilt (the
   // chassis is square, so flush poses repeat every 90°). Without this cap the
   // torque bias overshoots each tick and the heading buzzes at the wall.
@@ -231,7 +241,7 @@ function applyContactTorque(
     flushErr = Math.abs(rel);
   }
   const cap = Math.min(rate, flushErr);
-  const align = clamp(torque * 0.1 * gain, -cap, cap);
+  const align = clamp(torque * 0.1 * gain * rateMult, -cap, cap);
   if (align !== 0) {
     const maxTurn = driveParams(r.spec).maxTurn;
     r.heading += align;
@@ -655,14 +665,8 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
         contacts = [{ c: { x: clamp(r.pos.x, arm.x0, arm.x1), y: clamp(r.pos.y, arm.y0, arm.y1) }, d: mtv.depth }];
       }
       // ...and squared to, like every other flat face here — see the classifier note below
-      applyContactTorque(
-        r,
-        nx,
-        ny,
-        pressAlong(preVel, nx, ny) * C.GATE_ARM_TORQUE_MULT,
-        contacts,
-        true,
-      );
+      // the press is the robot's own — only the RATE is the arm's (see GATE_ARM_TORQUE_MULT)
+      applyContactTorque(r, nx, ny, pressAlong(preVel, nx, ny), contacts, true, C.GATE_ARM_TORQUE_MULT);
     }
   }
 

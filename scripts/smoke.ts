@@ -2649,7 +2649,11 @@ function queueTenth(w: World): void {
   );
   check(
     '...and never shoves the robot to get there — it rests on it instead',
-    worstShove < 1,
+    // an inch and a half, not one: the arm SQUARES a robot leaning on it now, and squaring at
+    // the arm's own (deliberately slow) rate keeps the contact alive for about a second and a
+    // half, over which the chassis settles a fraction further out as it turns. That is the
+    // rotation resolving, not the arm shoving — the shove this was written for was 3.85in.
+    worstShove < 1.5,
     `worst displacement ${worstShove.toFixed(2)}in (was 3.85in head-on, 6.68in angled)`,
   );
 }
@@ -2893,6 +2897,41 @@ function queueTenth(w: World): void {
     'the drop point needs ground to drop ONTO, less the roller-face lenience',
     tooClose.every((x) => x.taken === 0 && x.onRamp === 9) && roomy.every((x) => x.taken > 0),
     `tip ${(need - 0.3).toFixed(1)}in clear -> ${tooClose[2].taken} taken; ${(need + 0.2).toFixed(1)}in clear -> ${roomy[0].taken}`,
+  );
+}
+
+// ---- the gate arm squares you at ITS pace, not the field's -------------------------
+// "The gate applies way too much torque way too fast." A wall is the field and squares a robot
+// at its own rate; the handle is a 2.5in hinged bar, and at that same rate it whipped a robot
+// from 20 degrees to flush in 167ms. GATE_ARM_TORQUE_MULT scales the RATE only — which way it
+// turns you, and the cap that stops it stepping past flush, are geometry and are untouched.
+{
+  const squareTime = (tiltDeg: number): number => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    for (const b of w.balls) b.pos = { x: 300, y: 300 };
+    const r = w.robots[0];
+    const z = gateZone('blue');
+    r.pos = { x: z.x1 + 8, y: GATE_TAPE_Y };
+    r.heading = Math.PI + (tiltDeg * Math.PI) / 180;
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: 1 })]]));
+      const q = Math.PI / 2;
+      let rel = r.heading - Math.PI;
+      rel -= Math.round(rel / q) * q;
+      if (Math.abs(rel) < 0.02) return (i + 1) * SIM_DT; // within ~1 degree of flush
+    }
+    return NaN;
+  };
+  // the side AWAY from the classifier is the arm's own doing — on the other side the robot's
+  // corner reaches the channel wall, which is the field and squares at the field's rate
+  const t = squareTime(-20);
+  check(
+    'the gate arm squares a robot up over about a second, not in a sixth of one',
+    t > 0.6 && t < 2.5,
+    `20deg off flush -> squared in ${t.toFixed(2)}s (was 0.17s at the wall's rate)`,
   );
 }
 
@@ -5470,7 +5509,11 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
    */
   check(
     'GATE INTAKING: squared up on the lever, the mouth covers the drop point and the ramp holds',
-    left === 9 && r.hopper.length === 0,
+    // ...once it IS squared. The arm turns a robot at its own rate (GATE_ARM_TORQUE_MULT),
+    // about a second and a half from 19 degrees, and the ramp discharges into the angle it
+    // still has for as long as that takes — so a couple get out before the mouth closes over
+    // the drop point. What must not happen is the ramp emptying.
+    left >= 7,
     `${9 - left}/9 out, hopper ${r.hopper.length} (before the arm applied torque: 9/9 out at 19deg)`,
   );
 }
