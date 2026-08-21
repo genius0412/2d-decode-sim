@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `6de591c`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `b422a7e`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -429,27 +429,37 @@ are recorded in the check: extending the jam rule to any solid part of the robot
 through a corner gap they cannot fit; rate-limiting the eviction took it to 25/s; reverting
 resting artifacts near a robot lets a robot creep through one. Bounded so it cannot regress.
 
-### The gate-torque question — needs YOUR call (`14e9af3`)
+### The gate torque, answered — and the square-up bug it uncovered (`b422a7e`)
 
-*"If I push on the gate all the way and keep holding, it should apply torque to the robot."*
-Two things are true and neither is the bug it sounds like:
+*"The intake is part of the contact area."* That settled it, and wiring it up turned out to
+depend on a second, larger bug.
 
-- **The arm already acts as a wall at full lift** — measured, a robot pressing a fully-open
-  gate stops with its intake tip at x=-65.7 against a pivot at -66.0. It never gets in.
-- **No torque is felt because the contact is at the INTAKE.** The chassis's front-most corner
-  stops half an inch short of the stub the robot leans on, and every contact test in
-  `squareUpStatics` is built from `robotCorners` — the CHASSIS. `footprintCornersOf` (new) is
-  the fix's missing half, and `gateHandleRect` is now the one place the handle's geometry lives.
+**The intake is contact area.** Every contact test in `squareUpStatics` was built from
+`robotCorners` — the CHASSIS — and the gate is pressed with the INTAKE: the chassis's
+front-most corner stops half an inch short of the stub the robot leans on. The handle now
+reads the FOOTPRINT (`footprintCornersOf`, `footprintMTV`), grown by the touch epsilon because
+Rapier leaves a hair of separation and a strict overlap test fires never. Where a robot's front
+EDGE rests on the 2.5in stub with no corner in it, the contact is the stub's own corner digging
+into that edge — the nearest point ON the stub sits dead ahead of the robot's centre, where the
+lever arm is zero and the torque with it, which is why the first attempt measured identical to
+having no code at all.
 
-Wiring it up WORKS: a robot tilted 20° squares to within 1.6° of flush, and one tilted the
-other way — which used to move not at all — turns 9°. **It also rotates a GATE INTAKING press
-off its angle**, and a rotated robot's mouth lands over the outflow where the drop-space rule
-correctly stalls the drain: the tap benchmark fell to a worst of **4** (floor is 5) and gate
-intaking from 9 of 9 to **1**. Damping does not separate them — the alignment saturates at the
-remaining tilt, so 0.08 and 0.30 measure identically.
+**And the bug that made it look like a trade-off.** *"Even when I ram with the back of the
+chassis where there is no intake, the robot only turns if I impact it at certain specific
+angles, weird."* The classifier passed `contacts.length > 1` as its square-to flag, so a
+single-corner press took `applyContactTorque`'s PIVOT mode — which has no flush cap and spins
+instead of settling. A flat face aligns a chassis whether one corner is on it or two; the walls
+have always passed `true`. **Across ten approach angles, front and back, the classifier now ends
+0.0° off flush at every one.**
 
-So: the arm can push you straight, or you can hold an angle on it and drain the ramp. Not both.
-The note in `squareUpStatics` carries the numbers.
+With that fixed the gate torque costs nothing: the tap benchmark is back to **worst 6 / best 9**
+and GATE INTAKING drains **9 of 9** with the hopper full — they were 4 and 1 when the torque was
+first tried against the pivoting classifier. So the "arm can push you straight OR you can gate
+intake" trade-off recorded in the previous handoff entry was an artifact of the pivot bug, not
+a real choice.
+
+⚠️ The 360° turns this first appeared as were a MEASUREMENT artifact: the sim wraps the heading,
+so a raw delta reads as a full turn. Measure the remaining tilt mod 90 instead — the check does.
 
 ## Next steps
 
