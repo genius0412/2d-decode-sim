@@ -684,6 +684,15 @@ export const FLY_SPIN_FAR = 170; // in to goal: flywheel spin 1
 
 /** capture tolerance beyond the ball radius, each way (tight — no vacuuming
  * balls from a distance; a ball must actually reach the compliant wheels) */
+/**
+ * How close to the field boundary an artifact counts as PINNED against it, on top of its own
+ * radius — the case a funnel intake cannot centre and takes anyway. See `updateIntake`.
+ *
+ * Small on purpose: this is "the artifact is against the wall", not "the artifact is near the
+ * wall". A wedge preset that grabbed anything within a few inches of the perimeter would stop
+ * being a funnel at all along the whole edge of the field.
+ */
+export const INTAKE_WALL_GRAB = 0.6; // in
 export const INTAKE_CAPTURE_BAND = 0.5;
 /** how fast a HELD ball slides between storage slots (in/s), in the robot frame —
  * so the triangle's front ball visibly slides aside to make room for a 3rd */

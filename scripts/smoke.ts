@@ -2875,6 +2875,46 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- a funnel intake can collect an artifact from a CORNER -----------------------
+// "I can't intake a ball in the corner anymore. Please fix this for sloped and triangle."
+// A wedge preset only swallows at the THROAT and the suction walks the artifact there, which
+// works in open field and cannot work in a corner: an artifact tucked against two walls sits
+// 2.5in off each, and the chassis half-width (9in) is what decides how close the robot can
+// get, so it ends up ~6.5in off the mouth's centre — outside a 3in throat, and unable to be
+// moved any closer by anything. A real funnel pressed into a corner still collects it.
+{
+  const grab = (intake: 'sloped' | 'triangle' | 'vector', headingDeg: number, start: { x: number; y: number }) => {
+    const w = mkWorld('free', 'blue', 3, { intake });
+    startMatch(w);
+    const r = w.robots[0];
+    r.hopper = [];
+    for (const b of w.balls) b.pos = { x: -400, y: -400 };
+    const ball = w.balls[0];
+    const c = FIELD_HALF - BALL_RADIUS;
+    ball.state = { kind: 'ground' };
+    ball.pos = { x: c, y: -c }; // the AUDIENCE corner — the far corners are goal structure
+    ball.vel = { x: 0, y: 0 };
+    ball.z = 0;
+    ball.vz = 0;
+    r.heading = (headingDeg * Math.PI) / 180;
+    r.fieldCentric = false;
+    r.pos = { ...start };
+    r.vel = { x: 0, y: 0 };
+    for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({ intake: true, driveY: 0.4 })]]));
+      if (ball.state.kind === 'held') return (i + 1) * SIM_DT;
+    }
+    return NaN;
+  };
+  const wall = (['sloped', 'triangle'] as const).map((i) => grab(i, 0, { x: 48, y: -62 }));
+  const diag = (['sloped', 'triangle'] as const).map((i) => grab(i, -45, { x: 52, y: -52 }));
+  check(
+    'a funnel intake collects an artifact tucked in a corner',
+    wall.every((t) => t > 0) && diag.every((t) => t > 0),
+    `sloped/triangle: along the wall ${wall.map((t) => t.toFixed(2)).join('/')}s, on the diagonal ${diag.map((t) => t.toFixed(2)).join('/')}s`,
+  );
+}
+
 // ---- an artifact DROPPED on the intake is not swallowed by it ---------------------
 // "The intake should not intake if a ball drops on top of it." The mouth is open at BALL
 // HEIGHT — that is what lets an artifact roll in under the rollers, and why ballRobotContact

@@ -540,6 +540,33 @@ export function updateIntake(world: World, r: RobotState, cmd: RobotCommand): vo
       local.x > hl - 1 &&
       local.x < hl + C.BALL_RADIUS + C.INTAKE_CAPTURE_BAND &&
       Math.abs(local.y) < captureHalf + C.BALL_RADIUS * 0.25;
+    /**
+     * ...OR IT IS AGAINST THE FIELD AND THE FUNNEL CANNOT CENTRE IT.
+     *
+     * A wedge preset (sloped / triangle) only ever swallows at the THROAT, and the suction
+     * walks the ball there — which works in open field and cannot work in a CORNER. Putting
+     * the throat on a corner artifact means putting the chassis through two walls: an 18in
+     * robot at 45 degrees has a 12.7in half-diagonal against the 2.5in the artifact's centre
+     * sits off each wall. So the artifact stayed in the mouth, off-centre, and was never
+     * taken — "I can't intake a ball in the corner anymore, please fix this for sloped and
+     * triangle".
+     *
+     * A real funnel intake pressed into a corner does collect it: the slopes hold it against
+     * the wall and the compliant rollers take it from wherever it is. The artifact cannot run
+     * away, which is the whole reason the throat requirement exists. So an artifact under the
+     * wheels AND pinned against the field boundary is taken where it lies — at the SLOW end of
+     * the timing, since it is entering off-centre.
+     */
+    const wallClear = C.FIELD_HALF - Math.max(Math.abs(b.pos.x), Math.abs(b.pos.y));
+    const cornered =
+      m.wedge &&
+      wallClear <= C.BALL_RADIUS + C.INTAKE_WALL_GRAB &&
+      local.x > hl - 1 &&
+      local.x < tip + C.BALL_RADIUS &&
+      // the MOUTH, not the throat: a wedge's "wheels" span only throatHalf (3in), and a
+      // corner artifact sits 6.5in off centre because the chassis half-width is what stops
+      // the robot getting any closer to the wall. Inside the mouth is inside the funnel.
+      Math.abs(local.y) < m.mouthHalf + C.BALL_RADIUS * 0.25;
     // flank grab: only where the wheels OVERHANG a narrower chassis (vector)
     const sideTouch =
       m.mouthHalf > half + 0.5 &&
@@ -548,7 +575,8 @@ export function updateIntake(world: World, r: RobotState, cmd: RobotCommand): vo
       Math.abs(local.y) > half - 0.5 &&
       Math.abs(local.y) < half + C.BALL_RADIUS + 0.6 &&
       velRobot.y * Math.sign(local.y) > C.INTAKE_SIDE_MIN_STRAFE;
-    if (atThroat || sideTouch) candidates.push({ b, y: Math.abs(local.y) });
+    // a cornered grab reports its true off-centre distance, so the timing lands at capMax
+    if (atThroat || sideTouch || cornered) candidates.push({ b, y: Math.abs(local.y) });
   }
   if (candidates.length === 0) return;
 
