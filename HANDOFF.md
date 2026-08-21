@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `5fa9c18`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `907a90f`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -9,7 +9,7 @@ Do not merge to main. Standing rule.
 
 ## Where this session ended
 
-Eleven reports, all in the DECODE classifier: the ramp, the gate, and the intake at its outflow. The first two trace to the same kind of
+Fourteen reports: the DECODE classifier ramp and gate, the intake at its outflow and in a corner, and one Chain Reaction terrain bug. The first two trace to the same kind of
 thing:
 a constant (or the absence of one) that was correct against the OLD `RAIL_ACCEL` of 80 and
 was not rescaled when the ramp became 25 and lost its capped flow speed (`57a308e`).
@@ -354,6 +354,43 @@ The packing-variety check it replaces asked the yield to depend on how tightly t
 packed — true on a 5-degree ramp where the flow was marginal enough for spacing to decide
 whether it sustained. At 10.5 degrees a firm tap carries any column (loosening the pitch by
 8in changes nothing) and what varies is the tap.
+
+### Three from one session's play (`0ae0db6`, `1f8b612`, `907a90f`)
+
+**A funnel intake collects a corner artifact** (`0ae0db6`). A wedge preset only swallows at
+the THROAT and the suction walks the artifact there — which works in open field and cannot
+work in a corner. An artifact tucked against two walls sits 2.5in off each, and what decides
+how close the robot can get is its own chassis half-width (9in), so it ends up ~6.5in off the
+mouth's centre: outside a 3in throat, unmovable. Putting the throat on it means putting the
+chassis through a wall. A real funnel pressed into a corner does collect it, so a wedge now
+takes an artifact inside its MOUTH (not merely its throat) that is pinned against the field
+boundary, at the slow end of the timing. `INTAKE_WALL_GRAB` is deliberately tiny — this is
+"against the wall", not "near the wall". Measured in the audience corner: sloped 0.35s /
+triangle 0.30s along the wall, 1.18s / 2.87s on the diagonal. Vector is unchanged (its wheels
+already span the mouth; its answer to an off-centre artifact is the flank grab).
+
+**An artifact needs ground to drop onto** (`1f8b612`). The outflow block tested the mouth
+UNPADDED, so an artifact only needed its CENTRE outside the intake — it could be set down half
+inside one and taken. The rule is about the artifact's own footprint: the drop point needs a
+full RADIUS of clearance, exactly as it already needs from a chassis. The lenience is the
+front of the rollers and nowhere else (`INTAKE_CATCH_LENIENCE`, "if the ball drops on the very
+front edge of the intake rollers, they can suck them in due to compliance"). Swept by tip-to-
+drop-point distance it is a clean step: **1.0in clear → 0 taken, 9 left on the ramp; 1.5in
+clear → they land and feed.** That front lenience is also what keeps a lever-pressing robot
+from plugging its own drain.
+
+**The beam curb no longer teleports** (`907a90f`). Measured, a mecanum driving diagonally over
+a beam: **3.44in of position in ONE tick** against the 0.45in its velocity could account for;
+8 of the swept crossings jumped, all mecanum (the only drivetrain with the strafe curb). Two
+causes, both in `strafeCurb`/`beamStrafeBlock`:
+
+- the straddle guard wanted a wheel a full WHEEL RADIUS past the far face (3in past centre).
+  Mid-crossing `side` flips as the BODY passes the centre, the wheels behind become far-side
+  wheels with a small negative `rel`, and the curb fired on a robot half way over and shoved
+  it the rest of the way. **A wheel past the far face** is the honest test.
+- the correction was unbounded, though its own note calls it a slop clamp. `CHAIN_BEAM_CURB_SLOP`
+  caps it at **0.35in per tick**. Worst overshoot after: 0.16in, and the curb still parks the
+  leading wheel exactly at the near face — over three ticks, which is what a clamp looks like.
 
 ## Next steps
 
