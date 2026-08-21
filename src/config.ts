@@ -705,6 +705,16 @@ export const INTAKE_WALL_GRAB = 0.6; // in
  * half-land inside the side slopes or the chassis.
  */
 export const INTAKE_CATCH_LENIENCE = 1.2; // in of the radius, at the roller face only
+/**
+ * How briskly an artifact resting on a robot's TOP slides off it, per tick of contact.
+ *
+ * A robot's top is a lid over a mess of mechanism, not a shelf — an artifact that lands on one
+ * works its way off rather than parking there for the rest of the match. Added as a velocity
+ * each tick it is up there, outward from the robot's centre, so the direction is simply where
+ * it landed and nothing is invented. Small: it should look like the artifact easing off a
+ * moving roof, not being flicked.
+ */
+export const ROBOT_TOP_SHED = 6; // in/s outward while it rides the top
 export const INTAKE_CAPTURE_BAND = 0.5;
 /** how fast a HELD ball slides between storage slots (in/s), in the robot frame —
  * so the triangle's front ball visibly slides aside to make room for a 3rd */

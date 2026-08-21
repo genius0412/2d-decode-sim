@@ -2896,6 +2896,52 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- an artifact that lands ON a robot does not jolt ------------------------------
+// "If an artifact lands on top of the robot and I move away, they jolt." A robot had no TOP:
+// an artifact coming down on the chassis fell into it and was ejected out of the nearest FACE
+// by ballRobotContact — measured, dropped on the middle of an 18in chassis it moved 9.8in
+// sideways in ONE tick and was then shovelled along by the departing robot to 76 in/s.
+{
+  const w = mkWorld('free', 'blue', 3);
+  startMatch(w);
+  const r = w.robots[0];
+  r.pos = { x: -40, y: -40 };
+  r.heading = 0;
+  r.vel = { x: 0, y: 0 };
+  r.fieldCentric = false;
+  r.hopper = [];
+  for (const b of w.balls) b.pos = { x: 400, y: 400 };
+  const ball = w.balls[0];
+  ball.state = { kind: 'flight', target: 'blue' };
+  ball.pos = { x: r.pos.x, y: r.pos.y }; // dead centre of the chassis
+  ball.vel = { x: 0, y: 0 };
+  ball.z = 24;
+  ball.vz = 0;
+  let worstStep = 0;
+  let worstJump = 0;
+  let landedOnTop = false;
+  for (let i = 0; i < Math.round(1.5 / SIM_DT); i++) {
+    const v0 = { ...ball.vel };
+    const p0 = { ...ball.pos };
+    step(w, SIM_DT, new Map([[0, cmd(i > 12 ? { driveY: -1 } : {})]]));
+    if (Math.abs(ball.z - ROBOT_HEIGHT) < 1e-6) landedOnTop = true;
+    worstStep = Math.max(worstStep, hyp(ball.vel.x - v0.x, ball.vel.y - v0.y));
+    // how far it moved, against what its own speed could account for
+    const moved = hyp(ball.pos.x - p0.x, ball.pos.y - p0.y);
+    worstJump = Math.max(worstJump, moved - (Math.max(hyp(v0.x, v0.y), hyp(ball.vel.x, ball.vel.y)) * SIM_DT + 0.05));
+  }
+  check(
+    'an artifact that lands on a robot rests on its TOP instead of being ejected out a face',
+    landedOnTop && worstJump < 0.2,
+    `worst unexplained move ${Math.max(0, worstJump).toFixed(2)}in in a tick (was 9.8), landed on top: ${landedOnTop}`,
+  );
+  check(
+    '...and driving out from under it does not step its speed',
+    worstStep < 10,
+    `worst single-tick velocity change ${worstStep.toFixed(1)} in/s (the shove reached 76)`,
+  );
+}
+
 // ---- a funnel intake can collect an artifact from a CORNER -----------------------
 // "I can't intake a ball in the corner anymore. Please fix this for sloped and triangle."
 // A wedge preset only swallows at the THROAT and the suction walks the artifact there, which

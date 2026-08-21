@@ -1106,9 +1106,35 @@ function overIntakeRoof(
   return local.x > hl - pad && local.x <= tip + frontPad && Math.abs(local.y) <= mh + pad;
 }
 
+/**
+ * A ROBOT HAS A TOP, and an artifact that comes down on it lands there.
+ *
+ * Over the INTAKE that top is the roller structure (`intakeLidZ`); over the CHASSIS it is the
+ * robot's own height. Without the chassis half, an artifact that landed on a robot was ejected
+ * out of the nearest FACE by `ballRobotContact` — measured, dropped on the middle of an 18in
+ * chassis it teleported 9.8in sideways in one tick and was then shovelled along by the robot
+ * to 76 in/s. "If an artifact lands on top of the robot and I move away, they jolt."
+ *
+ * Returns the height of the top under `p`, or null if `p` is not over the robot at all.
+ */
+function robotTopZ(r: RobotState, p: Vec2): { z: number; overIntake: boolean } | null {
+  if (overIntakeRoof(r, p)) return { z: C.intakeLidZ(r.spec), overIntake: true };
+  const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);
+  const hl = r.spec.length / 2;
+  const half = r.spec.width / 2;
+  // the chassis top, out to where an artifact's own edge still overlaps it
+  const pad = C.BALL_RADIUS;
+  if (Math.abs(local.x) <= hl + pad && Math.abs(local.y) <= half + pad) {
+    return { z: C.ROBOT_HEIGHT, overIntake: false };
+  }
+  return null;
+}
+
 export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): boolean {
   if (b.state.kind !== 'flight') return false;
-  const lid = C.intakeLidZ(r.spec);
+  const top = robotTopZ(r, b.pos);
+  if (!top) return false;
+  const lid = top.z;
   // ON it (rolling off), or arriving onto it this tick — never a rising artifact, and never
   // one already UNDER it, which is an artifact that came in the way it is supposed to.
   const arriving = prevZ >= lid && b.z < lid;
@@ -1127,19 +1153,55 @@ export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): bool
    * dropped on the chassis front, every funnel preset still swallowed it. Reaching back a
    * radius means it meets the roof on the way instead.
    */
-  if (!overIntakeRoof(r, b.pos)) return false;
-
   b.z = lid;
   b.vz = 0;
-  // thrown forward off the roller: the axis runs ACROSS the robot, so there is nowhere else
-  // for it to go (back is the chassis). Only ever added to — an artifact already leaving
-  // faster than this keeps its own speed.
-  const fwd = rot({ x: 1, y: 0 }, r.heading);
-  const along = b.vel.x * fwd.x + b.vel.y * fwd.y;
-  if (along < C.INTAKE_LID_THROW) {
-    b.vel.x += fwd.x * (C.INTAKE_LID_THROW - along);
-    b.vel.y += fwd.y * (C.INTAKE_LID_THROW - along);
+  /**
+   * IT IS SITTING ON A THING THAT MOVES, so its speed is the ROOF'S speed plus whatever it is
+   * doing relative to the roof.
+   *
+   * The throw used to be floored against the artifact's WORLD velocity, which quietly says the
+   * roof is the field. Drive away and the artifact was left behind in mid-air, then re-floored
+   * along the robot's new heading every tick it stayed over the roof — a shove that changed
+   * direction with the steering, and a step in its velocity the moment the roof left from
+   * under it: "if an artifact lands on top of the robot and I move away, they jolt."
+   *
+   * Flooring the RELATIVE velocity instead makes it an artifact resting on a moving surface
+   * and rolling off the front of it. A stationary robot behaves exactly as before. A robot
+   * that drives off carries it until the roof runs out, and it leaves with the speed it
+   * already had — nothing steps.
+   */
+  const carry = robotPointVelocity(r, b.pos);
+  const relX = b.vel.x - carry.x;
+  const relY = b.vel.y - carry.y;
+  if (top.overIntake) {
+    // the ROLLER throws it: its axis runs across the robot, so forward or back is all there is,
+    // and back is the chassis
+    const fwd = rot({ x: 1, y: 0 }, r.heading);
+    const along = relX * fwd.x + relY * fwd.y;
+    const push = along < C.INTAKE_LID_THROW ? C.INTAKE_LID_THROW - along : 0;
+    b.vel.x = carry.x + relX + fwd.x * push;
+    b.vel.y = carry.y + relY + fwd.y * push;
+    return true;
   }
+  /**
+   * ...AND A ROBOT'S TOP IS NOT A SHELF. It is a lid over a mess of mechanism, so an artifact
+   * that lands on one rolls off it rather than parking there for the rest of the match. The
+   * push is OUTWARD from the robot's centre — the direction is where it happens to have
+   * landed, so nothing is synthesised — and it is an ACCELERATION, not a speed, so nothing
+   * steps: the artifact eases off the side it is nearest and falls where it falls.
+   */
+  const local = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+  const d = hyp(local.x, local.y);
+  const ox = d > 1e-6 ? local.x / d : 1;
+  const oy = d > 1e-6 ? local.y / d : 0;
+  const out = rot({ x: ox, y: oy }, r.heading);
+  // a FLOOR on the outward relative speed, never an addition — adding it every tick is an
+  // acceleration of 360 in/s^2 dressed up as a nudge, and it had the artifact off the roof at
+  // 42 in/s within two ticks.
+  const outward = relX * out.x + relY * out.y;
+  const shed = outward < C.ROBOT_TOP_SHED ? C.ROBOT_TOP_SHED - outward : 0;
+  b.vel.x = carry.x + relX + out.x * shed;
+  b.vel.y = carry.y + relY + out.y * shed;
   return true;
 }
 
