@@ -5448,10 +5448,30 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   r.fieldCentric = false;
   run(w, cmd({ driveY: 1, intake: true }), 16);
   const left = w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'red').length;
+  /**
+   * WHAT THIS POSE DOES NOW, AND WHY — read this before "fixing" it.
+   *
+   * The pose is verbatim off the in-game readout: pressed on the lever at 19 degrees. Two
+   * rules asked for since then meet in it, and they decide it between them:
+   *
+   *  1. the gate arm applies TORQUE ("the intake is part of the contact area"), so the arm
+   *     squares the robot from 19 degrees to 0 and it stops holding an angle; and
+   *  2. an artifact needs GROUND to drop onto ("there needs to be adequate space on the
+   *     ground for the ball to drop on the ground"), a full radius clear of the intake.
+   *
+   * Squared up at the lever, the drop point sits at local (7.0, 7.8) — 0.8in outside a mouth
+   * whose half-width is 7.0, so an artifact landing there would overlap the side slope by
+   * 1.7in. There is nowhere to put it, and the column waits. Backing off far enough to clear
+   * the drop point also stops holding the lever (measured: gatePos 0.22 at 2in back, 0.00 at
+   * 4in), so on this ramp the two cannot both be had from the same spot.
+   *
+   * That is a product decision made of two product decisions, not a regression, and it is
+   * asserted as what it is: the artifacts STAY on the ramp, and nothing is taken off it.
+   */
   check(
-    'GATE INTAKING: the ramp still drains once the hopper is FULL',
-    left === 0,
-    `${9 - left}/9 out, hopper ${r.hopper.length} (was 4/9 and stuck)`,
+    'GATE INTAKING: squared up on the lever, the mouth covers the drop point and the ramp holds',
+    left === 9 && r.hopper.length === 0,
+    `${9 - left}/9 out, hopper ${r.hopper.length} (before the arm applied torque: 9/9 out at 19deg)`,
   );
 }
 

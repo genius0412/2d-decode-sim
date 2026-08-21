@@ -599,6 +599,26 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
       const arm = { x0: raw.x0 - eps, x1: raw.x1 + eps, y0: raw.y0 - eps, y1: raw.y1 + eps };
       const mtv = footprintMTV(r, arm);
       if (!mtv) continue;
+      /**
+       * THE NORMAL HAS TO BE THE STUB'S, NOT THE SAT'S MINIMUM-OVERLAP AXIS.
+       *
+       * SAT returns whichever of the four candidate axes overlaps least, and two of those are
+       * the ROBOT'S OWN. When it picks one of those the normal comes back aligned with the
+       * chassis — and `applyContactTorque` measures "how far from flush" against that normal,
+       * so the answer is zero by construction and no torque is ever applied. Measured on a
+       * robot leaning 6 degrees on the gate: contacts found, torque 0.26, press 5.9, and the
+       * heading did not move a hundredth of a degree for four seconds. "Still no torque being
+       * applied at gate."
+       *
+       * The stub is axis-aligned, so its face normal is the axis from its centre to the
+       * robot's, snapped to whichever component dominates — the face the robot is actually on.
+       */
+      const cx = (arm.x0 + arm.x1) / 2;
+      const cy = (arm.y0 + arm.y1) / 2;
+      const ax = r.pos.x - cx;
+      const ay = r.pos.y - cy;
+      const nx = Math.abs(ax) >= Math.abs(ay) ? Math.sign(ax) : 0;
+      const ny = nx === 0 ? Math.sign(ay) : 0;
       let contacts = footprintCornersOf(r)
         .filter((c) => c.x > arm.x0 && c.x < arm.x1 && c.y > arm.y0 && c.y < arm.y1)
         .map((c) => ({ c, d: mtv.depth }));
@@ -616,8 +636,19 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
           { x: arm.x1, y: arm.y1 },
           { x: arm.x0, y: arm.y1 },
         ]) {
+          /**
+           * ...EACH WITH ITS OWN DEPTH, which is the whole reason this produces a torque.
+           *
+           * Handing both corners the same `mtv.depth` makes them symmetric about a robot
+           * pressing square-on, the two cross products cancel, and the torque is ZERO — which
+           * is exactly what "still no torque being applied at gate" looks like: it only turned
+           * at big tilts, where one corner falls outside the contact band and stops cancelling
+           * the other. The corner that is deeper into the chassis is the one bearing the load,
+           * and that asymmetry is what squares the robot up. The wall path has always worked
+           * this way (per-corner depth from the wall plane).
+           */
           const depth = pointDepthInRobot(r, c);
-          if (depth > -eps && depth < eps + 0.5) contacts.push({ c, d: mtv.depth });
+          if (depth > -eps) contacts.push({ c, d: Math.max(depth, 0) });
         }
       }
       if (contacts.length === 0) {
@@ -626,9 +657,9 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
       // ...and squared to, like every other flat face here — see the classifier note below
       applyContactTorque(
         r,
-        mtv.nx,
-        mtv.ny,
-        pressAlong(preVel, mtv.nx, mtv.ny) * C.GATE_ARM_TORQUE_MULT,
+        nx,
+        ny,
+        pressAlong(preVel, nx, ny) * C.GATE_ARM_TORQUE_MULT,
         contacts,
         true,
       );

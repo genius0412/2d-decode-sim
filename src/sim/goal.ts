@@ -657,7 +657,23 @@ export function updateRails(
      * doorway. RAIL_PITCH is wider than a tick of travel, so no two can cross together.
      */
     const doorway = doorwayArtifact(world, a);
-    const mouthClear = mouth.s === -Infinity && !doorway;
+    /**
+     * ...AND WHAT IS ALREADY ON THE FLOOR OUTSIDE DOES NOT HOLD THE RAMP BACK.
+     *
+     * The doorway artifact used to be part of "can it leave", so a pile in the tunnel throttled
+     * the discharge: measured, nine artifacts took 1.65s onto a clear floor and 2.20s into a
+     * fourteen-artifact pile, with the mean gap going 0.146s to 0.204s. "Ball flow gets slowed
+     * down if there are balls right outside the gate. Don't let it slow down."
+     *
+     * A chute does not ask the heap whether it may discharge — what comes out shoves what is
+     * there, which is what the exit nudge already does. So the mouth is clear unless a ROBOT is
+     * across it, and the doorway keeps its other two jobs: the artifact sitting in it still gets
+     * nudged along, and the release still hands it a shove rather than materialising on top of
+     * it. The invariant that matters is unchanged — the SOLVER and the RELEASE agree about what
+     * stops the column, which is the robot and nothing else, so nothing can descend past an exit
+     * that then refuses it.
+     */
+    const mouthClear = mouth.s === -Infinity;
     // the gate holds the RAMP lane only; OVERFLOW rides over the top of it (manual 9.8.3),
     // so a shut gate is not what stops an elevated artifact — only the mouth is.
     const canLeave = goal.gateOpen && mouthClear;
