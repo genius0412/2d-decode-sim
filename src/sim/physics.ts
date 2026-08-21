@@ -822,7 +822,8 @@ export function separateBalls(a: Artifact, b: Artifact): void {
     return;
   }
   const d = Math.sqrt(d2);
-  const push = (minD - d) / 2;
+  // a FRACTION of the overlap per pass — see BALL_SEPARATION_RELAX
+  const push = ((minD - d) / 2) * C.BALL_SEPARATION_RELAX;
   const nx = (dx / d) * push;
   const ny = (dy / d) * push;
   a.pos.x -= nx;
@@ -1313,6 +1314,18 @@ function ballRobotFrontContact(
   if (mm === dl) return toWorld(-1, 0, R + dl, -hl, local.y);
   if (mm === dt) return toWorld(0, 1, R + dt, local.x, half);
   return toWorld(0, -1, R + db, local.x, -half);
+}
+
+/**
+ * How deep an artifact centred at `p` is inside anything SOLID on the robot — chassis or the
+ * intake's own structure — and zero where the mouth is open to it. This is `ballRobotContact`'s
+ * own answer, exposed for the jam rule, which has to know "is this artifact against something
+ * that will not let it through" and must not count the open notch, where an artifact being
+ * swallowed sits several inches deep on purpose.
+ */
+export function ballRobotPenetration(r: RobotState, p: Vec2): number {
+  const c = ballRobotContact(r, p);
+  return c ? c.pen : 0;
 }
 
 export function collideBallRobot(b: Artifact, r: RobotState): void {

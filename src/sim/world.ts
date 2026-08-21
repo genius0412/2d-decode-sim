@@ -9,6 +9,7 @@ import {
   collideBallRobot,
   landOnIntakeLid,
   pointDepthInChassis,
+  pointDepthInRobot,
   collideBallStatic,
   separateBalls,
   evictBallFromRobot,
@@ -17,7 +18,7 @@ import {
   stepGroundBall,
   heldSlotPos,
 } from './physics';
-import { rot, approach } from '../math';
+import { rot, approach, hyp } from '../math';
 import { solveBalls, solveRobots } from './physicsEngine';
 import { decodeColliders } from '../games/decode/colliders';
 import { classifierRect } from './field';
@@ -281,6 +282,40 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
     clampGroundBall(b);
   }
 
+
+  /**
+   * A RESTING ARTIFACT DOES NOT SHUFFLE.
+   *
+   * The passes above each resolve one constraint and hand the result on, and where they
+   * genuinely cannot all be satisfied — artifacts packed into a corner, which cannot fit
+   * without overlap — the last two take turns: separation pushes a pair apart, the wall clamp
+   * puts them back, and they trade positions for the rest of the match. Measured in the
+   * loading-zone corner: 33 direction reversals per second, 1.8in of net movement over four
+   * seconds. That is the jitter.
+   *
+   * The rule is the one the wall-pinch jam already uses: an overlap with no valid resolution
+   * is not a reason to move anything. So an artifact that is at REST, is not being pushed by
+   * a robot, and ends the tick within BALL_SETTLE_SLOP of where it started, ends it exactly
+   * where it started. Reverting rather than inventing a position keeps it deterministic and it
+   * can never appear anywhere it has not already been.
+   *
+   * The robot exclusion is load-bearing: an artifact being evicted by an arriving chassis is
+   * at rest too, and refusing THAT would let a robot drive through it.
+   */
+  for (const b of ground) {
+    const was = wasPos.get(b.id);
+    if (!was) continue;
+    if (hyp(b.vel.x, b.vel.y) > C.BALL_REST_SPEED) continue; // actually rolling — leave it alone
+    const moved = hyp(b.pos.x - was.x, b.pos.y - was.y);
+    if (moved === 0 || moved > C.BALL_SETTLE_SLOP) continue;
+    let nearRobot = false;
+    for (const r of world.robots) {
+      if (pointDepthInRobot(r, b.pos) > -C.BALL_RADIUS) nearRobot = true;
+    }
+    if (nearRobot) continue;
+    b.pos.x = was.x;
+    b.pos.y = was.y;
+  }
 
   // ---- balls: FLIGHT (ground balls resolved above) -------------------------
   // Flight stays bespoke: ballistic arc + z axis (Rapier 2D has no z), goal-face

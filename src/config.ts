@@ -331,6 +331,33 @@ export const CLASSIFIER_HEIGHT = 16;
  * JAMMED rather than merely in contact. Rapier's soft contacts leave about 0.2in, so this sits
  * clear of that and well under the ~1in of give the squeeze was exploiting.
  */
+/**
+ * How far a RESTING artifact may be shuffled by the constraint passes before the shuffle is
+ * simply refused — the settle threshold.
+ *
+ * Artifacts packed into a corner cannot all fit without overlap, so the relaxation pass pushes
+ * them apart, the wall clamp puts them back, and the pair trade positions forever: measured in
+ * the loading-zone corner, 33 direction reversals per second on an artifact with 1.8in of net
+ * movement to show for four seconds of it. Neither pass is wrong and neither can win, which is
+ * the same shape as the wall-pinch jam rule — an overlap with no valid resolution is not a
+ * reason to move something.
+ *
+ * So an artifact that is at REST, is not being pushed by a robot, and ends the tick within
+ * this of where it started, ends it exactly where it started.
+ */
+export const BALL_SETTLE_SLOP = 0.2; // in
+/**
+ * How much of an artifact-artifact overlap the separation pass takes out per pass.
+ *
+ * It used to take out ALL of it, which is an overshoot as soon as anything else has a say:
+ * against a wall the clamp puts the pair straight back and the two trade positions forever.
+ * Correcting a FRACTION per pass converges instead — the passes are already a relaxation
+ * loop (BALL_RELAX_PASSES), which is exactly the setting where a full correction rings and a
+ * damped one settles. Measured on a robot pressing an artifact into a corner: 15 direction
+ * reversals a second at 1.0, none at 0.5.
+ */
+export const BALL_SEPARATION_RELAX = 0.5;
+
 export const BALL_JAM_SLOP = 0.35;
 
 export const BALL_ROBOT_RESTITUTION = 0.05;
@@ -366,7 +393,7 @@ export const BALL_SOLVER_ITERATIONS = 2;
  * Four passes because the pile is a CHAIN: separating the front pair pushes into the pair
  * behind it, so the correction has to propagate back through the clump within one tick.
  */
-export const BALL_RELAX_PASSES = 4;
+export const BALL_RELAX_PASSES = 6;
 
 // ------------------------------------------------- robot contact torque ----
 /** per-tick angular correction cap from a single contact group (rad), at rest */

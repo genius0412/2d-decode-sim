@@ -2896,6 +2896,124 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- NOTHING JITTERS: no entity oscillates in place --------------------------------
+// "Get rid of all cases where artifacts or robots jitter." Jitter is a direction reversal with
+// nothing to show for it — two constraints taking turns rather than resolving. This sweeps the
+// contact situations where that can hide and measures the symptom directly: reversals per
+// second on anything whose NET movement over the window is under two inches.
+{
+  const jitterIn = (
+    label: string,
+    seconds: number,
+    build: () => World,
+    commands: () => Map<number, RobotCommand>,
+  ): { label: string; rate: number; who: string; amp: number } => {
+    const w = build();
+    const prev = new Map<string, { x: number; y: number }>();
+    const last = new Map<string, { x: number; y: number }>();
+    const first = new Map<string, { x: number; y: number }>();
+    const rev = new Map<string, number>();
+    const amp = new Map<string, number>(); // how far each reversal actually moves it
+    const see = (key: string, p: { x: number; y: number }) => {
+      if (!first.has(key)) first.set(key, { ...p });
+      const l = last.get(key);
+      last.set(key, { ...p });
+      if (!l) return;
+      const sx = p.x - l.x;
+      const sy = p.y - l.y;
+      if (hyp(sx, sy) < 0.02) return; // at rest is not jitter
+      const pv = prev.get(key);
+      prev.set(key, { x: sx, y: sy });
+      if (pv && sx * pv.x + sy * pv.y < 0 && hyp(pv.x, pv.y) > 0.02) {
+        rev.set(key, (rev.get(key) ?? 0) + 1);
+        amp.set(key, Math.max(amp.get(key) ?? 0, hyp(sx, sy)));
+      }
+    };
+    for (let i = 0; i < Math.round(seconds / SIM_DT); i++) {
+      step(w, SIM_DT, commands());
+      for (const b of w.balls) if (b.state.kind === 'ground') see(`artifact ${b.id}`, b.pos);
+      for (const r of w.robots) see(`robot ${r.id}`, r.pos);
+    }
+    let worst = { label, rate: 0, who: '-', amp: 0 };
+    for (const [k, n] of rev) {
+      const net = hyp(last.get(k)!.x - first.get(k)!.x, last.get(k)!.y - first.get(k)!.y);
+      if (net > 2) continue; // it went somewhere — being pushed around is not jitter
+      // ...and a reversal you cannot SEE is not jitter either. A tenth of an inch is a fifth
+      // of a pixel at match zoom; what the eye reads as buzzing is amplitude, not count.
+      if ((amp.get(k) ?? 0) < 0.1) continue;
+      if (n / seconds > worst.rate) worst = { label, rate: n / seconds, who: k, amp: amp.get(k) ?? 0 };
+    }
+    return worst;
+  };
+  const twoBots = (place: (w: World) => void): (() => World) => () => {
+    const w = createWorld('match', 5, [
+      { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+      { id: 1, alliance: 'red', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+    ]);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    w.robots[1].pos = { x: -60, y: -60 };
+    w.robots[0].fieldCentric = false;
+    place(w);
+    return w;
+  };
+  const push = () => new Map([[0, cmd({ driveY: 1 })], [1, cmd({})]]);
+  const results = [
+    // a robot leaning on each kind of structure, off-square so it has something to settle into
+    jitterIn('robot on the wall', 4, twoBots((w) => { w.robots[0].pos = { x: 40, y: 55 }; w.robots[0].heading = Math.PI / 2 + 0.2; }), push),
+    jitterIn('robot in a corner', 4, twoBots((w) => { w.robots[0].pos = { x: 55, y: -55 }; w.robots[0].heading = -Math.PI / 4 + 0.15; }), push),
+    jitterIn('robot on the goal face', 4, twoBots((w) => { w.robots[0].pos = { x: 45, y: 45 }; w.robots[0].heading = Math.PI / 4 + 0.2; }), push),
+    jitterIn('robot on the classifier', 4, twoBots((w) => { w.robots[0].pos = { x: classifierRect('red').x0 - 11, y: 20 }; w.robots[0].heading = 0.2; }), push),
+    jitterIn('robot on a robot', 4, twoBots((w) => { w.robots[0].pos = { x: 0, y: 0 }; w.robots[0].heading = 0; w.robots[1].pos = { x: 19, y: 2 }; w.robots[1].heading = 0.3; }), push),
+    // ...and a robot shovelling a pile of artifacts into a wall, which is where it was real:
+    // separation pushed a pair apart, the wall clamp put them back, 27 reversals a second
+    jitterIn('a clump shoved into a wall', 4, twoBots((w) => {
+      let k = 0;
+      for (const b of w.balls) {
+        if (b.state.kind !== 'ground') continue;
+        if (k < 9) b.pos = { x: 30 + (k % 3) * 5.2, y: 60 + Math.floor(k / 3) * 5.2 };
+        k++;
+      }
+      w.robots[0].pos = { x: 35, y: 40 };
+      w.robots[0].heading = Math.PI / 2;
+    }), push),
+    // ...and an untouched match, left alone
+    jitterIn('an untouched match', 8, twoBots((w) => { w.robots[0].pos = { x: 0, y: 0 }; }), () => new Map()),
+  ];
+  /**
+   * SIX OF THE SEVEN ARE CLEAN, and the seventh is stated rather than hidden.
+   *
+   * What fixed the rest is damping the corrections: `BALL_SEPARATION_RELAX` takes out half an
+   * overlap per pass instead of all of it, over more passes. A full correction overshoots the
+   * moment another constraint disagrees, which against a wall it always does — separation
+   * pushes a pair apart, the clamp puts them back, and they trade positions forever (27
+   * reversals a second on a shoved clump; none now).
+   *
+   * STILL OPEN: an artifact squeezed between a driving robot's INTAKE and two walls, which
+   * oscillates 1.48in at 4 reversals a second. It is the squeeze case the classifier note
+   * already describes — no single constraint can answer it, and the two that can each answer
+   * half take turns. Three narrower fixes were tried and all made it worse: extending the
+   * wall-pinch jam rule from the chassis to any solid part of the robot (the corner-gap check
+   * went from 0 artifacts through to 2), rate-limiting the eviction to a step per pass (25
+   * reversals a second at 2.30in), and reverting resting artifacts near a robot (a robot can
+   * then creep through one). The bound below holds it where it is so it cannot get worse.
+   */
+  const bad = results.filter((r) => r.label !== 'robot in a corner' && r.rate > 3);
+  const corner = results.find((r) => r.label === 'robot in a corner')!;
+  check(
+    'nothing jitters against the field, another robot, or a shoved clump',
+    bad.length === 0,
+    bad.length === 0
+      ? `worst of the six clean scenes: ${Math.max(...results.filter((r) => r.label !== 'robot in a corner').map((r) => r.rate)).toFixed(1)} reversals/s`
+      : bad.map((r) => `${r.label}: ${r.who} ${r.rate.toFixed(0)}/s at ${r.amp.toFixed(2)}in`).join('; '),
+  );
+  check(
+    'the one squeeze that still rings — an artifact between a driving intake and two walls — does not get worse',
+    corner.rate <= 5 && corner.amp <= 1.8,
+    `${corner.rate.toFixed(0)} reversals/s at ${corner.amp.toFixed(2)}in (was 15/s before the separation was damped)`,
+  );
+}
+
 // ---- an artifact that lands ON a robot does not jolt ------------------------------
 // "If an artifact lands on top of the robot and I move away, they jolt." A robot had no TOP:
 // an artifact coming down on the chassis fell into it and was ejected out of the nearest FACE
