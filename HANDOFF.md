@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `ec806b8`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `bfa0a26`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -527,6 +527,32 @@ Two checks moved to the measured behaviour rather than around it:
 - the 19° GATE INTAKING pose discharges into the angle it still has while the arm works on it,
   so **one** artifact gets out before the mouth closes over the drop point. What must not
   happen is the ramp emptying, and that is what it asserts now.
+
+### A contact squares you up; it does not snap you round (`bfa0a26`)
+
+*"It is still WAY too fast. It spins me around like 90 degrees instantly."* Two things were
+doing it and **neither was the gate**:
+
+- **The align ceiling.** `CONTACT_PRESS_GAIN` scales the align rate with how hard you press, up
+  to `CONTACT_ALIGN_RATE_MAX` — which was 0.12 rad, **6.9° in ONE TICK, 412 deg/s**. A firm
+  press quadrupled the base rate into a snap, on every structure in the game. At **0.05** the
+  worst single tick ramming a wall at speed is 2.9° (174 deg/s) — about what a robot turns
+  itself — and 20° still comes flush in well under a second.
+- **The flick.** `CONTACT_IMPACT_SPIN` adds angular VELOCITY on a fast angled hit and, unlike
+  the alignment, is NOT capped at the remaining tilt — it keeps turning the chassis after the
+  contact is done. Wall ram peak spin **3.23 → 0.80 rad/s**.
+
+It was also not scaled by the surface's rate multiplier, so slowing the gate arm's alignment
+left its flick at the field's rate — the one part of the arm that could still whip you was the
+only part still running full strength.
+
+*"If I hit with the gate opener the robot doesn't turn, if I hit with the intake it turns
+insanely fast"* — both halves gone: hitting the arm at five offsets across the mouth turns
+17–20° and ends flush, worst single tick 3.2°.
+
+The classifier grind-jitter bound went 15 → 20 jump-frames, which its own note anticipates
+("legitimately shifts when contact tuning changes") — a robot that squares up more slowly
+grinds at an angle for longer. Worst single jump unchanged at 2.45in against a 2.5in bound.
 
 ## Next steps
 
