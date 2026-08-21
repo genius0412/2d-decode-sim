@@ -1,7 +1,7 @@
 import type { Alliance, World } from '../../types';
 import * as C from '../../config';
-import { classifierRect, goalFaceNormal, goalFacePoints, goalSide } from '../../sim/field';
-import { datan2, dcos, hyp } from '../../math';
+import { classifierRect, gateHandleRect, goalFaceNormal, goalFacePoints, goalSide } from '../../sim/field';
+import { datan2, hyp } from '../../math';
 import type { FieldColliders, StaticSpec } from '../types';
 
 /**
@@ -73,16 +73,16 @@ function decodeGateArms(
     // gateColliderPos) when provided, so a robot ramming the gate open glides
     // through on the same tick instead of hard-stopping against last tick's stub.
     const pos = gateCol ? gateCol[a] : world.goals[a].gatePos;
-    const proj = C.GATE_ARM_SHORT * dcos(pos * C.GATE_LIFT);
-    if (proj <= 0) continue;
-    const pivotX = g * (C.FIELD_HALF - C.CLASSIFIER_W); // classifier field-side edge (pivot)
+    const rect = gateHandleRect(a, pos); // ONE source of truth — the torque pass reads it too
+    if (!rect) continue;
     out.push({
-      hx: proj / 2,
-      hy: C.GATE_ARM_THICK / 2,
-      tx: pivotX - g * (proj / 2), // handle reaches into the field (−g)
-      ty: C.GATE_TAPE_Y,
+      hx: (rect.x1 - rect.x0) / 2,
+      hy: (rect.y1 - rect.y0) / 2,
+      tx: (rect.x0 + rect.x1) / 2,
+      ty: (rect.y0 + rect.y1) / 2,
       rot: 0,
     });
+    void g;
   }
   return out;
 }

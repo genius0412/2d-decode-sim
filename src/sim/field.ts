@@ -128,6 +128,35 @@ export function gateZone(a: Alliance): Rect {
   return sideRect(g, C.GATE_ZONE.xNear, C.GATE_ZONE.xFar, C.GATE_ZONE.y0, C.GATE_ZONE.y1);
 }
 
+/**
+ * THE GATE HANDLE'S PHYSICAL FOOTPRINT at a given open fraction — the stub a robot actually
+ * pushes on, and the ONE place its geometry lives.
+ *
+ * It foreshortens as the arm lifts (`GATE_ARM_SHORT · cos(pos · GATE_LIFT)`), because what a
+ * top-down view sees of a lifting lever is its projection. At full lift that leaves a short
+ * stub at the pivot, and the stub is still SOLID — the arm folded up against the classifier
+ * edge is structure, and pressing on it is pressing on the field.
+ *
+ * Both the Rapier collider (`decodeGateArms`) and the square-up torque (`squareUpStatics`)
+ * read this. They used to be one and none: the collider was built inline in the colliders
+ * module and the torque pass did not know the arm existed at all, so a robot holding the gate
+ * wide open was stopped by it and never squared against it — "if I push on the gate all the
+ * way and keep holding, it should apply torque to the robot but it doesn't".
+ */
+export function gateHandleRect(a: Alliance, gatePos: number): Rect | null {
+  const g = goalSide(a);
+  const proj = C.GATE_ARM_SHORT * dcos(gatePos * C.GATE_LIFT);
+  if (proj <= 0) return null;
+  const pivotX = g * (C.FIELD_HALF - C.CLASSIFIER_W); // classifier field-side edge (the pivot)
+  const xInner = pivotX - g * proj; // the handle reaches INTO the field
+  return {
+    x0: Math.min(pivotX, xInner),
+    x1: Math.max(pivotX, xInner),
+    y0: C.GATE_TAPE_Y - C.GATE_ARM_THICK / 2,
+    y1: C.GATE_TAPE_Y + C.GATE_ARM_THICK / 2,
+  };
+}
+
 /** the physical GATE ARM's contact footprint at the channel mouth: the classifier
  * face plus a short field-side approach band (GATE_ARM_REACH). A robot whose bumper
  * overlaps this is TOUCHING the gate — used by G417 (touching an opponent's gate,

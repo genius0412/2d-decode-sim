@@ -14,6 +14,29 @@ export function robotExtents(r: RobotState): { front: number; rear: number; half
   return footprintExtents(r.spec);
 }
 
+/**
+ * World-space corners of the robot's FOOTPRINT — the chassis plus whatever the intake sticks
+ * out front. `robotCorners` is the CHASSIS only, which is right for anything about the body
+ * and wrong for asking what the robot is touching: Rapier collides on the footprint, so a
+ * robot pressing a structure with its intake is in contact with it while no chassis corner is
+ * anywhere near. Measured against the gate handle: the chassis's front-most corner stopped
+ * 0.5in short of the stub the robot was leaning on, so every chassis-corner contact test said
+ * "not touching" and no torque was ever applied — "if I push on the gate all the way and keep
+ * holding, it should apply torque to the robot but it doesn't".
+ */
+export function footprintCornersOf(r: RobotState): Vec2[] {
+  const e = robotExtents(r);
+  return [
+    { x: e.front, y: e.half },
+    { x: e.front, y: -e.half },
+    { x: -e.rear, y: -e.half },
+    { x: -e.rear, y: e.half },
+  ].map((c) => {
+    const w = rot(c, r.heading);
+    return { x: r.pos.x + w.x, y: r.pos.y + w.y };
+  });
+}
+
 /** local (robot-frame) storage position of the held ball at `slot` (slot 0 = oldest,
  * fired first) given how many balls (`count`) the robot currently holds. Sloped/
  * vector queue them in a line near the mouth; triangle stores 1 deep + 2 near the
@@ -358,8 +381,13 @@ export function collideRobots(
 /** minimum-translation-vector to separate the robot OBB (intake included) from
  * an axis-aligned rect, oriented to push the robot AWAY from the rect. null if
  * already separated. SAT over the rect's axes + the robot's two axes. */
-function classifierMTV(r: RobotState, rect: Rect): { nx: number; ny: number; depth: number } | null {
-  const corners = robotCorners(r);
+
+function mtvOf(
+  corners: Vec2[],
+  heading: number,
+  rect: Rect,
+  centre: Vec2,
+): { nx: number; ny: number; depth: number } | null {
   const rc = [
     { x: rect.x0, y: rect.y0 },
     { x: rect.x1, y: rect.y0 },
@@ -369,8 +397,8 @@ function classifierMTV(r: RobotState, rect: Rect): { nx: number; ny: number; dep
   const axes = [
     { x: 1, y: 0 },
     { x: 0, y: 1 },
-    rot({ x: 1, y: 0 }, r.heading),
-    rot({ x: 0, y: 1 }, r.heading),
+    rot({ x: 1, y: 0 }, heading),
+    rot({ x: 0, y: 1 }, heading),
   ];
   let minOv = Infinity;
   let ax = { x: 0, y: 0 };
@@ -401,11 +429,16 @@ function classifierMTV(r: RobotState, rect: Rect): { nx: number; ny: number; dep
   const cy = (rect.y0 + rect.y1) / 2;
   let nx = ax.x;
   let ny = ax.y;
-  if ((r.pos.x - cx) * nx + (r.pos.y - cy) * ny < 0) {
+  if ((centre.x - cx) * nx + (centre.y - cy) * ny < 0) {
     nx = -nx;
     ny = -ny;
   }
   return { nx, ny, depth: minOv };
+}
+
+/** SAT overlap of the robot's CHASSIS with a rect */
+function classifierMTV(r: RobotState, rect: Rect): { nx: number; ny: number; depth: number } | null {
+  return mtvOf(robotCorners(r), r.heading, rect, r.pos);
 }
 
 export function constrainRobot(r: RobotState): void {
@@ -524,6 +557,31 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined): void {
       applyContactTorque(r, n.x, n.y, pressAlong(preVel, n.x, n.y), contacts, true);
     }
   }
+
+  /**
+   * THE GATE HANDLE IS NOT IN THIS PASS, AND THE REASON IS WORTH KEEPING.
+   *
+   * Reported: "if I push on the gate all the way and keep holding, it should apply torque to
+   * the robot." Two things were true and neither was the bug it sounds like.
+   *
+   * The arm ALREADY acts as a wall at full lift — measured, a robot pressing a fully-open gate
+   * stops with its intake tip at x=-65.7 against a pivot at -66.0, so it never gets into the
+   * gateway. And the reason no torque is felt is that the contact is at the INTAKE: the
+   * chassis's front-most corner stops half an inch short of the stub the robot is leaning on,
+   * and every contact test in this pass is built from `robotCorners`, the CHASSIS.
+   *
+   * Wiring it up (footprint corners, the stub's own corners as the contact points, damped from
+   * 1.0 down to 0.08) does apply real torque — a robot tilted 20 degrees squares up to within
+   * 1.6 of flush. It also rotates a GATE INTAKING press off its angle, and a rotated robot's
+   * mouth lands over the outflow, where the drop-space rule correctly stalls the drain: the
+   * tap benchmark fell to a worst of 4 (the floor is 5) and gate intaking from 9 of 9 to 1.
+   * Damping does not separate them — the alignment saturates at the remaining tilt, so 0.08
+   * and 0.30 measure the same.
+   *
+   * So it is a product decision, not a fix: the arm can push you straight, or you can hold an
+   * angle on it and drain the ramp, and this file cannot choose. `footprintCornersOf` and
+   * `gateHandleRect` are the pieces it needs and they are in place.
+   */
 
   for (const a of ALLIANCES) {
     const rect = classifierRect(a);
