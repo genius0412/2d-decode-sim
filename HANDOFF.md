@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `2de7310`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `19ee488`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -607,6 +607,52 @@ the eps-banded list picks ONE corner, a firm impact rotates 4.6° against a 3° 
 corner takes over, ±9°. **The fix is the contact SET, not the response** — both corners with
 true signed depths, a proper 2-point solve. The compression weighting above is the first half
 of exactly that.
+
+### The ramp has a delivery speed, and a hard hit is an impulse (`52ac706`, `19ee488`)
+
+**"The balls get supercharged and dash down if I gate intake — since the torque change."** It
+was: the same commit stopped the pile outside the gate throttling the discharge, and with
+nothing taking anything back the last artifacts off a full column ran all 59in of ramp
+unopposed and left at **69 in/s**.
+
+`RAIL_ACCEL`'s note is right that ROLLING resistance does not grow with speed — but rolling is
+not all that happens. The channel is a 6in groove around a 5in artifact, so it weaves down it
+(`railWander`), and the faster it goes the harder it works the walls. **That** loss grows with
+speed, and it is what gives a chute a delivery speed. `RAIL_RATTLE_DRAG` 1.1/s puts it at
+`RAIL_ACCEL/1.1` ≈ 45 in/s.
+
+| | before | after |
+|---|---|---|
+| exits off a full column | 24..**69** in/s | 20..**39** in/s |
+| first artifact out | 0.53s | **0.53s** (untouched) |
+| all nine clear | 1.9s | 1.9s |
+
+The START is untouched because it is a DRAG, not a cap — an artifact at rest has no speed for
+it to take. An ELEVATED artifact is exempt: it rides the column, not the channel.
+`GATE_KNOCK` 0.05 → **0.085**, because a slower flow hands the arm less momentum and the tap
+benchmark fell to a worst of 3; at 0.085 it is worst 6, best 9, mean 8.8.
+
+**"Even if I hit it with a large impact it doesn't turn me."** The impulse a collision hands
+the chassis lived inside an `else if (flushErr > 0.05)` — so arriving fast and nearly straight,
+the case where a hit is most obvious, produced nothing. It is its own term now, with two
+guards that are both the alignment cap's own argument (*a surface cannot turn a robot into
+itself*): the ALIGNMENT may only reduce the tilt, and the IMPULSE is guarded against the TILT
+rather than against `align` — comparing it to `align` passes trivially whenever `align` has
+been zeroed for pointing the wrong way, which is exactly when it is needed.
+
+Run-up rams at −20, −8, −3, +3, +8, +20° now all end **0.0° off flush**, wall and gate. Worst
+single tick 3.0°, peak spin ~1 rad/s.
+
+⚠️ **Tried and reverted within the hour**: reading `press` as the momentum the solve actually
+removed, rather than the approach the drive is holding. It is the better measure of an IMPACT,
+and it is **zero exactly when the settling torque is needed** — a robot already resting on a
+wall has no approach left to take — so a robot leaning at an angle just stayed there. The note
+in `pressAlong` records it.
+
+⚠️ **A probe hazard worth remembering**: parking artifacts "out of play" at (300,300) does not
+work — the ground clamp snaps them back inside the field, often right where the robot under
+test is about to ram. Two wrong-way diagnoses this session were pinned artifacts, not the
+surface. Set them `held` instead.
 
 ## Next steps
 
