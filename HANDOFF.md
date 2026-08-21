@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `907a90f`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `6de591c`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -391,6 +391,65 @@ causes, both in `strafeCurb`/`beamStrafeBlock`:
 - the correction was unbounded, though its own note calls it a slop clamp. `CHAIN_BEAM_CURB_SLOP`
   caps it at **0.35in per tick**. Worst overshoot after: 0.16in, and the curb still parks the
   leading wheel exactly at the near face — over three ticks, which is what a clamp looks like.
+
+### Four more from play, and one question left open
+
+**A robot has a TOP** (`6f10fb5`). *"If an artifact lands on top of the robot and I move away,
+they jolt."* The intake got a roof earlier; the CHASSIS did not, so an artifact coming down on
+one fell into it and was ejected out the nearest FACE — measured, dropped on the middle of an
+18in chassis it moved **9.8in sideways in ONE tick** and was then shovelled along to 76 in/s.
+`robotTopZ` is the top (roller structure over the intake, robot height over the chassis). The
+throw was also floored against the artifact's WORLD velocity, which says the roof is the field;
+flooring the RELATIVE velocity makes it an artifact on a moving surface, so nothing steps when
+the roof runs out. `ROBOT_TOP_SHED` walks it off the side it landed nearest — a FLOOR, never an
+addition (adding per tick is 360 in/s² dressed as a nudge). Shots are unaffected: a robot
+anywhere in the lane still lets 3 of 3 through.
+
+**Overflow rides the column** (`c147af5`). *"They ride on top of the balls already in the
+classifier, so it would move kinda like in steps, and it would get extra momentum from the
+balls if the gate is open."* The rider had no idea what it was on — it took the RAMP's gravity
+less a rolling loss and arrived faster than the column it was riding. `OVERFLOW_CARRY` is
+rolling contact: its speed is dragged toward the speed of the artifact beneath it. Shut gate ⇒
+stationary column ⇒ dragged to a crawl, and only the small leftover pull walks it over the
+crests (the stepping). Open gate ⇒ the column's momentum is handed to it. `OVERFLOW_ROLL_LOSS`
+0.36 → 0.88 of RAIL_ACCEL and `OVERFLOW_BUMP` 0.48 → 0.10 set that leftover. **0.0in of travel
+in 2s shut, 10.2in open.** Three checks had to be told which case they ask about.
+
+**Jitter** (`6de591c`). Swept the contact situations where it hides, measuring reversals/s on
+anything with under 2in of net movement and visible amplitude. **Robots are clean everywhere.**
+Artifacts were not, and the cause was correction SIZE: separation took out an overlap entirely
+in one pass, which overshoots whenever another constraint disagrees — against a wall, always.
+`BALL_SEPARATION_RELAX` (half per pass, `BALL_RELAX_PASSES` 4 → 6) plus `BALL_SETTLE_SLOP` (a
+resting artifact away from robots that ends the tick within 0.2in of where it started, ends it
+there). Six of seven scenes clean at 0.8/s.
+
+⚠️ **STILL OPEN**: an artifact squeezed between a driving robot's INTAKE and two walls rings at
+1.48in, 4 reversals/s (down from 15). Three narrower fixes all made something else worse and
+are recorded in the check: extending the jam rule to any solid part of the robot let artifacts
+through a corner gap they cannot fit; rate-limiting the eviction took it to 25/s; reverting
+resting artifacts near a robot lets a robot creep through one. Bounded so it cannot regress.
+
+### The gate-torque question — needs YOUR call (`14e9af3`)
+
+*"If I push on the gate all the way and keep holding, it should apply torque to the robot."*
+Two things are true and neither is the bug it sounds like:
+
+- **The arm already acts as a wall at full lift** — measured, a robot pressing a fully-open
+  gate stops with its intake tip at x=-65.7 against a pivot at -66.0. It never gets in.
+- **No torque is felt because the contact is at the INTAKE.** The chassis's front-most corner
+  stops half an inch short of the stub the robot leans on, and every contact test in
+  `squareUpStatics` is built from `robotCorners` — the CHASSIS. `footprintCornersOf` (new) is
+  the fix's missing half, and `gateHandleRect` is now the one place the handle's geometry lives.
+
+Wiring it up WORKS: a robot tilted 20° squares to within 1.6° of flush, and one tilted the
+other way — which used to move not at all — turns 9°. **It also rotates a GATE INTAKING press
+off its angle**, and a rotated robot's mouth lands over the outflow where the drop-space rule
+correctly stalls the drain: the tap benchmark fell to a worst of **4** (floor is 5) and gate
+intaking from 9 of 9 to **1**. Damping does not separate them — the alignment saturates at the
+remaining tilt, so 0.08 and 0.30 measure identically.
+
+So: the arm can push you straight, or you can hold an angle on it and drain the ramp. Not both.
+The note in `squareUpStatics` carries the numbers.
 
 ## Next steps
 
