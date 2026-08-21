@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `bfa0a26`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `2de7310`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -554,52 +554,59 @@ The classifier grind-jitter bound went 15 → 20 jump-frames, which its own note
 ("legitimately shifts when contact tuning changes") — a robot that squares up more slowly
 grinds at an angle for longer. Worst single jump unchanged at 2.45in against a 2.5in bound.
 
-### ⚠️ THE CONTACT RESPONSE IS A HEURISTIC, AND IT NEEDS REPLACING — attempted, reverted
+### The wrong-way turning: analysed, and it was the load sharing (`2de7310`)
 
-*"Still behaves really weirdly. Remember fundamentals."* They are right, and this is the
-honest state of it. `applyContactTorque` is **not physics**. It computes a "torque", scales it
-by a tuned gain, caps it at a tuned ceiling, **writes the heading directly**, and clamps the
-result at the remaining tilt against a mod-90 target. Every complaint about contact behaviour
-this session has been a complaint about one of those knobs, because there is nothing else
-there to complain about.
+*"It's turning me the other way sometimes. Fundamentals. Analyse."*
 
-**The model it should be** (built this session, measured, then reverted):
+**One line.** The contact list is every corner within `CONTACT_TOUCH_EPS` (half an inch) of the
+surface, and the load was shared as `depth + CONTACT_BIAS`. **That floor is a vote for corners
+that are not touching.**
 
-    the surface pushes along its normal, at the points where it touches
-    each push a lever-arm from the centre is a moment      tau = sum r_i x F_i
-    a moment on a body is angular acceleration             alpha = tau / I,  I/m = (l^2+w^2)/12
-    Coulomb friction opposes the contact's slip            |j_t| <= mu * j_n
-    and nothing may rotate INTO the surface                (non-penetration, not a cap)
+It reverses the torque because the two front corners are NOT mirror images — the intake extends
+the front, so a tilted chassis presents corners with different lever arms. Measured at 3° off
+square against a wall: the bearing corner's lever is **7.70**, the corner half an inch clear is
+**8.78**. Weighted 0.6 and 0.2 by the floor, the fabricated vote takes 40% of a longer arm, and
+past some tilt the sum points the wrong way. *Sometimes.*
 
-Flush stops being a target and becomes an EQUILIBRIUM: square on, the contacts sit either side
-of the centre line, the moments cancel, and the robot settles because nothing is turning it.
+`CONTACT_COMPLIANCE` replaces the floor: bumpers squash, so the share is how far each corner is
+compressed relative to the deepest — full load there, nothing beyond half an inch of it. A
+corner that is not touching carries no load, which is not a modelling choice. Square on, the
+bearing corners compress equally, the moments cancel, and the robot settles — the same
+equilibrium, now for a reason.
 
-**Four things that came out of the attempt and are worth keeping:**
+| approach | result |
+|---|---|
+| wall, every tilt −6°…+12° | **0.0° off flush** |
+| gate, every tilt −12°…+12° | **0.0° off flush** |
+| gate, hit 5in off centre with one side | **0.0° off flush** |
 
-1. **Mass cancels.** The impulse is `m·press`, the inertia `m·(l²+w²)/12`, so how far a hit
-   turns you is the geometry of the hit, not your weight. A dead-centre hit turns you not at
-   all — the same statement.
-2. **The impulse denominator matters.** The impulse that stops the CONTACT POINT is
-   `m·v_n / (1 + (r×n)²/(I/m))`, not `m·v_n`. Without the `moment²` term the same impulse both
-   stopped the robot dead and spun it about the corner: a 40 in/s ram peaked at **9.6 rad/s**.
-3. **`press` is a FORCE reading, not an impulse.** A robot driving at a wall still reads 22
-   in/s of approach every tick it is held there; charging that as an impulse 60×/s is a
-   sustained 3.4 g, more than any drivetrain in the game. It must be the momentum the solve
-   ACTUALLY removed — `(postVel − preVel)·n̂`. With that fixed, a 20° wall hit squares
-   **perfectly, 0.0° off flush**, over about two seconds.
-4. **The torque must turn the CHASSIS, not `angVel`.** `updateRobot` drives `angVel` toward the
-   commanded yaw every tick, so anything put there is a servo error to be corrected — the
-   contact torque and the turn controller cancelled almost exactly and the robot settled
-   wherever the first impact left it. A wall turns your robot; the wheels can only object by
-   skidding.
+**The gate cases are the ones that used to do nothing at all**, and it was the same bug: its
+contact set is the STUB's two corners, symmetric about the robot's centre line, and the floor
+weighted them so evenly they cancelled to a torque of **0.003** — "no torque at the gate" —
+while a hair more tilt let one escape the band and it snapped. Both complaints, one cause.
 
-**Why it was reverted:** small angles oscillate. At 3° off square the eps-banded corner list
-picks ONE corner as "the contact", the rotation from a firm impact (4.6° in the landing tick)
-overshoots the 3° error, the far corner takes over next tick, and it rocks ±9° instead of
-settling. Ten checks went red, including artifacts squeezing through gaps and the corner
-intake. **The fix is the contact SET, not the response**: both front corners with true signed
-depths (one bearing, one approaching), rather than "every corner within 0.5in". That is a
-proper 2-point contact solve and it is a session's work on its own.
+### ⚠️ The response is STILL a heuristic — the physical model, measured, not yet in
+
+Separate from the above, and still true: `applyContactTorque` scales a "torque" by a tuned
+gain, caps it at a tuned ceiling, WRITES the heading, and clamps against a mod-90 target. The
+physical model was built this session and reverted; keep these findings:
+
+    tau = sum r_i x F_i ;  alpha = tau / I ,  I/m = (l^2+w^2)/12 ;  |j_t| <= mu*j_n
+
+1. **Mass cancels** — impulse `m·press`, inertia `m·(l²+w²)/12`. How far a hit turns you is the
+   geometry of the hit, not your weight.
+2. **The impulse that stops the CONTACT POINT** is `m·v_n/(1 + (r×n)²/(I/m))`; without the
+   `moment²` term a 40 in/s ram peaked at 9.6 rad/s.
+3. **`press` is a force reading, not an impulse** — a robot held at a wall reads 22 in/s of
+   approach every tick, i.e. 3.4 g sustained. It must be `(postVel − preVel)·n̂`.
+4. **The torque must turn the CHASSIS, not `angVel`** — `updateRobot` servos `angVel` to the
+   commanded yaw, so the two cancel.
+
+With 2+3 fixed a 20° wall hit squares perfectly. It was reverted because small angles rock:
+the eps-banded list picks ONE corner, a firm impact rotates 4.6° against a 3° error, the far
+corner takes over, ±9°. **The fix is the contact SET, not the response** — both corners with
+true signed depths, a proper 2-point solve. The compression weighting above is the first half
+of exactly that.
 
 ## Next steps
 
