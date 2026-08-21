@@ -401,6 +401,17 @@ export const CONTACT_ALIGN_RATE = 0.03;
 /** contact bias: keeps torque alive under light steady pressure so the wall
  * finishes squaring the chassis instead of stalling at a small angle */
 export const CONTACT_BIAS = 0.2;
+/**
+ * How much deeper than its neighbours a contact must be before the neighbour stops bearing —
+ * the bumper's compliance, in inches of squash.
+ *
+ * The load at each corner is shared by how far it is compressed, and this is the distance over
+ * which that share falls to nothing. It replaces a flat CONTACT_BIAS floor, which handed load
+ * to corners that were not touching at all: with two front corners whose lever arms differ
+ * (the intake extends the front, so they are not mirror images), that fabricated vote can
+ * outweigh the real contact and reverse the torque — "it's turning me the other way sometimes".
+ */
+export const CONTACT_COMPLIANCE = 0.5; // in
 /** alignment speedup per in/s the robot pushes into the contact — holding
  * forward against a wall turns briskly, a fast hit swings hard */
 export const CONTACT_PRESS_GAIN = 0.4;

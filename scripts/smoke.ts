@@ -2902,6 +2902,55 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- a contact NEVER turns you the wrong way ---------------------------------------
+// "It's turning me the other way sometimes." The contact list is every corner within
+// CONTACT_TOUCH_EPS of the surface, and the load used to be shared as `depth + CONTACT_BIAS` —
+// a floor, which is a vote for corners that are NOT touching. The two front corners do not
+// have mirror-image lever arms once the chassis is tilted (the intake extends the front), so a
+// fabricated vote from the corner half an inch clear could outweigh the one actually bearing
+// and reverse the torque. Load is shared by COMPRESSION now: full at the deepest corner,
+// nothing beyond CONTACT_COMPLIANCE of it.
+{
+  const settle = (tiltDeg: number, at: 'wall' | 'gate', dy = 0): number => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    for (const b of w.balls) b.pos = { x: 300, y: 300 };
+    const r = w.robots[0];
+    const face = at === 'wall' ? Math.PI / 2 : Math.PI;
+    if (at === 'wall') r.pos = { x: 0, y: FIELD_HALF - 20 };
+    else r.pos = { x: gateZone('blue').x1 + 8, y: GATE_TAPE_Y + dy };
+    r.heading = face + (tiltDeg * Math.PI) / 180;
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    run(w, cmd({ driveY: 1 }), 3);
+    const q = Math.PI / 2;
+    let rel = r.heading - face;
+    rel -= Math.round(rel / q) * q;
+    return (rel * 180) / Math.PI;
+  };
+  const tilts = [-12, -6, -3, -1, 1, 3, 6, 12];
+  const cases: { label: string; tilt: number; ended: number }[] = [];
+  for (const t of tilts) cases.push({ label: 'wall', tilt: t, ended: settle(t, 'wall') });
+  for (const t of tilts) cases.push({ label: 'gate', tilt: t, ended: settle(t, 'gate') });
+  for (const t of [-6, -1, 1, 6]) cases.push({ label: 'gate, hit with one side', tilt: t, ended: settle(t, 'gate', 5) });
+  // WORSE means it ended further from flush than it started — the wrong way, by any amount
+  const worse = cases.filter((c) => Math.abs(c.ended) > Math.abs(c.tilt) + 0.5);
+  check(
+    'a contact never turns a robot further from flush than it found it',
+    worse.length === 0,
+    worse.length === 0
+      ? `${cases.length} approaches at the wall and the gate, worst residual ${Math.max(...cases.map((c) => Math.abs(c.ended))).toFixed(1)}deg`
+      : worse.map((c) => `${c.label} ${c.tilt}deg -> ${c.ended.toFixed(1)}`).join('; '),
+  );
+  // ...and the gate case is the one that used to cancel itself to a torque of 0.003
+  const gateResiduals = tilts.map((t) => Math.abs(settle(t, 'gate')));
+  check(
+    '...and the gate squares you from every angle, not just the ones where its contacts do not cancel',
+    Math.max(...gateResiduals) < 1,
+    `worst residual across ${tilts.length} tilts: ${Math.max(...gateResiduals).toFixed(1)}deg`,
+  );
+}
+
 // ---- the gate arm squares you at ITS pace, not the field's -------------------------
 // "The gate applies way too much torque way too fast." A wall is the field and squares a robot
 // at its own rate; the handle is a 2.5in hinged bar, and at that same rate it whipped a robot

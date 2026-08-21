@@ -220,13 +220,33 @@ function applyContactTorque(
    */
   rateMult = 1,
 ): void {
+  /**
+   * LOAD IS SHARED BY COMPRESSION, and a corner that is not bearing carries none of it.
+   *
+   * The weight used to be `depth + CONTACT_BIAS`, and that floor is a vote for corners that
+   * are not touching: the contact list is everything within CONTACT_TOUCH_EPS of the surface,
+   * so a corner half an inch clear still counted. Because the two front corners have
+   * different lever arms once the chassis is tilted (the intake extends the front, so they
+   * are not mirror images), a floor-weighted vote from the corner that is NOT touching can
+   * outweigh the one that is — and the torque comes out the wrong way round. "It's turning me
+   * the other way sometimes."
+   *
+   * Bumpers are compliant, so the honest share is how far each corner is compressed relative
+   * to the deepest one: full load at the deepest, nothing beyond CONTACT_COMPLIANCE of it.
+   * Square on, all the bearing corners compress equally, their moments cancel, and the robot
+   * settles — which is the same equilibrium as before, reached for a reason.
+   */
+  let dMax = -Infinity;
+  for (const { d } of contacts) dMax = Math.max(dMax, d);
   let torque = 0;
   for (const { c, d } of contacts) {
+    const load = Math.max(0, Math.min(d, 2) - (Math.min(dMax, 2) - C.CONTACT_COMPLIANCE));
+    if (load <= 0) continue;
     const lx = c.x - r.pos.x;
     const ly = c.y - r.pos.y;
     const lever = hyp(lx, ly);
     if (lever < 1e-6) continue;
-    torque += ((lx * ny - ly * nx) / lever) * (Math.min(d, 2) + C.CONTACT_BIAS);
+    torque += ((lx * ny - ly * nx) / lever) * load;
   }
   const gain = 1 + press * C.CONTACT_PRESS_GAIN;
   const rate = Math.min(C.CONTACT_ALIGN_RATE * gain, C.CONTACT_ALIGN_RATE_MAX) * rateMult;
