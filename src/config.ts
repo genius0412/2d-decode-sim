@@ -1147,7 +1147,17 @@ export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
  * of the ramp lane's speed — 0.8 — because climbing over a pile costs it, not because it is
  * a different kind of thing.
  */
-export const OVERFLOW_ROLL_LOSS = 0.36 * RAIL_ACCEL; // in/s²: net ride pull is the rest
+export const OVERFLOW_ROLL_LOSS = 0.88 * RAIL_ACCEL; // in/s²: net ride pull is the rest
+/**
+ * HOW STRONGLY THE COLUMN UNDERNEATH CARRIES THE ARTIFACT RIDING ON IT, per second.
+ *
+ * An overflow artifact is rolling on BALLS, not on the ramp, so what is under it sets its
+ * pace: against a shut gate the column is stationary and drags the rider to a crawl, and the
+ * only thing moving it is the small net pull left after the clamber loss — which is the
+ * STEPPING, hollow to crest. Open the gate and the column is running, and the same contact
+ * hands the rider its momentum.
+ */
+export const OVERFLOW_CARRY = 3.5; // 1/s toward the speed of the artifact beneath it
 
 /**
  * ...AND IT MUST STAY UNDER THE RAMP'S OWN PULL, or the scallop stops being a texture and
@@ -1168,7 +1178,7 @@ export const OVERFLOW_ROLL_LOSS = 0.36 * RAIL_ACCEL; // in/s²: net ride pull is
  * always accelerates down-ramp, hardest into a hollow and barely at all over a crest. Smoke
  * asserts it, because it is the difference between a lurch and a stall.
  */
-export const OVERFLOW_BUMP = 0.48 * RAIL_ACCEL; // in/s² per unit slope
+export const OVERFLOW_BUMP = 0.1 * RAIL_ACCEL; // in/s² per unit slope
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s
 /**
@@ -1604,18 +1614,6 @@ export const GATE_ARM_SHORT = 2.5; // in, short handle poking past the field edg
  * paddle needs no collider — it lies over the already-solid classifier channel. Robot-solve
  * ONLY (not the ball solve): released artifacts still roll out beneath the lifted paddle. */
 export const GATE_ARM_THICK = 3; // in, physical thickness (y) of the handle collider
-/**
- * How hard the gate HANDLE squares a robot up, against a wall's own contact torque.
- *
- * A robot leaning on the handle should feel it push back — "if I push on the gate all the way
- * and keep holding, it should apply torque to the robot" — and at full lift the folded arm is
- * structure, so it does what structure does. But it is a hinged bar 2.5in long, not a wall:
- * it can nudge a chassis toward flush, and it cannot wrench one that a driver is holding at
- * an angle. At full strength it rotated a 19-degree GATE INTAKING press flush, which parks the
- * robot's own intake across the outflow and stalls the drain it is holding open (9 of 9 out
- * became 6). Damped, both hold: the arm is felt, and a deliberate angle survives it.
- */
-export const GATE_ARM_TORQUE_MULT = 0.08;
 /** the gate does NOT open just because a robot LOITERS in the zone — the arm is a
  * push-to-open mechanism, so the robot must actively PRESS toward it. Detected as
  * a velocity toward the arm (ramming it) OR a drive command toward it (leaning on it

@@ -6078,7 +6078,17 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   let zLo = Infinity;
   let zHi = -Infinity;
   const speeds: number[] = [];
+  /**
+   * DRIVEN BY AN OPEN GATE, because what an overflow artifact does is decided by the column
+   * under it: it is rolling on BALLS, not on the ramp (see OVERFLOW_CARRY). Against a shut
+   * gate the column is stationary and the rider is dragged to a stop and parks on it, which
+   * is correct and measures nothing. Open the gate and the column runs, and the ride is the
+   * stepping-plus-carry this asks about.
+   */
   for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+    w.goals.blue.gatePos = 1;
+    w.goals.blue.gateOpen = true;
+    w.goals.blue.gateLatch = 1;
     step(w, SIM_DT, new Map([[0, cmd({})]]));
     if (rider.state.kind !== 'rail') break;
     const st = rider.state as { s: number; v: number };
@@ -6087,10 +6097,15 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     zHi = Math.max(zHi, rider.z);
     speeds.push(Math.abs(st.v));
   }
+  // the HOLLOW between two artifacts is the lowest the scallop goes — a rider carried along
+  // the column sits in one as often as it crests one, so the band is hollow..crest, not crest
+  const hollow = RAMP_SURFACE_Z + Math.sqrt(Math.max(0, 4 * BALL_RADIUS * BALL_RADIUS - (RAIL_PITCH / 2) ** 2));
   check(
-    'an overflow artifact rides a DIAMETER above the ramp, on top of the column',
-    Math.abs(OVERFLOW_Z - (RAMP_SURFACE_Z + 2 * BALL_RADIUS)) < 1e-9 && zHi > RAMP_SURFACE_Z + 2 * BALL_RADIUS - 0.2,
-    `peak z ${zHi.toFixed(2)}, a diameter up is ${(RAMP_SURFACE_Z + 2 * BALL_RADIUS).toFixed(2)}`,
+    'an overflow artifact rides on top of the column, between its hollows and its crests',
+    Math.abs(OVERFLOW_Z - (RAMP_SURFACE_Z + 2 * BALL_RADIUS)) < 1e-9 &&
+      zHi > hollow - 0.2 &&
+      zHi <= RAMP_SURFACE_Z + 2 * BALL_RADIUS + 1e-6,
+    `peak z ${zHi.toFixed(2)}, hollow ${hollow.toFixed(2)}, crest ${(RAMP_SURFACE_Z + 2 * BALL_RADIUS).toFixed(2)}`,
   );
   check(
     '...and its height UNDULATES over the spheres rather than tracking a flat lid',
@@ -6126,6 +6141,55 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- an overflow artifact rides the COLUMN, not the ramp -------------------------
+// "Overflow balls come down too quickly. Remember that they ride on top of the balls already
+// in the classifier, so it would move kinda like in steps, and it would get extra momentum
+// from the balls if the gate is open." Both halves are one rule: rolling contact drags the
+// rider toward the speed of the artifact under it (OVERFLOW_CARRY). It used to take the
+// ramp's own gravity less a rolling loss, with no idea what it was riding, and arrived
+// FASTER than the column it was supposedly on top of.
+{
+  const ride = (gateOpen: boolean) => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 300, y: 300 };
+    fillBlueRail(w);
+    w.robots[0].pos = { x: 0, y: -40 };
+    const rider = w.balls[RAMP_SLOTS];
+    rider.state = { kind: 'rail', goal: 'blue', s: 46, v: 0, overflow: true, pending: false };
+    rider.pos = railPos('blue', 46);
+    rider.vel = { x: 0, y: 0 };
+    rider.z = OVERFLOW_Z;
+    rider.vz = 0;
+    let travelled = 0;
+    const s0 = 46;
+    for (let i = 0; i < Math.round(2 / SIM_DT); i++) {
+      if (gateOpen) {
+        w.goals.blue.gatePos = 1;
+        w.goals.blue.gateOpen = true;
+        w.goals.blue.gateLatch = 1;
+      }
+      step(w, SIM_DT, new Map([[0, cmd({})]]));
+      if (rider.state.kind === 'rail') travelled = s0 - (rider.state as { s: number }).s;
+      else travelled = 99;
+    }
+    return travelled;
+  };
+  const shut = ride(false);
+  const open = ride(true);
+  check(
+    'an overflow artifact sits on a STATIONARY column instead of racing down it',
+    shut < 4,
+    `${shut.toFixed(1)}in of travel in 2s against a shut gate`,
+  );
+  check(
+    '...and takes the momentum of the column once it is running',
+    open > shut * 3 + 5,
+    `${open.toFixed(1)}in in the same 2s with the gate held open, against ${shut.toFixed(1)}in shut`,
+  );
+}
+
 // ---- the overflow lane FLOWS, and at a speed the ramp explains ------------------
 // Reported: "ball flow for overflow is weird and slightly slow". It was both, and from one
 // cause: OVERFLOW_BUMP 40 and a 2.2/s velocity drag were sized against a RAIL_ACCEL of 80 and
@@ -6153,6 +6217,12 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     rider.vz = 0;
     let out = 0;
     for (let i = 0; i < Math.round(8 / SIM_DT); i++) {
+      // the gate is HELD OPEN: an overflow artifact rides the column, so what it does is what
+      // the column does. Against a shut gate it parks on a stationary pile, which is right and
+      // is not what this asks about — see OVERFLOW_CARRY.
+      w.goals.blue.gatePos = 1;
+      w.goals.blue.gateOpen = true;
+      w.goals.blue.gateLatch = 1;
       step(w, SIM_DT, new Map([[0, cmd({})]]));
       if (rider.state.kind !== 'rail') {
         out = (i + 1) * SIM_DT;
@@ -6164,7 +6234,7 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     if (!out) stuck++;
   }
   check(
-    'every overflow artifact clambers off the column instead of parking on it',
+    'every overflow artifact clambers off a DRAINING column instead of parking on it',
     stuck === 0,
     `${stuck} of ${starts.length} still on the pile after 8s`,
   );

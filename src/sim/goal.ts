@@ -774,9 +774,10 @@ export function updateRails(
     let pushedUp = false;
 
     // the ramp-level artifacts, for deciding what is riding on what
-    const retainedS = rail
+    const retained = rail
       .filter((b) => !(b.state as { overflow: boolean }).overflow)
-      .map((b) => (b.state as { s: number }).s);
+      .map((b) => b.state as { s: number; v: number });
+    const retainedS = retained.map((st) => st.s);
 
     for (const b of rail) {
       const st = b.state as { s: number; v: number; overflow: boolean; pending?: boolean };
@@ -838,6 +839,33 @@ export function updateRails(
         // terminal either and its speed is still a consequence of how far it has come.
         const loss = C.OVERFLOW_ROLL_LOSS * dt;
         st.v = st.v > 0 ? Math.max(0, st.v - loss) : Math.min(0, st.v + loss);
+        /**
+         * ...AND IT IS ROLLING ON BALLS, NOT ON A RAMP, so what is under it decides its pace.
+         *
+         * "Overflow balls come down too quickly. Remember that they ride on top of the balls
+         * already in the classifier, so it would move kinda like in steps, and it would get
+         * extra momentum from the balls if the gate is open."
+         *
+         * Both halves are one rule: rolling contact with the artifact underneath drags the
+         * rider toward THAT artifact's speed. Against a shut gate the column is stationary, so
+         * the rider is dragged to a crawl and only the small net pull (RAIL_ACCEL less the
+         * clamber loss) walks it over the crests — the stepping. Open the gate and the column
+         * is running, so the same drag hands the rider the column's momentum and it comes down
+         * with the flow instead of ahead of it.
+         *
+         * It used to have no idea what it was on: it took the ramp's full gravity less a
+         * rolling loss, so it arrived FASTER than the column it was supposedly riding.
+         */
+        let carrier = 0;
+        let bestGap = Infinity;
+        for (const rs of retained) {
+          const gap = Math.abs(st.s - rs.s);
+          if (gap < 2 * C.BALL_RADIUS && gap < bestGap) {
+            bestGap = gap;
+            carrier = rs.v;
+          }
+        }
+        if (bestGap < Infinity) st.v = approach(st.v, carrier, C.OVERFLOW_CARRY * dt);
         st.v = Math.max(st.v, -C.RAIL_TERMINAL);
       } else if (st.overflow && b.z > C.RAMP_SURFACE_Z + 0.05) {
         /**
