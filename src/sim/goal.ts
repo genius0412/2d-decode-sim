@@ -543,13 +543,24 @@ function railBlock(
        * which sets the artifact down on the roof instead of through it.
        */
       const p = railPos(a, s);
-      // ...and the intake ROOF, unpadded: the mouth itself over the outflow, not a radius of
-      // slop around it. With the slop, a robot merely PRESSING THE LEVER — whose intake tip
-      // just reaches the rail line — read as parked on the drain, and a driver who bumped the
-      // gate and stayed there got nothing at all (0 of 9, at every tap length).
+      /**
+       * ...AND WHETHER THERE IS GROUND TO SET AN ARTIFACT DOWN ON.
+       *
+       * "There needs to be adequate space ON THE GROUND for the ball to DROP ON THE GROUND,
+       * which can then be intaked by the robot." So the drop point needs a full artifact
+       * RADIUS of clearance from the intake — otherwise the artifact has nowhere to land and
+       * the column waits, exactly as it does for a chassis.
+       *
+       * The FRONT of the rollers is the one place that gets lenience: "if the ball drops on
+       * the very front edge of the intake rollers, they can suck them in due to compliance."
+       * So the clearance required in front of the roller line is INTAKE_CATCH_LENIENCE
+       * shorter than a radius — which is also what keeps a robot merely PRESSING THE LEVER
+       * from plugging its own drain, since the handle holds it a stand-off away and only the
+       * tip of its intake comes near the outflow.
+       */
       if (
         pointDepthInChassis(r, p) > -C.BALL_RADIUS ||
-        intakeRoofAt(world, p, 0)?.robot === r
+        intakeRoofAt(world, p, C.BALL_RADIUS, C.BALL_RADIUS - C.INTAKE_CATCH_LENIENCE)?.robot === r
       ) {
         reach = s + C.RAIL_BLOCK_STEP;
       }

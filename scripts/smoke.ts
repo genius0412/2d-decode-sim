@@ -104,6 +104,7 @@ import {
   BALANCE_VERSION,
   SIM_VERSION,
   INTAKE_PRESETS,
+  INTAKE_CATCH_LENIENCE,
   ROBOT_PRESETS,
   ROBOT_MAX_SIZE,
   ROBOT_MIN_WIDTH,
@@ -2872,6 +2873,25 @@ function queueTenth(w: World): void {
     '...but backed off the drop point it feeds normally, so gate intaking still works',
     back.taken > 0 && back.onRamp < 9,
     `3in back: took ${back.taken}, ${back.onRamp} left on the ramp`,
+  );
+  /**
+   * WHERE THE LINE IS: "there needs to be adequate space ON THE GROUND for the ball to DROP
+   * ON THE GROUND which can then be intaked by the robot", with a lenience because "if the
+   * ball drops on the very front edge of the intake rollers, they can suck them in due to
+   * compliance."
+   *
+   * So the drop point needs a full artifact RADIUS of clearance from the intake, less
+   * INTAKE_CATCH_LENIENCE in front of the roller face and nowhere else. Swept by how far the
+   * intake tip sits from the drop point, this is a clean step: nothing until there is room,
+   * everything after.
+   */
+  const need = BALL_RADIUS - INTAKE_CATCH_LENIENCE;
+  const tooClose = [-1, 0, need - 0.3].map((g) => parkRun(-g));
+  const roomy = [need + 0.2, need + 1.2, need + 3.7].map((g) => parkRun(-g));
+  check(
+    'the drop point needs ground to drop ONTO, less the roller-face lenience',
+    tooClose.every((x) => x.taken === 0 && x.onRamp === 9) && roomy.every((x) => x.taken > 0),
+    `tip ${(need - 0.3).toFixed(1)}in clear -> ${tooClose[2].taken} taken; ${(need + 0.2).toFixed(1)}in clear -> ${roomy[0].taken}`,
   );
 }
 

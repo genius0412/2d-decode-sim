@@ -693,6 +693,18 @@ export const FLY_SPIN_FAR = 170; // in to goal: flywheel spin 1
  * being a funnel at all along the whole edge of the field.
  */
 export const INTAKE_WALL_GRAB = 0.6; // in
+/**
+ * HOW MUCH OF ITSELF AN ARTIFACT MAY OVERLAP THE ROLLER FACE and still count as having landed
+ * — the compliance lenience.
+ *
+ * The rule it bends: an artifact coming off the ramp needs adequate space ON THE GROUND to
+ * land in, and only then can a robot take it. So the drop point has to be a full radius clear
+ * of the intake, or there is nowhere for the artifact to be. The exception is the front edge
+ * of the rollers: compliant wheels reach a little past themselves, so an artifact landing just
+ * on that edge is drawn in rather than bounced. Only the FRONT gets this — an artifact cannot
+ * half-land inside the side slopes or the chassis.
+ */
+export const INTAKE_CATCH_LENIENCE = 1.2; // in of the radius, at the roller face only
 export const INTAKE_CAPTURE_BAND = 0.5;
 /** how fast a HELD ball slides between storage slots (in/s), in the robot frame —
  * so the triangle's front ball visibly slides aside to make room for a 3rd */

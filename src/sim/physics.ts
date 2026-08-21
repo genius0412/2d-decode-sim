@@ -1074,10 +1074,11 @@ export function intakeRoofAt(
   world: World,
   p: Vec2,
   pad = C.BALL_RADIUS,
+  frontPad = pad,
 ): { z: number; robot: RobotState } | null {
   let best: { z: number; robot: RobotState } | null = null;
   for (const r of world.robots) {
-    if (!overIntakeRoof(r, p, pad)) continue;
+    if (!overIntakeRoof(r, p, pad, frontPad)) continue;
     const z = C.intakeLidZ(r.spec);
     if (!best || z > best.z) best = { z, robot: r };
   }
@@ -1092,12 +1093,17 @@ export function intakeRoofAt(
  * asking whether the roof is in the way of something else, where a radius of slop is the
  * difference between a robot whose mouth is over the outflow and one merely reaching near it.
  */
-function overIntakeRoof(r: RobotState, p: Vec2, pad = C.BALL_RADIUS): boolean {
+function overIntakeRoof(
+  r: RobotState,
+  p: Vec2,
+  pad = C.BALL_RADIUS,
+  frontPad = pad,
+): boolean {
   const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);
   const hl = r.spec.length / 2;
   const tip = hl + C.INTAKE_PRESETS[r.spec.intake].reach;
   const mh = C.intakeMouth(r.spec).mouthHalf;
-  return local.x > hl - pad && local.x <= tip + pad && Math.abs(local.y) <= mh + pad;
+  return local.x > hl - pad && local.x <= tip + frontPad && Math.abs(local.y) <= mh + pad;
 }
 
 export function landOnIntakeLid(b: Artifact, r: RobotState, prevZ: number): boolean {
