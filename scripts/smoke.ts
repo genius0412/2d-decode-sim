@@ -235,6 +235,7 @@ import {
   CHAIN_HALF_Y,
   CHAIN_MIN_WIDTH,
   CHAIN_MAX_WIDTH,
+  CHAIN_BEAM_CURB_SLOP,
   chainMassFloorBump,
   chainStorageMax,
 } from '../src/games/chain/config';
@@ -10916,12 +10917,29 @@ const mkMM = () => {
       r.pos = { x: 44, y: -6.0 }; r.heading = 0; // leading (+y) wheel pair at y≈0.4 — on the ridge
       r.vel = { x: 0, y: 40 }; // strafing up INTO the beam
       const upBefore = wheelsOnBeam(r, beam.rect);
-      beamStrafeBlock(w);
+      /**
+       * ...A NUDGE AT A TIME. The clamp is capped at CHAIN_BEAM_CURB_SLOP per tick, because an
+       * uncapped position write IS a teleport: mid-crossing it moved a robot 3.44in in one
+       * tick against 0.45in of travel ("when driving over terrain, it sometimes teleports
+       * me"). The pre-solve velocity wall is what actually stops the wheel; this only takes
+       * out the slop, so it is asked here over a few ticks rather than in one.
+       */
+      let biggest = 0;
+      for (let i = 0; i < 5; i++) {
+        const y0 = r.pos.y;
+        beamStrafeBlock(w);
+        biggest = Math.max(biggest, Math.abs(r.pos.y - y0));
+      }
       const leadY = Math.max(...wheelContacts(r).map((c) => c.y)); // leading wheel after the block
       check(
         'chain beams: a strafing mecanum is curb-blocked (leading wheel back to the near face, vel killed)',
         upBefore >= 1 && leadY <= -0.5 + 1e-6 && r.vel.y === 0 && r.pos.y < -6.0,
         `up=${upBefore} leadY=${leadY.toFixed(2)} vy=${r.vel.y.toFixed(1)} y=${r.pos.y.toFixed(2)}`,
+      );
+      check(
+        '...and it never moves the robot more than slop in one tick — a clamp, not a teleport',
+        biggest <= CHAIN_BEAM_CURB_SLOP + 1e-9,
+        `worst single-tick correction ${biggest.toFixed(2)}in vs the ${CHAIN_BEAM_CURB_SLOP}in cap`,
       );
     }
     // the curb block is MECANUM-ONLY and STRAFE-ONLY: from the SAME pose, a swerve (pods steer

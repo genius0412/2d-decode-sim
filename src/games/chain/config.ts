@@ -192,6 +192,16 @@ export const CHAIN_CLEARANCE_DEFAULT = 1;
  * the forward push down toward `CHAIN_BEAM_GROUND_FLOOR` (all four up = high-centered on the ridge
  * = barely any grip). */
 export const CHAIN_BEAM_WHEEL_R = 2.5; // in — a wheel this close to the beam line is up on the ridge
+/**
+ * The most `beamStrafeBlock` may move a robot in one tick.
+ *
+ * That clamp is a NUMERICAL-SLOP fix — the pre-solve velocity wall in `beamDrag` is what
+ * actually stops a strafing wheel at the near face — so anything bigger than slop means the
+ * wall did not fire, and writing it into the position is a teleport rather than a correction.
+ * Measured before the cap, driving diagonally over a beam: 3.44in of position in ONE tick
+ * against the 0.45in the robot's velocity could account for.
+ */
+export const CHAIN_BEAM_CURB_SLOP = 0.35; // in per tick
 export const CHAIN_BEAM_GROUND_FLOOR = 0.86; // forward traction kept with wheels lifted (never 0 — grounded wheels still push; raised 2026-08 alongside TRACTION so terrain bites less)
 /**
  * BEAM YAW — the KICK a beam gives a robot crossing it CROOKED.

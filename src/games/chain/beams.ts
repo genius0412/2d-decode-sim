@@ -9,6 +9,7 @@ import {
   CHAIN_BEAM_MAX_RETAIN,
   CHAIN_BEAM_STRAFE_BLOCK_FWD,
   CHAIN_BEAM_WHEEL_R,
+  CHAIN_BEAM_CURB_SLOP,
   CHAIN_BEAM_GROUND_FLOOR,
   CHAIN_BEAM_YAW_GAIN,
   CHAIN_BEAM_YAW_MAX_KICK,
@@ -337,7 +338,18 @@ function strafeCurb(r: RobotState, beam: { rect: Rect; axis: 'x' | 'y' }): { sid
     if (!alongOK) continue;
     const cross = axisY ? w.y : w.x;
     const rel = side * (cross - cy); // + = same side as the body, − = the far side
-    if (rel < -(edge + R)) return null; // a wheel WELL on the far side ⇒ straddling, don't wall
+    /**
+     * A WHEEL PAST THE FAR FACE MEANS THE ROBOT IS ON THE BEAM — do not curb it.
+     *
+     * This used to ask for a wheel a further WHEEL RADIUS beyond that (3in past the centre),
+     * and the gap between the two is where the teleports lived. Mid-crossing, `side` flips
+     * the moment the BODY passes the beam's centre, and the wheels that were behind become
+     * far-side wheels with a small negative `rel` — not enough to read as straddling, so the
+     * curb fired and shoved the robot a full `pen` across. Measured driving diagonally over a
+     * beam: 3.44in of position in ONE tick against 0.45in of travel the velocity could
+     * account for. "In chain reaction, when driving over terrain, it sometimes teleports me."
+     */
+    if (rel < -edge) return null; // a wheel past the far face ⇒ straddling, don't wall
     if (rel < minRel) minRel = rel;
   }
   if (minRel === Infinity) return null; // no wheel within the beam's span
@@ -359,7 +371,14 @@ export function beamStrafeBlock(world: World): void {
     for (const beam of CHAIN_BEAMS) {
       const curb = strafeCurb(r, beam);
       if (!curb || curb.lead >= 0) continue; // no wheel has crept past the near face
-      const pen = -curb.lead; // how far the leading wheel is onto the ridge
+      /**
+       * ...AND ONLY BY SLOP. This is a numerical-slop clamp — the pre-solve velocity wall in
+       * `beamDrag` is what actually stops a strafing wheel at the near face — so a correction
+       * bigger than slop means the wall did not fire, and writing it into the position is a
+       * teleport rather than a fix. Capped, so the worst case is a nudge that resolves over a
+       * few ticks instead of a jump.
+       */
+      const pen = Math.min(-curb.lead, CHAIN_BEAM_CURB_SLOP);
       if (beam.axis === 'y') {
         r.pos.y += curb.side * pen;
         if (curb.side * r.vel.y < 0) r.vel.y = 0;
