@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `b422a7e`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `73b3ac7`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -460,6 +460,53 @@ a real choice.
 
 ⚠️ The 360° turns this first appeared as were a MEASUREMENT artifact: the sim wraps the heading,
 so a raw delta reads as a full turn. Measure the remaining tilt mod 90 instead — the check does.
+
+### The gate torque, actually applied — and the SAT normal that hid it (`73b3ac7`)
+
+*"Still no torque being applied at gate."* The contacts were being found: torque 0.26, press
+5.9, and the heading did not move a hundredth of a degree in four seconds.
+
+**The reason is the NORMAL.** SAT returns whichever of its four candidate axes overlaps least,
+and two of those are the ROBOT'S OWN. When it picks one, the normal comes back aligned with the
+chassis — and `applyContactTorque` measures "how far from flush" against that normal, so the
+answer is **zero by construction**. The stub is axis-aligned, so its face normal is the axis
+from its centre to the robot's, snapped to the dominant component. Pressing the gate at ten
+tilts from −20° to +20°: **every one ends 0° off flush**, where before nothing under 12° moved.
+
+Each contact also carries its **own depth** now. Handing both stub corners `mtv.depth` makes
+them symmetric about a robot pressing square-on, the cross products cancel, and the torque is
+zero — which is why it only ever turned at big tilts, where one corner falls outside the band
+and stops cancelling the other.
+
+**Worth remembering generally:** a torque built on a SAT normal is measuring against a
+direction that may be the robot's own. Any future contact-torque surface needs the STRUCTURE's
+normal, like the walls have always used.
+
+### A pile outside the gate no longer throttles the ramp (`73b3ac7`)
+
+*"Ball flow gets slowed down if there are balls right outside the gate. Don't let it slow
+down."* The doorway artifact was part of `canLeave`, so what was already on the floor gated the
+discharge:
+
+| artifacts piled outside | 0 | 6 | 10 | 14 |
+|---|---|---|---|---|
+| nine out, before | 1.65s | 1.88s | 2.07s | **2.20s** |
+| after | 1.47s | 1.48s | 1.48s | **1.48s** |
+
+A chute does not ask the heap whether it may discharge — what comes out shoves what is there,
+which is what the exit nudge is for. The mouth is clear unless a ROBOT is across it. **The
+invariant that mattered is untouched**: the solver and the release still agree about what stops
+the column (the robot, and nothing else), so nothing can descend past an exit that then refuses
+it.
+
+### One check changed MEANING, not value
+
+Pressed hard on the lever at 19° — the pose reported verbatim from play — the arm now squares
+the robot to 0° and its mouth lands over the drop point, where the drop-space rule holds the
+ramp. Backing off enough to clear the drop point also stops holding the lever (gatePos 0.22 at
+2in back, 0.00 at 4in). **That is two requested rules meeting, not a regression**, and the
+check says so at length rather than being deleted. Gate intaking itself is alive: the other
+gate-intaking check drains **9 of 9 at a 0.119s mean gap**.
 
 ## Next steps
 
