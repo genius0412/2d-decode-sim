@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `73b3ac7`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `ec806b8`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -507,6 +507,26 @@ ramp. Backing off enough to clear the drop point also stops holding the lever (g
 2in back, 0.00 at 4in). **That is two requested rules meeting, not a regression**, and the
 check says so at length rather than being deleted. Gate intaking itself is alive: the other
 gate-intaking check drains **9 of 9 at a 0.119s mean gap**.
+
+### ...at the arm's pace, not the field's (`ec806b8`)
+
+*"The gate applies way too much torque way too fast."* Measured: **20° off flush to square in
+167ms**, which is a whip, not a lever.
+
+The rate was the WALL's. A wall is the field and may square a chassis as fast as it likes; the
+handle is a 2.5in hinged bar. `GATE_ARM_TORQUE_MULT` was scaling the PRESS term — which only
+feeds the pressure gain and barely moved the result — and now scales the RATE, which is the
+thing that was wrong. Direction and the flush cap are geometry and are untouched. At **0.12**,
+20° comes square in **1.25s**: a firm nudge you can drive against.
+
+Two checks moved to the measured behaviour rather than around it:
+
+- the arm holds contact for a second and a half while it turns you, over which the chassis
+  settles **1.30in** further out as the rotation resolves. That is the rotation, not a shove —
+  the shove that check was written for was 3.85in — so its bound went 1.0 → 1.5.
+- the 19° GATE INTAKING pose discharges into the angle it still has while the arm works on it,
+  so **one** artifact gets out before the mouth closes over the drop point. What must not
+  happen is the ramp emptying, and that is what it asserts now.
 
 ## Next steps
 
