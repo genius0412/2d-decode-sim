@@ -2896,6 +2896,48 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- ramming a structure SQUARES you up, from any angle and either end -------------
+// "Even when I ram with the back of the chassis where there is no intake, the robot only turns
+// if I impact it at certain specific angles, weird." The classifier passed `contacts.length > 1`
+// as its square-to flag, so a single-corner press took applyContactTorque's PIVOT mode, which
+// has no flush cap: measured across ten approach angles it spun rather than settling. A flat
+// face aligns a chassis whether one corner is on it or two — the walls have always said so.
+{
+  const ramInto = (target: Vec2, faceAngle: number, tiltDeg: number, backwards: boolean): number => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    for (const b of w.balls) b.pos = { x: -300, y: -300 };
+    const r = w.robots[0];
+    r.heading = (backwards ? faceAngle + Math.PI : faceAngle) + (tiltDeg * Math.PI) / 180;
+    r.pos = { x: target.x - Math.cos(faceAngle) * 16, y: target.y - Math.sin(faceAngle) * 16 };
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    run(w, cmd({ driveY: backwards ? -1 : 1 }), 4);
+    // how far off FLUSH it ended, mod 90 — the chassis is square, and raw heading deltas are
+    // meaningless because the sim wraps the angle (which is what made this look like a 360)
+    const q = Math.PI / 2;
+    let rel = r.heading - faceAngle;
+    rel -= Math.round(rel / q) * q;
+    return Math.abs((rel * 180) / Math.PI);
+  };
+  const tilts = [-30, -20, -12, -6, -3, 3, 6, 12, 20, 30];
+  const cl = classifierRect('blue');
+  const worstAt = (target: Vec2, faceAngle: number) =>
+    Math.max(...tilts.flatMap((t) => [ramInto(target, faceAngle, t, false), ramInto(target, faceAngle, t, true)]));
+  const wall = Math.max(...tilts.flatMap((t) => [ramInto({ x: 0, y: FIELD_HALF }, Math.PI / 2, t, false), ramInto({ x: 0, y: FIELD_HALF }, Math.PI / 2, t, true)]));
+  const classifier = worstAt({ x: cl.x1, y: 20 }, Math.PI);
+  check(
+    'ramming a wall squares the chassis up, at every angle and either end',
+    wall < 1,
+    `worst of 20 approaches: ${wall.toFixed(1)}deg off flush`,
+  );
+  check(
+    '...and so does the classifier, which used to pivot instead of squaring',
+    classifier < 1,
+    `worst of 20 approaches: ${classifier.toFixed(1)}deg off flush`,
+  );
+}
+
 // ---- NOTHING JITTERS: no entity oscillates in place --------------------------------
 // "Get rid of all cases where artifacts or robots jitter." Jitter is a direction reversal with
 // nothing to show for it — two constraints taking turns rather than resolving. This sweeps the

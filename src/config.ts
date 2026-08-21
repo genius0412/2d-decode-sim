@@ -1641,6 +1641,14 @@ export const GATE_ARM_SHORT = 2.5; // in, short handle poking past the field edg
  * paddle needs no collider — it lies over the already-solid classifier channel. Robot-solve
  * ONLY (not the ball solve): released artifacts still roll out beneath the lifted paddle. */
 export const GATE_ARM_THICK = 3; // in, physical thickness (y) of the handle collider
+/**
+ * How hard the gate HANDLE squares a robot up, against a wall's own contact torque.
+ *
+ * The INTAKE is part of the contact area, so a robot leaning on the handle feels it — but the
+ * handle is a 2.5in hinged bar, not a wall. It nudges a chassis toward flush; it is not meant
+ * to wrench one a driver is holding at an angle.
+ */
+export const GATE_ARM_TORQUE_MULT = 0.3;
 /** the gate does NOT open just because a robot LOITERS in the zone — the arm is a
  * push-to-open mechanism, so the robot must actively PRESS toward it. Detected as
  * a velocity toward the arm (ramming it) OR a drive command toward it (leaning on it

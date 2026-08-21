@@ -1,6 +1,6 @@
 import type { Alliance, Artifact, RobotState, Vec2, World } from '../types';
 import * as C from '../config';
-import { classifierRect, footprintExtents, goalFaceNormal, goalLineValue, type Rect } from './field';
+import { classifierRect, footprintExtents, gateHandleRect, goalFaceNormal, goalLineValue, type Rect } from './field';
 import { dot, rot, clamp, hyp, datan2 } from '../math';
 import { driveParams } from './drivetrain';
 
@@ -239,9 +239,19 @@ function applyContactTorque(
       // bleed angular velocity that fights the contact
       r.angVel *= 0.9;
     } else if (flushErr > 0.05) {
-      // a fast off-axis impact converts speed into visible spin — scaled by
-      // the actual torque so a dead-center (torque≈0) contact adds nothing,
-      // and gated near flush so it can't re-excite a settled robot
+      /**
+       * a fast off-axis impact converts speed into visible spin — scaled by the actual torque
+       * so a dead-centre (torque≈0) contact adds nothing, and gated near flush so it cannot
+       * re-excite a settled robot.
+       *
+       * ...AND ONLY THE WAY THE ALIGNMENT IS ALREADY GOING. `align` is capped at the remaining
+       * tilt so it can never step past flush, but this is not, and fed against the alignment
+       * it carries the chassis straight through flush and round again: measured driving BACK
+       * into the classifier at ten angles, the robot turned a full 360 at every one of them,
+       * and at a few angles the two cancelled and it did not turn at all. "Even when I ram
+       * with the back of the chassis where there is no intake, the robot only turns if I
+       * impact it at certain specific angles, weird."
+       */
       r.angVel = clamp(r.angVel + torque * press * C.CONTACT_IMPACT_SPIN, -maxTurn, maxTurn);
     }
   }
@@ -436,6 +446,12 @@ function mtvOf(
   return { nx, ny, depth: minOv };
 }
 
+/** the same SAT overlap, against the robot's FOOTPRINT (chassis + intake) — what Rapier
+ * collides with, and what the gate is pressed with. See `footprintCornersOf`. */
+function footprintMTV(r: RobotState, rect: Rect): { nx: number; ny: number; depth: number } | null {
+  return mtvOf(footprintCornersOf(r), r.heading, rect, r.pos);
+}
+
 /** SAT overlap of the robot's CHASSIS with a rect */
 function classifierMTV(r: RobotState, rect: Rect): { nx: number; ny: number; depth: number } | null {
   return mtvOf(robotCorners(r), r.heading, rect, r.pos);
@@ -541,7 +557,7 @@ function squareUpWalls(r: RobotState, preVel: Vec2 | undefined, halfX: number, h
   }
 }
 
-function squareUpStatics(r: RobotState, preVel: Vec2 | undefined): void {
+function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World): void {
   const eps = C.CONTACT_TOUCH_EPS;
   squareUpWalls(r, preVel, C.FIELD_HALF, C.FIELD_HALF);
   const corners = robotCorners(r);
@@ -559,29 +575,65 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined): void {
   }
 
   /**
-   * THE GATE HANDLE IS NOT IN THIS PASS, AND THE REASON IS WORTH KEEPING.
+   * THE GATE HANDLE IS STRUCTURE, AND THE INTAKE IS PART OF THE CONTACT AREA.
    *
-   * Reported: "if I push on the gate all the way and keep holding, it should apply torque to
-   * the robot." Two things were true and neither was the bug it sounds like.
+   * "If I push on the gate all the way and keep holding, it should apply torque to the robot
+   * but it doesn't. Remember that if the gate is fully open, then that part acts like a wall
+   * essentially for collisions." The arm already stopped a robot — measured, a robot pressing
+   * a fully-open gate ends with its intake tip at x=-65.7 against a pivot at -66.0 — but a
+   * stop with no torque leaves the robot at whatever angle it arrived at.
    *
-   * The arm ALREADY acts as a wall at full lift — measured, a robot pressing a fully-open gate
-   * stops with its intake tip at x=-65.7 against a pivot at -66.0, so it never gets into the
-   * gateway. And the reason no torque is felt is that the contact is at the INTAKE: the
-   * chassis's front-most corner stops half an inch short of the stub the robot is leaning on,
-   * and every contact test in this pass is built from `robotCorners`, the CHASSIS.
+   * The reason nothing fired is that every contact test in this pass is built from
+   * `robotCorners`, the CHASSIS, and the gate is pressed with the INTAKE: the chassis's
+   * front-most corner stops half an inch short of the stub the robot is leaning on. The
+   * footprint is what Rapier collides with and it is what this reads now.
    *
-   * Wiring it up (footprint corners, the stub's own corners as the contact points, damped from
-   * 1.0 down to 0.08) does apply real torque — a robot tilted 20 degrees squares up to within
-   * 1.6 of flush. It also rotates a GATE INTAKING press off its angle, and a rotated robot's
-   * mouth lands over the outflow, where the drop-space rule correctly stalls the drain: the
-   * tap benchmark fell to a worst of 4 (the floor is 5) and gate intaking from 9 of 9 to 1.
-   * Damping does not separate them — the alignment saturates at the remaining tilt, so 0.08
-   * and 0.30 measure the same.
-   *
-   * So it is a product decision, not a fix: the arm can push you straight, or you can hold an
-   * angle on it and drain the ramp, and this file cannot choose. `footprintCornersOf` and
-   * `gateHandleRect` are the pieces it needs and they are in place.
+   * GROWN BY THE TOUCH EPSILON, because Rapier leaves a hair of separation and a strict
+   * overlap test would fire never. Damped by GATE_ARM_TORQUE_MULT: a 2.5in hinged bar is not
+   * a wall.
    */
+  if (world) {
+    for (const a of ALLIANCES) {
+      const raw = gateHandleRect(a, world.goals[a].gatePos);
+      if (!raw) continue;
+      const arm = { x0: raw.x0 - eps, x1: raw.x1 + eps, y0: raw.y0 - eps, y1: raw.y1 + eps };
+      const mtv = footprintMTV(r, arm);
+      if (!mtv) continue;
+      let contacts = footprintCornersOf(r)
+        .filter((c) => c.x > arm.x0 && c.x < arm.x1 && c.y > arm.y0 && c.y < arm.y1)
+        .map((c) => ({ c, d: mtv.depth }));
+      if (contacts.length === 0) {
+        /**
+         * ...AND FROM THE STUB'S SIDE WHEN THE ROBOT HAS NO CORNER IN IT. A robot pressing a
+         * 2.5in stub with its front EDGE has no footprint corner inside it, and the obvious
+         * fallback — the nearest point ON the stub — puts the contact dead ahead of the
+         * robot's centre, where the lever arm is zero and the torque with it. The contact a
+         * tilted robot actually makes is the stub's own CORNER digging into its front edge.
+         */
+        for (const c of [
+          { x: arm.x0, y: arm.y0 },
+          { x: arm.x1, y: arm.y0 },
+          { x: arm.x1, y: arm.y1 },
+          { x: arm.x0, y: arm.y1 },
+        ]) {
+          const depth = pointDepthInRobot(r, c);
+          if (depth > -eps && depth < eps + 0.5) contacts.push({ c, d: mtv.depth });
+        }
+      }
+      if (contacts.length === 0) {
+        contacts = [{ c: { x: clamp(r.pos.x, arm.x0, arm.x1), y: clamp(r.pos.y, arm.y0, arm.y1) }, d: mtv.depth }];
+      }
+      // ...and squared to, like every other flat face here — see the classifier note below
+      applyContactTorque(
+        r,
+        mtv.nx,
+        mtv.ny,
+        pressAlong(preVel, mtv.nx, mtv.ny) * C.GATE_ARM_TORQUE_MULT,
+        contacts,
+        true,
+      );
+    }
+  }
 
   for (const a of ALLIANCES) {
     const rect = classifierRect(a);
@@ -592,8 +644,16 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined): void {
     const contacts = robotCorners(r)
       .filter((c) => c.x > rect.x0 && c.x < rect.x1 && c.y > rect.y0 && c.y < rect.y1)
       .map((c) => ({ c, d: mtv.depth }));
+    /**
+     * SQUARE TO IT, always. A flat face aligns a chassis whether one corner is on it or two —
+     * the alternative is `applyContactTorque`'s pivot mode, which has no flush cap, and a
+     * robot pressing a corner on the classifier SPUN: measured across ten approach angles,
+     * a full 360 at most of them and nothing at all at a few. "Even when I ram with the back
+     * of the chassis where there is no intake, the robot only turns if I impact it at certain
+     * specific angles, weird." The walls have always passed `true` here for the same reason.
+     */
     if (contacts.length > 0)
-      applyContactTorque(r, mtv.nx, mtv.ny, pressAlong(preVel, mtv.nx, mtv.ny), contacts, contacts.length > 1);
+      applyContactTorque(r, mtv.nx, mtv.ny, pressAlong(preVel, mtv.nx, mtv.ny), contacts, true);
   }
 }
 
@@ -673,7 +733,7 @@ export function squareUpRobots(world: World, preVels: Map<number, Vec2>): void {
       squareUpPair(world.robots[i], world.robots[j], preVels, world.rrContacts);
     }
   }
-  for (const r of world.robots) squareUpStatics(r, preVels.get(r.id));
+  for (const r of world.robots) squareUpStatics(r, preVels.get(r.id), world);
 }
 
 /** post-Rapier square-up for a game whose only statics are perimeter WALLS (Chain
