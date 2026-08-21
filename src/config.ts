@@ -1089,6 +1089,22 @@ export const RAIL_ACCEL = 50; // in/s^2 down-ramp
  * arrival down a full ramp is about 54 in/s). It exists so a pathological state cannot launch
  * an artifact down the rail at an unbounded speed, not to give the ramp a flow speed.
  */
+/**
+ * THE CHANNEL IS A GROOVE, AND A FAST ARTIFACT RATTLES DOWN IT.
+ *
+ * `RAIL_ACCEL`'s own note is right that rolling resistance does not grow with speed, so there
+ * is no terminal from rolling — but rolling is not all that is happening. The channel is
+ * CLASSIFIER_W across against a 5in artifact, so it weaves (see `railWander`), and the faster
+ * it goes the harder it works the walls: knocking side to side, scrubbing the groove, throwing
+ * itself against the far side of each weave. That loss DOES grow with speed, and it is what
+ * stops a chute from delivering at whatever the drop height would give in a vacuum.
+ *
+ * Without it the ramp accelerated the whole 59in unopposed and the last artifacts off a full
+ * column arrived at 69 in/s — "the balls get supercharged and dash down". With it the early
+ * ones are untouched (they have no speed for it to take) and the tail settles near
+ * RAIL_ACCEL / this, about 45 in/s, which is the number the ramp actually delivers.
+ */
+export const RAIL_RATTLE_DRAG = 1.1; // 1/s — terminal ~RAIL_ACCEL/this
 export const RAIL_TERMINAL = 120; // in/s safety cap
 export const RAIL_PITCH = 5.1; // ball contact spacing on the stack
 export const GATE_STOP_S = 2; // lowest rest position against the closed gate
@@ -1350,7 +1366,7 @@ export const GATE_RIDE_FRAC = 0.62; // open fraction the arm rests at while ridi
  * At 0.12 the sweep was 9-or-nothing (12 ones, 36 nines, nothing between); at 0.07 it spans
  * 1..9 with a mean of 5.
  */
-export const GATE_KNOCK = 0.05; // (1/s of gatePos) per in/s of artifact speed
+export const GATE_KNOCK = 0.085; // (1/s of gatePos) per in/s of artifact speed
 /**
  * WHAT THE STRIKE COSTS THE ARTIFACT — the fraction of its down-ramp speed it spends
  * throwing the arm up. A collision moves momentum; it does not mint it.

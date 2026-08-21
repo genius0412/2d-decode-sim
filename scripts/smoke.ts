@@ -72,6 +72,7 @@ import {
   GATE_PADDLE_SHOVE,
   GATE_SHOVE_MIN,
   RAIL_ACCEL,
+  RAIL_RATTLE_DRAG,
   ROBOT_MIN_WIDTH,
   INTAKE_ROLLER_MM,
   intakeRollerDia,
@@ -2123,6 +2124,51 @@ function queueTenth(w: World): void {
     'the drain settles ALONG the wall, not out on a diagonal',
     offWall.filter((d) => d < 20).length >= 7,
     `off-wall=${offWall.map((d) => d.toFixed(0)).join(',')}`,
+  );
+}
+
+// ---- the ramp has a DELIVERY SPEED, it does not accelerate unopposed ---------------
+// "The balls get supercharged and dash down if I gate intake." Nothing was taking anything back
+// once the pile outside stopped throttling the discharge, so the last artifacts off a full
+// column ran the whole 59in of ramp unopposed and arrived at 69 in/s. RAIL_ACCEL's note is
+// right that ROLLING resistance does not grow with speed — but the channel is a 6in groove
+// around a 5in artifact, and weaving down it (railWander) works the walls harder the faster it
+// goes. That loss does grow with speed, and it is what gives a chute a delivery speed.
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  w.match.phase = 'teleop';
+  for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 300, y: 300 };
+  fillBlueRail(w);
+  w.robots[0].pos = { x: 0, y: -40 };
+  const nine = w.balls.slice(0, RAMP_SLOTS);
+  const seen = new Set<number>();
+  const exits: number[] = [];
+  let firstOut = NaN;
+  for (let i = 0; i < Math.round(6 / SIM_DT); i++) {
+    w.goals.blue.gatePos = 1;
+    w.goals.blue.gateOpen = true;
+    w.goals.blue.gateLatch = 1;
+    step(w, SIM_DT, new Map());
+    for (const b of nine) {
+      if (b.state.kind === 'rail' || seen.has(b.id)) continue;
+      seen.add(b.id);
+      exits.push(hyp(b.vel.x, b.vel.y));
+      if (Number.isNaN(firstOut)) firstOut = (i + 1) * SIM_DT;
+    }
+  }
+  const terminal = RAIL_ACCEL / RAIL_RATTLE_DRAG;
+  check(
+    'the ramp delivers at its own speed rather than accelerating the whole way down',
+    Math.max(...exits) < terminal,
+    `exits ${Math.min(...exits).toFixed(0)}..${Math.max(...exits).toFixed(0)} in/s against a delivery speed of ${terminal.toFixed(0)} (was 24..69 with nothing taking it back)`,
+  );
+  // ...and the START is untouched, which is the whole point of a drag rather than a cap: an
+  // artifact at rest has no speed for it to take, so the first one out is as quick as it was.
+  check(
+    '...and the first artifact out is no slower for it',
+    firstOut < 0.7,
+    `first out at ${firstOut.toFixed(2)}s`,
   );
 }
 

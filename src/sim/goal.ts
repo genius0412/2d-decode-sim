@@ -808,6 +808,11 @@ export function updateRails(
       const elevated = st.overflow && retainedS.some((rs) => rs < st.s + C.RAIL_PITCH * 0.5);
 
       st.v = Math.max(st.v - C.RAIL_ACCEL * dt, -C.RAIL_TERMINAL);
+      // ...less what the groove takes back, for anything IN the groove. See RAIL_RATTLE_DRAG:
+      // an artifact weaving down a 6in channel works the walls harder the faster it goes, so
+      // the ramp has a delivery speed rather than accelerating unopposed the whole way down.
+      // An ELEVATED artifact is riding the column, not the channel, and has its own losses.
+      if (!elevated) st.v *= Math.max(0, 1 - C.RAIL_RATTLE_DRAG * dt);
       /**
        * WHAT AN ELEVATED ARTIFACT IS ACTUALLY ROLLING ON — the scalloped tops of the
        * retained column, not a smooth incline.
