@@ -262,7 +262,14 @@ function applyContactTorque(
        * with the back of the chassis where there is no intake, the robot only turns if I
        * impact it at certain specific angles, weird."
        */
-      r.angVel = clamp(r.angVel + torque * press * C.CONTACT_IMPACT_SPIN, -maxTurn, maxTurn);
+      /**
+       * ...AND THIS IS SCALED BY THE SURFACE'S RATE TOO. It is angular VELOCITY, so unlike
+       * `align` it is not capped at the remaining tilt — it keeps spinning the chassis after
+       * the contact has done its work. Leaving it at full strength on the gate arm is what
+       * "it spins me around like 90 degrees instantly" is: the alignment was slowed to the
+       * arm's pace and the flick was not, so the flick was all that was left.
+       */
+      r.angVel = clamp(r.angVel + torque * press * C.CONTACT_IMPACT_SPIN * rateMult, -maxTurn, maxTurn);
     }
   }
 }

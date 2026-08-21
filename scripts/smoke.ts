@@ -2252,12 +2252,14 @@ function queueTenth(w: World): void {
       worst = Math.max(worst, unexplained);
     }
   }
-  // Baseline before slice 2 was 41 jump-frames and 2.88in worst; after, 4 and 1.84in.
-  // The bound is deliberately loose — this guards the ORDER of magnitude, not the exact
-  // solver output, which legitimately shifts when contact tuning changes.
+  // Baseline before slice 2 was 41 jump-frames and 2.88in worst; after, 4 and 1.84in. The
+  // bound is deliberately loose — it guards the ORDER of magnitude, not the exact solver
+  // output, which legitimately shifts when contact tuning changes. It shifted again when the
+  // align ceiling came down (CONTACT_ALIGN_RATE_MAX 0.12 -> 0.05, "way too fast"): a robot
+  // that squares up more slowly grinds at an angle for longer, so it is 16 rather than 4.
   check(
     'artifacts do not jitter against the classifier when a robot grinds a pile in',
-    jumpFrames <= 15 && worst < 2.5 / SIM_DT,
+    jumpFrames <= 20 && worst < 2.5 / SIM_DT,
     `${jumpFrames} jump-frames of ${Math.round(8 / SIM_DT)}, worst ${(worst * SIM_DT).toFixed(2)}in in one tick`,
   );
 }
@@ -2932,6 +2934,41 @@ function queueTenth(w: World): void {
     'the gate arm squares a robot up over about a second, not in a sixth of one',
     t > 0.6 && t < 2.5,
     `20deg off flush -> squared in ${t.toFixed(2)}s (was 0.17s at the wall's rate)`,
+  );
+  /**
+   * ...AND NOTHING SNAPS A ROBOT ROUND, structure or not.
+   *
+   * `CONTACT_PRESS_GAIN` scales the align rate with how hard you are pressing, up to
+   * `CONTACT_ALIGN_RATE_MAX` — which was 0.12 rad, or 6.9 degrees in ONE TICK, 412 deg/s. A
+   * contact should not out-turn the drivetrain. "It spins me around like 90 degrees instantly."
+   */
+  const ramTurn = (tiltDeg: number, runup: number): { worstTick: number; peakAng: number } => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    for (const b of w.balls) b.pos = { x: 300, y: 300 };
+    const r = w.robots[0];
+    r.pos = { x: 0, y: FIELD_HALF - 9 - runup };
+    r.heading = Math.PI / 2 + (tiltDeg * Math.PI) / 180;
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    let worstTick = 0;
+    let peakAng = 0;
+    for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+      const h0 = r.heading;
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: 1 })]]));
+      const d = Math.abs(r.heading - h0);
+      if (d < Math.PI && d > worstTick) worstTick = d;
+      peakAng = Math.max(peakAng, Math.abs(r.angVel));
+    }
+    return { worstTick: (worstTick * 180) / Math.PI, peakAng };
+  };
+  const rams = [ramTurn(-20, 20), ramTurn(20, 20), ramTurn(-20, 8)];
+  const worstTick = Math.max(...rams.map((x) => x.worstTick));
+  const peakAng = Math.max(...rams.map((x) => x.peakAng));
+  check(
+    'ramming a wall at speed never snaps the chassis round — it squares it',
+    worstTick < 4 && peakAng < 1.5,
+    `worst ${worstTick.toFixed(1)}deg in one tick (was 6.9), peak spin ${peakAng.toFixed(2)} rad/s (was 3.23)`,
   );
 }
 

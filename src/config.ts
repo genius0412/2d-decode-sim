@@ -405,10 +405,26 @@ export const CONTACT_BIAS = 0.2;
  * forward against a wall turns briskly, a fast hit swings hard */
 export const CONTACT_PRESS_GAIN = 0.4;
 /** hard cap on per-tick alignment under pressure (rad) */
-export const CONTACT_ALIGN_RATE_MAX = 0.12;
+/**
+ * ...AND THE CEILING THAT GAIN CAN REACH. A contact must not out-turn the drivetrain.
+ *
+ * It was 0.12 rad — 6.9 degrees in ONE TICK, 412 deg/s — so a firm press quadrupled the base
+ * rate into a snap: "it spins me around like 90 degrees instantly", "way too fast". At 0.05 the
+ * worst single tick ramming a wall at speed is 2.9 degrees (174 deg/s), which is about what a
+ * robot can turn itself, and a 20-degree tilt still comes flush in well under a second.
+ */
+export const CONTACT_ALIGN_RATE_MAX = 0.05;
 /** spin injected per (contact torque × in/s of impact speed) — a fast angled
  * hit visibly converts momentum into rotation; dead-center hits add nothing */
-export const CONTACT_IMPACT_SPIN = 0.12;
+/**
+ * ...and the FLICK a fast angled hit adds on top, as angular velocity.
+ *
+ * Unlike the alignment this is not capped at the remaining tilt — it keeps turning the chassis
+ * after the contact has done its work, which is what a violent hit should do and also what
+ * makes a merely firm one feel violent. Halved and more with the align ceiling: ramming a wall
+ * at speed peaked at 3.23 rad/s (185 deg/s of free spin) and now peaks at 0.80.
+ */
+export const CONTACT_IMPACT_SPIN = 0.05;
 /** touch tolerance (in) for the post-Rapier square-up pass: Rapier resolves
  * translation and leaves a chassis resting AT a face (near-zero penetration),
  * so the bespoke torque nudge treats a contact within this band as touching */
