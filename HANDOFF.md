@@ -1,4 +1,54 @@
-# HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
+# HANDOFF — 2026-08-22 (contact geometry: the closest FEATURE, and one turn per tick) — alpha only
+
+Branch **alpha**, commit `fb75a83`. Working tree **CLEAN**. `npm test` ALL PASS ·
+`npm run build` green · `npm run server:check` green. **Not deployed.**
+
+Do not merge to main. Standing rule.
+
+## READ FIRST — where this session ended
+
+*"Collision with the gate/corner of the gate is still very weird."* Three structural
+things, all in `src/sim/physics.ts`:
+
+1. **The normal at a corner.** The gate handle and the classifier both took their normal
+   from SAT's least-overlap axis (the handle, from a snap to whichever axis the centre was
+   furthest along). Both treat a rectangle as all FACE, so near a corner the normal jumps
+   between axes as the robot crosses the diagonal — the push direction, and which way you
+   are turned, flips within a fraction of an inch. Now: clamp the centre onto the rect; one
+   coordinate moved is a face, both moved is a CORNER and the normal runs from it.
+   Continuous everywhere.
+2. **Surfaces are summed, then the chassis turns once.** Each surface used to write
+   `heading` as it was processed, so the gate arm computed its geometry against a robot the
+   classifier had already rotated. `contactTorqueDelta` is pure, `squareUpStatics` sums, and
+   the flush cap that survives is the tightest any FACE imposes.
+3. **The arm's manifold is both bodies' features**, unioned, not three fallbacks in priority
+   order (which one answered depended on which side you hit from).
+
+**Measured** (drive into the arm, 2in steps across it): centred 0 deg; off-centre from the
+tunnel side 7/7/7/11 deg; from the channel side 0-15 depending on where you meet it. The
+channel-side spread is **not** a discontinuity — instrumented, one surface acts there and
+contributes a steady 0.19 deg/tick — it is how far the chassis turns before it slides off a
+2.5in stub. Bounded by a smoke check that prints both sides.
+
+### Still open here
+
+- **The response is a heuristic, not tau = sum(r x F) / I.** A full physical rewrite was
+  tried and REVERTED this session: 20 deg hits were perfect, small angles rocked +/-9 deg,
+  10 checks red. Findings kept: mass cancels; the impulse denominator is
+  `1 + (r x n)^2 / (I/m)` with `I/m = (l^2 + w^2)/12`; `press` reads as a FORCE, not an
+  impulse; and the torque must turn the CHASSIS, not integrate `angVel`.
+- One squeeze still rings: an artifact between a driving intake and two walls, 1.48in at
+  4/s. Bounded, not gone.
+
+### Two traps that cost real time this session
+
+- **Heading wrap.** Raw `heading` deltas read as full 360 turns. Three separate "it spins me
+  round" diagnoses were my own probes, not the sim. Unwrap, or measure mod 90.
+- **Parking probe artifacts at (300,300) does not remove them** — the ground clamp snaps
+  them back into the field, and the robot then pivots on a pinned ball. Use
+  `state = { kind: 'held', robot: 99 }`.
+
+## (older) HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
 Branch **alpha**, commit `3aa4697`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
