@@ -841,9 +841,22 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
        * until the arm is dead ahead, and one that arrives already centred is not turned at
        * all. The whole behaviour falls out of the geometry.
        *
-       * The press is the robot's own — only the RATE is the arm's (GATE_ARM_TORQUE_MULT).
+       * The press is the robot's own — only the RATE is the arm's, and that rate depends on
+       * how much travel the arm has left (`gateArmTorqueMult`): a closed one gives, a fully
+       * lifted one is a rigid link and answers like the wall it is resting against.
        */
-      out.push(contactTorqueDelta(r, nx, ny, pressAlong(preVel, nx, ny), contacts, false, C.GATE_ARM_TORQUE_MULT));
+      out.push(
+        contactTorqueDelta(
+          r,
+          nx,
+          ny,
+          pressAlong(preVel, nx, ny),
+          contacts,
+          false,
+          // soft while the arm still has somewhere to go, a wall once it is at its stop
+          C.gateArmTorqueMult(world.goals[a].gatePos),
+        ),
+      );
     }
   }
 

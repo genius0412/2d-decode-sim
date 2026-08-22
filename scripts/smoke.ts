@@ -3122,13 +3122,19 @@ function queueTenth(w: World): void {
   );
 }
 
-// ---- the gate arm squares you at ITS pace, not the field's -------------------------
-// "The gate applies way too much torque way too fast." A wall is the field and squares a robot
-// at its own rate; the handle is a 2.5in hinged bar, and at that same rate it whipped a robot
-// from 20 degrees to flush in 167ms. GATE_ARM_TORQUE_MULT scales the RATE only — which way it
-// turns you, and the cap that stops it stepping past flush, are geometry and are untouched.
+// ---- the gate arm answers at the pace its own TRAVEL allows ------------------------
+// Two reports, and the same lever explains both. "The gate applies way too much torque way too
+// fast" — a 2.5in hinged bar at a wall's rate whipped a robot from 20 degrees to flush in
+// 167ms. And then, once that was damped: "even if I hit it with a large impact it doesn't turn
+// me", "the chassis is barely turning".
+//
+// A lever is soft only while it has somewhere to go. Pushing a CLOSED arm mostly moves the arm;
+// at full lift there is no travel left to absorb anything and the push lands whole — "if the
+// gate is fully open, then that part acts like a wall essentially for collisions". So the rate
+// runs from GATE_ARM_TORQUE_MULT to the field's own, by how far it is already lifted, and both
+// ends are checked here.
 {
-  const squareTime = (tiltDeg: number): number => {
+  const squareTime = (tiltDeg: number, holdAt: number): number => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
     for (const b of w.balls) b.pos = { x: 300, y: 300 };
@@ -3139,6 +3145,11 @@ function queueTenth(w: World): void {
     r.fieldCentric = false;
     r.vel = { x: 0, y: 0 };
     for (let i = 0; i < Math.round(3 / SIM_DT); i++) {
+      // the arm is PINNED where the case wants it — a push would otherwise lift it, and this
+      // is a question about one position of the lever at a time
+      w.goals.blue.gatePos = holdAt;
+      w.goals.blue.gateOpen = holdAt >= GATE_PASS_FRAC;
+      w.goals.blue.gateLatch = GATE_OPEN_LATCH_S;
       step(w, SIM_DT, new Map([[0, cmd({ driveY: 1 })]]));
       const q = Math.PI / 2;
       let rel = r.heading - Math.PI;
@@ -3149,11 +3160,17 @@ function queueTenth(w: World): void {
   };
   // the side AWAY from the classifier is the arm's own doing — on the other side the robot's
   // corner reaches the channel wall, which is the field and squares at the field's rate
-  const t = squareTime(-20);
+  const shut = squareTime(-20, 0);
   check(
-    'the gate arm squares a robot up over about a second, not in a sixth of one',
-    t > 0.6 && t < 2.5,
-    `20deg off flush -> squared in ${t.toFixed(2)}s (was 0.17s at the wall's rate)`,
+    'a CLOSED gate arm barely squares a robot at all — it gives instead',
+    shut > 0.6,
+    `20deg off flush -> squared in ${shut.toFixed(2)}s, against 0.17s at the wall's rate. (This is now the PURE soft end: the arm is pinned shut for the case. In play it lifts as you push, so the rate rises under you.)`,
+  );
+  const stop = squareTime(-20, 1);
+  check(
+    '...and a FULLY OPEN one answers like the wall it is resting against',
+    stop < shut / 2,
+    `at its stop: ${stop.toFixed(2)}s against the closed arm's ${shut.toFixed(2)}s`,
   );
   /**
    * ...AND NOTHING SNAPS A ROBOT ROUND, structure or not.

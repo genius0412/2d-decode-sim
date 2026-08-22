@@ -1693,6 +1693,22 @@ export const GATE_ARM_THICK = 3; // in, physical thickness (y) of the handle col
  * cap that stops it stepping past flush are geometry and are untouched.
  */
 export const GATE_ARM_TORQUE_MULT = 0.12; // ~1s from 20 degrees, against the wall's 0.17s
+/**
+ * ...AND IT STOPS BEING SOFT WHEN IT RUNS OUT OF TRAVEL.
+ *
+ * "If the gate is fully open, then that part acts like a wall essentially for collisions."
+ * That is not a special case, it is what a lever IS: while it can still swing, a push mostly
+ * moves the ARM, and only what the hinge refuses reaches the robot. At full lift there is no
+ * travel left to absorb anything, so the whole push lands — a rigid link, i.e. a wall.
+ *
+ * So the arm's authority runs from GATE_ARM_TORQUE_MULT (free to swing) to a wall's full rate
+ * (at its stop), linear in how far it is already lifted. The two complaints this sits between
+ * are both real: "the gate applies way too much torque way too fast" was a CLOSED arm hitting
+ * at the wall's rate, and "even if I hit it with a large impact it doesn't turn me" / "the
+ * chassis is barely turning" was an OPEN one still pretending to be a spring.
+ */
+export const gateArmTorqueMult = (gatePos: number): number =>
+  GATE_ARM_TORQUE_MULT + (1 - GATE_ARM_TORQUE_MULT) * Math.min(1, Math.max(0, gatePos));
 /** the gate does NOT open just because a robot LOITERS in the zone — the arm is a
  * push-to-open mechanism, so the robot must actively PRESS toward it. Detected as
  * a velocity toward the arm (ramming it) OR a drive command toward it (leaning on it
