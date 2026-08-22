@@ -202,7 +202,21 @@ function pushRobotAt(
 /** the contact-torque response shared by wall and robot-robot contacts:
  * pushing harder squares up faster (pressure-scaled), the correction never
  * steps past flush, and fast off-axis hits convert speed into visible spin */
-function applyContactTorque(
+/**
+ * ONE SURFACE'S CONTRIBUTION, computed and returned rather than written.
+ *
+ * Surfaces used to each write the heading as they were processed, which makes the result
+ * PATH-DEPENDENT: the classifier would rotate the chassis and the gate arm would then work out
+ * its own contact geometry against a robot the classifier had already turned. In the corner
+ * where the two meet — which is exactly where a driver works the gate — that reads as the
+ * collision being erratic, because it is: sweeping the approach across the arm in 1.5in steps
+ * gave turns of 2, 0, -9, 0, -7, -17 degrees on the side the classifier is on, against a
+ * smooth -6..-8 on the side where the arm answers alone.
+ *
+ * So each surface returns what it wants, `squareUpStatics` sums them, and the chassis is
+ * turned once. Same physics, one answer.
+ */
+function contactTorqueDelta(
   r: RobotState,
   nx: number,
   ny: number,
@@ -219,7 +233,7 @@ function applyContactTorque(
    * are, only how quickly it gets there changes.
    */
   rateMult = 1,
-): void {
+): { align: number; spin: number; bleed: boolean; flushErr: number } {
   /**
    * LOAD IS SHARED BY COMPRESSION, and a corner that is not bearing carries none of it.
    *
@@ -259,7 +273,8 @@ function applyContactTorque(
    * degrees on its own: "torque is being applied with me not doing anything."
    */
   const gain = press * C.CONTACT_PRESS_GAIN;
-  if (gain <= 0) return;
+  const none = { align: 0, spin: 0, bleed: false, flushErr: Infinity };
+  if (gain <= 0) return none;
   const rate = Math.min(C.CONTACT_ALIGN_RATE * gain, C.CONTACT_ALIGN_RATE_MAX) * rateMult;
   // never step PAST flush: cap the correction at the remaining tilt (the
   // chassis is square, so flush poses repeat every 90°). Without this cap the
@@ -276,78 +291,60 @@ function applyContactTorque(
   const cap = Math.min(rate, flushErr);
   let align = clamp(torque * 0.1 * gain * rateMult, -cap, cap);
   /**
-   * A SETTLING RESPONSE SETTLES. It may reduce the tilt against the surface and it may not add
-   * to it — adding to it is what a collision does, and that is the impulse below, which is
-   * free to do so.
+   * A SETTLING RESPONSE SETTLES. It may reduce the tilt against a FACE and may not add to it —
+   * adding to it is what a collision does, and that is the impulse, which is free to.
    *
-   * The contact set is corners within half an inch of the surface, and near flush their levers
-   * nearly cancel, so what is left is small and noisy. When the noise came out the wrong way
-   * the alignment ran with it, and because the cap is the remaining tilt, every wrong step
-   * made the next one bigger: measured, a robot 3 degrees off square hitting a wall at speed
-   * ended 13 degrees off, the wrong side, from a torque that should have been ~0.
+   * Near flush the contact levers nearly cancel and what is left is small and noisy. When the
+   * noise came out the wrong way the alignment ran with it, and because the cap is the
+   * remaining tilt, every wrong step licensed a bigger one: measured, 3 degrees off square
+   * into a wall at speed ended 13 degrees off, the wrong side.
    */
   if (squareTo && align * relSigned > 0) align = 0;
-  if (align !== 0) {
-    const maxTurn = driveParams(r.spec).maxTurn;
-    r.heading += align;
-    if (r.angVel * align < 0) {
-      // bleed angular velocity that fights the contact — a surface being pressed does not let
-      // the chassis keep spinning into it
-      r.angVel *= 0.9;
-    } else {
-    /**
-     * AN IMPACT IS AN IMPULSE, AND AN IMPULSE IS NOT CAPPED BY FLUSH.
-     *
-     * `align` is a settling: it walks the chassis toward the pose the contact geometry wants,
-     * and it is rightly capped at the tilt that remains, because settling past flush would be
-     * settling into the surface. A CRASH is a different thing — it hands the chassis angular
-     * momentum, and momentum does not care where flush is. Gating it on `flushErr > 0.05`
-     * meant that arriving hard and square-ish produced nothing at all: "even if I hit it with
-     * a large impact it doesn't turn me."
-     *
-     * It is safe to ungate now that `press` is the push actually DELIVERED rather than the
-     * approach still being asked for: a lean delivers a few in/s per tick and adds nothing
-     * worth seeing, while an arrival delivers all of it at once. That is also what stopped
-     * this being re-excited every tick into a 360.
-     */
-    {
-      /**
-       * a fast off-axis impact converts speed into visible spin — scaled by the actual torque
-       * so a dead-centre (torque≈0) contact adds nothing, and gated near flush so it cannot
-       * re-excite a settled robot.
-       *
-       * ...AND ONLY THE WAY THE ALIGNMENT IS ALREADY GOING. `align` is capped at the remaining
-       * tilt so it can never step past flush, but this is not, and fed against the alignment
-       * it carries the chassis straight through flush and round again: measured driving BACK
-       * into the classifier at ten angles, the robot turned a full 360 at every one of them,
-       * and at a few angles the two cancelled and it did not turn at all. "Even when I ram
-       * with the back of the chassis where there is no intake, the robot only turns if I
-       * impact it at certain specific angles, weird."
-       */
-      /**
-       * ...AND THIS IS SCALED BY THE SURFACE'S RATE TOO. It is angular VELOCITY, so unlike
-       * `align` it is not capped at the remaining tilt — it keeps spinning the chassis after
-       * the contact has done its work. Leaving it at full strength on the gate arm is what
-       * "it spins me around like 90 degrees instantly" is: the alignment was slowed to the
-       * arm's pace and the flick was not, so the flick was all that was left.
-       */
-      /**
-       * ...AND ONLY THE WAY THE CONTACT IS ALREADY TURNING YOU. A surface cannot spin a robot
-       * INTO itself — that is the same non-penetration argument that caps the alignment, and
-       * an impulse is not exempt from it. Without the guard a hard, nearly-square hit spun the
-       * chassis the wrong way on the noise in a torque that is genuinely near zero there:
-       * measured, 3 degrees off square into a wall at speed came out 13 degrees off, the wrong
-       * side. It costs the honest case nothing, because the honest case is already pointing
-       * that way.
-       */
-      const spin = torque * press * C.CONTACT_IMPACT_SPIN * rateMult;
-      // ...compared against the TILT, not against `align`. When the alignment is zeroed for
-      // pointing the wrong way, `spin * align` is 0 and a wrong-way guard written against it
-      // passes trivially — which is how a hard nearly-square hit still came out 13 degrees off
-      // on the wrong side after both other guards were in place.
-      if (!squareTo || spin * relSigned <= 0) r.angVel = clamp(r.angVel + spin, -maxTurn, maxTurn);
-    }
-    }
+  /**
+   * The impulse a collision hands the chassis. Unlike the alignment it is angular VELOCITY, so
+   * it is not capped at the remaining tilt — a hard hit keeps turning you after the contact
+   * has done its work, which is what "even if I hit it with a large impact it doesn't turn me"
+   * was asking for. It is guarded against the TILT and not against `align`, because comparing
+   * it to `align` passes trivially whenever `align` has been zeroed for pointing the wrong way
+   * — exactly when the guard is needed.
+   */
+  const spinRaw = torque * press * C.CONTACT_IMPACT_SPIN * rateMult;
+  const spin = !squareTo || spinRaw * relSigned <= 0 ? spinRaw : 0;
+  return { align, spin, bleed: r.angVel * align < 0, flushErr };
+}
+
+/**
+ * ...and the writer for surfaces that answer alone (robot-robot, and the pre-solve constrain
+ * path). Multi-surface cases go through `squareUpStatics`, which sums first — see
+ * `contactTorqueDelta`.
+ */
+function applyContactTorque(
+  r: RobotState,
+  nx: number,
+  ny: number,
+  press: number,
+  contacts: { c: Vec2; d: number }[],
+  squareTo: boolean,
+  rateMult = 1,
+): void {
+  const d = contactTorqueDelta(r, nx, ny, press, contacts, squareTo, rateMult);
+  applyTurn(r, d);
+}
+
+/** turn the chassis by a summed contact response */
+function applyTurn(
+  r: RobotState,
+  d: { align: number; spin: number; bleed: boolean; flushErr: number },
+): void {
+  if (d.align === 0 && d.spin === 0) return;
+  const maxTurn = driveParams(r.spec).maxTurn;
+  r.heading += d.align;
+  if (d.bleed) {
+    // bleed angular velocity that fights the contact — a surface being pressed does not let
+    // the chassis keep spinning into it
+    r.angVel *= 0.9;
+  } else if (d.spin !== 0) {
+    r.angVel = clamp(r.angVel + d.spin, -maxTurn, maxTurn);
   }
 }
 
@@ -641,7 +638,46 @@ function pressAlong(preVel: Vec2 | undefined, nx: number, ny: number): number {
 /** square a tilted chassis flush against the four perimeter walls at ±halfX / ±halfY.
  * Shared by DECODE (`squareUpStatics`) and Chain Reaction (`squareUpRobotsWalls`) — the
  * wall-alignment torque that makes a robot driving into a wall settle parallel to it. */
-function squareUpWalls(r: RobotState, preVel: Vec2 | undefined, halfX: number, halfY: number): void {
+type TurnDelta = { align: number; spin: number; bleed: boolean; flushErr: number };
+
+/**
+ * SUM THE SURFACES, THEN TURN ONCE.
+ *
+ * Every surface a robot is touching this tick contributes its own answer, and they are added
+ * before anything is written. Writing them one at a time makes the result path-dependent — the
+ * classifier turns the chassis and the gate arm then works out its contact geometry against a
+ * robot the classifier has already moved — and in the corner where the two meet, which is
+ * exactly where a driver works the gate, that reads as the collision being erratic. It was:
+ * sweeping the approach across the arm in 1.5in steps gave 2, 0, -9, 0, -7, -17 degrees on the
+ * side the classifier is on, against a smooth -6..-8 where the arm answers alone.
+ *
+ * The alignment sums (two surfaces both squaring you agree, and a face fighting a stub nets
+ * out), and the flush cap that survives is the TIGHTEST one any FACE in the set imposes —
+ * because rotating past any of them would be rotating into it.
+ */
+function sumTurn(r: RobotState, deltas: TurnDelta[]): void {
+  if (deltas.length === 0) return;
+  let align = 0;
+  let spin = 0;
+  let bleed = false;
+  let cap = Infinity;
+  for (const d of deltas) {
+    align += d.align;
+    spin += d.spin;
+    if (d.bleed) bleed = true;
+    if (d.flushErr < cap) cap = d.flushErr;
+  }
+  applyTurn(r, { align: clamp(align, -cap, cap), spin, bleed, flushErr: cap });
+}
+
+function squareUpWalls(
+  r: RobotState,
+  preVel: Vec2 | undefined,
+  halfX: number,
+  halfY: number,
+  out: TurnDelta[] = [],
+  own = true,
+): void {
   const eps = C.CONTACT_TOUCH_EPS;
   const corners = robotCorners(r);
   const walls: [number, number, (c: Vec2) => number][] = [
@@ -656,13 +692,15 @@ function squareUpWalls(r: RobotState, preVel: Vec2 | undefined, halfX: number, h
       const d = depthOf(c);
       if (d > -eps) contacts.push({ c, d: Math.max(d, 0) });
     }
-    if (contacts.length > 0) applyContactTorque(r, nx, ny, pressAlong(preVel, nx, ny), contacts, true);
+    if (contacts.length > 0) out.push(contactTorqueDelta(r, nx, ny, pressAlong(preVel, nx, ny), contacts, true));
   }
+  if (own) sumTurn(r, out);
 }
 
 function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World): void {
   const eps = C.CONTACT_TOUCH_EPS;
-  squareUpWalls(r, preVel, C.FIELD_HALF, C.FIELD_HALF);
+  const out: TurnDelta[] = [];
+  squareUpWalls(r, preVel, C.FIELD_HALF, C.FIELD_HALF, out, false);
   const corners = robotCorners(r);
 
   for (const a of ALLIANCES) {
@@ -673,7 +711,7 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
     }
     if (contacts.length > 0) {
       const n = goalFaceNormal(a);
-      applyContactTorque(r, n.x, n.y, pressAlong(preVel, n.x, n.y), contacts, true);
+      out.push(contactTorqueDelta(r, n.x, n.y, pressAlong(preVel, n.x, n.y), contacts, true));
     }
   }
 
@@ -716,18 +754,45 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
        * The stub is axis-aligned, so its face normal is the axis from its centre to the
        * robot's, snapped to whichever component dominates — the face the robot is actually on.
        */
-      const cx = (arm.x0 + arm.x1) / 2;
-      const cy = (arm.y0 + arm.y1) / 2;
-      const ax = r.pos.x - cx;
-      const ay = r.pos.y - cy;
-      const nx = Math.abs(ax) >= Math.abs(ay) ? Math.sign(ax) : 0;
-      const ny = nx === 0 ? Math.sign(ay) : 0;
-      let contacts = footprintCornersOf(r)
+      /**
+       * THE NORMAL IS THE CLOSEST FEATURE'S, AND A CORNER IS A FEATURE.
+       *
+       * Snapping it to whichever axis the robot's centre was furthest along treats the stub as
+       * if it were all face: approach it near a corner and the normal jumps between +x and ±y
+       * as the robot slides past the diagonal, so the push direction — and with it which way
+       * the arm turns you — flips discontinuously over a fraction of an inch. That is
+       * "collision with the gate, and the corner of the gate, is still very weird".
+       *
+       * A rectangle has three kinds of closest feature and the clamp tells you which: clamp
+       * the robot's centre onto the rect, and if only ONE coordinate moved the closest thing
+       * is that FACE (its normal is the axis); if BOTH moved it is a CORNER, and the normal
+       * runs from the corner to the centre. That is continuous everywhere, including across
+       * the diagonal where the two meet.
+       */
+      const px = clamp(r.pos.x, arm.x0, arm.x1);
+      const py = clamp(r.pos.y, arm.y0, arm.y1);
+      const offX = r.pos.x - px;
+      const offY = r.pos.y - py;
+      const off = hyp(offX, offY);
+      let nx: number;
+      let ny: number;
+      if (off > 1e-6) {
+        // outside the rect: the closest point IS the contact feature, face or corner alike
+        nx = offX / off;
+        ny = offY / off;
+      } else {
+        // centre inside the stub (it is small enough to swallow one): push out the near face
+        const dx = Math.min(r.pos.x - arm.x0, arm.x1 - r.pos.x);
+        const dy = Math.min(r.pos.y - arm.y0, arm.y1 - r.pos.y);
+        nx = dx <= dy ? Math.sign(r.pos.x - (arm.x0 + arm.x1) / 2) || 1 : 0;
+        ny = nx === 0 ? Math.sign(r.pos.y - (arm.y0 + arm.y1) / 2) || 1 : 0;
+      }
+      const contacts = footprintCornersOf(r)
         .filter((c) => c.x > arm.x0 && c.x < arm.x1 && c.y > arm.y0 && c.y < arm.y1)
         .map((c) => ({ c, d: mtv.depth }));
-      if (contacts.length === 0) {
+      {
         /**
-         * ...AND FROM THE STUB'S SIDE WHEN THE ROBOT HAS NO CORNER IN IT. A robot pressing a
+         * ...AND THE STUB'S OWN CORNERS, WHICHEVER ARE INSIDE THE ROBOT. A robot pressing a
          * 2.5in stub with its front EDGE has no footprint corner inside it, and the obvious
          * fallback — the nearest point ON the stub — puts the contact dead ahead of the
          * robot's centre, where the lever arm is zero and the torque with it. The contact a
@@ -755,7 +820,8 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
         }
       }
       if (contacts.length === 0) {
-        contacts = [{ c: { x: clamp(r.pos.x, arm.x0, arm.x1), y: clamp(r.pos.y, arm.y0, arm.y1) }, d: mtv.depth }];
+        // neither body has a corner in the other — the contact is the closest point pair
+        contacts.push({ c: { x: clamp(r.pos.x, arm.x0, arm.x1), y: clamp(r.pos.y, arm.y0, arm.y1) }, d: mtv.depth });
       }
       // ...and squared to, like every other flat face here — see the classifier note below
       /**
@@ -777,7 +843,7 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
        *
        * The press is the robot's own — only the RATE is the arm's (GATE_ARM_TORQUE_MULT).
        */
-      applyContactTorque(r, nx, ny, pressAlong(preVel, nx, ny), contacts, false, C.GATE_ARM_TORQUE_MULT);
+      out.push(contactTorqueDelta(r, nx, ny, pressAlong(preVel, nx, ny), contacts, false, C.GATE_ARM_TORQUE_MULT));
     }
   }
 
@@ -785,6 +851,23 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
     const rect = classifierRect(a);
     const mtv = classifierMTV(r, rect);
     if (!mtv) continue;
+      /**
+       * THE NORMAL IS THE CLOSEST FEATURE'S, corner included — the same correction the gate
+       * handle needed, for the same reason and in the same place.
+       *
+       * SAT hands back whichever of its candidate axes overlaps least, and near the END of the
+       * channel that flips as the robot slides past the diagonal: the push direction, and with
+       * it which way the chassis is turned, changes discontinuously over a fraction of an inch.
+       * The gate is at that end, so this is the classifier half of "collision with the gate,
+       * and the corner of the gate, is still very weird".
+       */
+      const cpx = clamp(r.pos.x, rect.x0, rect.x1);
+      const cpy = clamp(r.pos.y, rect.y0, rect.y1);
+      const dxo = r.pos.x - cpx;
+      const dyo = r.pos.y - cpy;
+      const offLen = hyp(dxo, dyo);
+      const cn = offLen > 1e-6 ? { x: dxo / offLen, y: dyo / offLen } : { x: mtv.nx, y: mtv.ny };
+
     const wallDir = rect.x0 <= -C.FIELD_HALF + 0.01 ? -1 : 1;
     if (mtv.nx * wallDir > 0.5) continue;
     const contacts = robotCorners(r)
@@ -799,8 +882,10 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
      * specific angles, weird." The walls have always passed `true` here for the same reason.
      */
     if (contacts.length > 0)
-      applyContactTorque(r, mtv.nx, mtv.ny, pressAlong(preVel, mtv.nx, mtv.ny), contacts, true);
+      out.push(contactTorqueDelta(r, cn.x, cn.y, pressAlong(preVel, cn.x, cn.y), contacts, true));
   }
+
+  sumTurn(r, out);
 }
 
 /** torque + rrContacts for a robot pair. Rapier resolved the shove; this only
