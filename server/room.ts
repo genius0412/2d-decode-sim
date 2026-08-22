@@ -3,6 +3,7 @@ import { START_POSES } from '../src/config';
 import { activeStartLegal } from '../src/sim/field';
 import { coerceAutoPath, DEFAULT_SPEC, DEFAULT_ASSISTS, type RobotSetup } from '../src/sim/spawn';
 import { simModuleFor } from '../src/games/sim';
+import { scrubName } from './moderation';
 import type { GameId } from '../src/types';
 import { physicsReady } from '../src/sim/physicsEngine';
 import { ReplayRecorder, worldResult, type Replay, type ReplayResult } from '../src/sim/replay';
@@ -365,6 +366,36 @@ export class Room {
     if (!this.hostId) this.hostId = client.id;
     client.send({ t: 'welcome', clientId: client.id });
     this.broadcastRoster();
+    this.moderatePlayerNames(client);
+  }
+
+  /**
+   * Fire-and-forget hosted moderation of a newly-joined player's free-text names,
+   * off the join path (the hosted call is async and must never block the roster).
+   * If a name is flagged it is reset to a safe default and the roster re-broadcast,
+   * so an opponent never sees an inappropriate live team/robot name. Authed players'
+   * `name` is already the moderated handle (server/index.ts); this covers `teamName`,
+   * the robot `spec` name/team, and an anonymous player's chosen name. Best-effort:
+   * the durable record is scrubbed again at persist time regardless.
+   */
+  private moderatePlayerNames(client: Client): void {
+    void (async () => {
+      const p = client.player;
+      const [name, teamName, specName, specTeam] = await Promise.all([
+        scrubName(p.name, 'Driver'),
+        scrubName(p.teamName, ''),
+        scrubName(p.spec.name, DEFAULT_SPEC.name),
+        scrubName(p.spec.teamName, ''),
+      ]);
+      if (!this.clients.has(client.id)) return; // left before the check returned
+      if (name === p.name && teamName === p.teamName && specName === p.spec.name && specTeam === p.spec.teamName) {
+        return; // all clean (or moderation disabled) — nothing to do
+      }
+      p.name = name;
+      p.teamName = teamName;
+      p.spec = { ...p.spec, name: specName, teamName: specTeam };
+      this.broadcastRoster();
+    })();
   }
 
   /** true when this room's results must NOT be written to the leaderboard/ELO DB — an

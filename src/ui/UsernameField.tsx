@@ -4,6 +4,7 @@ import { checkUsername, USERNAME_RE } from '../net/api';
 export type UsernameStatus =
   | 'empty'
   | 'invalid' // wrong format
+  | 'blocked' // format ok but disallowed by content moderation
   | 'checking' // format ok, asking the server
   | 'available'
   | 'taken'
@@ -49,7 +50,9 @@ export function useUsernameCheck(raw: string, ownValue?: string): UsernameCheck 
       checkUsername(normalized)
         .then((r) => {
           if (mySeq !== seq.current) return; // a newer keystroke supersedes this
-          setStatus(!r.valid ? 'invalid' : r.available ? 'available' : 'taken');
+          setStatus(
+            r.reason === 'inappropriate' ? 'blocked' : !r.valid ? 'invalid' : r.available ? 'available' : 'taken',
+          );
         })
         .catch(() => {
           if (mySeq === seq.current) setStatus('error');
@@ -63,13 +66,15 @@ export function useUsernameCheck(raw: string, ownValue?: string): UsernameCheck 
       ? 'Lowercase letters and numbers, 4–20 characters.'
       : status === 'invalid'
         ? 'Only lowercase letters and numbers (4–20).'
-        : status === 'checking'
-          ? 'Checking…'
-          : status === 'available'
-            ? 'Available ✓'
-            : status === 'taken'
-              ? 'That username is taken.'
-              : 'Couldn’t check right now - try again.';
+        : status === 'blocked'
+          ? 'That username isn’t allowed. Please choose another.'
+          : status === 'checking'
+            ? 'Checking…'
+            : status === 'available'
+              ? 'Available ✓'
+              : status === 'taken'
+                ? 'That username is taken.'
+                : 'Couldn’t check right now - try again.';
 
   return { normalized, status, ok: status === 'available', message };
 }
@@ -78,7 +83,8 @@ export function useUsernameCheck(raw: string, ownValue?: string): UsernameCheck 
  *  (3.25:1 as 12px type on the light panel). --ds-danger is already a text token. */
 export function usernameHintColor(status: UsernameStatus): string | undefined {
   if (status === 'available') return 'var(--ds-ok-ink)';
-  if (status === 'invalid' || status === 'taken' || status === 'error') return 'var(--ds-danger)';
+  if (status === 'invalid' || status === 'blocked' || status === 'taken' || status === 'error')
+    return 'var(--ds-danger)';
   return undefined;
 }
 

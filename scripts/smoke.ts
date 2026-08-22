@@ -169,6 +169,7 @@ import { roomPersists } from '../server/channel';
 import { Room, type Client, type DodgeReport } from '../server/room';
 import { maintenanceBiting } from '../server/db/repo';
 import { maintenanceLine } from '../src/ui/MaintenanceBanner';
+import { moderateName, scrubName, moderationEnabled } from '../server/moderation';
 import { Matchmaker, radiusCeiling, type QueueEntry } from '../server/matchmaking';
 import { bestHost } from '../server/regions';
 import type { PendingMatch } from '../server/matchTypes';
@@ -12690,6 +12691,28 @@ const mkMM = () => {
   // per-game ranked/record period — see server/persist.ts + repo.ts game keying)
   check('chain room: MatchOutcome.game is "chain" (per-game board keying)', crOutcomeGame === 'chain');
   check('chain: is scored, so its matches DO persist (to CR boards)', moduleFor('chain').scored === true);
+}
+
+// ---- name moderation: fail-open / disabled invariants (network-free) -----------
+// The hosted moderation service is env-gated (MODERATION_API_KEY). These checks pin
+// the invariants that hold with NO key configured — the default in CI / local dev —
+// so the moderation layer is provably a zero-cost no-op unless explicitly enabled,
+// and empty/blank names never hit the network. (A live block/allow decision needs a
+// configured provider and is verified out-of-band, not in the deterministic smoke.)
+{
+  check('moderationEnabled is a boolean', typeof moderationEnabled === 'boolean');
+  // empty / whitespace names short-circuit to allowed WITHOUT calling the provider
+  const empty = await moderateName('   ');
+  check('moderateName("   ") allows without a network check', empty.allowed === true && empty.checked === false);
+  // scrubName never rejects a blank, and returns the fallback only for null/undefined
+  check('scrubName keeps an empty string as-is', (await scrubName('', 'Fallback')) === '');
+  check('scrubName(null) returns the fallback', (await scrubName(null, 'Fallback')) === 'Fallback');
+  if (!moderationEnabled) {
+    // with no provider configured, EVERY name is allowed and passed through untouched
+    const off = await moderateName('literally anything at all');
+    check('disabled: moderateName allows any name (checked=false)', off.allowed === true && off.checked === false);
+    check('disabled: scrubName passes a name through unchanged', (await scrubName('My Robot', 'x')) === 'My Robot');
+  }
 }
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);

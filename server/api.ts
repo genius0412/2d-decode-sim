@@ -3,6 +3,7 @@ import type { GameId } from '../src/types';
 import { BALANCE_VERSION } from '../src/config';
 import { monthsFor, policyFromEnv, whyNoMonths } from './kofi';
 import { CHALLENGE_FORMATS } from '../src/net/protocol';
+import { moderateName } from './moderation';
 import { dbEnabled } from './db/pool';
 import {
   acceptFriendRequest,
@@ -181,6 +182,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       if (clean.length < 2 || clean.length > 24) {
         return json(400, { error: 'name must be 2–24 characters' }), true;
       }
+      // authoritative content moderation via the hosted service (the client shows a
+      // hint from the same check, but any client value is spoofable — the server is
+      // the authority). Fails open on an outage; the admin console is the backstop.
+      if (!(await moderateName(clean)).allowed) {
+        return json(400, { error: 'That name isn’t allowed. Please choose another.' }), true;
+      }
       if (dbEnabled) {
         await ensureProfile(user.userId, clean);
         await setHandle(user.userId, clean);
@@ -204,6 +211,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       if (!username) {
         return json(400, { error: '4–20 characters, lowercase letters and numbers only' }), true;
       }
+      // authoritative content moderation (fails open on an outage; admin is backstop)
+      if (!(await moderateName(username)).allowed) {
+        return json(400, { error: 'That username isn’t allowed. Please choose another.' }), true;
+      }
       if (dbEnabled) {
         await ensureProfile(user.userId, user.handle);
         try {
@@ -222,6 +233,11 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     if (req.method === 'GET' && url.pathname === '/api/username-available') {
       const username = normalizeUsername(url.searchParams.get('u'));
       if (!username) return json(200, { valid: false, available: false }), true;
+      // a blocked name is never claimable — surface it as invalid with a reason so
+      // the client can show the "not allowed" hint (vs. a plain format error)
+      if (!(await moderateName(username)).allowed) {
+        return json(200, { valid: false, available: false, reason: 'inappropriate' }), true;
+      }
       const available = dbEnabled ? await usernameAvailable(username) : true;
       return json(200, { valid: true, available, username }), true;
     }

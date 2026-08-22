@@ -372,7 +372,7 @@ export const USERNAME_RE = /^[a-z0-9]{4,20}$/;
  * locally first so a bad string never hits the network) */
 export async function checkUsername(
   username: string,
-): Promise<{ valid: boolean; available: boolean }> {
+): Promise<{ valid: boolean; available: boolean; reason?: string }> {
   const u = username.trim().toLowerCase();
   if (!USERNAME_RE.test(u)) return { valid: false, available: false };
   const base = gameServerHttpUrl();
@@ -380,7 +380,9 @@ export async function checkUsername(
   try {
     const res = await fetch(base + `/api/username-available?u=${encodeURIComponent(u)}`);
     if (!res.ok) return { valid: true, available: false };
-    return (await res.json()) as { valid: boolean; available: boolean };
+    // `reason: 'inappropriate'` distinguishes a moderation block (blocked name) from
+    // a plain format/availability failure, so the UI can show the right hint.
+    return (await res.json()) as { valid: boolean; available: boolean; reason?: string };
   } catch {
     return { valid: true, available: false };
   }

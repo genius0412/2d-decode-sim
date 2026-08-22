@@ -5,6 +5,19 @@ Branch **alpha**, commit `fb75a83`. Working tree **CLEAN**. `npm test` ALL PASS 
 
 Do not merge to main. Standing rule.
 
+**MERGED IN (this session):** `df4b085` *hosted name moderation* off the long-lived
+`moderation` branch. Server is the authority for every user-supplied NAME (username,
+display handle, robot/team names on the public leaderboard + live roster) via
+`server/moderation.ts` — a HOSTED endpoint (default OpenAI's free `/v1/moderations`),
+NOT a hand-rolled wordlist (the user rejected that; a deleted `nameFilter.ts` — do not
+resurrect it). Env-gated on `MODERATION_API_KEY` like `DATABASE_URL` gates records:
+absent ⇒ disabled, every name allowed, ZERO network. FAILS OPEN on outage/timeout;
+`/admin` forced-rename is the human backstop.
+**DEPLOY:** this is a SERVER change — `./scripts/fly-deploy.sh` (NEVER a bare
+`flyctl deploy`) AND `fly secrets set MODERATION_API_KEY='sk-…' -a dohun-sim-decode`.
+Backward-compatible: no key ⇒ no-op, and the `reason:'inappropriate'` field is additive
+so old clients ignore it. No CSS/colour change (reused `--ds-danger`).
+
 ## READ FIRST — where this session ended
 
 *"Collision with the gate/corner of the gate is still very weird."* Three structural
