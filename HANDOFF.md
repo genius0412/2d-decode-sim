@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `fea5c1a`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `3aa4697`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -677,6 +677,32 @@ arrive centred on it and you are not turned at all.
 moment arm. Two checks were asking the gate about flush and are now one check about the pivot;
 a third pinned a blocking robot's position but not its heading, and an unpinned robot now
 pivots off the arm and stops blocking the outflow it was put there to block.
+
+### No load, no torque (`3aa4697`)
+
+*"Torque is being applied with me not doing anything."*
+
+The response's gain was `1 + press * CONTACT_PRESS_GAIN`. **That floor of 1 means the geometric
+torque alone rotates a chassis at ZERO press** — touch a surface and it turns you, with nothing
+pushing.
+
+Against a FACE it hides: the flush cap stops the rotation the moment the robot is square, so it
+reads as settling. Against the gate handle it does not hide at all, because a point contact has
+no flush to stop at. Measured: a robot **parked beside the arm and never given a command turned
+359.6°** on its own; one that had driven in and let go turned another 35°.
+
+The gain is `press * CONTACT_PRESS_GAIN` now, and zero press returns before anything is
+written. Worst idle turn over four resting poses (parked at the gate, driven into the gate and
+released, the same at a wall and at the classifier): **0.0°**.
+
+**The GATE INTAKING pose has been through three states this session** and the current one is
+the physical one — the check says so at length rather than being re-tuned:
+
+| | ramp discharge |
+|---|---|
+| arm applied no torque, robot held 19° | 9 of 9 |
+| arm SQUARED the robot → mouth over the drop point | **0 of 9** |
+| arm PIVOTS (it is a stub, not a face) → robot keeps its angle | 4 of 9, hopper filling |
 
 ## Next steps
 
