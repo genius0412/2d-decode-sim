@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-18 (the ramp: a stalled column, and the overflow lane) — alpha only
 
-Branch **alpha**, commit `19ee488`. Working tree **CLEAN**. `npm test` ALL PASS ·
+Branch **alpha**, commit `fea5c1a`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed** — production
 `dohun-sim-decode` is still on an older build and still owes the migrations listed
 further down.
@@ -653,6 +653,30 @@ in `pressAlong` records it.
 work — the ground clamp snaps them back inside the field, often right where the robot under
 test is about to ram. Two wrong-way diagnoses this session were pinned artifacts, not the
 surface. Set them `held` instead.
+
+### The gate handle is a POINT, so it pivots you (`fea5c1a`)
+
+*"When I hit the gate with the leftmost or rightmost side of the robot, I should be turning but
+I square up instead."*
+
+Every other surface in the square-up pass is a **face** — wall, goal face, classifier side — and
+a chassis pressed on one bears on two corners whose moments cancel when it is flat against it.
+Flush is where it settles; that is why they pass `squareTo = true`. **The gate handle is 2.5in
+of bar.** Nothing about it can align an 18in chassis, and asking it to was the bug.
+
+A point contact has an equilibrium of its own and needs no cap to find it: the moment is
+`r × n`, which vanishes when the contact comes to lie on the line through the robot's centre
+along the push. Lean on the arm off-centre and you turn about it until it is dead ahead;
+arrive centred on it and you are not turned at all.
+
+| arm off the robot's centre line | 0in | 3in | 6in | 8in |
+|---|---|---|---|---|
+| turn | **0°** | 24° | 57° | 57° |
+
+**This is the general rule the pass was missing**: ask a FACE about flush, ask a POINT about its
+moment arm. Two checks were asking the gate about flush and are now one check about the pivot;
+a third pinned a blocking robot's position but not its heading, and an unpinned robot now
+pivots off the arm and stops blocking the outflow it was put there to block.
 
 ## Next steps
 
