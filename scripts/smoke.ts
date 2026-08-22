@@ -2949,6 +2949,57 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- NO LOAD, NO TORQUE: a robot touching something is not being turned by it -------
+// "Torque is being applied with me not doing anything." The response's gain was
+// `1 + press * CONTACT_PRESS_GAIN` — a floor of 1 — so the geometric torque alone rotated a
+// chassis at zero press. Against a FACE it hides, because the flush cap stops it the moment
+// the robot is square; against the gate handle, which is a point and has no flush to stop at,
+// a robot parked beside it turned 359.6 degrees on its own.
+{
+  const idleTurn = (label: string, place: (w: World) => void, driveFirst: boolean): number => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    for (const b of w.balls) b.state = { kind: 'held', robot: 99, slot: 0, lx: 0, ly: 0, side: 0 };
+    const r = w.robots[0];
+    r.fieldCentric = false;
+    r.vel = { x: 0, y: 0 };
+    place(w);
+    if (driveFirst) run(w, cmd({ driveY: 1 }), 1.5);
+    const h0 = r.heading;
+    let worst = 0;
+    for (let i = 0; i < Math.round(4 / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({})]])); // nothing pressed
+      worst = Math.max(worst, Math.abs(r.heading - h0));
+    }
+    void label;
+    return (worst * 180) / Math.PI;
+  };
+  const z = gateZone('blue');
+  const turns = [
+    idleTurn('gate, never driven', (w) => {
+      w.robots[0].pos = { x: z.x1 + 2, y: GATE_TAPE_Y - 6 };
+      w.robots[0].heading = Math.PI;
+    }, false),
+    idleTurn('gate, driven then released', (w) => {
+      w.robots[0].pos = { x: z.x1 + 8, y: GATE_TAPE_Y - 6 };
+      w.robots[0].heading = Math.PI;
+    }, true),
+    idleTurn('wall, driven then released', (w) => {
+      w.robots[0].pos = { x: 0, y: FIELD_HALF - 20 };
+      w.robots[0].heading = Math.PI / 2 + 0.15;
+    }, true),
+    idleTurn('classifier, driven then released', (w) => {
+      w.robots[0].pos = { x: classifierRect('blue').x1 + 12, y: 20 };
+      w.robots[0].heading = Math.PI + 0.15;
+    }, true),
+  ];
+  check(
+    'a robot resting against something does not turn while the driver does nothing',
+    turns.every((t) => t < 1),
+    `worst idle turn over four resting poses: ${Math.max(...turns).toFixed(1)}deg (the gate turned 359.6 on its own)`,
+  );
+}
+
 // ---- a contact NEVER turns you the wrong way ---------------------------------------
 // "It's turning me the other way sometimes." The contact list is every corner within
 // CONTACT_TOUCH_EPS of the surface, and the load used to be shared as `depth + CONTACT_BIAS` —
@@ -5645,34 +5696,27 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   run(w, cmd({ driveY: 1, intake: true }), 16);
   const left = w.balls.filter((b) => b.state.kind === 'rail' && b.state.goal === 'red').length;
   /**
-   * WHAT THIS POSE DOES NOW, AND WHY — read this before "fixing" it.
+   * WHAT THIS POSE DOES, AND WHY — read this before "fixing" it. The pose is verbatim off the
+   * in-game readout: pressed on the lever at 19 degrees, hopper full, intaking the outflow.
    *
-   * The pose is verbatim off the in-game readout: pressed on the lever at 19 degrees. Two
-   * rules asked for since then meet in it, and they decide it between them:
+   * It has been through three states this session and the current one is the physical one:
    *
-   *  1. the gate arm applies TORQUE ("the intake is part of the contact area"), so the arm
-   *     squares the robot from 19 degrees to 0 and it stops holding an angle; and
-   *  2. an artifact needs GROUND to drop onto ("there needs to be adequate space on the
-   *     ground for the ball to drop on the ground"), a full radius clear of the intake.
+   *  · originally the arm applied no torque at all, and the robot held 19 degrees;
+   *  · then the arm SQUARED it, which put the mouth over the drop point where the drop-space
+   *    rule correctly stalls the ramp — 0 of 9, and gate intaking was dead;
+   *  · now the arm PIVOTS rather than squares (it is a 2.5in stub, not a face), so a robot
+   *    leaning on it turns about it instead of being swung flat, keeps its angle, and keeps
+   *    the drain running.
    *
-   * Squared up at the lever, the drop point sits at local (7.0, 7.8) — 0.8in outside a mouth
-   * whose half-width is 7.0, so an artifact landing there would overlap the side slope by
-   * 1.7in. There is nowhere to put it, and the column waits. Backing off far enough to clear
-   * the drop point also stops holding the lever (measured: gatePos 0.22 at 2in back, 0.00 at
-   * 4in), so on this ramp the two cannot both be had from the same spot.
-   *
-   * That is a product decision made of two product decisions, not a regression, and it is
-   * asserted as what it is: the artifacts STAY on the ramp, and nothing is taken off it.
+   * So what is asserted is the thing the technique needs: the ramp keeps discharging while a
+   * robot works the lever, and the hopper fills from it.
    */
   check(
-    'GATE INTAKING: squared up on the lever, the mouth covers the drop point and the ramp holds',
-    // ...once it IS squared. The arm turns a robot at its own rate (GATE_ARM_TORQUE_MULT),
-    // about a second and a half from 19 degrees, and the ramp discharges into the angle it
-    // still has for as long as that takes — so a couple get out before the mouth closes over
-    // the drop point. What must not happen is the ramp emptying.
-    left >= 7,
-    `${9 - left}/9 out, hopper ${r.hopper.length} (before the arm applied torque: 9/9 out at 19deg)`,
+    'GATE INTAKING: working the lever keeps the ramp discharging',
+    9 - left >= 3 && r.hopper.length > 0,
+    `${9 - left}/9 out, hopper ${r.hopper.length} (0 of 9 when the arm squared the robot onto its own outflow)`,
   );
+
 }
 
 // ---- GATE INTAKING drains at full speed ---------------------------------------------

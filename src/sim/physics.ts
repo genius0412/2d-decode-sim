@@ -248,7 +248,18 @@ function applyContactTorque(
     if (lever < 1e-6) continue;
     torque += ((lx * ny - ly * nx) / lever) * load;
   }
-  const gain = 1 + press * C.CONTACT_PRESS_GAIN;
+  /**
+   * NO LOAD, NO TORQUE. A surface turns a robot because the robot is pressing on it; a robot
+   * that is merely TOUCHING one has nothing pushing it round.
+   *
+   * The gain used to be `1 + press * CONTACT_PRESS_GAIN` — a floor of 1, which means a
+   * geometric `torque` alone rotates the chassis at zero press. Against a face it hides,
+   * because the flush cap stops it as soon as the robot is square; against the gate handle,
+   * which is a point and has no flush to stop at, a robot parked beside it turned 359.6
+   * degrees on its own: "torque is being applied with me not doing anything."
+   */
+  const gain = press * C.CONTACT_PRESS_GAIN;
+  if (gain <= 0) return;
   const rate = Math.min(C.CONTACT_ALIGN_RATE * gain, C.CONTACT_ALIGN_RATE_MAX) * rateMult;
   // never step PAST flush: cap the correction at the remaining tilt (the
   // chassis is square, so flush poses repeat every 90°). Without this cap the
