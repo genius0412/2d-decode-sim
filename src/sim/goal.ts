@@ -544,24 +544,24 @@ function railBlock(
        */
       const p = railPos(a, s);
       /**
-       * ...AND WHETHER THERE IS GROUND TO SET AN ARTIFACT DOWN ON.
+       * ...AND THE INTAKE IS NOT A PLUG. AN ARTIFACT WITH NO FLOOR TO LAND ON LANDS ON THE
+       * INTAKE — IT DOES NOT MAKE THE RAMP WAIT.
        *
-       * "There needs to be adequate space ON THE GROUND for the ball to DROP ON THE GROUND,
-       * which can then be intaked by the robot." So the drop point needs a full artifact
-       * RADIUS of clearance from the intake — otherwise the artifact has nowhere to land and
-       * the column waits, exactly as it does for a chassis.
+       * The roof used to block here as well, so that "there needs to be adequate space ON THE
+       * GROUND for the ball to DROP ON THE GROUND" was answered by the column waiting for the
+       * space. It never comes: the robot is holding the lever, so it is not going anywhere,
+       * and the wait is unbounded. Measured, holding the gate open and intaking — the ordinary
+       * way anyone drains a ramp — the column parked 1in past the gate stop and 0 of 9
+       * artifacts came out in 20 seconds with the gate wide open the whole time, for the two
+       * intakes whose reach covers the outflow (vector and triangle; sloped, being shorter,
+       * drained 8). A chute does not stop because something is under it.
        *
-       * The FRONT of the rollers is the one place that gets lenience: "if the ball drops on
-       * the very front edge of the intake rollers, they can suck them in due to compliance."
-       * So the clearance required in front of the roller line is INTAKE_CATCH_LENIENCE
-       * shorter than a radius — which is also what keeps a robot merely PRESSING THE LEVER
-       * from plugging its own drain, since the handle holds it a stand-off away and only the
-       * tip of its intake comes near the outflow.
+       * The drop-space rule is still right and is answered where the drop happens — at the
+       * RELEASE, which sets the artifact down on the roof rather than through it. Which
+       * surface it lands on is the whole of the rule: the floor if there is floor, the intake
+       * lid if the intake is in the way. What it must never do is arrive INSIDE the throat.
        */
-      if (
-        pointDepthInChassis(r, p) > -C.BALL_RADIUS ||
-        intakeRoofAt(world, p, C.BALL_RADIUS, C.BALL_RADIUS - C.INTAKE_CATCH_LENIENCE)?.robot === r
-      ) {
+      if (pointDepthInChassis(r, p) > -C.BALL_RADIUS) {
         reach = s + C.RAIL_BLOCK_STEP;
       }
     }
@@ -1307,6 +1307,44 @@ export function updateRails(
        * artifact is still airborne for the tumble, and the roller throws it at whatever the
        * robot happens to be facing, which by the gate is usually the wall.
        */
+      /**
+       * ...ONTO WHATEVER SURFACE IS UNDER IT. Usually that is the floor; where a robot's
+       * intake covers the outflow it is the intake's LID.
+       *
+       * The artifact descends over the last RAIL_DROP_S of rail, so at the exit it has just
+       * come DOWN onto that spot — and a lid sits at intakeLidZ, high enough to catch it. It
+       * is set down there as a flight artifact at lid height with the speed the ramp gave it,
+       * and the lid mechanics it shares with anything else that lands on a robot take over:
+       * carried while the roof stays under it, thrown clear along the roller axis, on the
+       * floor in FRONT of the mouth where an intake may legitimately take it. The one thing
+       * that does not happen is the artifact appearing inside the throat, which is what the
+       * drop-space rule is about.
+       *
+       * The lenience is the front edge of the rollers — "if the ball drops on the very front
+       * edge of the intake rollers, they can suck them in due to compliance" — so the roof
+       * asked about here stops INTAKE_CATCH_LENIENCE short of the roller line.
+       *
+       * (Setting it on the roof was tried before and reverted because a flight artifact is
+       * outside the ground solve and one drifted through a 4.6in gap beside a robot. The
+       * mouth is solid from above now — `ballRobotFrontContact` — and the alternative,
+       * blocking, does not merely look wrong: it stops the ramp for good.)
+       */
+      const lid = intakeRoofAt(
+        world,
+        b.pos,
+        C.BALL_RADIUS,
+        C.BALL_RADIUS - C.INTAKE_CATCH_LENIENCE,
+      );
+      if (lid) {
+        // `target` is which goal a shot was aimed at, and this one was aimed at nothing: it
+        // is already OUT and has only a lid to come off. The field needs a value and its own
+        // goal is the harmless one — it is leaving that goal, not crossing back into it.
+        b.state = { kind: 'flight', target: a };
+        b.z = lid.z;
+        b.vz = 0;
+        b.vel = { x: drift, y: -speed };
+        continue;
+      }
       b.state = { kind: 'ground' };
       b.z = 0;
       b.vz = 0;

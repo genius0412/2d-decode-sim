@@ -2877,15 +2877,25 @@ function queueTenth(w: World): void {
   );
 }
 
-// ---- parking ON the outflow blocks it, it does not feed you ----------------------
+// ---- parking ON the outflow puts artifacts ON the intake, never inside it -------------
 // "Once I open the gate and then stand directly in front of where the balls come out, there
 // is no space for the balls to drop, so it would drop on top of the intake. However, it is
 // being intaked, still." The ramp discharges at RAMP_SURFACE_Z and an intake's roof is at
 // about the same height (intakeLidZ), so an artifact leaving the channel with a robot parked
 // under it has nowhere to be set down. The descent used to run straight through the intake
 // and put it on the floor INSIDE the mouth, which is the one place it cannot have got to.
+//
+// The answer to that was to make the column WAIT for floor to appear, and that was wrong in a
+// way that only shows up in play: the robot holding the gate open is the robot in the way, so
+// the floor never appears. Measured, holding the lever and intaking — the ordinary way anyone
+// drains a ramp — 0 of 9 artifacts came out in 20 seconds with the gate wide open, for both
+// intakes whose reach covers the outflow. "When I gate intake the balls go infinitely."
+//
+// So the ramp always runs, and the roof answers at the RELEASE: the artifact is set down ON
+// the lid and has to come off it. Nothing is ever handed to a robot off the rail — that is
+// the rule, and it is what the two checks below actually watch.
 {
-  const parkRun = (over: number): { taken: number; onRamp: number } => {
+  const parkRun = (over: number): { taken: number; onRamp: number; straightIn: number } => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
     w.match.phase = 'teleop';
@@ -2898,6 +2908,11 @@ function queueTenth(w: World): void {
     r.fieldCentric = false;
     r.hopper = [];
     const park = { x: exit.x, y: exit.y - tip + over };
+    const nine = w.balls.slice(0, 9);
+    const wasOn = new Map(nine.map((b) => [b.id, b.state.kind]));
+    // an artifact taken WITHOUT ever leaving the ramp — the one thing the drop-space rule
+    // forbids, and the only way to ask it that does not also outlaw the ramp running
+    let straightIn = 0;
     for (let i = 0; i < Math.round(14 / SIM_DT); i++) {
       r.pos = { ...park };
       r.vel = { x: 0, y: 0 };
@@ -2905,18 +2920,27 @@ function queueTenth(w: World): void {
       w.goals.blue.gateOpen = true;
       w.goals.blue.gateLatch = 1;
       step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+      for (const b of nine) {
+        if (b.state.kind === 'held' && wasOn.get(b.id) === 'rail') straightIn++;
+        wasOn.set(b.id, b.state.kind);
+      }
     }
-    const nine = w.balls.slice(0, 9);
     return {
       taken: nine.filter((b) => b.state.kind === 'held').length,
       onRamp: nine.filter((b) => b.state.kind === 'rail').length,
+      straightIn,
     };
   };
   const on = parkRun(0); // intake tip right on the drop point
   check(
-    'a robot parked on the outflow takes nothing off it — there is nowhere to put an artifact',
-    on.taken === 0 && on.onRamp === 9,
-    `took ${on.taken}, ${on.onRamp} still on the ramp (took 3 before)`,
+    'a robot parked on the outflow never takes an artifact straight off the ramp',
+    on.straightIn === 0,
+    `${on.straightIn} rail->held; ${on.taken} ended up held after crossing the lid, ${on.onRamp} still on the ramp`,
+  );
+  check(
+    '...and the ramp keeps running rather than waiting for floor that never comes',
+    on.onRamp === 0,
+    `${on.onRamp} of 9 still on the ramp after 14s (was 9 — the drain stalled for good)`,
   );
   // ...and the rule is about the DROP SPACE, not about being near the gate: back off a few
   // inches and the artifacts land on the floor and roll into the mouth as they should. This
@@ -2944,8 +2968,8 @@ function queueTenth(w: World): void {
   const roomy = [need + 0.2, need + 1.2, need + 3.7].map((g) => parkRun(-g));
   check(
     'the drop point needs ground to drop ONTO, less the roller-face lenience',
-    tooClose.every((x) => x.taken === 0 && x.onRamp === 9) && roomy.every((x) => x.taken > 0),
-    `tip ${(need - 0.3).toFixed(1)}in clear -> ${tooClose[2].taken} taken; ${(need + 0.2).toFixed(1)}in clear -> ${roomy[0].taken}`,
+    tooClose.every((x) => x.straightIn === 0) && roomy.every((x) => x.taken > 0),
+    `no ground -> over the lid every time; ${(need + 0.2).toFixed(1)}in clear -> ${roomy[0].taken} taken off the floor`,
   );
 }
 
