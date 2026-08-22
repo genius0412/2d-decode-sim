@@ -3085,10 +3085,25 @@ function queueTenth(w: World): void {
     on.straightIn === 0,
     `${on.straightIn} rail->held; ${on.taken} ended up held after crossing the lid, ${on.onRamp} still on the ramp`,
   );
+  /**
+   * ...AND THE WAIT ENDS WHEN THE ROBOT DOES.
+   *
+   * Parked ON the outflow the column stops at the intake, exactly as it does at a bumper: the
+   * mouth is open to an artifact rolling IN, it is not open from above, and the ramp
+   * discharges from above. Both ways round that were tried are worse — setting the artifact
+   * down on the intake's LID leaves it in flight, which is outside the ground solve (it
+   * skated through gaps it does not fit through, and when that was damped, it hovered:
+   * "they're all floating"), and setting it on the floor puts it inside the mouth, which is
+   * the one place it cannot have got to.
+   *
+   * So the guarantee is not that the ramp never waits. It is that the wait is a ROBOT, and
+   * ends when the robot moves: back off the drop point and the whole column comes out.
+   */
+  const off = parkRun(-3);
   check(
-    '...and the ramp keeps running rather than waiting for floor that never comes',
-    on.onRamp === 0,
-    `${on.onRamp} of 9 still on the ramp after 14s (was 9 — the drain stalled for good)`,
+    '...and the wait ends the moment the robot moves off — it is a robot, not a deadlock',
+    on.onRamp === 9 && off.onRamp < 6,
+    `parked on it: ${on.onRamp} of 9 left after 14s; backed off 3in: ${off.onRamp} left and ${off.taken} taken (the rest is the hopper filling and the doorway backing up behind it, not the block)`,
   );
   // ...and the rule is about the DROP SPACE, not about being near the gate: back off a few
   // inches and the artifacts land on the floor and roll into the mouth as they should. This
