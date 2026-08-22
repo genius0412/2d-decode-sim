@@ -448,6 +448,19 @@ export const CONTACT_ALIGN_RATE_MAX = 0.05;
  * at speed peaked at 3.23 rad/s (185 deg/s of free spin) and now peaks at 0.80.
  */
 export const CONTACT_IMPACT_SPIN = 0.05;
+/**
+ * Coulomb friction at a POINT contact — bumper against field structure.
+ *
+ * This is a real material constant, not a dial: it is what decides that catching a post with
+ * your flank yaws you INTO it rather than away, because the post drags that side back. Rubber
+ * bumper on polycarbonate/aluminium runs about 0.6-0.9.
+ */
+export const CONTACT_MU = 0.8;
+/**
+ * Restitution at a point contact. A bumper is there to absorb, so a robot pressing structure
+ * does not bounce off it — zero is the honest value and anything above it reads as springy.
+ */
+export const CONTACT_RESTITUTION = 0;
 /** touch tolerance (in) for the post-Rapier square-up pass: Rapier resolves
  * translation and leaves a chassis resting AT a face (near-zero penetration),
  * so the bespoke torque nudge treats a contact within this band as touching */

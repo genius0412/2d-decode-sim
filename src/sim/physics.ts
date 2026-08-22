@@ -1,7 +1,7 @@
 import type { Alliance, Artifact, RobotState, Vec2, World } from '../types';
 import * as C from '../config';
 import { classifierRect, footprintExtents, gateHandleRect, goalFaceNormal, goalLineValue, type Rect } from './field';
-import { dot, rot, clamp, hyp, datan2 } from '../math';
+import { dot, rot, clamp, hyp, datan2, wrapAngle } from '../math';
 import { driveParams } from './drivetrain';
 
 const ALLIANCES: Alliance[] = ['red', 'blue'];
@@ -697,7 +697,7 @@ function squareUpWalls(
   if (own) sumTurn(r, out);
 }
 
-function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World): void {
+function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, dt: number, world?: World): void {
   const eps = C.CONTACT_TOUCH_EPS;
   const out: TurnDelta[] = [];
   squareUpWalls(r, preVel, C.FIELD_HALF, C.FIELD_HALF, out, false);
@@ -823,40 +823,116 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
         // neither body has a corner in the other — the contact is the closest point pair
         contacts.push({ c: { x: clamp(r.pos.x, arm.x0, arm.x1), y: clamp(r.pos.y, arm.y0, arm.y1) }, d: mtv.depth });
       }
-      // ...and squared to, like every other flat face here — see the classifier note below
       /**
-       * A STUB IS A POINT, AND A POINT PIVOTS YOU — it does not square you up.
+       * A STUB IS A POINT, AND A POINT IS A REAL CONTACT — so it is solved as one.
        *
-       * Every other surface in this pass is a FACE: a wall, a goal face, the classifier's
-       * side. A chassis pressed on one of those bears on two corners, their moments cancel
-       * when it is flat against it, and flush is where it settles. The gate handle is 2.5in of
-       * bar. Nothing about it can align an 18in chassis, and asking it to (`squareTo = true`)
-       * is what made a robot leaning on one end of the arm swing square instead of turning:
-       * "when I hit the gate with the leftmost or rightmost side of the robot, I should be
-       * turning but I square up instead."
+       * Every other surface in this pass is a FACE, and faces go through the square-up model:
+       * a chassis pressed flat on one bears on two corners whose moments cancel at flush, and
+       * that model is a stand-in for a distributed contact the sim does not integrate. The
+       * gate handle is 2.5in of bar. It has no flush to settle to, and every attempt to
+       * describe it in the square-up model's terms got one case right and another wrong —
+       * squaring instead of turning, then turning away instead of into, then not turning at
+       * all.
        *
-       * A point contact has an equilibrium of its own and needs no cap to find it: the moment
-       * is `r x n`, which vanishes when the contact comes to lie on the line through the
-       * robot's centre along the push. So a robot leaning on the arm off-centre turns about it
-       * until the arm is dead ahead, and one that arrives already centred is not turned at
-       * all. The whole behaviour falls out of the geometry.
+       * There is no need for a stand-in here, because a single point contact on a rigid body
+       * is the textbook case:
        *
-       * The press is the robot's own — only the RATE is the arm's, and that rate depends on
-       * how much travel the arm has left (`gateArmTorqueMult`): a closed one gives, a fully
-       * lifted one is a rigid link and answers like the wall it is resting against.
+       *   J_n = -(1 + e)(v_p . n) / (1 + (r x n)^2 / (I/m))
+       *   J_t = clamp(-(v_p . t) / (1 + (r x t)^2 / (I/m)), -mu J_n, mu J_n)
+       *   dv = J_n n + J_t t          dw = (r x (J_n n + J_t t)) / (I/m)
+       *
+       * with `v_p` the velocity of the CONTACT POINT (rotation included), and `I/m` the square
+       * chassis's (l^2 + w^2)/12, so the robot's mass cancels out of both lines.
+       *
+       * THE FRICTION TERM IS THE ANSWER TO THE SIDE HIT. A normal push through a point can
+       * only ever swing a robot AWAY from what it touched; catching a post with your flank
+       * does the opposite, because the post drags that side back. "It is a collision to the
+       * SIDE of the robot, meaning the robot should turn INTO THE CORNER." That is J_t, and
+       * nothing else in a contact can produce it.
+       *
+       * It goes into `angVel`, not into `heading`. The drivetrain owns angVel and pulls it
+       * back toward the commanded turn every tick (`motorStep`), which is the wheels resisting
+       * — so a hit spins the chassis and the robot recovers, instead of the heading being
+       * stepped by a number and staying there.
+       *
+       * The arm's own softness is the one thing that is not textbook, and it is real: while
+       * the lever still has travel, part of the push goes into lifting it rather than into the
+       * robot (`gateArmTorqueMult`), and at its stop the whole impulse lands.
        */
-      out.push(
-        contactTorqueDelta(
-          r,
-          nx,
-          ny,
-          pressAlong(preVel, nx, ny),
-          contacts,
-          false,
-          // soft while the arm still has somewhere to go, a wall once it is at its stop
-          C.gateArmTorqueMult(world.goals[a].gatePos),
-        ),
-      );
+      let cx = 0;
+      let cy = 0;
+      let wsum = 0;
+      let dMax = -Infinity;
+      for (const { d } of contacts) dMax = Math.max(dMax, d);
+      for (const { c, d } of contacts) {
+        const load = Math.max(0, Math.min(d, 2) - (Math.min(dMax, 2) - C.CONTACT_COMPLIANCE));
+        if (load <= 0) continue;
+        cx += c.x * load;
+        cy += c.y * load;
+        wsum += load;
+      }
+      if (wsum <= 0) continue;
+      const cpx = cx / wsum;
+      const cpy = cy / wsum;
+      const lx = cpx - r.pos.x;
+      const ly = cpy - r.pos.y;
+      /**
+       * THE NORMAL IMPULSE IS WHAT THE SURFACE TOOK OFF THE ROBOT THIS TICK.
+       *
+       * Reading it off the contact point's CURRENT velocity is the impact case only, and it
+       * dies immediately: one tick after the hit the approach has already been cancelled, so
+       * every tick of a sustained push produces almost nothing (measured 1-3 degrees over
+       * three seconds of driving into the arm). A robot leaning on structure is not making a
+       * series of tiny impacts — it is applying a steady force, and the surface is supplying
+       * an equal and opposite one.
+       *
+       * `pressAlong(preVel, n)` is exactly that force, in the units this needs: the approach
+       * the collision pass removed this tick, which for a robot driving into something is its
+       * drive acceleration times dt, every tick, for as long as it keeps driving. So the same
+       * expression covers both regimes — a hard hit is one big value, a steady push is a small
+       * one repeated — which is what a contact actually is.
+       */
+      const press = pressAlong(preVel, nx, ny);
+      if (press <= 0) continue; // separating, or not driving into it — no contact force
+      const iOverM = (r.spec.length * r.spec.length + r.spec.width * r.spec.width) / 12;
+      const rxn = lx * ny - ly * nx;
+      const jn = ((1 + C.CONTACT_RESTITUTION) * press) / (1 + (rxn * rxn) / iOverM);
+      // ...and the friction is bounded by it, opposing however that point of the chassis is
+      // sliding along the surface right now
+      const pv = robotPointVelocity(r, { x: cpx, y: cpy });
+      const vn = pv.x * nx + pv.y * ny;
+      let tx = pv.x - nx * vn;
+      let ty = pv.y - ny * vn;
+      const vt = hyp(tx, ty);
+      let jt = 0;
+      if (vt > 1e-6) {
+        tx /= vt;
+        ty /= vt;
+        const rxt = lx * ty - ly * tx;
+        jt = clamp(-vt / (1 + (rxt * rxt) / iOverM), -C.CONTACT_MU * jn, C.CONTACT_MU * jn);
+      }
+      const soft = C.gateArmTorqueMult(world.goals[a].gatePos);
+      const ix = (jn * nx + jt * tx) * soft;
+      const iy = (jn * ny + jt * ty) * soft;
+      r.vel.x += ix;
+      r.vel.y += iy;
+      /**
+       * ...AND THE ROTATION IT PRODUCES HAPPENS THIS TICK, not just as angular velocity.
+       *
+       * The drivetrain owns `angVel` and `motorStep` pulls it toward the commanded turn at
+       * turnAccel — which is hundreds of rad/s^2, so it erases anything a contact injects
+       * BEFORE the next tick's heading integration ever sees it. Setting angVel alone is
+       * therefore a rotation that never happens: measured, an impulse of 0.09 rad/s per tick
+       * against a chassis that turned 1.9 degrees in a second and a bit.
+       *
+       * So the chassis rotates by the impulse's own `dw * dt` here (that is simply
+       * integrating the new angular velocity over the rest of this tick), and angVel carries
+       * the remainder into the next one, where the wheels fight it. That is the real pair: a
+       * hit turns you, and your drivetrain pulls you back.
+       */
+      const dw = (lx * iy - ly * ix) / iOverM;
+      r.heading = wrapAngle(r.heading + dw * dt);
+      r.angVel = clamp(r.angVel + dw, -driveParams(r.spec).maxTurn, driveParams(r.spec).maxTurn);
     }
   }
 
@@ -971,13 +1047,13 @@ function squareUpPair(
 /** post-Rapier bespoke pass: square tilted chassis flush and record robot-robot
  * contacts (rrContacts) for the penalty engine. `preVels` are the pre-solve
  * velocities from solveRobots (drive-in pressure the torque scales with). */
-export function squareUpRobots(world: World, preVels: Map<number, Vec2>): void {
+export function squareUpRobots(world: World, preVels: Map<number, Vec2>, dt: number): void {
   for (let i = 0; i < world.robots.length; i++) {
     for (let j = i + 1; j < world.robots.length; j++) {
       squareUpPair(world.robots[i], world.robots[j], preVels, world.rrContacts);
     }
   }
-  for (const r of world.robots) squareUpStatics(r, preVels.get(r.id), world);
+  for (const r of world.robots) squareUpStatics(r, preVels.get(r.id), dt, world);
 }
 
 /** post-Rapier square-up for a game whose only statics are perimeter WALLS (Chain

@@ -105,7 +105,7 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
     blue: gateColliderPos(world, dt, actualCommands, 'blue'),
   };
   const preVels = solveRobots(world, dt, decodeColliders, gateCol);
-  squareUpRobots(world, preVels);
+  squareUpRobots(world, preVels, dt);
 
   // ---- robots (actions: intake/fire/turret) ------------------------------
   // passive dummies never act — skip the aim solve / flywheel / fire / intake work
