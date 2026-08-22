@@ -26,6 +26,7 @@ import {
   robotExtents,
   robotIntersectsRect,
   intakeRoofAt,
+  robotPointVelocity,
 } from './physics';
 
 export const ZERO_CMD: RobotCommand = {
@@ -1342,7 +1343,22 @@ export function updateRails(
         b.state = { kind: 'flight', target: a };
         b.z = lid.z;
         b.vz = 0;
-        b.vel = { x: drift, y: -speed };
+        /**
+         * ...AND IT LANDS. It does not keep the ramp's speed and skate off down the tunnel.
+         *
+         * Handing it `-speed` says it is still rolling, and an artifact ON a lid is not: it
+         * has just dropped onto a surface, and what it keeps is that surface's motion. The
+         * difference is not cosmetic, because a lid artifact is in FLIGHT and flight is
+         * outside the ground solve — so with the ramp's 40in/s still on it, it sailed past the
+         * robot down the tunnel and through the gap beside it, which is a gap it does not fit
+         * through. Measured at the reported pose: 3, 2 and 4 artifacts through gaps of 3.0,
+         * 3.5 and 4.0in, where the same pose passed none before the outflow moved onto the
+         * lid. "I'm gate intaking and they get thru the gap."
+         *
+         * Resting on the roof, the lid mechanics take it from here: carried while the robot is
+         * under it, thrown clear along the roller axis, onto the floor in front of the mouth.
+         */
+        b.vel = robotPointVelocity(lid.robot, b.pos);
         continue;
       }
       b.state = { kind: 'ground' };

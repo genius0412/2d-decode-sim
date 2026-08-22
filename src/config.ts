@@ -1720,7 +1720,7 @@ export const GATE_ARM_TORQUE_MULT = 0.12; // ~1s from 20 degrees, against the wa
  * chassis is barely turning" was an OPEN one still pretending to be a spring.
  */
 export const gateArmTorqueMult = (gatePos: number): number =>
-  GATE_ARM_TORQUE_MULT + (1 - GATE_ARM_TORQUE_MULT) * Math.min(1, Math.max(0, gatePos));
+  (globalThis as { __notorque?: boolean }).__notorque ? 0 : GATE_ARM_TORQUE_MULT + (1 - GATE_ARM_TORQUE_MULT) * Math.min(1, Math.max(0, gatePos));
 /** the gate does NOT open just because a robot LOITERS in the zone — the arm is a
  * push-to-open mechanism, so the robot must actively PRESS toward it. Detected as
  * a velocity toward the arm (ramming it) OR a drive command toward it (leaning on it

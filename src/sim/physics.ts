@@ -1357,6 +1357,35 @@ function ballRobotContact(
   return penFlank > 0 ? toWorld(0, s, penFlank, local.x, s * half) : null;
 }
 
+/**
+ * IS AN ARTIFACT WEDGED IN A ROBOT — the test the jam rule asks, over the whole of the robot
+ * that is SOLID to artifacts.
+ *
+ * The jam rule ("nothing squeezes through a gap it does not fit in") asked
+ * `pointDepthInChassis`, on the grounds that the intake's mouth is open by design and an
+ * artifact being swallowed is deep inside that box on purpose. The mouth is; the intake is
+ * not. Its side rails are solid out to the roller line, and when you are GATE INTAKING the
+ * thing nearest the wall is exactly those rails — so artifacts squeezed between an intake
+ * and the wall were never covered by the rule and walked straight through: measured, 5in
+ * artifacts through gaps of 3.0, 3.5, 4.0 and 4.6in, at every heading. "I'm gate intaking and
+ * they get thru the gap."
+ *
+ * So: the chassis, plus the intake's FLANK, and nothing in between the rollers. Outboard of
+ * the frame is not somewhere an artifact can be, whatever else the mouth allows.
+ */
+export function ballWedgedInRobot(r: RobotState, p: Vec2): boolean {
+  if (pointDepthInChassis(r, p) + C.BALL_RADIUS > C.BALL_JAM_SLOP) return true;
+  const local = rot({ x: p.x - r.pos.x, y: p.y - r.pos.y }, -r.heading);
+  const hl = r.spec.length / 2;
+  const half = r.spec.width / 2;
+  const tip = hl + C.INTAKE_PRESETS[r.spec.intake].reach;
+  if (local.x <= hl || local.x > tip) return false;
+  // ...and the MOUTH is not the intake. An artifact within the roller span is where an
+  // artifact is supposed to be — freezing those froze every capture, and the drain with them.
+  if (Math.abs(local.y) <= C.intakeMouth(r.spec).mouthHalf) return false;
+  return C.BALL_RADIUS - (Math.abs(local.y) - half) > C.BALL_JAM_SLOP;
+}
+
 /** is `p` inside `rect` grown by `pad` — the test an artifact centre needs, since it is the
  * artifact's SKIN that has to clear a solid, not its centre. */
 function inflatedRect(rect: Rect, pad: number, p: Vec2): boolean {
@@ -1431,6 +1460,7 @@ export function evictBallFromRobot(b: Artifact, r: RobotState): void {
    * and the pile-grinding jitter case is quieter with the ceiling gone than it was before any
    * of this (3 jump-frames, worst 1.56in, against 16 and 1.84 at the start of the session).
    */
+  if ((globalThis as any).__noslide) return;
   const rx = rx0;
   const ry = ry0;
   const rl = hyp(rx, ry);

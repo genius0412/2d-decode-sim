@@ -8,7 +8,7 @@ import {
   ballRobotFeedback,
   collideBallRobot,
   landOnIntakeLid,
-  pointDepthInChassis,
+  ballWedgedInRobot,
   pointDepthInRobot,
   collideBallStatic,
   separateBalls,
@@ -266,15 +266,18 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
    * tangential motion back, because sliding along the wall is precisely how the clamp resolves
    * being pushed into it.
    *
-   * The CHASSIS only. The intake mouth is open to artifacts by design, and an artifact being
-   * swallowed is deep inside that box on purpose.
+   * The chassis AND the intake's solid FLANK — see `ballWedgedInRobot`. The MOUTH is open to
+   * artifacts by design and an artifact being swallowed is deep inside that box on purpose,
+   * but the rails beside it are structure, and they are what is next to the wall when someone
+   * is gate intaking. Asking only about the chassis let artifacts walk between an intake and
+   * the wall through gaps they do not fit in.
    */
   for (const b of ground) {
     const was = wasPos.get(b.id);
     if (!was) continue;
     let jammed = false;
     for (const r of world.robots) {
-      if (pointDepthInChassis(r, b.pos) + C.BALL_RADIUS > C.BALL_JAM_SLOP) jammed = true;
+      if (ballWedgedInRobot(r, b.pos)) jammed = true;
     }
     if (!jammed) continue;
     b.pos.x = was.x;
