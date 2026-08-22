@@ -2386,6 +2386,72 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- nothing on the rail hangs in the air, and nothing runs off the end of it --------
+/**
+ * "They're all floating." "Still floating by."
+ *
+ * Two ways an artifact ended up somewhere the rail does not go, both of them at the exit:
+ *
+ *  · HELD UP BY A ROOF THE COLUMN DID NOT SEE. The descent floors an artifact's height on any
+ *    intake beneath it, so it is set down ON an intake rather than through it. That test and
+ *    `railBlock`'s asked the same question with different tolerances, at different points, and
+ *    over different stretches of rail — so the column would descend past the channel mouth
+ *    while the height test held it at lid height, leaving it hanging over open apron with
+ *    nothing under it either pass agreed was there: measured s = -2.5 at z = 10.3.
+ *  · NO FLOOR AT ALL BELOW THE LIP. `exitFloor` was -Infinity whenever the way out LOOKED
+ *    clear, but the release also waits on the doorway and on its own one-per-tick budget, and
+ *    while it waited the column had nothing under it: measured five artifacts at s = -290,
+ *    hundreds of inches off the end of the world, sliding through robots and walls alike
+ *    because a rail artifact is in neither solve.
+ *
+ * So the two roof tests are now one question, asked at one point, over the stretch the block
+ * actually walks; and the rail has a floor a pitch below its lip, which is enough to slide out
+ * through and not enough to leave on.
+ */
+{
+  const worst = { air: 0, run: 0 };
+  for (const over of [0, -1, -2, -3.5]) {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    for (const b of w.balls) b.state = { kind: 'held', robot: 99 };
+    fillBlueRail(w);
+    const r = w.robots[0];
+    const exit = railPos('blue', RAIL_EXIT_S);
+    const tip = DEFAULT_SPEC.length / 2 + INTAKE_PRESETS[DEFAULT_SPEC.intake].reach;
+    r.heading = Math.PI / 2;
+    r.fieldCentric = false;
+    r.hopper = [];
+    const park = { x: exit.x, y: exit.y - tip + over };
+    for (let i = 0; i < Math.round(10 / SIM_DT); i++) {
+      r.pos = { ...park };
+      r.vel = { x: 0, y: 0 };
+      w.goals.blue.gatePos = 1;
+      w.goals.blue.gateOpen = true;
+      w.goals.blue.gateLatch = 1;
+      step(w, SIM_DT, new Map([[0, cmd({ intake: true })]]));
+      for (const b of w.balls) {
+        if (b.state.kind !== 'rail') continue;
+        const st = b.state as { s: number; v: number };
+        // past the channel mouth there is no ramp: an artifact that has STOPPED there is
+        // either on the floor or it is hanging in mid-air
+        if (st.s < RAIL_OPEN_S && Math.abs(st.v) < 1) worst.air = Math.max(worst.air, b.z);
+        worst.run = Math.max(worst.run, RAIL_EXIT_S - st.s);
+      }
+    }
+  }
+  check(
+    'nothing on the rail comes to rest in mid-air past the channel mouth',
+    worst.air < 1,
+    `worst resting height below the mouth: ${worst.air.toFixed(1)}in (was 10.3 — held on an intake lid the column did not know about)`,
+  );
+  check(
+    '...and nothing slides off the end of the rail',
+    worst.run <= RAIL_PITCH + 0.5,
+    `furthest past the exit lip: ${worst.run.toFixed(1)}in against a ${RAIL_PITCH.toFixed(1)}in leak (was 290in — off the map, through everything)`,
+  );
+}
+
 // ---- THE RAIL IS NOT A HOLE IN THE FIELD ----------------------------------------
 // An artifact walked off the end of the world: in `rail` state, position written straight
 // down the rail line, from y=-64.9 to y=-75.6 — six inches outside the audience wall —

@@ -561,17 +561,24 @@ function railBlock(
        * surface it lands on is the whole of the rule: the floor if there is floor, the intake
        * lid if the intake is in the way. What it must never do is arrive INSIDE the throat.
        */
-      if (
-        pointDepthInChassis(r, p) > -C.BALL_RADIUS ||
+      if (pointDepthInChassis(r, p) > -C.BALL_RADIUS) {
+        reach = s + C.RAIL_BLOCK_STEP;
+      } else if (
         // ...AND ITS INTAKE, where that is what is over the drop point. The mouth is open to
         // an artifact ROLLING in; it is not open from ABOVE, and the ramp discharges from
         // above. An artifact cannot be set down inside it, and it cannot fly past it either —
         // both were tried (see the release below), so the column stops here, exactly as it
         // does for a bumper. The lenience is the roller face: "if the ball drops on the very
         // front edge of the intake rollers, they can suck them in due to compliance."
+        //
+        // WAITING ON A ROOF IS NOT WAITING. An artifact held where a roof is has no ramp under
+        // it — past RAIL_OPEN_S the channel has ended — so stopping the column there leaves
+        // the lead artifact hanging in mid-air over the apron at the intake's lid height:
+        // measured s = -2.5 at z = 10.3, which is "they're all floating". The channel is where
+        // an elevated artifact can legitimately be, so that is where an intake stops it.
         intakeRoofAt(world, p, C.BALL_RADIUS, C.BALL_RADIUS - C.INTAKE_CATCH_LENIENCE)?.robot === r
       ) {
-        reach = s + C.RAIL_BLOCK_STEP;
+        reach = Math.max(s + C.RAIL_BLOCK_STEP, C.RAIL_OPEN_S);
       }
     }
     if (reach > best) {
@@ -1051,7 +1058,27 @@ export function updateRails(
        * the exit lip an artifact keeps `wasV`, neither accelerating under a gravity it cannot
        * act on nor losing the momentum it arrived with.
        */
-      const exitFloor = (elevated ? mouthClear : canLeave) ? -Infinity : C.RAIL_EXIT_S;
+      /**
+       * THE EXIT IS ALWAYS A FLOOR. The rail ends there; there is no rail below it.
+       *
+       * This was -Infinity whenever the way out looked clear, on the reasoning that an
+       * artifact about to leave should not be held up by a floor it is passing through. But
+       * `mouthClear` only knows about ROBOTS, and the release ALSO waits on the doorway (the
+       * artifact already on the floor in front of the gate) and on its own one-per-tick
+       * budget. Whenever it waited, the column had nothing under it and simply kept sliding:
+       * measured, five artifacts at s = -290, which is a rail position hundreds of inches off
+       * the end of the world, sliding through robots and walls alike because a rail artifact
+       * is in neither solve. It is the same "the rail is not a hole in the field" as before,
+       * reached by a different route.
+       *
+       * The floor is one PITCH below the lip while the way out looks clear, and the lip
+       * itself when it does not. That is the whole of the fix: an artifact on its way out
+       * still slides through the exit rather than stopping dead on it (a hard floor at the
+       * lip costs throughput — the tap benchmark drops from a worst of 6 to 4), and one that
+       * is not going anywhere runs out of rail after five inches instead of five hundred.
+       */
+      const exitFloor =
+        (elevated ? mouthClear : canLeave) ? C.RAIL_EXIT_S - C.RAIL_PITCH : C.RAIL_EXIT_S;
       const solid = Math.max(mouth.s, exitFloor);
       if (st.s < solid) {
         st.s = Math.min(solid, wasS + C.RAIL_PUSH_RATE * dt);
@@ -1093,8 +1120,32 @@ export function updateRails(
         // (see intakeRoofAt). Without this the descent ran straight through the intake and set
         // the artifact down INSIDE the mouth, at floor level, where it was promptly taken:
         // "once I stand in front of where the balls come out, it is still being intaked".
-        const roof = intakeRoofAt(world, b.pos);
-        b.z = Math.max(roof?.z ?? 0, Math.min(b.z, rideZ * (1 - fall)));
+        /**
+         * ...AND IT ASKS THE SAME QUESTION `railBlock` ASKS, with the same tolerances.
+         *
+         * These two had different pads, so they could disagree: the block would let the
+         * column descend past the mouth while this held the artifact up at lid height,
+         * leaving it hanging over the apron with nothing under it that either pass agreed
+         * was there — measured, an artifact queued at the exit lip at z = 10.3. If an intake
+         * is close enough to hold an artifact up, it is close enough to stop the column;
+         * if it is not, the artifact comes down to the floor. One test, both answers.
+         */
+        // ...at the point the BLOCK asked about, too. `railBlock` walks the rail centreline;
+        // asking here about the artifact's actual position, which wanders off that line by
+        // design, is a second way for the two to disagree — and every disagreement leaves an
+        // artifact held up by a roof the column does not know is there.
+        const roof = intakeRoofAt(
+          world,
+          railPos(a, st.s),
+          C.BALL_RADIUS,
+          C.BALL_RADIUS - C.INTAKE_CATCH_LENIENCE,
+        );
+        // ...and only ABOVE THE LIP. `railBlock` walks from the lip upwards, so below it
+        // nothing has been asked whether a robot is there — and holding an artifact up on a
+        // roof the column never saw is how one ends up hanging in the air past the end of the
+        // rail. Below the lip an artifact is leaving; it comes down.
+        const held = st.s >= C.RAIL_EXIT_S ? (roof?.z ?? 0) : 0;
+        b.z = Math.max(held, Math.min(b.z, rideZ * (1 - fall)));
       }
     }
 
