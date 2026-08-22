@@ -357,6 +357,18 @@ export const BALL_SETTLE_SLOP = 0.2; // in
  * reversals a second at 1.0, none at 0.5.
  */
 export const BALL_SEPARATION_RELAX = 0.5;
+/**
+ * How far an artifact will look ALONG a wall for a way out of a chassis, and at what
+ * resolution — see `evictBallFromRobot`.
+ *
+ * An artifact pinched between a chassis and a wall cannot be pushed out the way it came, so
+ * it squirts out sideways instead. The reach is what separates squirting out of a pocket from
+ * being carried down a robot's whole flank: a corner's exit is an inch or two away, and a
+ * 5in artifact must never make it through a 4.6in gap however long it is pushed. A radius
+ * and a half covers every real wedge and nothing else.
+ */
+export const BALL_ESCAPE_REACH = BALL_RADIUS * 1.5; // in
+export const BALL_ESCAPE_STEP = 0.25; // in, the resolution that search walks at
 
 export const BALL_JAM_SLOP = 0.35;
 

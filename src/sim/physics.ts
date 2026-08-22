@@ -1270,6 +1270,7 @@ function ballRobotContact(
 
   if (local.x > tip) return null; // past the roller front — nothing there at all
 
+
   /**
    * THE ROLLER BAND RIDES ABOVE THE BALLS. The floor-level structure of a funnel intake is
    * the WEDGE, and it ends at the roller's axle; forward of that there is only the roller
@@ -1334,7 +1335,32 @@ function ballRobotContact(
     if (mm === dFront) return toWorld(1, 0, R + dFront, tip, local.y);
     return toWorld(-1, 0, R + dBack, hl, local.y);
   }
-  return null; // beyond the frame width, forward → open (overhang region)
+  /**
+   * OUTBOARD OF THE FRAME, FORWARD: the flank does not stop at the chassis.
+   *
+   * This returned null — "beyond the frame width, forward → open" — and that left a gap
+   * exactly one feature wide. The rail branch above treats |y| <= half as solid all the way
+   * out to the roller line, so the union of chassis and intake has a straight SIDE running
+   * from the back of the robot to the tip. An artifact just outboard of that side, and even
+   * slightly ahead of the front face plane, met nothing at all: measured, driving through
+   * loose artifacts, 2.33in of a 2.5in radius inside the front corner, and every worst case
+   * in the sweep sat within a tenth of an inch of x = hl. "Balls go thru the chassis still."
+   *
+   * The answer is the SIDE, not the corner. Pushing off the chassis's corner is what a body
+   * that ENDED at hl would do; this one continues, so the closest feature is the flank line
+   * and the push is sideways — the same answer the funnel presets give one branch up, and
+   * continuous with the chassis's own side face behind it. (Corner-first was tried and it
+   * jitters: near hl the correction flips between a diagonal and the rail's sideways push
+   * from tick to tick, 4.3in of hop in the pile-grinding case against 1.8 here.)
+   */
+  const penFlank = R - (ay - half);
+  return penFlank > 0 ? toWorld(0, s, penFlank, local.x, s * half) : null;
+}
+
+/** is `p` inside `rect` grown by `pad` — the test an artifact centre needs, since it is the
+ * artifact's SKIN that has to clear a solid, not its centre. */
+function inflatedRect(rect: Rect, pad: number, p: Vec2): boolean {
+  return p.x > rect.x0 - pad && p.x < rect.x1 + pad && p.y > rect.y0 - pad && p.y < rect.y1 + pad;
 }
 
 /** push a ground ball out of a robot chassis, inheriting surface velocity.
@@ -1356,9 +1382,113 @@ export function evictBallFromRobot(b: Artifact, r: RobotState): void {
   const contact = ballRobotContact(r, b.pos);
   if (!contact) return;
   const { nx, ny, pen } = contact;
-  const c = clampBallPosToStatics({ x: b.pos.x + nx * pen, y: b.pos.y + ny * pen });
-  b.pos.x = c.x;
-  b.pos.y = c.y;
+  const want = { x: b.pos.x + nx * pen, y: b.pos.y + ny * pen };
+  const c = clampBallPosToStatics(want);
+  const rx0 = want.x - c.x;
+  const ry0 = want.y - c.y;
+  /**
+   * A REFUSED PUSH IS REFUSED WHOLE — the leftover tangent is not a consolation prize.
+   *
+   * Taking the part the statics allowed looks like the conservative thing and it is how an
+   * artifact gets WALKED along a wall: the chassis is at an angle, so the push into it has a
+   * component along the wall, the wall keeps refusing the rest, and every tick moves the
+   * artifact a little further down — through gaps it does not fit through. Measured: 4 of a
+   * drain squeezed past a corner with 4.6in of clearance, on 5in artifacts.
+   *
+   * So either the artifact can be separated, or it cannot and stays where it is. When it
+   * cannot, the only real way out is sideways, and that is the search below — which has to
+   * find an actual exit before anything moves.
+   */
+  if (hyp(rx0, ry0) <= C.BALL_SETTLE_SLOP) {
+    b.pos.x = c.x;
+    b.pos.y = c.y;
+  }
+  /**
+   * ...AND WHEN THE PUSH IS REFUSED, IT GOES OUT SIDEWAYS. An artifact between a chassis and
+   * a wall is incompressible: something has to give, and the only direction left is ALONG the
+   * wall.
+   *
+   * Without this the eviction simply loses: the wall clamp puts back whatever the normal push
+   * gained and the artifact ends the tick still buried. Measured, a robot sliding along the
+   * red wall past an artifact resting on it — 2.32in of a 2.5in radius inside the chassis,
+   * with the artifact tracking the robot's own velocity, which is a robot driving THROUGH an
+   * artifact. "Balls go thru the chassis still."
+   *
+   * The robot-stall path does not answer this one and should not: `ballRobotFeedback` stalls
+   * a robot DRIVING INTO a pinned artifact, and a robot sliding PAST one is not driving into
+   * anything — it would have to be stopped by an artifact it is only brushing. A real ball
+   * squirts out of the gap instead, and that is what this does: the step is the part of the
+   * push the statics refused, in whichever direction along the wall clears the chassis sooner,
+   * so it is self-limiting (no refusal, no slide) and it converges over the relaxation passes
+   * rather than teleporting anything.
+   *
+   * DAMPED by the same fraction the artifact-artifact separation uses, and for the same
+   * reason: this runs once per relaxation pass, so a full correction per pass rings where a
+   * partial one converges. A ceiling tied to the robot's own speed was tried on top of that —
+   * the gap does close at the robot's speed, so it reads as the honest bound — and it is
+   * simply too tight to matter: at 0.03in a pass an artifact 2in inside a chassis is still
+   * inside it when the robot has driven away. The damping alone is what keeps this smooth,
+   * and the pile-grinding jitter case is quieter with the ceiling gone than it was before any
+   * of this (3 jump-frames, worst 1.56in, against 16 and 1.84 at the start of the session).
+   */
+  const rx = rx0;
+  const ry = ry0;
+  const rl = hyp(rx, ry);
+  if (rl < 1e-6) return; // the statics allowed the whole push — it is out
+  const still = ballRobotContact(r, b.pos);
+  if (!still || still.pen <= C.BALL_SETTLE_SLOP) return;
+  /**
+   * ONLY A CLOSING GAP SQUEEZES ANYTHING OUT.
+   *
+   * The slide is what a wedge does to what is caught in it, and a wedge that is not closing
+   * does nothing at all. Without this the same code walks an artifact THROUGH a standing gap:
+   * artifacts draining down the wall met a parked robot's corner, overlapped it by a hair
+   * under their own momentum, and were then helpfully squirted past it — 4 of them through a
+   * 4.6in opening, which a 5in artifact does not fit through however long it is pushed.
+   *
+   * So the question is whether the CHASSIS is moving into the artifact at this contact, which
+   * is the surface velocity there and not the chassis's translation: the case this exists for
+   * is a robot swinging a corner onto an artifact resting on a wall, and that closes the gap
+   * with no translation whatsoever.
+   */
+  const pv = robotPointVelocity(r, b.pos);
+  if (pv.x * nx + pv.y * ny <= 0) return;
+  const tx = -ry / rl;
+  const ty = rx / rl;
+  /**
+   * WHICH WAY OUT, AND IS THERE ONE AT ALL.
+   *
+   * An artifact squirts out of a wedge it is CAUGHT IN — a corner, a shallow pocket — and the
+   * exit is a couple of inches away. It does not travel the length of a robot's flank: that
+   * is not escaping a gap, it is being carried THROUGH one, and a 5in artifact does not pass
+   * a 4.6in opening no matter how long you push it. So the exit is looked for within
+   * BALL_ESCAPE_REACH and the slide only happens if one is found — which is the difference
+   * between the two cases, since a mid-flank artifact's nearest clear spot is half a robot
+   * away.
+   */
+  let exit = 0;
+  let dirOut = 0;
+  for (let d = C.BALL_ESCAPE_STEP; d <= C.BALL_ESCAPE_REACH && dirOut === 0; d += C.BALL_ESCAPE_STEP) {
+    for (const dir of [1, -1]) {
+      const q = { x: b.pos.x + tx * d * dir, y: b.pos.y + ty * d * dir };
+      const p = clampBallPosToStatics(q);
+      if (hyp(p.x - q.x, p.y - q.y) > C.BALL_SETTLE_SLOP) continue; // the statics refuse it too
+      if (ALLIANCES.some((al) => inflatedRect(classifierRect(al), C.BALL_RADIUS, p))) continue;
+      const hit = ballRobotContact(r, p);
+      if (!hit || hit.pen <= C.BALL_SETTLE_SLOP) {
+        exit = d;
+        dirOut = dir;
+        break;
+      }
+    }
+  }
+  if (dirOut === 0) return; // wedged with nowhere to go — it stays put and stays overlapping
+  const step = Math.min(rl * C.BALL_SEPARATION_RELAX, exit) * dirOut;
+  const q = { x: b.pos.x + tx * step, y: b.pos.y + ty * step };
+  const p = clampBallPosToStatics(q);
+  if (hyp(p.x - q.x, p.y - q.y) > C.BALL_SETTLE_SLOP) return;
+  b.pos.x = p.x;
+  b.pos.y = p.y;
 }
 
 /**
@@ -1385,7 +1515,18 @@ export function ballRobotFeedback(b: Artifact, r: RobotState, dt: number): void 
   const contact = ballRobotContact(r, b.pos);
   if (!contact) return;
   const { nx, ny, pen, cp } = contact;
-  const approach = r.vel.x * nx + r.vel.y * ny; // robot speed INTO the artifact
+  /**
+   * THE SPEED THAT MATTERS IS THE SURFACE'S AT THE CONTACT, NOT THE CENTRE'S.
+   *
+   * This read `r.vel`, which is the chassis's translation and says nothing about the corner
+   * that is actually arriving. A robot TURNING closes a gap with no translation at all, so a
+   * chassis swinging its rear corner onto an artifact resting on a wall was neither stalled
+   * nor drag-loaded by it — measured, an artifact left 2.19in inside the chassis, tracking
+   * the robot's own velocity, wedged into a 2.81in gap it does not fit in. `pointVelocity`
+   * is the same quantity the possession test and the lid carry already use.
+   */
+  const pv = robotPointVelocity(r, cp);
+  const approach = pv.x * nx + pv.y * ny; // robot SURFACE speed INTO the artifact
   const probe = Math.max(pen, Math.max(0, approach) * dt);
   const px = b.pos.x + nx * probe;
   const py = b.pos.y + ny * probe;
@@ -1398,7 +1539,7 @@ export function ballRobotFeedback(b: Artifact, r: RobotState, dt: number): void 
     const iny = by / blocked;
     // only the robot's OWN drive transmits through a pinned artifact — one arriving under
     // its own momentum (gate outflow) just stops against the chassis
-    const drivingIn = r.vel.x * inx + r.vel.y * iny;
+    const drivingIn = pv.x * inx + pv.y * iny;
     if (drivingIn > C.BALL_PIN_PUSH_MIN_SPEED) {
       // depth is SEPARATION and stays the real overlap; the STALL is the velocity kill
       // inside pushRobotAt, which is what this call is actually for.

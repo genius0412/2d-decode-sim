@@ -2311,6 +2311,79 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- nothing sinks into a chassis, corners included ------------------------------
+/**
+ * "Balls go thru the chassis still."
+ *
+ * Two holes, both at the same feature. `ballRobotContact` dealt with the chassis only while
+ * an artifact was BEHIND the front face plane (`local.x <= hl`); a hair forward of it the
+ * chassis stopped existing and, outboard of the frame, so did everything else — so an
+ * artifact sitting on a front corner met nothing at all. And where a wall was behind it, the
+ * eviction that should have pushed it out was refused by the wall clamp and kept only the
+ * part along the wall, which does not separate anything.
+ *
+ * The union of chassis and intake is one body with a straight side running back to front, so
+ * the closest feature outboard of it is that SIDE (not the chassis's corner, which is
+ * interior to the union — treating it as a corner makes the correction flip between a
+ * diagonal and the rail's sideways push, and that jitters). And a push the field refuses is
+ * refused whole: the artifact either finds a way out sideways within BALL_ESCAPE_REACH, or it
+ * stays where it is.
+ *
+ * Swept by driving back and forth through a field of loose artifacts, worst overlap per
+ * intake: 2.33 / 2.19 / 0.43in before, 0.90 / 1.42 / 0.44 after, and never a centre inside.
+ */
+{
+  const grind = (intake: 'vector' | 'sloped' | 'triangle', spin: number) => {
+    const w = mkWorld('match', 'blue', 7, { intake });
+    startMatch(w);
+    w.match.phase = 'teleop';
+    const r = w.robots[0];
+    r.pos = { x: -30, y: 0 };
+    r.heading = 0;
+    r.fieldCentric = false;
+    r.hopper = ['green', 'green', 'green']; // full, so this is about collision and not capture
+    let k = 0;
+    for (const b of w.balls) {
+      if (b.state.kind === 'held') continue;
+      b.state = { kind: 'ground' };
+      b.pos = { x: -20 + (k % 8) * 5, y: -14 + Math.floor(k / 8) * 7 };
+      b.vel = { x: 0, y: 0 };
+      b.z = 0;
+      b.vz = 0;
+      k++;
+    }
+    let worst = -Infinity;
+    let insideTicks = 0;
+    for (let i = 0; i < Math.round(12 / SIM_DT); i++) {
+      const fwd = Math.sin(i * SIM_DT * 1.2) > 0 ? 1 : -1;
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: fwd, leftDrive: fwd, rightDrive: fwd, rotate: spin })]]));
+      for (const b of w.balls) {
+        if (b.state.kind !== 'ground') continue;
+        const d = pointDepthInChassis(r, b.pos);
+        worst = Math.max(worst, d);
+        if (d > 0) insideTicks++;
+      }
+    }
+    return { overlap: BALL_RADIUS + worst, insideTicks };
+  };
+  const runs = [
+    grind('vector', 0),
+    grind('sloped', 0),
+    grind('triangle', 0),
+    grind('vector', 1),
+  ];
+  check(
+    'artifacts do not sink into a chassis when a robot grinds through them',
+    runs.every((x) => x.overlap < 1.6),
+    `worst overlap per run: ${runs.map((x) => x.overlap.toFixed(2)).join(' / ')}in on a ${BALL_RADIUS}in radius (2.33 / 2.19 / 0.43 / 1.23 before)`,
+  );
+  check(
+    '...and no artifact centre is ever inside one',
+    runs.every((x) => x.insideTicks === 0),
+    `${runs.map((x) => x.insideTicks).join('/')} artifact-ticks with the centre inside the chassis`,
+  );
+}
+
 // ---- THE RAIL IS NOT A HOLE IN THE FIELD ----------------------------------------
 // An artifact walked off the end of the world: in `rail` state, position written straight
 // down the rail line, from y=-64.9 to y=-75.6 — six inches outside the audience wall —
