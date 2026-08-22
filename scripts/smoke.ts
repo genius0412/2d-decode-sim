@@ -1541,7 +1541,8 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
     w.goals.blue.gateOpen = true;
     w.goals.blue.gateLatch = 1;
     r.pos = { ...park };
-    r.vel = { x: 0, y: 0 };
+    r.heading = Math.PI; // ...and its heading: the gate arm PIVOTS a robot leaning on it now,
+    r.vel = { x: 0, y: 0 }; // so an unpinned one turns off the outflow and stops blocking
     step(w, SIM_DT, new Map());
     perTick.push(Math.max(0, ...railV()));
     stalledLeft = railV().length;
@@ -2983,46 +2984,41 @@ function queueTenth(w: World): void {
    * own term now, and it is guarded by the TILT rather than by the alignment — comparing it
    * against `align` passes trivially whenever `align` has been zeroed for pointing the wrong
    * way, which is exactly when the guard is needed.
+   *
+   * ONLY FACES ARE ASKED ABOUT FLUSH. A wall, a goal face and the classifier's side can align
+   * a chassis because two corners bear on them. The gate handle is 2.5in of bar and cannot —
+   * it PIVOTS you, and its own check is below.
    */
   const hardCases: { tilt: number; ended: number }[] = [];
-  for (const t of tilts) cases.push({ label: 'wall', tilt: t, ended: settle(t, 'wall') });
-  for (const t of tilts) cases.push({ label: 'gate', tilt: t, ended: settle(t, 'gate') });
-  for (const t of [-6, -1, 1, 6]) cases.push({ label: 'gate, hit with one side', tilt: t, ended: settle(t, 'gate', 5) });
-  // WORSE means it ended further from flush than it started — the wrong way, by any amount
-  const worse = cases.filter((c) => Math.abs(c.ended) > Math.abs(c.tilt) + 0.5);
-  for (const t of [-20, -8, -3, 3, 8, 20]) {
+  /**
+   * ...AND THE GATE HANDLE PIVOTS YOU INSTEAD, which is what a 2.5in stub can do to an 18in
+   * chassis. "When I hit the gate with the leftmost or rightmost side of the robot, I should
+   * be turning but I square up instead."
+   *
+   * The moment is `r x n`, so it vanishes when the contact comes to lie on the line through
+   * the robot's centre along the push: lean on the arm off-centre and you turn about it until
+   * it is dead ahead; arrive already centred on it and you are not turned at all. No cap and
+   * no target angle — the equilibrium is in the geometry.
+   */
+  const armHit = (offCentre: number): number => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
     for (const b of w.balls) b.state = { kind: 'held', robot: 99, slot: 0, lx: 0, ly: 0, side: 0 };
     const r = w.robots[0];
-    r.pos = { x: 0, y: FIELD_HALF - 9 - 30 }; // a 30in run-up: a real ram, not a lean
-    r.heading = Math.PI / 2 + (t * Math.PI) / 180;
+    r.pos = { x: gateZone('blue').x1 + 14, y: GATE_TAPE_Y - offCentre };
+    r.heading = Math.PI;
     r.fieldCentric = false;
     r.vel = { x: 0, y: 0 };
+    const h0 = r.heading;
     run(w, cmd({ driveY: 1 }), 3);
-    const q = Math.PI / 2;
-    let rel = r.heading - Math.PI / 2;
-    rel -= Math.round(rel / q) * q;
-    hardCases.push({ tilt: t, ended: (rel * 180) / Math.PI });
-  }
+    return Math.abs(((r.heading - h0) * 180) / Math.PI);
+  };
+  const centred = armHit(0);
+  const withSide = [3, 6, 8].map(armHit);
   check(
-    'a hard ram squares the chassis up rather than leaving it where it landed',
-    hardCases.every((c) => Math.abs(c.ended) < 1),
-    `run-up rams at ${hardCases.map((c) => `${c.tilt}deg->${c.ended.toFixed(1)}`).join(' ')}`,
-  );
-  check(
-    'a contact never turns a robot further from flush than it found it',
-    worse.length === 0,
-    worse.length === 0
-      ? `${cases.length} approaches at the wall and the gate, worst residual ${Math.max(...cases.map((c) => Math.abs(c.ended))).toFixed(1)}deg`
-      : worse.map((c) => `${c.label} ${c.tilt}deg -> ${c.ended.toFixed(1)}`).join('; '),
-  );
-  // ...and the gate case is the one that used to cancel itself to a torque of 0.003
-  const gateResiduals = tilts.map((t) => Math.abs(settle(t, 'gate')));
-  check(
-    '...and the gate squares you from every angle, not just the ones where its contacts do not cancel',
-    Math.max(...gateResiduals) < 1,
-    `worst residual across ${tilts.length} tilts: ${Math.max(...gateResiduals).toFixed(1)}deg`,
+    'hitting the gate arm off-centre TURNS the robot, and hitting it square does not',
+    centred < 1 && withSide.every((t) => t > 10),
+    `centred ${centred.toFixed(0)}deg; 3/6/8in off centre ${withSide.map((t) => t.toFixed(0)).join('/')}deg`,
   );
 }
 

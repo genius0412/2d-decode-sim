@@ -747,8 +747,26 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, world?: World)
         contacts = [{ c: { x: clamp(r.pos.x, arm.x0, arm.x1), y: clamp(r.pos.y, arm.y0, arm.y1) }, d: mtv.depth }];
       }
       // ...and squared to, like every other flat face here — see the classifier note below
-      // the press is the robot's own — only the RATE is the arm's (see GATE_ARM_TORQUE_MULT)
-      applyContactTorque(r, nx, ny, pressAlong(preVel, nx, ny), contacts, true, C.GATE_ARM_TORQUE_MULT);
+      /**
+       * A STUB IS A POINT, AND A POINT PIVOTS YOU — it does not square you up.
+       *
+       * Every other surface in this pass is a FACE: a wall, a goal face, the classifier's
+       * side. A chassis pressed on one of those bears on two corners, their moments cancel
+       * when it is flat against it, and flush is where it settles. The gate handle is 2.5in of
+       * bar. Nothing about it can align an 18in chassis, and asking it to (`squareTo = true`)
+       * is what made a robot leaning on one end of the arm swing square instead of turning:
+       * "when I hit the gate with the leftmost or rightmost side of the robot, I should be
+       * turning but I square up instead."
+       *
+       * A point contact has an equilibrium of its own and needs no cap to find it: the moment
+       * is `r x n`, which vanishes when the contact comes to lie on the line through the
+       * robot's centre along the push. So a robot leaning on the arm off-centre turns about it
+       * until the arm is dead ahead, and one that arrives already centred is not turned at
+       * all. The whole behaviour falls out of the geometry.
+       *
+       * The press is the robot's own — only the RATE is the arm's (GATE_ARM_TORQUE_MULT).
+       */
+      applyContactTorque(r, nx, ny, pressAlong(preVel, nx, ny), contacts, false, C.GATE_ARM_TORQUE_MULT);
     }
   }
 
