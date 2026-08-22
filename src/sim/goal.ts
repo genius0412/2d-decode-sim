@@ -26,7 +26,6 @@ import {
   robotExtents,
   robotIntersectsRect,
   intakeRoofAt,
-  robotPointVelocity,
 } from './physics';
 
 export const ZERO_CMD: RobotCommand = {
@@ -562,7 +561,16 @@ function railBlock(
        * surface it lands on is the whole of the rule: the floor if there is floor, the intake
        * lid if the intake is in the way. What it must never do is arrive INSIDE the throat.
        */
-      if (pointDepthInChassis(r, p) > -C.BALL_RADIUS) {
+      if (
+        pointDepthInChassis(r, p) > -C.BALL_RADIUS ||
+        // ...AND ITS INTAKE, where that is what is over the drop point. The mouth is open to
+        // an artifact ROLLING in; it is not open from ABOVE, and the ramp discharges from
+        // above. An artifact cannot be set down inside it, and it cannot fly past it either —
+        // both were tried (see the release below), so the column stops here, exactly as it
+        // does for a bumper. The lenience is the roller face: "if the ball drops on the very
+        // front edge of the intake rollers, they can suck them in due to compliance."
+        intakeRoofAt(world, p, C.BALL_RADIUS, C.BALL_RADIUS - C.INTAKE_CATCH_LENIENCE)?.robot === r
+      ) {
         reach = s + C.RAIL_BLOCK_STEP;
       }
     }
@@ -1309,58 +1317,23 @@ export function updateRails(
        * robot happens to be facing, which by the gate is usually the wall.
        */
       /**
-       * ...ONTO WHATEVER SURFACE IS UNDER IT. Usually that is the floor; where a robot's
-       * intake covers the outflow it is the intake's LID.
+       * ...ONTO THE FLOOR. NOT ONTO THE INTAKE'S LID, WHICH WAS TRIED TWICE AND IS WRONG.
        *
-       * The artifact descends over the last RAIL_DROP_S of rail, so at the exit it has just
-       * come DOWN onto that spot — and a lid sits at intakeLidZ, high enough to catch it. It
-       * is set down there as a flight artifact at lid height with the speed the ramp gave it,
-       * and the lid mechanics it shares with anything else that lands on a robot take over:
-       * carried while the roof stays under it, thrown clear along the roller axis, on the
-       * floor in FRONT of the mouth where an intake may legitimately take it. The one thing
-       * that does not happen is the artifact appearing inside the throat, which is what the
-       * drop-space rule is about.
+       * The drop-space rule — "there needs to be adequate space ON THE GROUND for the ball to
+       * DROP ON THE GROUND" — asks for an artifact that arrives where an intake already is to
+       * end up ON it rather than inside it, and setting it on the lid is the obvious way to
+       * say that. It does not survive contact with the rest of the sim: a lid artifact is in
+       * FLIGHT, and flight is outside the ground solve and outside the jam rule. Handed the
+       * ramp's speed it skated past the robot and through gaps it does not fit through;
+       * handed the LID's speed instead it stopped skating and hovered there, which is worse
+       * and is what "they're all floating" is.
        *
-       * The lenience is the front edge of the rollers — "if the ball drops on the very front
-       * edge of the intake rollers, they can suck them in due to compliance" — so the roof
-       * asked about here stops INTAKE_CATCH_LENIENCE short of the roller line.
-       *
-       * (Setting it on the roof was tried before and reverted because a flight artifact is
-       * outside the ground solve and one drifted through a 4.6in gap beside a robot. The
-       * mouth is solid from above now — `ballRobotFrontContact` — and the alternative,
-       * blocking, does not merely look wrong: it stops the ramp for good.)
+       * So the release stays what it always was — the floor — and the drop-space rule is
+       * still owed a real answer. The one thing that must NOT come back with it is the
+       * column waiting for floor that never appears: the robot holding the gate open is the
+       * robot in the way, so that wait has no end (0 of 9 out in 20 seconds with the gate
+       * wide open). The ramp runs; where the artifact lands is a separate question.
        */
-      const lid = intakeRoofAt(
-        world,
-        b.pos,
-        C.BALL_RADIUS,
-        C.BALL_RADIUS - C.INTAKE_CATCH_LENIENCE,
-      );
-      if (lid) {
-        // `target` is which goal a shot was aimed at, and this one was aimed at nothing: it
-        // is already OUT and has only a lid to come off. The field needs a value and its own
-        // goal is the harmless one — it is leaving that goal, not crossing back into it.
-        b.state = { kind: 'flight', target: a };
-        b.z = lid.z;
-        b.vz = 0;
-        /**
-         * ...AND IT LANDS. It does not keep the ramp's speed and skate off down the tunnel.
-         *
-         * Handing it `-speed` says it is still rolling, and an artifact ON a lid is not: it
-         * has just dropped onto a surface, and what it keeps is that surface's motion. The
-         * difference is not cosmetic, because a lid artifact is in FLIGHT and flight is
-         * outside the ground solve — so with the ramp's 40in/s still on it, it sailed past the
-         * robot down the tunnel and through the gap beside it, which is a gap it does not fit
-         * through. Measured at the reported pose: 3, 2 and 4 artifacts through gaps of 3.0,
-         * 3.5 and 4.0in, where the same pose passed none before the outflow moved onto the
-         * lid. "I'm gate intaking and they get thru the gap."
-         *
-         * Resting on the roof, the lid mechanics take it from here: carried while the robot is
-         * under it, thrown clear along the roller axis, onto the floor in front of the mouth.
-         */
-        b.vel = robotPointVelocity(lid.robot, b.pos);
-        continue;
-      }
       b.state = { kind: 'ground' };
       b.z = 0;
       b.vz = 0;
