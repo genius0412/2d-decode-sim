@@ -237,6 +237,21 @@ export const POSSESSION_GRACE = 0.4; // s
  */
 export const POSSESSION_LEAK = 0.5;
 /**
+ * How often a CONTINUING over-possession is billed again.
+ *
+ * The tariff used to be charged once per episode (plus top-ups as the pile grew), so a robot
+ * that gathered six artifacts and simply kept them paid three MINORs — fifteen points — and
+ * then hoarded for free for the rest of the match. That is not what the rule is worth: G408 is
+ * a foul for the STATE of controlling too many, and a state that persists is a violation that
+ * persists. "The over-possession penalty is way too lenient."
+ *
+ * Five seconds is the interval FTC uses for continuous violations elsewhere in the manual, and
+ * it is long enough that a legitimate pass through a clump — which is over the limit for a
+ * fraction of a second and covered by POSSESSION_CONFIRM and POSSESSION_GRACE before it ever
+ * gets here — never reaches a second billing.
+ */
+export const POSSESSION_REBILL_S = 5;
+/**
  * How long ONE artifact has to stay with a robot before it counts toward the limit.
  *
  * This is the test that separates the two things a single frame cannot: HERDING (the same

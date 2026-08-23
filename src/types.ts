@@ -471,6 +471,14 @@ export interface PenaltyState {
    * episode, so a pile that grows while the violation is held tops the tariff up rather
    * than riding free on the first assessment */
   possessionBilled: Record<number, number>;
+  /** the possession-clock reading at which the CONTINUING tariff was last charged, so a
+   * violation that is simply held keeps costing every POSSESSION_REBILL_S rather than being
+   * paid off once. Optional for back-compat with snapshots/replays that predate it. */
+  possessionRebill: Record<number, number>;
+  /** PER-ARTIFACT trap clock, `"<robotId>:<ballId>"` -> seconds this robot has been pressing
+   * this artifact against the field. Past MOMENTARY_S that is TRAPPING, which is CONTROL
+   * whether or not the robot is moving. */
+  ballTrap: Record<string, number>;
   controlHeld: Record<number, number>;
   /** PER-ARTIFACT hold: `"<robotId>:<ballId>"` -> seconds this robot has had this artifact,
    * filling while it is possessed and draining at POSSESSION_LEAK when it is not. An

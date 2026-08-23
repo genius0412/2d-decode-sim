@@ -6283,7 +6283,7 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
-// ---- G408: intaking from a clump is not over-possession ---------------------
+// ---- G408: intaking from a clump is not over-possession — but HOLDING one is ------
 // Reported: "I get overpossession penalties when I am just intaking from a clump" —
 // "clump against a wall, specifically". Two separate things were counting artifacts the
 // robot does not control, and both are structural rather than a matter of timing:
@@ -6317,13 +6317,37 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   r.heading = Math.PI / 2; // facing the clump
   r.fieldCentric = false;
   const before = w.match.fouls.blue.minor;
-  run(w, cmd({ driveY: 1, intake: true }), 6);
+  run(w, cmd({ driveY: 1, intake: true }), 2.5);
+  const acquiring = w.match.fouls.blue.minor - before;
   check(
-    'intaking from a clump jammed on a wall is not over-possession (no G408)',
-    w.match.fouls.blue.minor === before,
-    `minor fouls=${w.match.fouls.blue.minor - before}, hopper=${r.hopper.length}`,
+    'driving into a wall clump to INTAKE from it is not over-possession (no G408)',
+    acquiring === 0,
+    `minor fouls=${acquiring}, hopper=${r.hopper.length}`,
   );
   check('...and it actually intaked (the test is not vacuous)', r.hopper.length > 0, `hopper=${r.hopper.length}`);
+  /**
+   * ...BUT STAYING THERE IS TRAPPING, AND TRAPPING IS CONTROL.
+   *
+   * The glossary's CONTROL is "carrying, herding, launching, TRAPPING, or triggering", and
+   * the POSSESSION half of it — everything the rest of this engine tests — is conditional on
+   * the robot moving or turning. A robot that parks on a pile against the wall satisfied
+   * neither, so it paid nothing: measured, a full robot holding three artifacts against the
+   * perimeter for thirty seconds drew ZERO fouls. "The over-possession penalty is way too
+   * lenient."
+   *
+   * What separates this from the case above is TIME, which is also how the manual separates
+   * it: BULLDOZING is "INADVERTENT contact ... while in the path of the ROBOT moving about the
+   * FIELD", so the glossary's own MOMENTARY (about three seconds) is the line. Drive in, take
+   * what you can and leave, and nothing happens; keep holding them there and it is a foul,
+   * and it keeps being one every POSSESSION_REBILL_S for as long as it lasts.
+   */
+  run(w, cmd({ driveY: 1, intake: true }), 8);
+  const holding = w.match.fouls.blue.minor - before - acquiring;
+  check(
+    '...but pinning it there past MOMENTARY is TRAPPING, and keeps costing',
+    holding >= 3,
+    `${holding} further MINORs over the next 8s of holding the same pile on the wall (was 0, ever)`,
+  );
 }
 
 // ---- G408: pushing a clump in the open fouls even with the intake held ------------

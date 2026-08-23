@@ -267,7 +267,10 @@ function updatePossession(
       t += dt;
     } else {
       t = Math.max(0, t - dt * C.POSSESSION_LEAK);
-      if (t === 0) pen.possessionBilled[r.id] = 0; // fully drained — the next episode bills fresh
+      if (t === 0) {
+        pen.possessionBilled[r.id] = 0; // fully drained — the next episode bills fresh
+        pen.possessionRebill[r.id] = 0;
+      }
     }
     pen.possession[r.id] = t;
 
@@ -289,6 +292,27 @@ function updatePossession(
         awardFoul(world, r.alliance, 'minor', 'G408 over-possession');
       }
       if (over > billed) pen.possessionBilled[r.id] = over;
+
+      /**
+       * ...AND A VIOLATION THAT KEEPS GOING KEEPS COSTING.
+       *
+       * Billing once per episode meant the whole tariff for hoarding six artifacts was three
+       * MINORs, after which holding them for the rest of the match was free. G408 fouls the
+       * STATE of controlling too many, and a state that persists is a violation that
+       * persists — so the tariff is charged again every POSSESSION_REBILL_S the robot is
+       * still over the limit. The clocks in front of this (per-artifact confirm, then the
+       * grace) are what keep a legitimate pass through a clump from ever reaching a second
+       * billing.
+       */
+      const since = pen.possessionRebill[r.id] ?? 0;
+      if (t - since >= C.POSSESSION_REBILL_S) {
+        pen.possessionRebill[r.id] = t;
+        if (since > 0) {
+          for (let i = 0; i < over; i++) {
+            awardFoul(world, r.alliance, 'minor', 'G408 over-possession (continuing)');
+          }
+        }
+      }
 
       // The CARD is likewise re-checked every tick the violation is live, not once at the
       // edge — clause A is about what is controlled AT THE MOMENT, and a pile that grows
@@ -350,9 +374,8 @@ function controlledArtifacts(
   const active =
     hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED || Math.abs(r.angVel) >= C.POSSESSION_TURN_RATE;
   const home = loadZone(r.alliance);
-  const ground = active
-    ? world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home))
-    : [];
+  const loose = world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home));
+  const ground = active ? loose : [];
 
   const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN; // touching the footprint
   const chain = C.BALL_RADIUS * 2 + C.POSSESSION_CONTROL_MARGIN; // ...or touching a ball that is
@@ -383,7 +406,7 @@ function controlledArtifacts(
    * row that is. An artifact is pinned if the push would be refused by the field OR lands it
    * on something already pinned, iterated until it settles.
    */
-  const pushDir = (b: (typeof ground)[number]) => {
+  const pushDir = (b: (typeof loose)[number]) => {
     const cp = closestPointOnRobot(r, b.pos);
     const dx = b.pos.x - cp.x;
     const dy = b.pos.y - cp.y;
@@ -391,7 +414,7 @@ function controlledArtifacts(
     return { x: dx / d, y: dy / d };
   };
   const jammed = new Set<number>();
-  for (const b of ground) {
+  for (const b of loose) {
     const n = pushDir(b);
     const tx = b.pos.x + n.x * C.BALL_RADIUS;
     const ty = b.pos.y + n.y * C.BALL_RADIUS;
@@ -399,12 +422,12 @@ function controlledArtifacts(
     if (hyp(tx - c.x, ty - c.y) > C.BALL_PIN_SLOP) jammed.add(b.id);
   }
   for (let pass = 0; pass < 3; pass++) {
-    for (const b of ground) {
+    for (const b of loose) {
       if (jammed.has(b.id)) continue;
       const n = pushDir(b);
       const tx = b.pos.x + n.x * C.BALL_RADIUS;
       const ty = b.pos.y + n.y * C.BALL_RADIUS;
-      for (const o of ground) {
+      for (const o of loose) {
         if (o.id === b.id || !jammed.has(o.id)) continue;
         if (hyp(tx - o.pos.x, ty - o.pos.y) < C.BALL_RADIUS * 2) {
           jammed.add(b.id);
@@ -520,7 +543,42 @@ function controlledArtifacts(
    * pinned against the plate, so holding them to the same station test quietly let the back
    * half of every pile go free.
    */
+  /**
+   * TRAPPING IS CONTROL, and it is the one kind that does not need the robot to be moving.
+   *
+   * The glossary's CONTROL is "carrying, herding, launching, TRAPPING, or triggering", and
+   * trapping is preventing a SCORING ELEMENT from moving by pressing it against a FIELD
+   * element. Everything above is the POSSESSION half of the definition, which is conditional
+   * on the robot moving or turning — so a robot that simply parks on a pile against the wall
+   * satisfied nothing and paid nothing: measured, a full robot holding three artifacts
+   * against the perimeter for thirty seconds drew ZERO fouls. "The over-possession penalty is
+   * way too lenient."
+   *
+   * The jam test above already identifies exactly these artifacts; it was reading them as the
+   * manual's BULLDOZING carve-out, which they are — for a moment. Bulldozing is "INADVERTENT
+   * contact with a SCORING ELEMENT while in the path of the ROBOT moving about the FIELD", and
+   * what separates it from trapping is time, so the glossary's own MOMENTARY (about three
+   * seconds) is the line. Drive through a wall clump to intake from it and you are gone long
+   * before it; sit on one and you are trapping it.
+   */
+  for (const b of loose) {
+    const key = `${r.id}:${b.id}`;
+    const cp = closestPointOnRobot(r, b.pos);
+    const touching = jammed.has(b.id) && hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach;
+    const prev = pen.ballTrap[key] ?? 0;
+    if (touching) {
+      pen.ballTrap[key] = prev + dt;
+    } else if (prev > 0) {
+      const t = prev - dt * C.POSSESSION_LEAK;
+      if (t <= 0) delete pen.ballTrap[key];
+      else pen.ballTrap[key] = t;
+    }
+  }
+
   const controlled = new Set<number>();
+  for (const b of loose) {
+    if ((pen.ballTrap[`${r.id}:${b.id}`] ?? 0) >= C.MOMENTARY_S) controlled.add(b.id);
+  }
   for (const b of ground) {
     if (!held.has(b.id)) continue;
     const hold = pen.ballHold[`${r.id}:${b.id}`] ?? 0;
