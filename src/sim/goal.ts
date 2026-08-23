@@ -921,7 +921,25 @@ export function updateRails(
             carrier = rs.v;
           }
         }
-        if (bestGap < Infinity) st.v = approach(st.v, carrier, C.OVERFLOW_CARRY * dt);
+        if (bestGap < Infinity) {
+          st.v = approach(st.v, carrier, C.OVERFLOW_CARRY * dt);
+          /**
+           * ...AND IT CANNOT OUTRUN WHAT IT IS RIDING ON. A rider is rolling on the column,
+           * so the column's speed is the fastest it can be carried at — gravity may keep
+           * pulling, but past the carrier it would be rolling on artifacts moving backwards
+           * relative to it, which is a slide, not a ride. Without the cap, opening the gate
+           * under a full ramp launched the riders past the column they were sitting on:
+           * measured 59 in/s over a column doing 45. "Overflow balls are way too fast."
+           *
+           * Only while the column is MOVING, though. Over a stationary pile there is nothing
+           * being ridden and the rider clambers over the crests under its own net pull — that
+           * is how an overflow artifact gets out over a SHUT gate, which the rules require and
+           * a cap at the carrier's zero would forbid outright.
+           */
+          if (Math.abs(carrier) > C.RAIL_CONTACT_MOVING) {
+            st.v = Math.max(st.v, carrier - C.OVERFLOW_LEAD);
+          }
+        }
         st.v = Math.max(st.v, -C.RAIL_TERMINAL);
       } else if (st.overflow && b.z > C.RAMP_SURFACE_Z + 0.05) {
         /**

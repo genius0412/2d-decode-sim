@@ -1317,7 +1317,21 @@ export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
  * of the ramp lane's speed — 0.8 — because climbing over a pile costs it, not because it is
  * a different kind of thing.
  */
-export const OVERFLOW_ROLL_LOSS = 0.88 * RAIL_ACCEL; // in/s²: net ride pull is the rest
+/**
+ * ...AND THE NET IS THE NUMBER THAT MATTERS, so that is what is written down.
+ *
+ * This was a FRACTION of RAIL_ACCEL — 0.88 of it, "net ride pull is the rest" — which ties
+ * how fast a rider clambers over a pile to how steep the chute under the pile is. Those are
+ * not the same thing: the crests it climbs are artifact-sized whatever the ramp does. So
+ * steepening the chute for the drain cadence doubled the net pull with it and the riders took
+ * off — measured, a peak of 32 in/s against a shut gate and 57 with it open, on a lane whose
+ * whole character is meant to be a slow lurching ride ("overflow balls come down too quickly
+ * ... it would move kinda like in steps").
+ *
+ * The net pull is 6 in/s^2, as it was, and the loss is whatever the slope leaves over it.
+ */
+export const OVERFLOW_NET_PULL = 6; // in/s², what actually drives a rider down the pile
+export const OVERFLOW_ROLL_LOSS = RAIL_ACCEL - OVERFLOW_NET_PULL; // in/s²
 /**
  * HOW STRONGLY THE COLUMN UNDERNEATH CARRIES THE ARTIFACT RIDING ON IT, per second.
  *
@@ -1328,6 +1342,10 @@ export const OVERFLOW_ROLL_LOSS = 0.88 * RAIL_ACCEL; // in/s²: net ride pull is
  * hands the rider its momentum.
  */
 export const OVERFLOW_CARRY = 3.5; // 1/s toward the speed of the artifact beneath it
+/** how much faster than its carrier a rider may get, in/s. It is rolling ON the column, so a
+ * little lead is the crest it is coming down; a lot is a slide. Only applies while the column
+ * is actually moving — over a stationary pile the rider clambers under its own net pull. */
+export const OVERFLOW_LEAD = 6;
 
 /**
  * ...AND IT MUST STAY UNDER THE RAMP'S OWN PULL, or the scallop stops being a texture and
@@ -1348,7 +1366,9 @@ export const OVERFLOW_CARRY = 3.5; // 1/s toward the speed of the artifact benea
  * always accelerates down-ramp, hardest into a hollow and barely at all over a crest. Smoke
  * asserts it, because it is the difference between a lurch and a stall.
  */
-export const OVERFLOW_BUMP = 0.1 * RAIL_ACCEL; // in/s² per unit slope
+// ...and the LURCH is artifact geometry too, not the chute's: a crest is a crest. Held at
+// the value it had when the ramp pulled at 50, rather than scaling with the slope.
+export const OVERFLOW_BUMP = 5; // in/s² per unit slope
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s
 /**
