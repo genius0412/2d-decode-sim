@@ -1385,10 +1385,25 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
      */
     const armFall = Math.sqrt((2 * (1 - GATE_PASS_FRAC)) / GATE_GRAVITY);
     const railPitchTime = Math.sqrt((2 * RAIL_PITCH) / RAIL_ACCEL);
+    /**
+     * ...AND THAT RATIO IS NOW DELIBERATELY OVER ONE.
+     *
+     * The band above was 0.75-1.00 — marginal, so the yield varied with how the column
+     * happened to be packed. Two asks moved it, in the same direction, on purpose: "gate
+     * should stay open for longer" slowed the arm, and "balls come down at a too slow
+     * cadence and lose too much velocity" steepened the chute twice (RAIL_ACCEL 50 -> 65 ->
+     * 100). Both shorten the delivery against the fall, and past 1.0 the arm cannot shut
+     * between artifacts, so a tap carries the whole ramp. That is the behaviour asked for and
+     * it is recorded here rather than defended.
+     *
+     * The ceiling is what still matters: far enough past 1 and the arm is effectively never
+     * shut, which is a different mechanism (and a gate that no longer means anything). 1.6
+     * leaves the fall visibly shorter than two artifacts' worth of delivery.
+     */
     check(
-      "the arm's fall to the pass line is commensurate with the ramp's own pace",
-      armFall > railPitchTime * 0.75 && armFall < railPitchTime,
-      `fall ${armFall.toFixed(2)}s vs one pitch from rest ${railPitchTime.toFixed(2)}s (ratio ${(armFall / railPitchTime).toFixed(2)}, want 0.75-1.00)`,
+      "the arm's fall outlasts the ramp's pace, so a tap carries the ramp",
+      armFall > railPitchTime && armFall < railPitchTime * 1.6,
+      `fall ${armFall.toFixed(2)}s vs one pitch from rest ${railPitchTime.toFixed(2)}s (ratio ${(armFall / railPitchTime).toFixed(2)}; it was 0.75-1.00 when a tap was meant to be marginal)`,
     );
     /**
      * THE BENCHMARK, in the user's words: "on a gate tap, 5-9 balls must release."

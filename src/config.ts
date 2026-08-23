@@ -1146,7 +1146,7 @@ export const RAIL_S_MAX = 55; // rail length: SQUARE at the top (y = CLASSIFIER_
  * each with more runway than the one in front, so the gaps between arrivals SHORTEN as the
  * column drains and the ramp visibly speeds up as it empties.
  */
-export const RAIL_ACCEL = 65; // in/s^2 down-ramp
+export const RAIL_ACCEL = 100; // in/s^2 down-ramp
 /**
  * Terminal flow speed down the ramp — the speed at which the incline's pull (RAIL_ACCEL) is
  * balanced by rolling resistance.
@@ -1183,7 +1183,7 @@ export const RAIL_ACCEL = 65; // in/s^2 down-ramp
  * ones are untouched (they have no speed for it to take) and the tail settles near
  * RAIL_ACCEL / this, about 45 in/s, which is the number the ramp actually delivers.
  */
-export const RAIL_RATTLE_DRAG = 1.44; // 1/s — terminal ~RAIL_ACCEL/this
+export const RAIL_RATTLE_DRAG = 1.45; // 1/s — terminal ~RAIL_ACCEL/this
 export const RAIL_TERMINAL = 120; // in/s safety cap
 export const RAIL_PITCH = 5.1; // ball contact spacing on the stack
 export const GATE_STOP_S = 2; // lowest rest position against the closed gate
@@ -1673,7 +1673,21 @@ export const GATE_LINE_S = GATE_STOP_S - GATE_PADDLE_REACH;
  *  · d ≈ 0 is the balance point: the arm sits squarely on top at GATE_SEAT_FRAC, which is
  *    not passable, so it stays there until something works the lever or shoves it.
  */
-export const GATE_PADDLE_SHOVE = 105; // in/s² at the artifact's equator
+/**
+ * ...AND IT IS MEASURED AGAINST THE RAMP, because that is what it has to beat.
+ *
+ * A flat 105 was written against a ramp pulling at 50, and the invariant below
+ * (GATE_SHOVE_MIN × this > RAIL_ACCEL) held with room to spare. Steepening the chute for the
+ * drain cadence walked straight into it: at RAIL_ACCEL 100 the minimum shove is 90, the ramp
+ * pulls harder than the paddle can push, and an artifact wedged under the arm slides back
+ * under it instead of being squeezed out — the jam this constant exists to break.
+ *
+ * So it is a MULTIPLE of the ramp's pull. The paddle is the arm's weight bearing on a sphere;
+ * how decisive that is only means anything relative to what is pulling the sphere the other
+ * way, and tying the two together means the chute can be tuned without quietly re-opening a
+ * jam at the bottom of it.
+ */
+export const GATE_PADDLE_SHOVE = 2.4 * RAIL_ACCEL; // in/s² at the artifact's equator
 /**
  * THE APEX IS NOT A RESTING PLACE — the ramp is tilted, so "dead on top" is not dead on top.
  *
