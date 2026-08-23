@@ -1725,7 +1725,21 @@ export const GATE_GRAVITY =
  * the travel). Terminal-limited instead, so the time is very nearly proportional to how far
  * open it was — "how fast it closes is determined by the initial position of the gate".
  */
-export const GATE_CLOSE_MAX = 3.6; // 1/s: terminal swing speed as it falls closed
+/**
+ * ...AND IT IS SLOW, because a hinge is not frictionless and the paddle is not a point.
+ *
+ * 3.6 came from matching a free pendulum, which is the wrong model twice over: the arm
+ * carries a long paddle lying across the channel (its moment of inertia is the paddle's, not
+ * a bob's) and it swings on a real hinge with real friction. Both make the fall slower than
+ * gravity alone, and the drain is what pays for it being fast — "gate should stay open for
+ * longer in general (let out more balls)".
+ *
+ * At 2.0 the arm is passable for 0.48s after being released with nothing under it (0.30s
+ * before) and fully shut at 0.70s, and a tap on a packed column now drains all nine every
+ * time (worst 6, mean 8.8 -> worst 9, mean 9.0 across 30 taps). It still falls all the way
+ * shut, and what it comes to rest ON is unchanged, so a loose column still gives out.
+ */
+export const GATE_CLOSE_MAX = 2.0; // 1/s: terminal swing speed as it falls closed
 export const GATE_DISPLACE = 2; // in, real closed->open horizontal displacement (manual 9.8.3)
 /** the gate is a class-1 LEVER (manual Figure 9-15) hinged at the CLASSIFIER EDGE — where
  * the gate-zone tape starts (|x| = FIELD_HALF − CLASSIFIER_W = the classifier's field-side
