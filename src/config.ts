@@ -1131,7 +1131,7 @@ export const RAIL_S_MAX = 55; // rail length: SQUARE at the top (y = CLASSIFIER_
  * each with more runway than the one in front, so the gaps between arrivals SHORTEN as the
  * column drains and the ramp visibly speeds up as it empties.
  */
-export const RAIL_ACCEL = 50; // in/s^2 down-ramp
+export const RAIL_ACCEL = 65; // in/s^2 down-ramp
 /**
  * Terminal flow speed down the ramp — the speed at which the incline's pull (RAIL_ACCEL) is
  * balanced by rolling resistance.
@@ -1168,7 +1168,7 @@ export const RAIL_ACCEL = 50; // in/s^2 down-ramp
  * ones are untouched (they have no speed for it to take) and the tail settles near
  * RAIL_ACCEL / this, about 45 in/s, which is the number the ramp actually delivers.
  */
-export const RAIL_RATTLE_DRAG = 1.1; // 1/s — terminal ~RAIL_ACCEL/this
+export const RAIL_RATTLE_DRAG = 1.44; // 1/s — terminal ~RAIL_ACCEL/this
 export const RAIL_TERMINAL = 120; // in/s safety cap
 export const RAIL_PITCH = 5.1; // ball contact spacing on the stack
 export const GATE_STOP_S = 2; // lowest rest position against the closed gate
@@ -1725,8 +1725,15 @@ export const GATE_OPEN_RATE_MAX = 66; // 1/s cap (~fully open in one tick at a h
  * 0.15s 3 · 0.20s 5 · 0.25s 9. Loosen the column to +5in and a quick tap is worth 1 again,
  * which is the situational answer this is supposed to have.
  */
-export const GATE_GRAVITY =
-  ((1 - GATE_PASS_FRAC) * RAIL_ACCEL) / (0.74 * RAIL_PITCH); // 1/s^2 on gatePos — see above
+/**
+ * ...AND IT IS NOT THE RAMP'S SLOPE. This was derived from RAIL_ACCEL, which reads as tidy
+ * and is a coupling between two unrelated things: how fast a chute delivers artifacts, and
+ * how fast a hinged arm falls. Steepening the chute then quietly sped the arm up by the same
+ * factor and undid the "stays open longer" work in one edit. The number below is the value
+ * that derivation produced at the ramp it was written against (RAIL_ACCEL 50), kept as its
+ * own constant so the two can be tuned for their own reasons.
+ */
+export const GATE_GRAVITY = 7.42; // 1/s^2 on gatePos — see above
 /**
  * Terminal swing speed as the arm falls closed.
  *
