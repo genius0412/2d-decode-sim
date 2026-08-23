@@ -21,10 +21,26 @@ import { hyp } from '../../math';
  *
  * The alliance stays in the OUTLINE, which is where it has always been.
  */
+/**
+ * The chassis SILHOUETTE line, drawn on the inside of the footprint and drawn LAST.
+ *
+ * Inside-stroking moved the line a half-width inboard, so anything reaching the true edge —
+ * a sweeper bar, DECODE's gate-opener tabs — filled the sliver outside it and read as poking
+ * through. Drawn over them it is the boundary of the whole object, which is what an outline
+ * is for.
+ */
+export function drawChassisOutline(ctx: CanvasRenderingContext2D, r: RobotState, color: string): void {
+  ctx.strokeStyle = color;
+  strokeInside(
+    ctx,
+    () => roundRect(ctx, -r.spec.length / 2, -r.spec.width / 2, r.spec.length, r.spec.width, C.CHASSIS_CORNER),
+    C.CHASSIS_OUTLINE,
+  );
+}
+
 export function drawChassisBody(
   ctx: CanvasRenderingContext2D,
   r: RobotState,
-  color: string,
   fill: string,
   /** draw the contact shadow? CR turns it OFF while a robot is lifted onto a beam — it
    * already draws a shadow at the true footprint down on the mat, and two would read as
@@ -44,13 +60,11 @@ export function drawChassisBody(
     ctx.restore();
   }
 
-  // base plate — outlined on the INSIDE, so the sprite is exactly the collision box
+  // base plate. Its OUTLINE is not drawn here — see `drawChassisOutline`, which the caller
+  // runs after the mechanisms so the silhouette line sits on top of anything reaching the edge
   ctx.fillStyle = fill;
-  const plate = () => roundRect(ctx, -hl, -hw, L, W, C.CHASSIS_CORNER);
-  plate();
+  roundRect(ctx, -hl, -hw, L, W, C.CHASSIS_CORNER);
   ctx.fill();
-  ctx.strokeStyle = color;
-  strokeInside(ctx, plate, C.CHASSIS_OUTLINE);
 
   // the FRAME: an inset rail line, which is what a top-down extrusion perimeter actually
   // looks like. One thin stroke — enough to say "this is a built frame, not a tile".

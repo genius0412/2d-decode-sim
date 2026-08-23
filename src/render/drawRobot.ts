@@ -1,5 +1,6 @@
 import type { Artifact, RobotState } from '../types';
 import * as C from '../config';
+import { footprintExtents } from '../sim/field';
 import { turretWorldPos } from '../sim/robot';
 import { rot } from '../math';
 
@@ -26,13 +27,34 @@ export function drawRobot(
   ctx.translate(r.pos.x, r.pos.y);
   ctx.rotate(r.heading);
 
+  /**
+   * THE SPRITE CANNOT EXCEED THE COLLISION BOX. Anything drawn here is clipped to it.
+   *
+   * Insetting the chassis outline fixed the one edge that was obvious and left every other
+   * stroke on the boundary spilling half its width: the GATE OPENER tabs run out to the
+   * chassis edge and were stroked at 0.8 (0.4in past it), the rollers' front face IS the
+   * intake's reach and was stroked at 0.4 (0.2in past it). Reported as "the gate opener
+   * outline seems to be protruding out too. check everything else."
+   *
+   * Checking everything else once is worth less than making it impossible, so the body is
+   * drawn inside a clip at `footprintExtents` — the exact box `robotExtents` collides with.
+   * Every stroke on the boundary becomes an inside stroke automatically, including ones added
+   * later. Held artifacts and the turret are drawn AFTER it: an artifact halfway into the
+   * mouth really is half outside the frame, and the turret is sized against the chassis in
+   * the world frame.
+   */
+  const fx = footprintExtents(r.spec);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(-fx.rear, -fx.half, fx.rear + fx.front, fx.half * 2);
+  ctx.clip();
+
   // chassis
   ctx.fillStyle = fill;
   ctx.strokeStyle = color;
   const body = () => roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, C.CHASSIS_CORNER);
   body();
   ctx.fill();
-  strokeInside(ctx, body, C.CHASSIS_OUTLINE);
 
   drawWheels(ctx, r, color);
 
@@ -142,6 +164,20 @@ export function drawRobot(
   ctx.lineTo(hl - 5.4, -2.2);
   ctx.closePath();
   ctx.fill();
+
+  /**
+   * THE SILHOUETTE LINE GOES ON LAST, over everything that reaches the edge.
+   *
+   * It used to be stroked with the chassis, before the intake. Inside-stroking moved it a
+   * half-width INBOARD, so anything drawn out to the true edge — the gate-opener tabs at the
+   * ends of the roller beam are exactly that — filled the sliver outside it and read as
+   * poking through the outline: "the gate opener outline seems to be protruding out too".
+   * Drawn last it is the boundary of the whole object, which is what an outline is.
+   */
+  ctx.strokeStyle = color;
+  strokeInside(ctx, body, C.CHASSIS_OUTLINE);
+
+  ctx.restore(); // ...end of the footprint clip
 
   // held artifacts — the actual PHYSICAL balls (they slide within the intake),
   // drawn HERE in the robot's local frame so they sit BELOW the turret/shooter.

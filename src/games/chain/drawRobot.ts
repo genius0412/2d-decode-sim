@@ -1,7 +1,8 @@
 import type { Artifact, RobotState, Vec2, World } from '../../types';
 import * as C from '../../config';
 import { roundRect } from '../../render/drawRobot';
-import { drawChassisBody, drawWheels } from './parts';
+import { footprintExtents } from '../../sim/field';
+import { drawChassisBody, drawChassisOutline, drawWheels } from './parts';
 import {
   CHAIN_DEFAULT_SCORE_MODE,
   chainHopperCap,
@@ -175,11 +176,25 @@ export function drawChainRobot(
   ctx.translate(r.pos.x + ox, r.pos.y + oy);
   ctx.rotate(r.heading);
 
+  /**
+   * ...INSIDE THE COLLISION BOX. Every stroke on the boundary is an inside stroke, because
+   * the body is clipped to `footprintExtents` — see the same clip in DECODE's drawRobot.
+   *
+   * The CATALYST mechanism is deliberately outside it: it is drawn at its stowed size to say
+   * which way the claw points, and the prism it actuates into is not part of the chassis
+   * footprint, so clipping it would hide the indicator rather than correct anything.
+   */
+  const fx = footprintExtents(r.spec);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(-fx.rear, -fx.half, fx.rear + fx.front, fx.half * 2);
+  ctx.clip();
+
   // chassis — the SHARED body (bumpers, deck, structure), so a robot is the same object in
   // both games. Its own contact shadow is suppressed while the robot is lifted onto a beam:
   // the terrain shadow above is already drawn at the true footprint, and two would read as
   // two robots.
-  drawChassisBody(ctx, r, color, C.chassisFill(r.spec.chassisColor), lift <= 0.15);
+  drawChassisBody(ctx, r, C.chassisFill(r.spec.chassisColor), lift <= 0.15);
   drawWheels(ctx, r, color);
 
   drawChainIntake(ctx, r, intaking);
@@ -197,6 +212,10 @@ export function drawChainRobot(
     else drawCatapult(ctx, g.dist, g.span, loaded);
     ctx.restore();
   }
+
+  drawChassisOutline(ctx, r, color); // the silhouette line, over everything that reaches it
+
+  ctx.restore(); // ...end of the footprint clip
 
   drawCatalystMech(ctx, r, world);
 
