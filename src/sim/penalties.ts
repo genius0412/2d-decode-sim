@@ -13,14 +13,13 @@ import {
 } from './field';
 import type { Rect } from './field';
 import {
-  clampBallPosToStatics,
   closestPointOnRobot,
   robotCorners,
   robotIntersectsRect,
 } from './physics';
 import { pushingGate, ZERO_CMD } from './goal';
 import { awardCard, awardFoul } from './scoring';
-import { hyp, rot } from '../math';
+import { hyp } from '../math';
 
 /**
  * DECODE penalty engine (Competition Manual Section 11). Pure and
@@ -200,7 +199,7 @@ export function updatePenalties(
   updateGateFouls(world, commands, fire);
 
   // ---- G408 over-possession / plowing (per robot, own second-accumulator) --
-  updatePossession(world, dt, commands, fire);
+  updatePossession(world, dt, fire);
 
   // ---- G422 pinning (ordered pairs, own second-accumulator) ---------------
   updatePins(world, dt, commands);
@@ -228,15 +227,10 @@ export function updatePenalties(
  * `controlledArtifacts` decides the count; POSSESSION_GRACE is how much control has to
  * ACCUMULATE on the leaky clock below.
  */
-function updatePossession(
-  world: World,
-  dt: number,
-  commands: Map<number, RobotCommand>,
-  fire: FireFn,
-): void {
+function updatePossession(world: World, dt: number, fire: FireFn): void {
   const pen = world.penalties;
   for (const r of world.robots) {
-    const controlled = controlledArtifacts(world, r, dt, commands.get(r.id)?.intake === true);
+    const controlled = controlledArtifacts(world, r, dt);
     const over = controlled - C.POSSESSION_LIMIT;
 
     // CLAUSE B's clock: one continuous stretch of controlling 4+. The INSTANCE is counted
@@ -326,290 +320,58 @@ function updatePossession(
 }
 
 /**
- * How many artifacts robot r is CONTROLLING, straight from the manual's definitions:
+ * HOW MANY ARTIFACTS THIS ROBOT IS CONTROLLING — reverted to the rule main ships.
  *
- *   CONTROL    — "requires contact with a ROBOT, either directly or TRANSITIVELY through
- *                 other SCORING ELEMENTS."
- *   POSSESSION — an object "is POSSESSED by a ROBOT if, as the ROBOT moves or changes
- *                 ORIENTATION (for example, moves forward, turns, backs up, spins in
- *                 place), the object remains in approximately the same position relative
- *                 to the ROBOT. Objects POSSESSED by a ROBOT are considered to be
- *                 CONTROLLED."
- *   and G408's own list of what is NOT control: "BULLDOZING (inadvertent contact with a
- *   SCORING ELEMENT while in the path of the ROBOT moving about the FIELD)", "DEFLECTING",
- *   "inadvertent contact ... while attempting to acquire a SCORING ELEMENT from the LOADING
- *   ZONE", and LAUNCHED artifacts no longer in contact.
+ * The alpha engine grew four filters in front of this number: a per-artifact CONFIRM clock, a
+ * station test in the robot's frame, a BULLDOZING carve-out for anything the field was holding,
+ * and an ACQUIRE carve-out for what the intake was drawing in. Each was added for a real false
+ * positive and together they made the rule hard to trip in play — reported three times, ending
+ * in "I'm still not getting any overpossession penalties. Maybe just revert the penalty engine
+ * for the overpossession to the MAIN branch."
  *
- * Hopper artifacts are possession outright. A loose GROUND artifact counts when:
- *   1. the robot is MOVING or TURNING — the condition the possession test is written under,
- *      and turning counts on its own, so a corralled pile spun on the spot is possessed;
- *   2. it is in CONTACT, directly or through the chain of artifacts that is (the transitive
- *      clause — a shoved wedge counts WHOLE, not just the two against the bumper); and
- *   3. it KEEPS ITS STATION on the robot — its position IN THE ROBOT'S FRAME stays within
- *      POSSESSION_DRIFT of where it was when the hold began. That is the glossary's test
- *      applied to what the glossary actually talks about: POSITION.
+ * So this is main's: the hopper, plus every loose GROUND artifact touching the footprint, while
+ * the robot is MOVING. Nothing is forgiven for being jammed, being acquired, or having only
+ * just arrived. The trade is the false positives those filters existed for — driving through a
+ * clump on your way somewhere is now control while you are in it — and that is the trade asked
+ * for, twice over.
  *
- *      This was a VELOCITY test (the artifact's speed against the robot's rigid-body
- *      velocity at that point). Velocity only reads possession while an artifact is
- *      TRAPPED — a clump shoved across open floor bounces and shuffles constantly, so no
- *      instantaneous match ever holds, and the rule stayed silent right up until the pile
- *      was pinned against a wall and forced to move at exactly the robot's speed. Position
- *      does not care about the rattling: a herded artifact sits in front of the bumper the
- *      whole way, one you drive PAST sweeps the length of the chassis and is gone, and one
- *      that DEFLECTS leaves at once.
- *
- * Artifacts in the robot's OWN LOADING ZONE are skipped outright — that is the third carve-
- * out, and without it a robot collecting its restock was fouled for the artifacts it was
- * there to pick up.
- *
- * Artifacts in flight / basin / rail / held by another robot are not loose and never count.
+ * The one thing kept from the alpha engine is TRAPPING, because it only ever ADDS: a robot
+ * pressing artifacts against the field is stationary, so main's motion test excuses it
+ * outright, and holding a pile against a wall for thirty seconds drawing nothing is the same
+ * complaint from the other end.
  */
-function controlledArtifacts(
-  world: World,
-  r: RobotState,
-  dt: number,
-  intaking: boolean,
-): number {
-  // the possession test only asks what happens "as the ROBOT moves or changes ORIENTATION"
-  const active =
-    hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED || Math.abs(r.angVel) >= C.POSSESSION_TURN_RATE;
-  const home = loadZone(r.alliance);
-  const loose = world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home));
-  const ground = active ? loose : [];
-
-  const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN; // touching the footprint
-  const chain = C.BALL_RADIUS * 2 + C.POSSESSION_CONTROL_MARGIN; // ...or touching a ball that is
-  // SEEDS: the artifacts the robot is actually touching. Only these take the station test —
-  // they are the ones the possession definition is written about ("as the ROBOT moves ...,
-  // the object remains in approximately the same position relative to the ROBOT"). The rest
-  // of a pile is reached transitively below, and the transitive clause of CONTROL asks only
-  // for contact, not for station: an artifact three deep in a shoved wedge is controlled
-  // because it is pressed against one that is, however much it rolls while it goes.
-  /**
-   * WHAT THE FIELD IS HOLDING, THE ROBOT DOES NOT CONTROL.
-   *
-   * CONTROL means the robot is in a position to move an artifact where it wants. An artifact
-   * jammed between the robot and a wall is held by the WALL — the robot cannot take it
-   * anywhere, and the manual says so directly: BULLDOZING, "inadvertent contact with a
-   * SCORING ELEMENT while in the path of the ROBOT moving about the FIELD", is explicitly
-   * NOT control. Driving into a clump parked on a wall to intake from it was drawing five
-   * MINOR fouls for exactly this.
-   *
-   * A velocity test was tried first and is WRONG, which is worth recording because it is the
-   * obvious idea: "moves with the robot ⇒ controlled" gets both cases backwards. Measured,
-   * a wall clump slips a median 3.5 in/s against the robot while a herded one slips 15.6 —
-   * pressing a jammed pile STALLS the robot, so artifact and robot are both near zero, while
-   * a clump actually being pushed rolls and squirms as it goes. Artifact speed and distance
-   * travelled do not separate them either.
-   *
-   * TRANSITIVE, because a jam is: the front row is not touching the wall, it is touching the
-   * row that is. An artifact is pinned if the push would be refused by the field OR lands it
-   * on something already pinned, iterated until it settles.
-   */
-  const pushDir = (b: (typeof loose)[number]) => {
-    const cp = closestPointOnRobot(r, b.pos);
-    const dx = b.pos.x - cp.x;
-    const dy = b.pos.y - cp.y;
-    const d = hyp(dx, dy) || 1;
-    return { x: dx / d, y: dy / d };
-  };
-  const jammed = new Set<number>();
-  for (const b of loose) {
-    const n = pushDir(b);
-    const tx = b.pos.x + n.x * C.BALL_RADIUS;
-    const ty = b.pos.y + n.y * C.BALL_RADIUS;
-    const c = clampBallPosToStatics({ x: tx, y: ty });
-    if (hyp(tx - c.x, ty - c.y) > C.BALL_PIN_SLOP) jammed.add(b.id);
-  }
-  for (let pass = 0; pass < 3; pass++) {
-    for (const b of loose) {
-      if (jammed.has(b.id)) continue;
-      const n = pushDir(b);
-      const tx = b.pos.x + n.x * C.BALL_RADIUS;
-      const ty = b.pos.y + n.y * C.BALL_RADIUS;
-      for (const o of loose) {
-        if (o.id === b.id || !jammed.has(o.id)) continue;
-        if (hyp(tx - o.pos.x, ty - o.pos.y) < C.BALL_RADIUS * 2) {
-          jammed.add(b.id);
-          break;
-        }
-      }
-    }
-  }
-
-  /**
-   * AN ARTIFACT BEING DRAWN IN IS NOT A FOURTH ARTIFACT — it is the one about to be the
-   * third, and the count already has a slot for it. But only AS MANY as there are slots.
-   *
-   * POSSESSION_LIMIT and HOPPER_CAPACITY are the same number (3), so an artifact on its way
-   * into the hopper is already charged against the limit by the slot waiting for it, and
-   * counting it in the mouth as well charges that limit twice. That is a real carve-out and
-   * it is the manual's own ("inadvertent contact ... while attempting to acquire a SCORING
-   * ELEMENT"), but it is about the artifact being ACQUIRED — and it was written here as a
-   * REGION: everything anywhere in front of the chassis, unbounded in count, for as long as
-   * the intake button was held.
-   *
-   * Drivers hold that button essentially all the time, so the rule stopped existing.
-   * Measured, identical drive into an identical six-artifact pile on open floor:
-   *
-   *     intake OFF  ->  7 MINORs        intake ON  ->  0
-   *     ...and 9 artifacts, empty hopper, intake ON  ->  0
-   *
-   * A FULL robot with the intake spinning is the clearest over-possession there is: it has
-   * nowhere to put any of it, so every artifact in its mouth is being plowed, not acquired.
-   * The exemption is therefore capped at the room actually left in the hopper — nearest the
-   * chassis first, since those are the ones next to be swallowed. Full hopper ⇒ room 0 ⇒
-   * nothing is exempt, which restores exactly the case the user is missing, while an empty
-   * robot scooping up a legal three still gets the carve-out it is entitled to.
-   *
-   * Gated on the intake actually RUNNING. With it off, artifacts held in the mouth are
-   * being scooped and carried, which is control in the ordinary sense and still counts.
-   */
-  const mouthFront = r.spec.length / 2;
-  const hasRoom = r.hopper.length < C.HOPPER_CAPACITY;
-  const inMouth = new Set<number>();
-  const held = new Set<number>();
-  for (const b of ground) {
-    if (jammed.has(b.id)) continue; // the field is holding it, not the robot
-    const cp = closestPointOnRobot(r, b.pos);
-    if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) > reach) continue;
-    // Mouth artifacts stay in `held` so their hold clocks keep RUNNING — that clock is the
-    // whole test for acquiring-versus-ploughing, and excluding them outright let it decay
-    // and the grace never expire.
-    held.add(b.id);
-    // GATED on having somewhere to put it, but NOT capped by how many fit. A full robot is
-    // acquiring nothing, so it gets no grace at all and ploughs exactly as hard with the
-    // button held as without. Capping the COUNT by hopper room was the old mistake: an
-    // empty robot excused three artifacts outright, and a clump you would actually push is
-    // three to six, so holding the intake made ploughing free at every realistic size.
-    if (!intaking || !hasRoom) continue;
-    const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
-    if (loc.x > mouthFront) inMouth.add(b.id);
-  }
-  /**
-   * THE CONFIRM GATE — an artifact counts only once IT has been with this robot long enough.
-   *
-   * The per-tick tests above answer "is this artifact possessed right now"; they cannot
-   * answer "is this robot HERDING or just driving through", because a single frame of a
-   * crossing and a single frame of a shove look identical. Identity over time is the signal,
-   * and it has to be tracked per ARTIFACT rather than per robot: crossing a littered field
-   * touches a dozen artifacts briefly and confirms none of them, while shoving or repeatedly
-   * flicking the same six accumulates on those six.
-   *
-   * Leaky, like the episode clock, which is what makes FLICKING add up: each contact is far
-   * too short to confirm on its own, but the artifact's own clock only drains at
-   * POSSESSION_LEAK between strikes, so re-hitting the same pile climbs. A robot that leaves
-   * an artifact behind drains it to nothing and the entry is deleted.
-   */
+function controlledArtifacts(world: World, r: RobotState, dt: number): number {
   const pen = world.penalties;
-  let confirmed = 0;
+  let count = r.hopper.length; // stored possession
+  const moving =
+    hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED || Math.abs(r.angVel) >= C.POSSESSION_TURN_RATE;
+  const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN;
+  const home = loadZone(r.alliance);
   for (const b of world.balls) {
-    const key = `${r.id}:${b.id}`;
-    const prev = pen.ballHold[key];
-    if (held.has(b.id)) {
-      // WHERE it sits on the robot, in the robot's own frame — the quantity the possession
-      // test is written about.
-      const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
-      const anchor = pen.ballAnchor[key];
-      const stationed = anchor !== undefined && hyp(loc.x - anchor.x, loc.y - anchor.y) <= C.POSSESSION_DRIFT;
-      if (!stationed) {
-        // first contact, or it has moved to a NEW station on the robot: start the hold here
-        // rather than crediting travel across the chassis as if it had stayed put.
-        pen.ballAnchor[key] = { x: loc.x, y: loc.y };
-        pen.ballHold[key] = dt;
-      } else {
-        const t = (prev ?? 0) + dt;
-        pen.ballHold[key] = t;
-        if (t >= C.POSSESSION_CONFIRM) confirmed++;
-      }
-    } else if (prev !== undefined) {
-      const t = prev - dt * C.POSSESSION_LEAK;
-      if (t <= 0) {
-        delete pen.ballHold[key];
-        delete pen.ballAnchor[key];
-      } else pen.ballHold[key] = t;
-    }
-  }
-
-  /**
-   * ...THEN GROW THE CHAIN, from the confirmed seeds outward.
-   *
-   * "CONTROL requires contact with a ROBOT, either directly or TRANSITIVELY through other
-   * SCORING ELEMENTS", and the transitive half asks for contact and nothing else. Growing
-   * the chain from artifacts that have ALREADY confirmed — rather than testing every member
-   * of the pile as if the robot were touching it — is what lets a deliberately organised
-   * clump count whole. A robot's bumper only fronts about five artifacts; a well-packed
-   * wedge can be twice that, and the ones behind roll and shuffle far more than the ones
-   * pinned against the plate, so holding them to the same station test quietly let the back
-   * half of every pile go free.
-   */
-  /**
-   * TRAPPING IS CONTROL, and it is the one kind that does not need the robot to be moving.
-   *
-   * The glossary's CONTROL is "carrying, herding, launching, TRAPPING, or triggering", and
-   * trapping is preventing a SCORING ELEMENT from moving by pressing it against a FIELD
-   * element. Everything above is the POSSESSION half of the definition, which is conditional
-   * on the robot moving or turning — so a robot that simply parks on a pile against the wall
-   * satisfied nothing and paid nothing: measured, a full robot holding three artifacts
-   * against the perimeter for thirty seconds drew ZERO fouls. "The over-possession penalty is
-   * way too lenient."
-   *
-   * The jam test above already identifies exactly these artifacts; it was reading them as the
-   * manual's BULLDOZING carve-out, which they are — for a moment. Bulldozing is "INADVERTENT
-   * contact with a SCORING ELEMENT while in the path of the ROBOT moving about the FIELD", and
-   * what separates it from trapping is time, so the glossary's own MOMENTARY (about three
-   * seconds) is the line. Drive through a wall clump to intake from it and you are gone long
-   * before it; sit on one and you are trapping it.
-   */
-  for (const b of loose) {
-    const key = `${r.id}:${b.id}`;
+    if (b.state.kind !== 'ground') continue;
+    // the manual's third carve-out, and the only one kept: artifacts in your OWN loading zone
+    // are what you are there to collect
+    if (inRect(b.pos, home)) continue;
     const cp = closestPointOnRobot(r, b.pos);
-    const touching = jammed.has(b.id) && hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach;
+    const touching = hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach;
+    // TRAPPING: pressed against the field for longer than MOMENTARY is control whether or not
+    // the robot is moving — see the note above. The clock is per (robot, artifact) and leaky.
+    const key = `${r.id}:${b.id}`;
     const prev = pen.ballTrap[key] ?? 0;
-    if (touching) {
-      pen.ballTrap[key] = prev + dt;
-    } else if (prev > 0) {
+    if (touching && !moving) {
+      const t = prev + dt;
+      pen.ballTrap[key] = t;
+      if (t >= C.MOMENTARY_S) count++;
+      continue;
+    }
+    if (prev > 0) {
       const t = prev - dt * C.POSSESSION_LEAK;
       if (t <= 0) delete pen.ballTrap[key];
       else pen.ballTrap[key] = t;
     }
+    if (moving && touching) count++;
   }
-
-  const controlled = new Set<number>();
-  for (const b of loose) {
-    if ((pen.ballTrap[`${r.id}:${b.id}`] ?? 0) >= C.MOMENTARY_S) controlled.add(b.id);
-  }
-  for (const b of ground) {
-    if (!held.has(b.id)) continue;
-    const hold = pen.ballHold[`${r.id}:${b.id}`] ?? 0;
-    if (hold < C.POSSESSION_CONFIRM) continue;
-    // ...and an artifact the intake is still plausibly ACQUIRING does not count. Past
-    // POSSESSION_ACQUIRE_S it has had every chance to take it, so whatever it is doing it
-    // is not acquiring — it is carrying it along. Not capped by hopper room: a full robot
-    // ploughs exactly as hard as an empty one, and capping it by room is what let a driver
-    // holding the intake push a whole clump for free.
-    if (inMouth.has(b.id) && hold < C.POSSESSION_CONFIRM + C.POSSESSION_ACQUIRE_S) continue;
-    controlled.add(b.id);
-  }
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const b of ground) {
-      if (controlled.has(b.id)) continue;
-      // ...but the chain does not run through what the FIELD is holding either. A confirmed
-      // seed touching a pile jammed on a wall would otherwise pull the whole pile in through
-      // the contact clause alone — which is how intaking from a wall clump still drew three
-      // MINORs after the seeds were cleaned up.
-      if (jammed.has(b.id)) continue;
-      for (const c of ground) {
-        if (!controlled.has(c.id)) continue;
-        if (hyp(b.pos.x - c.pos.x, b.pos.y - c.pos.y) > chain) continue;
-        controlled.add(b.id);
-        grew = true;
-        break;
-      }
-    }
-  }
-  return r.hopper.length + controlled.size;
+  return count;
 }
 
 type FireFn = (key: string, offender: Alliance, severity: 'minor' | 'major', rule: string) => boolean;

@@ -6593,10 +6593,20 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   const before = w.match.fouls.blue.minor;
   run(w, cmd({ driveY: 1, intake: true }), 2.5);
   const acquiring = w.match.fouls.blue.minor - before;
+  /**
+   * ...AND IT IS OVER-POSSESSION NOW, which is the trade that was asked for.
+   *
+   * This case was the reason for the BULLDOZING carve-out: the field holds a jammed pile, so
+   * the robot cannot take it anywhere, so it is not control. The carve-out is gone with the
+   * rest of the alpha filters — "I'm still not getting any overpossession penalties, maybe
+   * just revert the penalty engine to the MAIN branch" — and main's rule asks one question:
+   * is it touching you while you are moving. Driving into a clump therefore costs, and the
+   * way not to pay is to stop driving into it once you are full.
+   */
   check(
-    'driving into a wall clump to INTAKE from it is not over-possession (no G408)',
-    acquiring === 0,
-    `minor fouls=${acquiring}, hopper=${r.hopper.length}`,
+    'driving into a wall clump to intake from it IS over-possession now',
+    acquiring > 0,
+    `minor fouls=${acquiring} while acquiring, hopper=${r.hopper.length} (it was 0 while the jam carve-out stood)`,
   );
   check('...and it actually intaked (the test is not vacuous)', r.hopper.length > 0, `hopper=${r.hopper.length}`);
   /**
@@ -6682,9 +6692,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     'acquiring is not controlling',
   );
   check(
-    '...nor a clump jammed against a wall',
-    clump(6, push, 8, FIELD_HALF - BALL_RADIUS - 5, FIELD_HALF - 30) === 0,
-    'the field is holding it, not the robot',
+    '...and so does a clump jammed against a wall',
+    clump(6, push, 8, FIELD_HALF - BALL_RADIUS - 5, FIELD_HALF - 30) > 0,
+    'the field holding it is no longer an excuse — see the note on the reverted rule',
   );
 }
 
@@ -6752,9 +6762,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   w.balls.push({ id: 9101, color: 'purple', state: { kind: 'ground' }, pos: { x: 12, y: 0 }, vel: { x: 0, y: 60 }, z: 0, vz: 0 });
   runCmds(w, new Map([[0, cmd({ driveY: 1 })]]), POSSESSION_CONFIRM + POSSESSION_GRACE + 0.5);
   check(
-    'a ball squirting sideways off the bumper is not plowed (no G408)',
-    w.match.fouls.blue.minor === 0,
-    `blueMinor=${w.match.fouls.blue.minor}`,
+    'a ball squirting sideways off the bumper is control while it touches',
+    w.match.fouls.blue.minor > 0,
+    `blueMinor=${w.match.fouls.blue.minor} (0 while DEFLECTING was carved out; main's rule asks only whether it is touching a moving robot)`,
   );
 
   // ...and one lying AT REST that the robot drives past is BULLDOZING, which G408 names as
@@ -6830,9 +6840,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     updatePenalties(w4, 1 / 60, new Map());
   }
   check(
-    'a shoved WEDGE counts transitively and costs a MINOR per artifact over the limit',
-    w4.match.fouls.blue.minor === 4 && w4.match.scores.red.foulPoints === 20,
-    `blueMinor=${w4.match.fouls.blue.minor} redFoulPts=${w4.match.scores.red.foulPoints}`,
+    'a shoved wedge costs a MINOR per artifact TOUCHING, over the limit',
+    w4.match.fouls.blue.minor === 3 && w4.match.scores.red.foulPoints === 15,
+    `blueMinor=${w4.match.fouls.blue.minor} redFoulPts=${w4.match.scores.red.foulPoints} (4 and 20 while the chain counted artifacts behind the front row too — main counts contact, so the back of a pile is not billed)`,
   );
 
   // YELLOW CARD, clause A: "simultaneous CONTROL of 5 or more ARTIFACTS" is excessive on
@@ -6890,8 +6900,8 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     run1(2, 2);
     check(
       'growing the pile inside a held violation tops the tariff up (not billed once)',
-      atFour === 1 && w.match.fouls.blue.minor === 4,
-      `atFour=${atFour} final=${w.match.fouls.blue.minor}`,
+      atFour >= 1 && w.match.fouls.blue.minor > atFour,
+      `${atFour} MINOR at four artifacts -> ${w.match.fouls.blue.minor} once the pile grew`,
     );
   }
 
@@ -6930,7 +6940,7 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     const spun = hoard(4, (r) => { r.angVel = 2.5; });
     check(
       'a pile corralled and SPUN IN PLACE is possessed (G408 fires)',
-      spun.match.fouls.blue.minor === 4,
+      spun.match.fouls.blue.minor > 0,
       `blueMinor=${spun.match.fouls.blue.minor}`,
     );
 
@@ -6938,7 +6948,7 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     const crept = hoard(4, (r) => { r.vel = { x: 5, y: 0 }; });
     check(
       'a pile CREPT downfield at 5 in/s is possessed (no slow-herd window)',
-      crept.match.fouls.blue.minor === 4,
+      crept.match.fouls.blue.minor > 0,
       `blueMinor=${crept.match.fouls.blue.minor}`,
     );
 
@@ -6946,10 +6956,13 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     // moving or changing orientation. (Sitting inert on a pile is G405/G423 territory —
     // impeding access — not G408, and neither is modelled.)
     const inert = hoard(4, () => {});
+    // ...and a motionless robot is outside the POSSESSION half of the definition, but not
+    // outside CONTROL: holding artifacts against the field past MOMENTARY is TRAPPING, which
+    // is the one piece of the alpha engine kept through the revert, because it only ever adds.
     check(
-      'a completely motionless robot is outside the possession test (no G408)',
-      inert.match.fouls.blue.minor === 0,
-      `blueMinor=${inert.match.fouls.blue.minor}`,
+      'a motionless robot holding a pile is TRAPPING, and that is control',
+      inert.match.fouls.blue.minor > 0,
+      `blueMinor=${inert.match.fouls.blue.minor} after the MOMENTARY hold (0 while only the possession half was tested)`,
     );
   }
 
@@ -7022,11 +7035,19 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       });
     }
     runCmds(w, new Map([[0, cmd({ driveY: 1 })]]), 8);
+    /**
+     * ...AND CROSSING A LITTERED FIELD COSTS NOW TOO. The per-artifact CONFIRM clock was what
+     * separated brushing past a dozen artifacts from herding six, and it went with the rest of
+     * the alpha filters when the rule was reverted to main's — which asks only whether an
+     * artifact is touching a moving robot. Brushing three at once while full is therefore a
+     * violation, and it is recorded rather than argued with: it is the same trade as the wall
+     * clump above, and the price of a rule that actually fires in play.
+     */
     check(
-      'crossing a littered field is BULLDOZING, not control (no G408)',
-      w.match.fouls.blue.minor === 0 && !w.match.cards?.blue.yellow,
-      `blueMinor=${w.match.fouls.blue.minor} cards=${JSON.stringify(w.match.cards?.blue)}`,
-    );
+      'crossing a littered field with a full hopper costs, with no confirm window to hide in',
+      w.match.fouls.blue.minor > 0,
+      `blueMinor=${w.match.fouls.blue.minor} cards=${JSON.stringify(w.match.cards?.blue ?? {})} (0 while each artifact had to confirm for itself)`,
+);
   }
 
   check(
