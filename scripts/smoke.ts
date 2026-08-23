@@ -15,6 +15,7 @@ import {
 import type { LobbyPlayer } from '../src/net/protocol';
 import { generateRoomCode, isValidRoomCode, normalizeRoomCode } from '../src/net/roomCode';
 import { step } from '../src/sim/world';
+import { Keyboard } from '../src/input/keyboard';
 import { updatePenalties } from '../src/sim/penalties';
 import { aimSolution, robotInLaunchZone } from '../src/sim/robot';
 import { updateHumanPlayers } from '../src/sim/humanPlayer';
@@ -2504,6 +2505,83 @@ function queueTenth(w: World): void {
     '...and nothing slides off the end of the rail',
     worst.run <= RAIL_PITCH + 0.5,
     `furthest past the exit lip: ${worst.run.toFixed(1)}in against a ${RAIL_PITCH.toFixed(1)}in leak (was 290in — off the map, through everything)`,
+  );
+}
+
+// ---- a focused text field owns the keyboard ---------------------------------------
+/**
+ * "I can't type properly in the report a player menu because some keys are counted as game
+ * control."
+ *
+ * The game listens on `window`, so every keystroke on the page reached the robot — including
+ * the ones going into the post-match report's "what happened" box. Letters bound to actions
+ * fired those actions while you typed, and SPACE, which is permanently in `preventKeys` so
+ * the page cannot scroll under a driver, had its default suppressed and so did not type a
+ * space at all.
+ *
+ * `Keyboard` is DOM-facing, so this drives it with synthetic events rather than importing a
+ * scene: a fake target for each case, the real handler, and the question of whether the key
+ * reached the robot.
+ */
+{
+  const kb = new Keyboard();
+  const fake = (tag: string, extra: Record<string, unknown> = {}) => ({
+    tagName: tag,
+    isContentEditable: false,
+    ...extra,
+  });
+  // the private handler is reached the way the browser reaches it: through attach()
+  const events: { target: unknown; key: string }[] = [];
+  const listeners: Record<string, ((e: unknown) => void)[]> = {};
+  const realWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    addEventListener: (t: string, fn: (e: unknown) => void) => {
+      (listeners[t] ??= []).push(fn);
+    },
+    removeEventListener: () => {},
+  };
+  kb.attach();
+  (globalThis as { window?: unknown }).window = realWindow;
+  const send = (type: string, key: string, target: unknown, prevented: { hit: boolean }) => {
+    for (const fn of listeners[type] ?? []) {
+      fn({ key, target, repeat: false, preventDefault: () => { prevented.hit = true; } });
+    }
+  };
+  const canvas = fake('CANVAS');
+  let p = { hit: false };
+  send('keydown', 'w', canvas, p);
+  check(
+    'a keystroke on the FIELD still drives the robot',
+    kb.held('w'),
+    'w on the canvas is held',
+  );
+  send('keyup', 'w', canvas, p);
+  for (const [what, target] of [
+    ['a textarea', fake('TEXTAREA')],
+    ['a text input', fake('INPUT', { type: 'text' })],
+    ['a contenteditable', fake('DIV', { isContentEditable: true })],
+  ] as [string, unknown][]) {
+    p = { hit: false };
+    send('keydown', 'w', target, p);
+    send('keydown', ' ', target, p);
+    check(
+      `...and one typed into ${what} does not, nor is its default suppressed`,
+      !kb.held('w') && !kb.held(' ') && !kb.justPressed(' ') && !p.hit,
+      `held(w)=${kb.held('w')} held(space)=${kb.held(' ')} preventDefault=${p.hit}`,
+    );
+  }
+  // a BUTTON is not typing — a driver tabbing onto a HUD control can still drive
+  p = { hit: false };
+  send('keydown', 'w', fake('BUTTON'), p);
+  check('...but a BUTTON is not a text field, so the robot still answers', kb.held('w'), 'w held');
+  send('keyup', 'w', fake('BUTTON'), p);
+  // clicking into a field mid-drive releases what was held
+  send('keydown', 'w', canvas, p);
+  for (const fn of listeners.focusin ?? []) fn({ target: fake('TEXTAREA') });
+  check(
+    '...and focusing one mid-drive lets go of the keys, rather than pinning the robot',
+    !kb.held('w'),
+    `held(w)=${kb.held('w')}`,
   );
 }
 
