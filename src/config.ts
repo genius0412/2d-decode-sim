@@ -820,6 +820,18 @@ export const INTAKE_CATCH_LENIENCE = 1.2; // in of the radius, at the roller fac
  * it landed and nothing is invented. Small: it should look like the artifact easing off a
  * moving roof, not being flicked.
  */
+/**
+ * CHASSIS SPRITE: square corners, thin outline.
+ *
+ * The corners were rounded by 1.6in, which is a sixth of a chassis and reads as a pebble
+ * rather than as the welded box an FTC frame is — and the collision box has square corners,
+ * so the drawing was disagreeing with the shape it stands for. The outline is thinner for the
+ * same reason: it is drawn INSIDE the footprint (see `strokeInside`), so every bit of width
+ * it takes is width taken off the robot's own body.
+ */
+export const CHASSIS_CORNER = 0; // in, corner radius of the drawn chassis
+export const CHASSIS_OUTLINE = 0.5; // in, its outline width — half what it was
+
 export const ROBOT_TOP_SHED = 6; // in/s outward while it rides the top
 export const INTAKE_CAPTURE_BAND = 0.5;
 /** how fast a HELD ball slides between storage slots (in/s), in the robot frame —

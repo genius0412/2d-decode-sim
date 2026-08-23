@@ -29,10 +29,10 @@ export function drawRobot(
   // chassis
   ctx.fillStyle = fill;
   ctx.strokeStyle = color;
-  const body = () => roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, 1.6);
+  const body = () => roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, C.CHASSIS_CORNER);
   body();
   ctx.fill();
-  strokeInside(ctx, body, 1);
+  strokeInside(ctx, body, C.CHASSIS_OUTLINE);
 
   drawWheels(ctx, r, color);
 
@@ -124,7 +124,7 @@ export function drawRobot(
       };
       wedge();
       ctx.fill();
-      strokeInside(ctx, wedge, 1);
+      strokeInside(ctx, wedge, C.CHASSIS_OUTLINE);
     }
     drawRoller();
   } else {

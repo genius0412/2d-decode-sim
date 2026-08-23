@@ -449,20 +449,18 @@ export function ChainRobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?
         y={-len / 2}
         width={w}
         height={len}
-        rx={1.8}
         fill="var(--ds-line)"
         stroke={stroke}
-        strokeWidth={0.5}
+        strokeWidth={0.35}
       />
       <rect
         x={-w / 2 + bumpW}
         y={-len / 2 + bumpW}
         width={w - bumpW * 2}
         height={len - bumpW * 2}
-        rx={1}
         fill="var(--ds-panel)"
         stroke={stroke}
-        strokeWidth={0.32}
+        strokeWidth={0.24}
       />
       {/* control hub — the box every FTC robot has. Pushed WELL back (0.62 of the deck,
           matching drawChassisBody): rear-of-centre is exactly where both games park a turret,

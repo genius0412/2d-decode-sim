@@ -39,18 +39,18 @@ export function drawChassisBody(
   if (shadow) {
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.30)';
-    roundRect(ctx, -hl + 0.6, -hw + 0.9, L, W, 1.6);
+    roundRect(ctx, -hl + 0.6, -hw + 0.9, L, W, C.CHASSIS_CORNER);
     ctx.fill();
     ctx.restore();
   }
 
   // base plate — outlined on the INSIDE, so the sprite is exactly the collision box
   ctx.fillStyle = fill;
-  const plate = () => roundRect(ctx, -hl, -hw, L, W, 1.6);
+  const plate = () => roundRect(ctx, -hl, -hw, L, W, C.CHASSIS_CORNER);
   plate();
   ctx.fill();
   ctx.strokeStyle = color;
-  strokeInside(ctx, plate, 1);
+  strokeInside(ctx, plate, C.CHASSIS_OUTLINE);
 
   // the FRAME: an inset rail line, which is what a top-down extrusion perimeter actually
   // looks like. One thin stroke — enough to say "this is a built frame, not a tile".

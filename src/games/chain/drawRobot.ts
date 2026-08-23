@@ -166,7 +166,7 @@ export function drawChainRobot(
     ctx.translate(r.pos.x, r.pos.y);
     ctx.rotate(r.heading);
     ctx.fillStyle = `rgba(0,0,0,${(0.3 * Math.min(1, ride.lift * 1.3)).toFixed(3)})`;
-    roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, 1.6);
+    roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, C.CHASSIS_CORNER);
     ctx.fill();
     ctx.restore();
   }

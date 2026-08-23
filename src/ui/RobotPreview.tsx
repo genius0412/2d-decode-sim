@@ -245,10 +245,9 @@ export function RobotPreview({
         y={-len / 2}
         width={w}
         height={len}
-        rx={1.4}
         fill="var(--ds-panel)"
         stroke={stroke}
-        strokeWidth={0.5}
+        strokeWidth={0.35}
       />
 
       {/* wheels ON TOP of the chassis (like the in-game drawRobot) — per
