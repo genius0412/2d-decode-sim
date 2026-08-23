@@ -1090,7 +1090,7 @@ export const OVERFLOW_LAND_LOSS = 11; // 1/s while dropping off the end of the c
 export const BASIN_FLOOR_Z = 14; // funnel floor height inside the goal
 export const BASIN_RESTITUTION = 0.4; // vertical bounce off the funnel floor
 export const BASIN_WALL_RESTITUTION = 0.55; // lively caroms off the goal walls
-export const BASIN_FUNNEL_ACCEL = 1150; // in/s^2 pull toward the classifier entrance (drains the basin briskly so balls don't clog)
+export const BASIN_FUNNEL_ACCEL = 2500; // in/s^2 pull toward the classifier entrance (drains the basin briskly so balls don't clog)
 /** the funnel only really grips slow balls — fast ones carom around first */
 export const BASIN_FUNNEL_GRIP_SPEED = 360; // in/s (higher ⇒ funnels sooner, less caroming)
 export const BASIN_DAMPING = 1.1; // 1/s horizontal velocity damping (settles onto the funnel faster)
@@ -1184,7 +1184,23 @@ export const RAIL_ENTRY_BLOCK_S = 50;
  * can then be faster than something released at the very top, which is the property that
  * makes the flow legible.
  */
-export const RAIL_ENTRY_V = 8; // in/s, the minimum an artifact boards the ramp at
+/**
+ * The speed an artifact boards the ramp at — and it is the ramp's own DELIVERY speed, not a
+ * crawl.
+ *
+ * It was 8 in/s, which set the whole goal's throughput: the next artifact cannot board until
+ * this one is a PITCH clear of the entrance, so the hand-off rate is boarding speed over
+ * pitch, and 8 over 5.1in is two a second. Everything else about the basin was already fast
+ * enough — raising the funnel pull, widening the catch and moving the block all bought
+ * fractions — because the entrance itself was the bottleneck. "Basin frequency needs to be
+ * like 5 times faster."
+ *
+ * Derived rather than picked: RAIL_ACCEL / RAIL_RATTLE_DRAG is the terminal the ramp converges
+ * on, so an artifact entering at it is moving exactly as fast as the ramp's own fastest and
+ * the invariant that nothing on the ramp outruns the ramp is untouched. Measured 2.04 -> 5.24
+ * hand-offs a second; the ceiling for a 5.1in artifact at that speed is 8.8.
+ */
+export const RAIL_ENTRY_V = RAIL_ACCEL / RAIL_RATTLE_DRAG; // in/s ~= 45
 export const RAIL_EXIT_S = -4; // past the gate: ball drops out to the floor
 /**
  * An artifact on the ramp is drawn RAMP_SURFACE_Z up in the air, which is true while it is on

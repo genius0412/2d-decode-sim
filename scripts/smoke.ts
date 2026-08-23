@@ -2130,6 +2130,61 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- the basin hands off at the ramp's pace, not at a crawl ------------------------
+/**
+ * "Basin frequency needs to be like 5 times faster."
+ *
+ * The entrance was the bottleneck and nothing else was: the next artifact cannot board until
+ * the last is a PITCH clear of the top, so the hand-off rate is boarding speed over pitch —
+ * and boarding was floored at 8 in/s, which is two a second however hard the funnel pulled.
+ * Raising the funnel acceleration bought 3.4/s, widening the catch radius bought nothing at
+ * all, and moving the block up bought 0.2. The boarding speed is the whole of it.
+ *
+ * It is now the ramp's own delivery speed (RAIL_ACCEL / RAIL_RATTLE_DRAG), which keeps the
+ * invariant that nothing on the ramp outruns the ramp — an artifact entering at the terminal
+ * the ramp converges on is exactly as fast as the ramp's fastest.
+ */
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  w.match.phase = 'teleop';
+  const entry = basinFunnelTarget('blue');
+  const ids: number[] = [];
+  let k = 0;
+  for (const b of w.balls) {
+    if (k < 12) {
+      b.state = { kind: 'basin', goal: 'blue' };
+      b.pos = { x: entry.x - 6 + (k % 4) * 5.2, y: entry.y + 6 + Math.floor(k / 4) * 5.2 };
+      b.vel = { x: 0, y: 0 };
+      b.z = BASIN_FLOOR_Z;
+      b.vz = 0;
+      ids.push(b.id);
+    } else b.state = { kind: 'held', robot: 99 };
+    k++;
+  }
+  const boarded: number[] = [];
+  const seen = new Set<number>();
+  for (let i = 0; i < Math.round(15 / SIM_DT); i++) {
+    w.goals.blue.gatePos = 1;
+    w.goals.blue.gateOpen = true;
+    w.goals.blue.gateLatch = 1;
+    step(w, SIM_DT, new Map());
+    for (const b of w.balls) {
+      if (ids.includes(b.id) && b.state.kind === 'rail' && !seen.has(b.id)) {
+        seen.add(b.id);
+        boarded.push(i * SIM_DT);
+      }
+    }
+  }
+  const gaps = boarded.slice(1).map((t, j) => t - boarded[j]);
+  const rate = gaps.length / gaps.reduce((a, b) => a + b, 0);
+  check(
+    "a loaded basin feeds the classifier at the ramp's pace, not at a crawl",
+    boarded.length === 12 && rate > 4.5,
+    `${rate.toFixed(2)} hand-offs/s (was 2.04; the ceiling for a ${RAIL_PITCH}in artifact at the ramp's ${(RAIL_ACCEL / RAIL_RATTLE_DRAG).toFixed(0)}in/s delivery speed is ${((RAIL_ACCEL / RAIL_RATTLE_DRAG) / RAIL_PITCH).toFixed(1)})`,
+  );
+}
+
 // ---- the ramp has a DELIVERY SPEED, it does not accelerate unopposed ---------------
 // "The balls get supercharged and dash down if I gate intake." Nothing was taking anything back
 // once the pile outside stopped throttling the discharge, so the last artifacts off a full

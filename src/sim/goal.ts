@@ -399,8 +399,25 @@ export function updateBasins(world: World, dt: number): void {
         // slope, and an artifact that dived straight at the entrance used to carry all of it
         // onto the ramp — boarding at 52 in/s and peaking at 75, past the 54 the ramp itself
         // can produce over its whole length. See RAIL_ENTRY_V.
+        /**
+         * ...AND THE CEILING IS THE RAMP'S OWN DELIVERY SPEED, not free-fall from where it
+         * boarded.
+         *
+         * At the very top of the channel the free-fall term is ~0, so an artifact arriving
+         * from the basin — funnelled at 1150 in/s^2 and moving fast when it gets there — was
+         * clamped to RAIL_ENTRY_V, 8 in/s. That is what set the whole goal's throughput: the
+         * next artifact cannot board until this one is a PITCH clear, so the hand-off rate is
+         * entry speed over pitch, and 8 in/s over 5.1in is two a second. "Basin frequency
+         * needs to be like 5 times faster."
+         *
+         * The invariant the cap exists for is that nothing on the ramp outruns the ramp, and
+         * the ramp's own fastest is its DELIVERY speed (RAIL_ACCEL / RAIL_RATTLE_DRAG, the
+         * terminal it converges on). Letting an artifact board at up to that keeps the
+         * invariant exactly — it can never be faster than the ramp makes things — while the
+         * entrance stops being a bottleneck the basin has to queue behind.
+         */
         const rampV = Math.sqrt(2 * C.RAIL_ACCEL * Math.max(0, C.RAIL_S_MAX - s));
-        const cap = Math.max(C.RAIL_ENTRY_V, rampV);
+        const cap = Math.max(C.RAIL_ENTRY_V, rampV, C.RAIL_ACCEL / C.RAIL_RATTLE_DRAG);
         const v = Math.max(Math.min(b.vel.y, -C.RAIL_ENTRY_V), -cap);
         b.state = { kind: 'rail', goal: a, s, v, overflow: false, pending: true };
         b.vel = { x: 0, y: 0 };
