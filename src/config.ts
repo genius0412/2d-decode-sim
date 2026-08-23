@@ -965,7 +965,13 @@ export const INTAKE_PRESETS = {
       // laterally (drawIn) to the center compliant zone (throatHalf) before sucking
       // it in, so edge entries take longer — the vectoring time. `mouthHalf` here is
       // a fallback; the live value is the robot's half-width (see `intakeMouth`).
-      wedge: false, mouthHalf: 8.5, throatHalf: 3, drawIn: 18,
+      //
+      // drawIn 18 -> 21 ("make vector intake vector slightly faster"): the vectoring
+      // time is the distance to the throat over this speed, so an edge entry at 8in
+      // off-centre falls 0.30s -> 0.25s and the centre is untouched at 0.02s. It stays
+      // the SLOWEST of the three by a distance (sloped 26, triangle 46) — vectoring an
+      // off-centre ball across a flat plate is what this preset trades away.
+      wedge: false, mouthHalf: 8.5, throatHalf: 3, drawIn: 21,
       capMin: 0.08, capMax: 0.14, clumpInterval: 0.12, dual: false,
     },
   },
@@ -975,11 +981,20 @@ export const INTAKE_PRESETS = {
    * fire faster than that, but when conditions are already slower than the cap
    * (flywheel recovery on far shots) it fires at the same rate as everyone else. */
   triangle: {
-    reach: 5, overhang: false, minLength: 11, maxLength: 13, minWidth: 15.5, fireInterval: 0.1, fireCap: 0.12,
+    reach: 5, overhang: false, minLength: 11, maxLength: 13, minWidth: 15.5, fireInterval: 0.09, fireCap: 0.105,
     mouth: {
       // strongest INTAKE of the three (its identity — devours clumps): a hard
       // suction (drawIn) snaps balls to the throat and it swallows quickest. The
       // tradeoff is TRANSFER (fireCap), not the grab — those stay untouched.
+      //
+      // "Make triangle intake transfer slightly faster." The CAP was not what was slow:
+      // measured, the gap between shots was 0.133s against a cap of 0.12, so the cap
+      // never bound at all and lowering it alone changed nothing (7.50/s either way).
+      // What binds is `fireInterval` plus the flywheel recovery, so that is what moved:
+      // 0.10 -> 0.09, with the cap eased to 0.105 so it still sits just under the
+      // result and remains the thing that stops this preset being the fastest shooter.
+      // It is still the only preset with a cap, and still slower than sloped's 0.08 —
+      // the triangle grabs best and shoots slowest, by a little less than before.
       wedge: true, mouthHalf: 7, throatHalf: 3.5, drawIn: 46,
       capMin: 0.04, capMax: 0.07, clumpInterval: 0.035, dual: true,
     },
@@ -2006,31 +2021,50 @@ export const MAX_SAVED_AUTOS = 4;
  * fully custom builder. Picking a preset copies its BUILD only — the player's
  * name/team/number are their own. The first entry (TW) is the DEFAULT_SPEC build
  * a new player starts with. */
+/**
+ * ...AND THEY DRIVE ROBOT-CENTRIC. "All DECODE robot presets should be robot centric."
+ *
+ * The presets are real team BUILDS, and a real FTC team drives robot-centric — field-centric
+ * is the rarity, not the default. Every preset picked up the player default (all assists on,
+ * including field-centric) because none of them carried assists of their own, so choosing a
+ * build silently chose a drive frame with it.
+ *
+ * Only the FRAME is pinned. The rest is the player default, and the menu toggle still works —
+ * this decides what a preset LOADS as, not what the player is stuck with. The custom builder
+ * is untouched and still starts field-centric.
+ */
+const PRESET_ASSISTS = {
+  fieldCentric: false,
+  aimAssist: true,
+  autoIntake: true,
+  autoFire: true,
+} as const;
+
 export const ROBOT_PRESETS: readonly RobotSpec[] = [
   {
     name: 'TW', teamName: 'Turtle Walkers', teamNumber: 19745,
     length: 14.5, width: 16.5, intake: 'sloped', massLb: 23.5, drivetrain: 'mecanum',
-    driveRpm: 440, flywheelInertia: 0.7, canSort: false,
+    driveRpm: 440, flywheelInertia: 0.7, canSort: false, assists: PRESET_ASSISTS,
   },
   {
     name: 'Dugtrio', teamName: 'Blu Cru', teamNumber: 6417,
     length: 15, width: 18, intake: 'sloped', massLb: 36, drivetrain: 'tank',
-    driveRpm: 340, flywheelInertia: 0.9, canSort: false,
+    driveRpm: 340, flywheelInertia: 0.9, canSort: false, assists: PRESET_ASSISTS,
   },
   {
     name: 'Cypher', teamName: 'Seattle Solvers', teamNumber: 23511,
     length: 14, width: 14, intake: 'vector', massLb: 23.5, drivetrain: 'swerve',
-    driveRpm: 500, flywheelInertia: 0.1, canSort: false,
+    driveRpm: 500, flywheelInertia: 0.1, canSort: false, assists: PRESET_ASSISTS,
   },
   {
     name: 'Rohan', teamName: 'Exodus', teamNumber: 30030,
     length: 13, width: 17.5, intake: 'triangle', massLb: 34, drivetrain: 'mecanum',
-    driveRpm: 395, flywheelInertia: 0.8, canSort: false,
+    driveRpm: 395, flywheelInertia: 0.8, canSort: false, assists: PRESET_ASSISTS,
   },
   {
     name: 'Ditto', teamName: 'Galactic Narwhal Chicken Effect - Diamond', teamNumber: 22489,
     length: 14.5, width: 16, intake: 'vector', massLb: 28, drivetrain: 'mecanum',
-    driveRpm: 450, flywheelInertia: 0.9, canSort: false,
+    driveRpm: 450, flywheelInertia: 0.9, canSort: false, assists: PRESET_ASSISTS,
   },
 ] as const;
 

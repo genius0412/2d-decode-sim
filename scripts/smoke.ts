@@ -4,7 +4,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
-import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, coerceAssists, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
+import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, PLAYER_ASSISTS, coerceAssists, coerceSpec, coerceSetup, coerceStartPose } from '../src/sim/spawn';
 import { drawWheels } from '../src/games/chain/parts';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
@@ -2514,6 +2514,42 @@ function queueTenth(w: World): void {
     '...and nothing slides off the end of the rail',
     worst.run <= RAIL_PITCH + 0.5,
     `furthest past the exit lip: ${worst.run.toFixed(1)}in against a ${RAIL_PITCH.toFixed(1)}in leak (was 290in — off the map, through everything)`,
+  );
+}
+
+// ---- every DECODE preset loads robot-centric --------------------------------------
+/**
+ * "All DECODE robot presets should be robot centric."
+ *
+ * The presets are real team BUILDS and a real FTC team drives robot-centric; field-centric is
+ * the rarity. None of them carried assists, so each one picked up the player default (all on,
+ * field-centric included) and choosing a build silently chose a drive frame with it.
+ *
+ * Only the frame is pinned — the rest is still the player default, and the menu toggle still
+ * works, which is what the second half of this checks.
+ */
+{
+  check(
+    'every DECODE preset loads ROBOT-centric',
+    ROBOT_PRESETS.every((p) => p.assists?.fieldCentric === false),
+    `${ROBOT_PRESETS.filter((p) => p.assists?.fieldCentric === false).length} of ${ROBOT_PRESETS.length}: ${ROBOT_PRESETS.map((p) => p.name).join(', ')}`,
+  );
+  check(
+    "...and pins nothing else — the rest is the player's own default",
+    ROBOT_PRESETS.every(
+      (p) =>
+        p.assists?.aimAssist === PLAYER_ASSISTS.aimAssist &&
+        p.assists?.autoIntake === PLAYER_ASSISTS.autoIntake &&
+        p.assists?.autoFire === PLAYER_ASSISTS.autoFire,
+    ),
+    'aim / auto-intake / auto-fire match PLAYER_ASSISTS',
+  );
+  // ...and it survives the coercer every load path runs through
+  const loaded = coerceSpec({ ...ROBOT_PRESETS[0] }, undefined, 'decode');
+  check(
+    '...and coerceSpec keeps the frame the preset asked for',
+    loaded.assists?.fieldCentric === false,
+    `fieldCentric=${loaded.assists?.fieldCentric}`,
   );
 }
 
@@ -5298,7 +5334,13 @@ const setup = (
   // width 14 → vector mouth half-width 7, so an edge entry sits at localY 6 (inside
   // the mouth); the vectoring travel to center makes it slower than a center entry
   const center = capTicks(0), edge = capTicks(6);
-  check('vector intake swallows a CENTER ball faster than an EDGE ball', edge > center + 3, `center ${center}t vs edge ${edge}t`);
+  // a RATIO rather than a fixed margin of ticks: the vectoring cost is proportional to the
+  // travel, so speeding `drawIn` up compresses the absolute gap without changing the fact.
+  check(
+    'vector intake swallows a CENTER ball faster than an EDGE ball',
+    edge >= center * 1.3,
+    `center ${center}t vs edge ${edge}t (${(edge / center).toFixed(2)}x — the vectoring travel)`,
+  );
 }
 
 // ---- sloped: driving into an OFF-CENTER ball, the slopes funnel it to center ----
