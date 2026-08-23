@@ -3330,25 +3330,24 @@ function queueTenth(w: World): void {
     `centred ${centred.toFixed(0)}deg; 2/4/6/8in off centre ${withSide.map((t) => t.toFixed(0)).join('/')}deg`,
   );
   /**
-   * ...AND HOW MUCH IS STILL UNEVEN, which is recorded rather than papered over.
+   * ...AND HOW MUCH IT TURNS YOU GROWS WITH THE LEVER ARM, which is the physics showing.
    *
-   * Lean on the arm from the TUNNEL side and it turns the chassis 7-11 degrees; from the
-   * CHANNEL side, 0-15 depending on exactly where you meet it. That is NOT a discontinuity in
-   * the response — instrumented, only one surface acts there and it contributes a steady
-   * 0.19 deg per tick — it is how far the chassis gets to turn before it slides off a 2.5in
-   * stub, which depends on where it hit. The normals are the closest FEATURE now (corner
-   * included, on both the arm and the classifier) and the surfaces are summed rather than
-   * applied in turn, so what is left is the contact geometry itself.
+   * The moment of a contact force is r x F: meet the stub further off your centre and the
+   * same push turns you more. That ordering was absent while the normal came from the robot's
+   * CENTRE clamped onto the stub (7/7/7/11 degrees — flat, because the geometry it measured
+   * was not the contact's), and it appears as soon as the normal is the separation direction
+   * the shapes actually have: 5/12/22/32.
    *
-   * Bounded here so it cannot grow, and stated so the next person does not have to rediscover
-   * that the two sides differ.
+   * The ceiling is a right angle, which is the thing the old complaint was about ("it spins me
+   * around like 90 degrees instantly"), and the rate is what makes it not that: 32 degrees is
+   * over three full seconds of driving into the arm, about 11 deg/s.
    */
   const fromChannelSide = [2, 4, 6, 8].map((d) => armHit(-d));
   const allHits = [...withSide, ...fromChannelSide];
   check(
-    '...and no hit on it ever spins the robot round',
-    allHits.every((t) => t < 20) && allHits.filter((t) => t > 3).length >= 5,
-    `tunnel side ${withSide.map((t) => t.toFixed(0)).join('/')}deg vs channel side ${fromChannelSide.map((t) => t.toFixed(0)).join('/')}deg`,
+    '...and how far grows with how far off centre you hit it, without ever spinning you round',
+    allHits.every((t) => t < 45) && withSide[3] > withSide[0] * 2,
+    `tunnel side ${withSide.map((t) => t.toFixed(0)).join('/')}deg vs channel side ${fromChannelSide.map((t) => t.toFixed(0)).join('/')}deg (was 7/7/7/11 and 2/10/0/15 — flat)`,
   );
 }
 

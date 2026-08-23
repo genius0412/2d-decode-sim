@@ -503,6 +503,7 @@ function mtvOf(
   ];
   let minOv = Infinity;
   let ax = { x: 0, y: 0 };
+  const found: { axis: Vec2; ov: number }[] = [];
   for (const axis of axes) {
     let aMin = Infinity;
     let aMax = -Infinity;
@@ -520,21 +521,44 @@ function mtvOf(
     }
     const ov = Math.min(aMax, bMax) - Math.max(aMin, bMin);
     if (ov <= 0) return null; // a separating axis exists ⇒ no overlap
+    found.push({ axis, ov });
     if (ov < minOv) {
       minOv = ov;
       ax = axis;
     }
   }
-  // orient the normal away from the rect (toward the robot center)
+  /**
+   * ...AND AT A CORNER, TWO AXES ARE THE ANSWER AT ONCE.
+   *
+   * SAT picks the single least-overlapping axis, which is exactly right in the middle of a
+   * face and ill-conditioned at a corner: there the two candidates are within numerical noise
+   * of each other, so the normal — and with it which way a contact pushes and turns you —
+   * flips between them as the shapes slide a fraction of an inch. That is a real property of
+   * the algorithm, not of the geometry: the true contact normal at a corner is between the
+   * two faces that meet there.
+   *
+   * So axes within CONTACT_NORMAL_BLEND of the minimum are summed, each weighted by how close
+   * it is to being the answer. Away from a corner the second axis carries no weight and this
+   * is plain SAT; at one it hands back the diagonal, continuously, which is what a corner
+   * actually pushes along.
+   */
   const cx = (rect.x0 + rect.x1) / 2;
   const cy = (rect.y0 + rect.y1) / 2;
-  let nx = ax.x;
-  let ny = ax.y;
-  if ((centre.x - cx) * nx + (centre.y - cy) * ny < 0) {
-    nx = -nx;
-    ny = -ny;
+  const out = (a: Vec2) =>
+    (centre.x - cx) * a.x + (centre.y - cy) * a.y < 0 ? { x: -a.x, y: -a.y } : a;
+  let bx = 0;
+  let by = 0;
+  for (const { axis, ov } of found) {
+    const w = 1 - (ov - minOv) / C.CONTACT_NORMAL_BLEND;
+    if (w <= 0) continue;
+    const o = out(axis);
+    bx += o.x * w;
+    by += o.y * w;
   }
-  return { nx, ny, depth: minOv };
+  const bl = hyp(bx, by);
+  if (bl > 1e-9) return { nx: bx / bl, ny: by / bl, depth: minOv };
+  const o = out(ax);
+  return { nx: o.x, ny: o.y, depth: minOv };
 }
 
 /** the same SAT overlap, against the robot's FOOTPRINT (chassis + intake) — what Rapier
@@ -755,38 +779,23 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, dt: number, wo
        * robot's, snapped to whichever component dominates — the face the robot is actually on.
        */
       /**
-       * THE NORMAL IS THE CLOSEST FEATURE'S, AND A CORNER IS A FEATURE.
+       * THE NORMAL IS THE ONE THE SEPARATION IS ALONG — the same one Rapier pushes the robot
+       * out along, because it is computed the same way.
        *
-       * Snapping it to whichever axis the robot's centre was furthest along treats the stub as
-       * if it were all face: approach it near a corner and the normal jumps between +x and ±y
-       * as the robot slides past the diagonal, so the push direction — and with it which way
-       * the arm turns you — flips discontinuously over a fraction of an inch. That is
-       * "collision with the gate, and the corner of the gate, is still very weird".
+       * Two wrong answers preceded it. Snapping to whichever axis the robot's CENTRE was
+       * furthest along treats the stub as if it were all face, so near a corner it jumps
+       * between +x and +/-y as the robot slides past the diagonal. Clamping the centre onto
+       * the rect fixes the jump and replaces it with a subtler error: the direction from a
+       * 2.5in stub to the middle of an 18in chassis has nothing to do with the surface where
+       * they actually touch, so the impulse pushed one way while Rapier separated them
+       * another. "Still not colliding that accurately."
        *
-       * A rectangle has three kinds of closest feature and the clamp tells you which: clamp
-       * the robot's centre onto the rect, and if only ONE coordinate moved the closest thing
-       * is that FACE (its normal is the axis); if BOTH moved it is a CORNER, and the normal
-       * runs from the corner to the centre. That is continuous everywhere, including across
-       * the diagonal where the two meet.
+       * The minimum translation vector is the direction that separates the two shapes, it is
+       * what a collision solver uses, and `mtvOf` blends near-tied axes so the corner case is
+       * continuous rather than a flip.
        */
-      const px = clamp(r.pos.x, arm.x0, arm.x1);
-      const py = clamp(r.pos.y, arm.y0, arm.y1);
-      const offX = r.pos.x - px;
-      const offY = r.pos.y - py;
-      const off = hyp(offX, offY);
-      let nx: number;
-      let ny: number;
-      if (off > 1e-6) {
-        // outside the rect: the closest point IS the contact feature, face or corner alike
-        nx = offX / off;
-        ny = offY / off;
-      } else {
-        // centre inside the stub (it is small enough to swallow one): push out the near face
-        const dx = Math.min(r.pos.x - arm.x0, arm.x1 - r.pos.x);
-        const dy = Math.min(r.pos.y - arm.y0, arm.y1 - r.pos.y);
-        nx = dx <= dy ? Math.sign(r.pos.x - (arm.x0 + arm.x1) / 2) || 1 : 0;
-        ny = nx === 0 ? Math.sign(r.pos.y - (arm.y0 + arm.y1) / 2) || 1 : 0;
-      }
+      const nx = mtv.nx;
+      const ny = mtv.ny;
       const contacts = footprintCornersOf(r)
         .filter((c) => c.x > arm.x0 && c.x < arm.x1 && c.y > arm.y0 && c.y < arm.y1)
         .map((c) => ({ c, d: mtv.depth }));

@@ -472,6 +472,18 @@ export const CONTACT_IMPACT_SPIN = 0.05;
  */
 export const CONTACT_MU = 0.8;
 /**
+ * How close a second separating axis has to be to the least-overlapping one before it counts
+ * toward the contact normal, in inches of overlap.
+ *
+ * SAT returns one axis, which is right in the middle of a face and ill-conditioned at a
+ * CORNER — there two axes are within noise of each other and the normal flips between them as
+ * the shapes slide a hair. The true normal at a corner is between the two faces that meet
+ * there, so axes within this window are blended by how close they are to being the answer.
+ * A quarter inch is about the depth a bumper compresses, and well under the size of any
+ * feature this is used on.
+ */
+export const CONTACT_NORMAL_BLEND = 0.25; // in
+/**
  * Restitution at a point contact. A bumper is there to absorb, so a robot pressing structure
  * does not bounce off it — zero is the honest value and anything above it reads as springy.
  */
