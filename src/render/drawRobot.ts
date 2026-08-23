@@ -29,10 +29,10 @@ export function drawRobot(
   // chassis
   ctx.fillStyle = fill;
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, 1.6);
+  const body = () => roundRect(ctx, -hl, -hw, r.spec.length, r.spec.width, 1.6);
+  body();
   ctx.fill();
-  ctx.stroke();
+  strokeInside(ctx, body, 1);
 
   drawWheels(ctx, r, color);
 
@@ -113,14 +113,18 @@ export function drawRobot(
     // mouth edge back in to the throat. Running the slope to the mouth edge (rw) rather
     // than straight to the chassis corner is what makes it read as a funnel at all.
     for (const sg of [1, -1] as const) {
-      ctx.beginPath();
-      ctx.moveTo(hl, sg * hw);
-      ctx.lineTo(wedgeTip, sg * hw);
-      ctx.lineTo(wedgeTip, sg * rw);
-      ctx.lineTo(hl, sg * th);
-      ctx.closePath();
+      // ...and its outline stays INSIDE it, because the wedge's outer edge IS the footprint's
+      const wedge = () => {
+        ctx.beginPath();
+        ctx.moveTo(hl, sg * hw);
+        ctx.lineTo(wedgeTip, sg * hw);
+        ctx.lineTo(wedgeTip, sg * rw);
+        ctx.lineTo(hl, sg * th);
+        ctx.closePath();
+      };
+      wedge();
       ctx.fill();
-      ctx.stroke();
+      strokeInside(ctx, wedge, 1);
     }
     drawRoller();
   } else {
@@ -248,6 +252,29 @@ export function drawWheels(ctx: CanvasRenderingContext2D, r: RobotState, color: 
   } else {
     for (const [px, py] of corners) drawWheel(px, py, 0);
   }
+}
+
+/**
+ * Stroke a path so the line lies ENTIRELY INSIDE it.
+ *
+ * A canvas stroke straddles the path — half its width falls outside — so a chassis drawn at
+ * its true length x width renders half a line wider on every side than the box it collides
+ * with, and the outline reads as not being part of the robot. Clipping to the path and
+ * stroking at double width puts the whole line inside: the drawn silhouette is exactly the
+ * collision footprint, and nothing about where the wheels or mechanisms sit changes.
+ */
+export function strokeInside(
+  ctx: CanvasRenderingContext2D,
+  path: () => void,
+  width: number,
+): void {
+  ctx.save();
+  path();
+  ctx.clip();
+  ctx.lineWidth = width * 2;
+  path();
+  ctx.stroke();
+  ctx.restore();
 }
 
 export function roundRect(

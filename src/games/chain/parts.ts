@@ -8,7 +8,7 @@
  */
 import type { RobotState } from '../../types';
 import * as C from '../../config';
-import { roundRect } from '../../render/drawRobot';
+import { roundRect, strokeInside } from '../../render/drawRobot';
 import { hyp } from '../../math';
 
 /**
@@ -44,13 +44,13 @@ export function drawChassisBody(
     ctx.restore();
   }
 
-  // base plate
+  // base plate — outlined on the INSIDE, so the sprite is exactly the collision box
   ctx.fillStyle = fill;
-  roundRect(ctx, -hl, -hw, L, W, 1.6);
+  const plate = () => roundRect(ctx, -hl, -hw, L, W, 1.6);
+  plate();
   ctx.fill();
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  strokeInside(ctx, plate, 1);
 
   // the FRAME: an inset rail line, which is what a top-down extrusion perimeter actually
   // looks like. One thin stroke — enough to say "this is a built frame, not a tile".
