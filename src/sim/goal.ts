@@ -689,7 +689,6 @@ export function updateRails(
      * at most ONE artifact out per tick, since the artifact it just released IS the new
      * doorway. RAIL_PITCH is wider than a tick of travel, so no two can cross together.
      */
-    const doorway = doorwayArtifact(world, a);
     /**
      * ...AND WHAT IS ALREADY ON THE FLOOR OUTSIDE DOES NOT HOLD THE RAMP BACK.
      *
@@ -811,6 +810,9 @@ export function updateRails(
     const exitFloorV = goal.gateOpen ? -Infinity : 0;
     let rampAhead = -Infinity;
     let rampFloorV = exitFloorV;
+    /** the artifact the ramp lane is queued behind — the one a faster artifact behind it
+     * actually pushes. See the momentum note at the contact clamp. */
+    let rampAheadBall: Artifact | null = null;
     // ...and the same pair for an ELEVATED artifact: never stopped by the gate, only by the exit
     // being physically occupied or by another elevated artifact ahead of it. A SHUT gate is
     // therefore no floor for it and must not zero its speed the way it does the ramp lane's —
@@ -1043,7 +1045,40 @@ export function updateRails(
         st.s = Math.min(floor, wasS);
         // move WITH whatever is ahead (so the column drains packed), and no faster than it was
         // already going (so being held is never an acceleration) — see the note above
-        st.v = Math.max(st.v, floorV, wasV);
+        /**
+         * A COLUMN IN CONTACT SHARES ITS MOMENTUM — the one behind does not simply give its
+         * speed away to the one in front.
+         *
+         * This clamped the artifact behind down to whatever the one ahead was doing and left
+         * the one ahead alone, so every contact THREW AWAY the difference. And because the
+         * lane is walked front to back, one slow artifact at the lip pulled the whole column
+         * down to its speed within a single tick: measured on a tap, 29 in/s to 17 across
+         * five artifacts at once, over and over as each one reached the gate. "The balls
+         * higher up don't accelerate much and don't transfer much momentum to the ones
+         * below."
+         *
+         * They are touching, so a contact is a perfectly inelastic collision between equal
+         * masses: both end at the mean. The one behind still cannot pass the one ahead — that
+         * is the position clamp above, untouched — but the one ahead is now pushed ALONG by
+         * what is behind it, which is what a queue on a slope does.
+         */
+        /**
+         * ...BUT ONLY INTO SOMETHING THAT CAN MOVE. A column held against a shut gate or a
+         * robot is a WALL, not a queue: sharing momentum into it invents speed the stack can
+         * never spend, and the held column then sat there carrying 32 in/s and crept. So the
+         * artifact ahead has to be rolling before it can be pushed along; against a stopped
+         * one the old clamp applies and the arriving artifact simply stops.
+         */
+        const pressed = elevated || Math.abs(floorV) <= C.RAIL_CONTACT_MOVING ? null : rampAheadBall;
+        if (pressed && Math.abs(st.v) > Math.abs(floorV)) {
+          const shared = (st.v + floorV) / 2;
+          st.v = shared;
+          const ps = pressed.state as { v: number };
+          ps.v = shared;
+          rampFloorV = shared;
+        } else {
+          st.v = Math.max(st.v, floorV, wasV);
+        }
         if (st.pending) {
           st.pending = false;
           goal.classifiedCount++;
@@ -1108,6 +1143,7 @@ export function updateRails(
       } else {
         rampAhead = st.s + C.RAIL_PITCH;
         rampFloorV = st.v;
+        rampAheadBall = b;
         retainedBelow++;
       }
       // glide smoothly onto the rail line — no positional snapping. The target is the
@@ -1195,13 +1231,25 @@ export function updateRails(
       }
     }
 
-    // Balls past the exit roll out onto the floor from where they are — the LOWEST first, and
-    // AT MOST ONE per tick, because the artifact just released becomes the doorway for the
-    // next. `mouthClear` above already accounts for the doorway, so the solver has held
-    // everything else above the exit rather than letting it descend into a refusal.
+    /**
+     * Balls past the exit roll out onto the floor from where they are, LOWEST first — and
+     * EVERY one that is past it, not one per tick.
+     *
+     * One per tick sounds harmless at 60Hz and is not, because the column is in CONTACT: the
+     * artifact waiting its turn is a floor for the one behind it, and that one for the one
+     * behind IT. Measured on a tap, the whole column stalled and surged in time with the
+     * releases — the bottom three at 19 in/s while the top three ran at 28, over and over —
+     * and the artifacts that had queued were then pushed back UP to the floor, losing the
+     * speed they had. "The balls higher up don't accelerate much and don't transfer much
+     * momentum to the ones below."
+     *
+     * They do transfer it; the exit was throwing it away. The doorway is re-read between
+     * releases, so the artifact that just left still blocks the next if it has not cleared —
+     * which is the real constraint that one-per-tick was standing in for.
+     */
     const out = mouth;
     const leaving = rail.filter((b) => (b.state as { s: number }).s <= out.takeAt);
-    for (const b of leaving.slice(0, 1)) {
+    for (const b of leaving) {
       if (b.state.kind !== 'rail') continue; // narrowing; `rail` is pre-filtered by goal
       // NOTHING LEAVES INTO AN OCCUPIED MOUTH — the artifact stays on the rail and the
       // column queues behind it (see `railBlock`).
@@ -1209,7 +1257,9 @@ export function updateRails(
       // ...and if the LAST artifact out is still in the doorway, shove it clear and wait a
       // tick rather than materialising this one on top of it.
       {
-        const ahead = doorway;
+        // re-read, not the value from the top of the tick: the artifact released a moment ago
+        // is the doorway for this one
+        const ahead = doorwayArtifact(world, a);
         if (ahead) {
           /**
            * TOP UP TO A CREEP — never ADD.

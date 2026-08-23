@@ -2155,6 +2155,75 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- a column in CONTACT shares its momentum -------------------------------------
+/**
+ * "You just made overflow and coming down the ramp insanely fast, but when you tap the gate
+ * open it is still pretty slow. I think the balls higher up don't accelerate much and don't
+ * transfer much momentum to the ones below."
+ *
+ * They accelerated; the exit threw it away. When an artifact met the one ahead, the clamp took
+ * the SLOWER of the two and left the one ahead alone — so every contact lost the difference,
+ * and because the lane is walked front to back, one slow artifact at the lip pulled the whole
+ * column down within a single tick. Measured on a tap: 29 in/s to 17 across five artifacts at
+ * once, over and over, as each one reached the gate.
+ *
+ * Touching artifacts are a perfectly inelastic collision between equal masses, so both end at
+ * the mean — the one behind cannot pass (the position clamp is untouched), but the one ahead
+ * is pushed ALONG. The exception is a column held against something that cannot move: that is
+ * a contact with the FIELD, and sharing into it invents speed the stack can never spend.
+ */
+{
+  const drain = () => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    for (const b of w.balls) b.state = { kind: 'held', robot: 99 };
+    fillBlueRail(w);
+    const r = w.robots[0];
+    r.pos = { x: -55, y: 1 };
+    r.heading = Math.PI;
+    r.fieldCentric = false;
+    const out: number[] = [];
+    const seen = new Set<number>();
+    let worstDrop = 0;
+    let prev = new Map<number, number>();
+    for (let i = 0; i < Math.round(8 / SIM_DT); i++) {
+      const push = i * SIM_DT < 0.25;
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: push ? 1 : 0, leftDrive: push ? 1 : 0, rightDrive: push ? 1 : 0 })]]));
+      const now = new Map<number, number>();
+      for (const b of w.balls) {
+        if (b.state.kind === 'rail') {
+          const v = Math.abs((b.state as { v: number }).v);
+          now.set(b.id, v);
+          const was = prev.get(b.id);
+          // a rolling artifact losing a big chunk of its speed in one tick, with nothing in
+          // front of it to hit — that is the contact throwing momentum away
+          // as a FRACTION of what it was doing: an equal-mass inelastic contact with a
+          // stationary artifact loses exactly half, and nothing may lose more than that
+          if (was !== undefined && was > 10 && (was - v) / was > worstDrop) worstDrop = (was - v) / was;
+        } else if (prev.has(b.id) && !seen.has(b.id)) {
+          seen.add(b.id);
+          out.push(i * SIM_DT);
+        }
+      }
+      prev = now;
+    }
+    const gaps = out.slice(1).map((t, j) => t - out[j]);
+    return { rate: gaps.length / gaps.reduce((a, b) => a + b, 0), worstDrop };
+  };
+  const d = drain();
+  check(
+    'a tap drains at the pace the column is actually moving',
+    d.rate > 5,
+    `${d.rate.toFixed(2)} artifacts a second (was 4.53 when each contact discarded the difference, 3.10 before the chute was steepened)`,
+  );
+  check(
+    '...because a contact SHARES the speed rather than discarding it',
+    d.worstDrop <= 0.5,
+    `worst single-tick loss on a rolling artifact: ${(d.worstDrop * 100).toFixed(0)}% of its speed — an equal-mass inelastic contact with a STOPPED artifact loses exactly half, so half is the ceiling. It used to hand over the whole difference, and to the whole column at once.`,
+  );
+}
+
 // ---- the basin hands off at the ramp's pace, not at a crawl ------------------------
 /**
  * "Basin frequency needs to be like 5 times faster."

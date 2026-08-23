@@ -250,7 +250,7 @@ export const POSSESSION_LEAK = 0.5;
  * fraction of a second and covered by POSSESSION_CONFIRM and POSSESSION_GRACE before it ever
  * gets here — never reaches a second billing.
  */
-export const POSSESSION_REBILL_S = 5;
+export const POSSESSION_REBILL_S = 3;
 /**
  * How long ONE artifact has to stay with a robot before it counts toward the limit.
  *
@@ -1186,6 +1186,11 @@ export const RAIL_ACCEL = 100; // in/s^2 down-ramp
 export const RAIL_RATTLE_DRAG = 1.45; // 1/s — terminal ~RAIL_ACCEL/this
 export const RAIL_TERMINAL = 120; // in/s safety cap
 export const RAIL_PITCH = 5.1; // ball contact spacing on the stack
+/** how fast the artifact AHEAD has to be rolling before the one behind can push it along
+ * (in/s). Below this the column is being held against something — a shut gate, a bumper — and
+ * a contact with it is a contact with the field, not a momentum exchange. See the contact
+ * clamp in `updateRails`. */
+export const RAIL_CONTACT_MOVING = 2;
 export const GATE_STOP_S = 2; // lowest rest position against the closed gate
 // entrance blocked only while a ball is still within ~one pitch of the top entry
 // (s = RAIL_S_MAX = 55); was 43.4, which forced each ball to flow 11.6" clear
