@@ -4375,10 +4375,41 @@ button.ds-key:active {
 
 /* REPORT a player — the post-match dialog. Lives inside the results panel, which is itself
    a scroll container on a phone, so this only has to size itself sanely. */
+/**
+ * ...and the LINK BUTTON it is built on. `.ds-linkbtn` was written into the markup and never
+ * into the stylesheet, so the only rules reaching it were `button { font: inherit }` and the
+ * two lines below — no background, no border, no padding of its own. A `<button>` with no
+ * background rule keeps the BROWSER's: a grey slab with a bevelled border, sitting on a dark
+ * results panel. That is what "the report a player button looks ass" was looking at.
+ *
+ * A quiet text action, then, and quiet is the point (see the note above about where this
+ * sits): no chrome at rest, the app's own muted ink, and the same accent + underline on hover
+ * that every other text action in the app uses. It keeps a real hit area through padding
+ * rather than a box, and the standard focus ring, because it is still a button.
+ */
+.ds-linkbtn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  padding: 6px 10px;
+  border-radius: var(--ds-round-sm);
+  color: var(--ds-mut);
+  text-decoration: none;
+}
+.ds-linkbtn:hover {
+  color: var(--ds-accent);
+  text-decoration: underline;
+}
+.ds-linkbtn:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 2px;
+}
+
 .results-report {
   align-self: center;
-  font: 600 12px/1 var(--ds-font);
-  color: var(--ds-mut);
+  font: 600 12px/1.2 var(--ds-font);
+  letter-spacing: 0.2px;
 }
 .ds-report {
   display: flex;
