@@ -693,6 +693,22 @@ export function railWander(s: number, id: number, elevated: boolean): number {
  * artifact leaving the ramp has any right to, and it is what the release hands it: no fan is
  * synthesised, and unlike a fan it is signed, so a drain does not leave on one diagonal.
  */
+/**
+ * The artifact's LEAN across the groove at `s`, normalised to -1..1.
+ *
+ * Same phase and wavelength as `railWander`/`railWanderRate` — it is the same weave — but
+ * without the amplitude, so a caller can scale it by something that is not the artifact's
+ * speed. The exit uses it: which groove wall an artifact last touched decides which way it
+ * rolls off the lip, and that is a couple of inches a second either way whether it arrives at
+ * 20 or at 40. (Multiplying the RATE by the speed, which is what the exit used to do, makes
+ * the same weave a drift at one speed and a spray at the other — see the note there.)
+ */
+export function railExitLean(s: number, id: number, elevated: boolean): number {
+  const phase = (id % 16) * 2.399963;
+  const k = elevated ? C.RAIL_WANDER_K * 2.3 : C.RAIL_WANDER_K;
+  return dcos(phase + s * k);
+}
+
 export function railWanderRate(s: number, id: number, elevated: boolean): number {
   const slop = C.CLASSIFIER_W / 2 - C.BALL_RADIUS;
   const phase = (id % 16) * 2.399963;

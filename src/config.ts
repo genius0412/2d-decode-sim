@@ -1022,7 +1022,7 @@ export const INTAKE_PRESETS = {
    * fire faster than that, but when conditions are already slower than the cap
    * (flywheel recovery on far shots) it fires at the same rate as everyone else. */
   triangle: {
-    reach: 5, overhang: false, minLength: 11, maxLength: 13, minWidth: 15.5, fireInterval: 0.09, fireCap: 0.105,
+    reach: 5, overhang: false, minLength: 11, maxLength: 13, minWidth: 15.5, fireInterval: 0.08, fireCap: 0.095,
     mouth: {
       // strongest INTAKE of the three (its identity — devours clumps): a hard
       // suction (drawIn) snaps balls to the throat and it swallows quickest. The
@@ -1227,6 +1227,11 @@ export const RAIL_ACCEL = 100; // in/s^2 down-ramp
 export const RAIL_RATTLE_DRAG = 1.45; // 1/s — terminal ~RAIL_ACCEL/this
 export const RAIL_TERMINAL = 120; // in/s safety cap
 export const RAIL_PITCH = 5.1; // ball contact spacing on the stack
+/** how far off straight an artifact tips as it rolls off the exit lip, in in/s of lateral
+ * speed. NOT a fraction of its speed — the weave it carries is groove geometry, so it is worth
+ * the same couple of inches a second however fast it arrives. At the drain's ~40in/s that is a
+ * few degrees; the rest of the spread comes from collisions. */
+export const EXIT_DRIFT = 2.5;
 /** how fast the artifact AHEAD has to be rolling before the one behind can push it along
  * (in/s). Below this the column is being held against something — a shut gate, a bumper — and
  * a contact with it is a contact with the field, not a momentum exchange. See the contact

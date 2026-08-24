@@ -11,6 +11,7 @@ import {
   classifierRect,
   convexOverlap,
   railPos,
+  railExitLean,
   railWander,
   rectCorners,
   tunnelExitVel,
@@ -1449,12 +1450,13 @@ export function updateRails(
        * a drift into a spray. "Overflow balls come out at weird angles for no reason. Make it
        * spread out less. The spreading out should be fundamentally from collisions mostly."
        *
-       * So there is no synthesised lateral component at all now. The channel runs down the
-       * wall and an artifact rolls off the end of it going the way the channel points; where
-       * the drain ends up spread is where it caroms off whatever stopped first, which is a
-       * cause rather than a shape applied to all of them.
+       * So what is left is small, and it is not proportional to speed: which groove wall the
+       * artifact last leaned on decides which way it tips off the lip, and that is worth a
+       * couple of inches a second either way whether it arrived at 20 or at 40 ("balls come
+       * down as a straight line too much, a slight variation please"). The bulk of the spread
+       * still comes from what each one runs into — see the contact scatter in `separateBalls`.
        */
-      const drift = 0;
+      const drift = goalSide(a) * railExitLean(st0.s, b.id, st0.overflow) * C.EXIT_DRIFT;
       /**
        * ...ONTO THE FLOOR, and it is only ever reached when there IS floor to put it on: a
        * robot whose MOUTH is over the outflow blocks the column up-ramp (see `railBlock`), so

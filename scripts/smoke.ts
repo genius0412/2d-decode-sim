@@ -2419,10 +2419,24 @@ function queueTenth(w: World): void {
   // spread a corridor this narrow can actually show. Lateral room by the wall is a few inches,
   // so it is the DISTANCE each one travels before its own collision stops it that varies.
   const pairs = finals.flatMap((p1, i) => finals.slice(i + 1).map((p2) => hyp(p1.pos.x - p2.pos.x, p1.pos.y - p2.pos.y)));
+  /**
+   * ...and the lean each one leaves on is SMALL, SIGNED, and not proportional to its speed.
+   *
+   * The old fan multiplied the artifact's weave RATE by its speed, so the same groove made a
+   * drift at 20in/s and a spray at 40 — "weird angles for no reason". Removing it entirely
+   * left them in single file: "balls come down as a straight line too much, a slight variation
+   * please." So the weave decides the DIRECTION and a fixed couple of inches a second decides
+   * the size, which is a few degrees at drain speed and cannot grow with the chute.
+   */
+  const leans = angles.map((d) => Math.abs(d));
   check(
-    '...and the spread they end up with comes from COLLISIONS, not from a fan at the exit',
-    angles.every((d) => Math.abs(d) < 0.05) && spreadY > 20 && Math.min(...pairs) >= BALL_RADIUS * 2 - 0.5,
-    `every heading ${angles.map((d) => d.toFixed(1)).join(',')} — and they finish spread over ${spreadY.toFixed(0)}in of tunnel, closest pair ${Math.min(...pairs).toFixed(1)}in`,
+    '...on a slight, signed lean — and the spread still comes from COLLISIONS',
+    Math.max(...leans) < 6 &&
+      angles.some((d) => d > 0.2) &&
+      angles.some((d) => d < -0.2) &&
+      spreadY > 20 &&
+      Math.min(...pairs) >= BALL_RADIUS * 2 - 0.5,
+    `headings ${angles.map((d) => d.toFixed(1)).join(',')} — and they finish spread over ${spreadY.toFixed(0)}in of tunnel, closest pair ${Math.min(...pairs).toFixed(1)}in`,
   );
 }
 
