@@ -1370,7 +1370,7 @@ export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
  *
  * The net pull is 6 in/s^2, as it was, and the loss is whatever the slope leaves over it.
  */
-export const OVERFLOW_NET_PULL = 4; // in/s², what actually drives a rider down the pile
+export const OVERFLOW_NET_PULL = 6; // in/s², what actually drives a rider down the pile
 export const OVERFLOW_ROLL_LOSS = RAIL_ACCEL - OVERFLOW_NET_PULL; // in/s²
 /**
  * HOW STRONGLY THE COLUMN UNDERNEATH CARRIES THE ARTIFACT RIDING ON IT, per second.
@@ -1412,7 +1412,7 @@ export const OVERFLOW_LEAD = 6;
 // rather than a glide: cresting a sphere all but cancels the pull, dropping into the next
 // hollow doubles it. Held just under the net pull by the invariant a smoke check states — past
 // it a crest would drive a rider back UP the pile, and a lurch would become a trap.
-export const OVERFLOW_BUMP = 3.8; // in/s² per unit slope
+export const OVERFLOW_BUMP = 3; // in/s² per unit slope
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s
 /**

@@ -2654,6 +2654,72 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- an overflow rider never parks on a crest -------------------------------------
+/**
+ * "Overflow balls sometimes just get stuck on the classifier and don't go down."
+ *
+ * The ride was tuned right up against its own invariant — the crest lurch (OVERFLOW_BUMP ×
+ * slope) at 3.8 against a net pull of 4 — chasing the "in steps" feel. Numerically that
+ * satisfies "the scallop never cancels the ramp", and in a discrete tick it does not: gravity
+ * gives 1.67 in/s a tick, the rolling loss takes back nearly all of it, and a crest takes the
+ * remainder. A rider that arrives at a crest with no speed then has nothing left to leave with
+ * and sits there. Measured: four riders on a stationary column, ZERO inches of travel in
+ * fifteen seconds.
+ *
+ * A sphere balanced on two spheres is an UNSTABLE equilibrium — it cannot rest there, it rolls
+ * into the next hollow — so the pull has to keep a real margin over the lurch rather than
+ * meeting it. At 6 against 3 the ride still visibly steps (the lead rider's speed goes
+ * 3, 3, 2, 2, 3, 3, 4 as it crests and drops) and never stops.
+ */
+{
+  const w = mkWorld('match', 'blue', 42);
+  startMatch(w);
+  w.match.phase = 'teleop';
+  const riders: number[] = [];
+  let k = 0;
+  for (const b of w.balls) {
+    if (k < 9) {
+      const s = GATE_STOP_S + k * RAIL_PITCH;
+      b.state = { kind: 'rail', goal: 'blue', s, v: 0, overflow: false };
+      b.pos = railPos('blue', s);
+      b.vel = { x: 0, y: 0 };
+      b.z = RAMP_SURFACE_Z;
+      b.vz = 0;
+    } else if (k < 13) {
+      const s = RAIL_S_MAX - (k - 9) * RAIL_PITCH;
+      b.state = { kind: 'rail', goal: 'blue', s, v: 0, overflow: true };
+      b.pos = railPos('blue', s);
+      b.vel = { x: 0, y: 0 };
+      b.z = OVERFLOW_Z;
+      b.vz = 0;
+      riders.push(b.id);
+    } else b.state = { kind: 'held', robot: 99 };
+    k++;
+  }
+  const speeds: number[] = [];
+  for (let i = 0; i < Math.round(15 / SIM_DT); i++) {
+    step(w, SIM_DT, new Map());
+    const lead = w.balls.find((b) => b.id === riders[0]);
+    if (lead && lead.state.kind === 'rail') speeds.push(Math.abs((lead.state as { v: number }).v));
+  }
+  const stuck = w.balls.filter((b) => riders.includes(b.id) && b.state.kind === 'rail').length;
+  check(
+    'overflow riders always get off the pile — none parks on a crest',
+    stuck === 0,
+    `${riders.length - stuck} of ${riders.length} left the ramp in 15s (0 of 4 when the lurch met the pull)`,
+  );
+  // ...and it is still a LURCH rather than a glide: what varies is how hard it is being
+  // pulled tick to tick, which is the crest-and-hollow shape of what it is rolling over
+  const gains = speeds.slice(1).map((v, i) => (v - speeds[i]) / SIM_DT);
+  const hi = Math.max(...gains);
+  const lo = Math.min(...gains);
+  check(
+    '...and it still rides in steps rather than gliding',
+    hi > lo * 2 + 1,
+    `pull swings ${lo.toFixed(1)}..${hi.toFixed(1)} in/s² over the crests (a glide would be flat)`,
+  );
+}
+
 // ---- turning carries the velocity round with the chassis --------------------------
 /**
  * "When I drive straight and turn with tank, I feel like I get shifted slightly in a weird
