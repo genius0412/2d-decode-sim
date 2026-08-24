@@ -324,7 +324,7 @@ export const BALL_ROLL_FRICTION = 20; // in/s^2 — low enough that classifier
 export const BALL_PUSH_DRAG = 0.01;
 export const BALL_REST_SPEED = 2; // in/s, snap to rest below this
 export const BALL_WALL_RESTITUTION = 0.5;
-export const BALL_BALL_RESTITUTION = 0.55;
+export const BALL_BALL_RESTITUTION = 0.68;
 export const BALL_GROUND_RESTITUTION = 0.45; // vertical bounce
 export const BALL_BOUNCE_H_RETAIN = 0.8; // horizontal speed kept on ground bounce
 export const GRAVITY = 386; // in/s^2
@@ -372,6 +372,14 @@ export const BALL_SETTLE_SLOP = 0.2; // in
  * reversals a second at 1.0, none at 0.5.
  */
 export const BALL_SEPARATION_RELAX = 0.5;
+/** peak tangential kick (in/s) a contact between two artifacts gets, equal and opposite. Two
+ * spheres never meet dead centre; this is that offset, and it is where the drain's spread comes
+ * from now that the exit no longer fans them. Deterministic — see `separateBalls`. */
+export const BALL_CONTACT_SCATTER = 4; // in/s, the ceiling on that kick
+/** ...as a fraction of the CLOSING speed. Two artifacts meeting hard glance off each other;
+ * two barely touching do not, and treating those the same is a vibration rather than a
+ * contact. */
+export const BALL_CONTACT_SCATTER_FRAC = 0.25;
 /**
  * How far an artifact will look ALONG a wall for a way out of a chassis, and at what
  * resolution — see `evictBallFromRobot`.
@@ -1217,22 +1225,21 @@ export const RAIL_ENTRY_BLOCK_S = 50;
  * makes the flow legible.
  */
 /**
- * The speed an artifact boards the ramp at — and it is the ramp's own DELIVERY speed, not a
- * crawl.
+ * The speed an artifact boards the ramp at.
  *
- * It was 8 in/s, which set the whole goal's throughput: the next artifact cannot board until
- * this one is a PITCH clear of the entrance, so the hand-off rate is boarding speed over
- * pitch, and 8 over 5.1in is two a second. Everything else about the basin was already fast
- * enough — raising the funnel pull, widening the catch and moving the block all bought
- * fractions — because the entrance itself was the bottleneck. "Basin frequency needs to be
- * like 5 times faster."
+ * It was 8 in/s, which throttled the whole goal: the next artifact cannot board until this one
+ * is a PITCH clear, so the hand-off rate is boarding speed over pitch, and 8 over 5.1in is two
+ * a second. It was then tied to the ramp's DELIVERY speed to fix that — and when the chute was
+ * steepened for the drain cadence, the delivery speed went with it and artifacts started
+ * entering the channel at 69 in/s. "Balls come down the funnel too fast. Not frequency, speed."
  *
- * Derived rather than picked: RAIL_ACCEL / RAIL_RATTLE_DRAG is the terminal the ramp converges
- * on, so an artifact entering at it is moving exactly as fast as the ramp's own fastest and
- * the invariant that nothing on the ramp outruns the ramp is untouched. Measured 2.04 -> 5.24
- * hand-offs a second; the ceiling for a 5.1in artifact at that speed is 8.8.
+ * So it is its own number again. An artifact arrives from the basin under a funnel pull, not
+ * off a ramp, and 25 in/s is a brisk hand-off without being a shot: fast enough that the
+ * entrance is not the bottleneck it was at 8, slow enough that the channel does not read as
+ * firing artifacts down itself. What it costs in hand-off rate the ramp now gives back — a
+ * packed column shares momentum, so the artifacts behind push the one at the top along.
  */
-export const RAIL_ENTRY_V = RAIL_ACCEL / RAIL_RATTLE_DRAG; // in/s ~= 45
+export const RAIL_ENTRY_V = 25; // in/s
 export const RAIL_EXIT_S = -4; // past the gate: ball drops out to the floor
 /**
  * An artifact on the ramp is drawn RAMP_SURFACE_Z up in the air, which is true while it is on
@@ -1330,7 +1337,7 @@ export const EXIT_PIN_FRAC = 0.8; // of BALL_RADIUS
  *
  * The net pull is 6 in/s^2, as it was, and the loss is whatever the slope leaves over it.
  */
-export const OVERFLOW_NET_PULL = 6; // in/s², what actually drives a rider down the pile
+export const OVERFLOW_NET_PULL = 4; // in/s², what actually drives a rider down the pile
 export const OVERFLOW_ROLL_LOSS = RAIL_ACCEL - OVERFLOW_NET_PULL; // in/s²
 /**
  * HOW STRONGLY THE COLUMN UNDERNEATH CARRIES THE ARTIFACT RIDING ON IT, per second.
@@ -1368,7 +1375,11 @@ export const OVERFLOW_LEAD = 6;
  */
 // ...and the LURCH is artifact geometry too, not the chute's: a crest is a crest. Held at
 // the value it had when the ramp pulled at 50, rather than scaling with the slope.
-export const OVERFLOW_BUMP = 5; // in/s² per unit slope
+// ...and the LURCH is nearly the whole of it, which is what makes the ride read as STEPS
+// rather than a glide: cresting a sphere all but cancels the pull, dropping into the next
+// hollow doubles it. Held just under the net pull by the invariant a smoke check states — past
+// it a crest would drive a rider back UP the pile, and a lurch would become a trap.
+export const OVERFLOW_BUMP = 3.8; // in/s² per unit slope
 /** lateral/vertical glide rate as a ball settles onto the rail line */
 export const RAIL_BLEND_SPEED = 30; // in/s
 /**

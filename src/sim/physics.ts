@@ -1195,7 +1195,7 @@ export function collideBallBall(a: Artifact, b: Artifact): void {
  * impulse injects energy and makes a pinned clump jitter. Here the ONLY job is that no two
  * artifacts occupy the same space.
  */
-export function separateBalls(a: Artifact, b: Artifact): void {
+export function separateBalls(a: Artifact, b: Artifact, tick = 0, scatter = false): void {
   const dx = b.pos.x - a.pos.x;
   const dy = b.pos.y - a.pos.y;
   const d2 = dx * dx + dy * dy;
@@ -1211,6 +1211,49 @@ export function separateBalls(a: Artifact, b: Artifact): void {
     return;
   }
   const d = Math.sqrt(d2);
+  /**
+   * A CONTACT BETWEEN TWO SPHERES IS NEVER PERFECTLY CENTRAL.
+   *
+   * Two artifacts meeting on a foam tile touch at a point that is a little off the line
+   * between their centres — the seams, the tile, the spin each is carrying — so real ones
+   * scatter where these slid past each other in a tidy line. It matters most at the gate,
+   * where the drain now leaves straight (no synthesised fan at the exit) and the spread has
+   * to come from what the artifacts hit: measured, nine draining artifacts finished 3in apart
+   * across the tunnel. "Add slightly more randomness to each collision between balls to make
+   * them spread out more."
+   *
+   * Equal and opposite, so momentum is conserved, and DETERMINISTIC — a hash of the two ids
+   * and the tick, not Math.random, because this runs inside the lockstep sim.
+   */
+   // ...ONCE PER TICK, not once per relaxation pass. The pass runs six times, and six kicks a
+   // tick is not a contact, it is a vibration: measured, two overlapping artifacts flew 13.6in
+   // apart and the pinned-artifact squeeze went from 15 reversals a second to 32.
+  const t = Math.floor(tick * 60);
+  if (!scatter) return separate();
+  let h = (a.id * 73856093) ^ (b.id * 19349663) ^ (t * 83492791);
+  h = Math.imul(h ^ (h >>> 15), 2246822507);
+  h = Math.imul(h ^ (h >>> 13), 3266489909);
+  /**
+   * ...AND IN PROPORTION TO THE HIT. A flat kick applies the same shove to an artifact being
+   * crept onto as to one arriving at 40 in/s, which is not an off-centre contact, it is a
+   * vibration: it shoved artifacts through a 4.6in gap they do not fit through and set the
+   * pinned-artifact squeeze ringing again. The offset scales with how hard the two actually
+   * meet, so a pile being leaned on barely scatters and a drain hitting the pile in front of
+   * the gate scatters properly.
+   */
+  const rvn = ((b.vel.x - a.vel.x) * dx + (b.vel.y - a.vel.y) * dy) / d;
+  const closing = Math.min(Math.abs(rvn), C.BALL_CONTACT_SCATTER / C.BALL_CONTACT_SCATTER_FRAC);
+  const jitter =
+    (((h ^ (h >>> 16)) >>> 0) / 4294967296 - 0.5) * closing * C.BALL_CONTACT_SCATTER_FRAC;
+  const tanx = -(dy / d) * jitter;
+  const tany = (dx / d) * jitter;
+  a.vel.x -= tanx;
+  a.vel.y -= tany;
+  b.vel.x += tanx;
+  b.vel.y += tany;
+  separate();
+  return;
+  function separate(): void {
   // a FRACTION of the overlap per pass — see BALL_SEPARATION_RELAX
   const push = ((minD - d) / 2) * C.BALL_SEPARATION_RELAX;
   const nx = (dx / d) * push;
@@ -1219,6 +1262,7 @@ export function separateBalls(a: Artifact, b: Artifact): void {
   a.pos.y -= ny;
   b.pos.x += nx;
   b.pos.y += ny;
+}
 }
 
 /** a HELD ball (stored in a robot's intake) is a solid immovable obstacle to an

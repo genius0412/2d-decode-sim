@@ -2402,10 +2402,27 @@ function queueTenth(w: World): void {
     angles.length >= 7 && worst < 5,
     `${angles.length} out, worst ${worst.toFixed(1)}deg off straight (the fan was 5-15deg)`,
   );
+  /**
+   * ...AND THERE IS NO LEAN AT ALL NOW. The exit used to hand the artifact its weave across
+   * the groove as a lateral velocity, which is honest at 20 in/s and a spray at 40 — the same
+   * wander rate times twice the speed. Steepening the chute turned the drift into the "weird
+   * angles for no reason" that were reported, so the synthesised component is gone entirely:
+   * "the spreading out should be fundamentally from collisions mostly".
+   *
+   * Which means the spread has to come from somewhere real, and this is where that is
+   * checked: they leave on identical headings and still end up in different places, because
+   * each one caroms off whatever stopped before it.
+   */
+  const finals = tracked.filter((b) => b.state.kind === 'ground');
+  const spreadY = Math.max(...finals.map((b) => b.pos.y)) - Math.min(...finals.map((b) => b.pos.y));
+  // ...and they do NOT end up stacked on one spot: every pair at least a diameter apart is the
+  // spread a corridor this narrow can actually show. Lateral room by the wall is a few inches,
+  // so it is the DISTANCE each one travels before its own collision stops it that varies.
+  const pairs = finals.flatMap((p1, i) => finals.slice(i + 1).map((p2) => hyp(p1.pos.x - p2.pos.x, p1.pos.y - p2.pos.y)));
   check(
-    '...and what lean they do have is SIGNED — a drain is not one diagonal',
-    angles.some((d) => d > 0.05) && angles.some((d) => d < -0.05),
-    `headings ${angles.map((d) => d.toFixed(1)).join(',')}`,
+    '...and the spread they end up with comes from COLLISIONS, not from a fan at the exit',
+    angles.every((d) => Math.abs(d) < 0.05) && spreadY > 20 && Math.min(...pairs) >= BALL_RADIUS * 2 - 0.5,
+    `every heading ${angles.map((d) => d.toFixed(1)).join(',')} — and they finish spread over ${spreadY.toFixed(0)}in of tunnel, closest pair ${Math.min(...pairs).toFixed(1)}in`,
   );
 }
 

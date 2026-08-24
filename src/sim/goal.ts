@@ -12,7 +12,6 @@ import {
   convexOverlap,
   railPos,
   railWander,
-  railWanderRate,
   rectCorners,
   tunnelExitVel,
   viewAngleOf,
@@ -417,7 +416,10 @@ export function updateBasins(world: World, dt: number): void {
          * entrance stops being a bottleneck the basin has to queue behind.
          */
         const rampV = Math.sqrt(2 * C.RAIL_ACCEL * Math.max(0, C.RAIL_S_MAX - s));
-        const cap = Math.max(C.RAIL_ENTRY_V, rampV, C.RAIL_ACCEL / C.RAIL_RATTLE_DRAG);
+        // the ceiling is the ramp's own free-fall from where it boards, or the entry speed,
+        // whichever is greater — NOT the ramp's terminal, which is what made the entrance fire
+        // artifacts down the channel at 69 in/s once the chute was steepened
+        const cap = Math.max(C.RAIL_ENTRY_V, rampV);
         const v = Math.max(Math.min(b.vel.y, -C.RAIL_ENTRY_V), -cap);
         b.state = { kind: 'rail', goal: a, s, v, overflow: false, pending: true };
         b.vel = { x: 0, y: 0 };
@@ -1438,7 +1440,21 @@ export function updateRails(
       // the groove. `railWanderRate` is how fast the groove was carrying it across per inch
       // travelled, so times its own speed it IS that artifact's lateral velocity — signed,
       // different for each, and a couple of in/s, not a fan.
-      const drift = goalSide(a) * railWanderRate(st0.s, b.id, st0.overflow) * st0.v;
+      /**
+       * ...AND IT LEAVES STRAIGHT. THE SPREAD COMES FROM WHAT IT HITS.
+       *
+       * The exit carried the artifact's weave across the groove out onto the floor as a
+       * lateral velocity — honest enough at 20 in/s, and a fan at 40: the same wander rate
+       * times twice the speed is twice the sideways component, so steepening the chute turned
+       * a drift into a spray. "Overflow balls come out at weird angles for no reason. Make it
+       * spread out less. The spreading out should be fundamentally from collisions mostly."
+       *
+       * So there is no synthesised lateral component at all now. The channel runs down the
+       * wall and an artifact rolls off the end of it going the way the channel points; where
+       * the drain ends up spread is where it caroms off whatever stopped first, which is a
+       * cause rather than a shape applied to all of them.
+       */
+      const drift = 0;
       /**
        * ...ONTO THE FLOOR, and it is only ever reached when there IS floor to put it on: a
        * robot whose MOUTH is over the outflow blocks the column up-ramp (see `railBlock`), so

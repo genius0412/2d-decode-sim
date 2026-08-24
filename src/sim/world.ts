@@ -219,7 +219,7 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
    */
   for (let pass = 0; pass < C.BALL_RELAX_PASSES; pass++) {
     for (let i = 0; i < ground.length; i++) {
-      for (let j = i + 1; j < ground.length; j++) separateBalls(ground[i], ground[j]);
+      for (let j = i + 1; j < ground.length; j++) separateBalls(ground[i], ground[j], world.time, pass === 0);
     }
     for (const b of ground) {
       // ROBOTS ARE PART OF THE WORLD THIS PASS HAS TO RESPECT. Separation moves artifacts
