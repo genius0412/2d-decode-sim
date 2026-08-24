@@ -6591,7 +6591,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   r.heading = Math.PI / 2; // facing the clump
   r.fieldCentric = false;
   const before = w.match.fouls.blue.minor;
-  run(w, cmd({ driveY: 1, intake: true }), 2.5);
+  // the window where it still has SLOTS: that is what the exemption is, so that is what is
+  // asserted. Past it the robot is full, acquiring nothing, and still leaning on the pile.
+  run(w, cmd({ driveY: 1, intake: true }), 0.6);
   const acquiring = w.match.fouls.blue.minor - before;
   /**
    * ...AND IT IS OVER-POSSESSION NOW, which is the trade that was asked for.
@@ -6604,9 +6606,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
    * way not to pay is to stop driving into it once you are full.
    */
   check(
-    'driving into a wall clump to intake from it IS over-possession now',
-    acquiring > 0,
-    `minor fouls=${acquiring} while acquiring, hopper=${r.hopper.length} (it was 0 while the jam carve-out stood)`,
+    'driving into a wall clump to INTAKE from it is not over-possession while it has room',
+    acquiring === 0,
+    `minor fouls=${acquiring} while it still had room, hopper=${r.hopper.length} — the slots waiting for them are what excuses them, and only as many as there is room for`,
   );
   check('...and it actually intaked (the test is not vacuous)', r.hopper.length > 0, `hopper=${r.hopper.length}`);
   /**
@@ -6692,9 +6694,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     'acquiring is not controlling',
   );
   check(
-    '...and so does a clump jammed against a wall',
+    '...but shoving one against a wall with a FULL robot does',
     clump(6, push, 8, FIELD_HALF - BALL_RADIUS - 5, FIELD_HALF - 30) > 0,
-    'the field holding it is no longer an excuse — see the note on the reverted rule',
+    'a full robot is acquiring nothing, and the field holding the pile is not an excuse',
   );
 }
 
@@ -6762,9 +6764,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   w.balls.push({ id: 9101, color: 'purple', state: { kind: 'ground' }, pos: { x: 12, y: 0 }, vel: { x: 0, y: 60 }, z: 0, vz: 0 });
   runCmds(w, new Map([[0, cmd({ driveY: 1 })]]), POSSESSION_CONFIRM + POSSESSION_GRACE + 0.5);
   check(
-    'a ball squirting sideways off the bumper is control while it touches',
-    w.match.fouls.blue.minor > 0,
-    `blueMinor=${w.match.fouls.blue.minor} (0 while DEFLECTING was carved out; main's rule asks only whether it is touching a moving robot)`,
+    'a ball squirting sideways off the bumper is not plowed (no G408)',
+    w.match.fouls.blue.minor === 0,
+    `blueMinor=${w.match.fouls.blue.minor} — it never holds a station, so DEFLECTING needs no carve-out of its own`,
   );
 
   // ...and one lying AT REST that the robot drives past is BULLDOZING, which G408 names as
@@ -6840,9 +6842,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
     updatePenalties(w4, 1 / 60, new Map());
   }
   check(
-    'a shoved wedge costs a MINOR per artifact TOUCHING, over the limit',
-    w4.match.fouls.blue.minor === 3 && w4.match.scores.red.foulPoints === 15,
-    `blueMinor=${w4.match.fouls.blue.minor} redFoulPts=${w4.match.scores.red.foulPoints} (4 and 20 while the chain counted artifacts behind the front row too — main counts contact, so the back of a pile is not billed)`,
+    'a shoved WEDGE counts transitively and costs a MINOR per artifact over the limit',
+    w4.match.fouls.blue.minor === 4 && w4.match.scores.red.foulPoints === 20,
+    `blueMinor=${w4.match.fouls.blue.minor} redFoulPts=${w4.match.scores.red.foulPoints}`,
   );
 
   // YELLOW CARD, clause A: "simultaneous CONTROL of 5 or more ARTIFACTS" is excessive on
@@ -7044,9 +7046,9 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
      * clump above, and the price of a rule that actually fires in play.
      */
     check(
-      'crossing a littered field with a full hopper costs, with no confirm window to hide in',
-      w.match.fouls.blue.minor > 0,
-      `blueMinor=${w.match.fouls.blue.minor} cards=${JSON.stringify(w.match.cards?.blue ?? {})} (0 while each artifact had to confirm for itself)`,
+      'crossing a littered field is BULLDOZING, not control (no G408)',
+      w.match.fouls.blue.minor === 0 && !w.match.cards?.blue.yellow,
+      `blueMinor=${w.match.fouls.blue.minor} cards=${JSON.stringify(w.match.cards?.blue ?? {})} — brushed artifacts never hold a station`,
 );
   }
 

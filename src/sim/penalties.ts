@@ -19,7 +19,7 @@ import {
 } from './physics';
 import { pushingGate, ZERO_CMD } from './goal';
 import { awardCard, awardFoul } from './scoring';
-import { hyp } from '../math';
+import { hyp, rot } from '../math';
 
 /**
  * DECODE penalty engine (Competition Manual Section 11). Pure and
@@ -199,7 +199,7 @@ export function updatePenalties(
   updateGateFouls(world, commands, fire);
 
   // ---- G408 over-possession / plowing (per robot, own second-accumulator) --
-  updatePossession(world, dt, fire);
+  updatePossession(world, dt, commands, fire);
 
   // ---- G422 pinning (ordered pairs, own second-accumulator) ---------------
   updatePins(world, dt, commands);
@@ -227,10 +227,15 @@ export function updatePenalties(
  * `controlledArtifacts` decides the count; POSSESSION_GRACE is how much control has to
  * ACCUMULATE on the leaky clock below.
  */
-function updatePossession(world: World, dt: number, fire: FireFn): void {
+function updatePossession(
+  world: World,
+  dt: number,
+  commands: Map<number, RobotCommand>,
+  fire: FireFn,
+): void {
   const pen = world.penalties;
   for (const r of world.robots) {
-    const controlled = controlledArtifacts(world, r, dt);
+    const controlled = controlledArtifacts(world, r, dt, commands.get(r.id)?.intake === true);
     const over = controlled - C.POSSESSION_LIMIT;
 
     // CLAUSE B's clock: one continuous stretch of controlling 4+. The INSTANCE is counted
@@ -340,38 +345,112 @@ function updatePossession(world: World, dt: number, fire: FireFn): void {
  * outright, and holding a pile against a wall for thirty seconds drawing nothing is the same
  * complaint from the other end.
  */
-function controlledArtifacts(world: World, r: RobotState, dt: number): number {
+function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: boolean): number {
   const pen = world.penalties;
-  let count = r.hopper.length; // stored possession
+  const home = loadZone(r.alliance);
+  const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN; // touching the footprint
+  const chain = C.BALL_RADIUS * 2 + C.POSSESSION_CONTROL_MARGIN; // ...or touching one that is
   const moving =
     hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED || Math.abs(r.angVel) >= C.POSSESSION_TURN_RATE;
-  const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN;
-  const home = loadZone(r.alliance);
-  for (const b of world.balls) {
-    if (b.state.kind !== 'ground') continue;
-    // the manual's third carve-out, and the only one kept: artifacts in your OWN loading zone
-    // are what you are there to collect
-    if (inRect(b.pos, home)) continue;
-    const cp = closestPointOnRobot(r, b.pos);
-    const touching = hyp(b.pos.x - cp.x, b.pos.y - cp.y) <= reach;
-    // TRAPPING: pressed against the field for longer than MOMENTARY is control whether or not
-    // the robot is moving — see the note above. The clock is per (robot, artifact) and leaky.
+  const loose = world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home));
+
+  /**
+   * ONE TEST PER DEFINITION, and the definitions are the manual's.
+   *
+   * POSSESSION: "as the ROBOT moves or changes ORIENTATION ... the object remains in
+   * approximately the same position RELATIVE TO THE ROBOT." So: where does it sit in the
+   * robot's own frame, and does it stay there. That single question is also what separates
+   * herding from the two things G408 excuses — an artifact you drive PAST sweeps the length of
+   * the chassis and is gone, one that DEFLECTS leaves at once, and neither keeps its station.
+   * BULLDOZING and DEFLECTING need no carve-out of their own; they fail this.
+   *
+   * TRAPPING is the other half of CONTROL ("carrying, herding, launching, TRAPPING") and is
+   * not conditional on moving — a robot pinning artifacts against the field is holding them.
+   * It is the same station test with a longer clock, because resting against something for a
+   * moment is not trapping and the glossary's MOMENTARY is where that line is.
+   */
+  const held = new Set<number>();
+  for (const b of loose) {
     const key = `${r.id}:${b.id}`;
-    const prev = pen.ballTrap[key] ?? 0;
-    if (touching && !moving) {
-      const t = prev + dt;
-      pen.ballTrap[key] = t;
-      if (t >= C.MOMENTARY_S) count++;
+    const cp = closestPointOnRobot(r, b.pos);
+    if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) > reach) {
+      // not touching: its clock drains, and a long enough gap forgets the station entirely
+      const prev = pen.ballHold[key];
+      if (prev !== undefined) {
+        const t = prev - dt * C.POSSESSION_LEAK;
+        if (t <= 0) {
+          delete pen.ballHold[key];
+          delete pen.ballAnchor[key];
+        } else pen.ballHold[key] = t;
+      }
       continue;
     }
-    if (prev > 0) {
-      const t = prev - dt * C.POSSESSION_LEAK;
-      if (t <= 0) delete pen.ballTrap[key];
-      else pen.ballTrap[key] = t;
+    const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+    const anchor = pen.ballAnchor[key];
+    const stationed =
+      anchor !== undefined && hyp(loc.x - anchor.x, loc.y - anchor.y) <= C.POSSESSION_DRIFT;
+    if (!stationed) {
+      // first contact, or it has moved to a NEW station on the robot — start the hold here
+      // rather than crediting travel across the chassis as if it had stayed put
+      pen.ballAnchor[key] = { x: loc.x, y: loc.y };
+      pen.ballHold[key] = dt;
+      continue;
     }
-    if (moving && touching) count++;
+    const t = (pen.ballHold[key] ?? 0) + dt;
+    pen.ballHold[key] = t;
+    if (t >= (moving ? C.POSSESSION_CONFIRM : C.MOMENTARY_S)) held.add(b.id);
   }
-  return count;
+
+  /**
+   * ...AND AN ARTIFACT ON ITS WAY INTO A SLOT IS NOT A FOURTH ARTIFACT.
+   *
+   * POSSESSION_LIMIT and HOPPER_CAPACITY are the same three, so an artifact being drawn in is
+   * already charged against the limit by the slot waiting for it — counting it in the mouth as
+   * well charges that slot twice. That is the manual's "inadvertent contact ... while
+   * attempting to acquire", and the whole of the exemption: it is capped at the room actually
+   * LEFT, nearest the mouth first. A FULL robot is acquiring nothing, so it gets none of it and
+   * ploughs exactly as hard with the intake running as without — which is the case that made
+   * this exemption worth capping rather than deleting.
+   */
+  let room = Math.max(0, C.HOPPER_CAPACITY - r.hopper.length);
+  if (room > 0 && intaking) {
+    const mouth = [...held]
+      .map((id) => {
+        const b = loose.find((x) => x.id === id)!;
+        const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+        return { id, ahead: loc.x };
+      })
+      .filter((m) => m.ahead > 0)
+      .sort((p1, p2) => p1.ahead - p2.ahead);
+    for (const m of mouth) {
+      if (room <= 0) break;
+      held.delete(m.id);
+      room--;
+    }
+  }
+
+  /**
+   * ...THEN THE CHAIN, because CONTROL "requires contact with a ROBOT, either directly or
+   * TRANSITIVELY through other SCORING ELEMENTS". The transitive half asks for CONTACT and
+   * nothing else — an artifact three deep in a shoved wedge is controlled because it is
+   * pressed against one that is, however much it rolls on the way.
+   */
+  const controlled = new Set(held);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const b of loose) {
+      if (controlled.has(b.id)) continue;
+      for (const o of loose) {
+        if (!controlled.has(o.id)) continue;
+        if (hyp(b.pos.x - o.pos.x, b.pos.y - o.pos.y) <= chain) {
+          controlled.add(b.id);
+          grew = true;
+          break;
+        }
+      }
+    }
+  }
+  return r.hopper.length + controlled.size;
 }
 
 type FireFn = (key: string, offender: Alliance, severity: 'minor' | 'major', rule: string) => boolean;
