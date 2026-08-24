@@ -23,6 +23,8 @@ import {
 } from './db/repo';
 import {
   WINDOW_HOURS,
+  STANDING_MAX,
+  tierOf,
   applyStandingEvent,
   queueLocked,
   type StandingEventKind,
@@ -37,6 +39,14 @@ export interface OffenceContext {
   roomCode?: string;
   /** distinct reporters, for the `report` kind only */
   count?: number;
+  /**
+   * An EXPLICIT point cost, overriding the ladder. Only a moderator sets this — it is how a
+   * smite for a false report is sized to what the person actually did, since "filed a claim
+   * that was wrong" and "filed a fabricated claim to bury an opponent" arrive as the same
+   * row and only a human can tell them apart. Everything else about the event is unchanged:
+   * it lands in the same ledger, on the same tier ladder, with the same cooldown rung.
+   */
+  points?: number;
 }
 
 /**
@@ -85,6 +95,14 @@ export async function chargeStanding(
       }
     }
     const final: StandingVerdict = { ...verdict, ratingCharge: charged };
+    if (ctx.points !== undefined && Number.isFinite(ctx.points)) {
+      // the override re-derives what depends on it, so the ledger and the player's score can
+      // never disagree about what the event cost
+      const points = Math.max(0, Math.min(STANDING_MAX, Math.round(ctx.points)));
+      final.points = points;
+      final.scoreAfter = Math.max(0, Math.min(STANDING_MAX, final.scoreBefore - points));
+      final.tierAfter = tierOf(final.scoreAfter).key;
+    }
     await writeStandingEvent(userId, final, { game: ctx.game, mode: ctx.mode, roomCode: ctx.roomCode });
     console.log(
       `[standing] ${userId} ${kind}${ctx.count && ctx.count > 1 ? `x${ctx.count}` : ''} ` +

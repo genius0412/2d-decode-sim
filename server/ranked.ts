@@ -176,6 +176,9 @@ export async function persistVersusMatch(
   replayId: string,
   ranked: boolean,
   game?: GameId,
+  /** filled with the row id of the match this wrote, so the caller can hand it to anything
+   *  that needs to point AT the match later — the misscore queue opens the replay by it. */
+  out?: { matchId?: string },
 ): Promise<EloOutcome[]> {
   const reds = authed.filter((p) => p.alliance === 'red');
   const blues = authed.filter((p) => p.alliance === 'blue');
@@ -207,6 +210,7 @@ export async function persistVersusMatch(
   }
 
   const matchId = await saveMatch(mode, balanceVersion, replayId, ranked, game);
+  if (out) out.matchId = String(matchId);
   for (const p of authed) {
     const u = ranked ? updates.find((x) => x.userId === p.userId) : undefined;
     await addMatchParticipant({

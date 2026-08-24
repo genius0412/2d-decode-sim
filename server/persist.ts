@@ -142,12 +142,13 @@ export async function persistMatch(o: MatchOutcome): Promise<PersistOutcome> {
       );
       return { record: info };
     } else {
-      const elo = await persistVersusMatch(authed, o, bv, replayId, o.ranked, game);
+      const ids: { matchId?: string } = {};
+      const elo = await persistVersusMatch(authed, o, bv, replayId, o.ranked, game, ids);
       console.log(
         `[persist] WROTE versus match (ranked=${o.ranked}) — ${elo.length} ratings updated` +
           (elo.length === 0 && o.ranked ? ' (not a two-sided match)' : ''),
       );
-      return { elo };
+      return { elo, matchId: ids.matchId };
     }
   } catch (e) {
     console.error('[persist] FAILED writing to DB:', e);

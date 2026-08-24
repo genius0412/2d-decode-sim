@@ -738,6 +738,62 @@ async function main(): Promise<void> {
   check('delete: but the payer email is scrubbed (personal data)', pay.email === null);
   check('delete: and the claim is unlinked by the FK', pay.claimed_by === null);
 
+  // ------------------------------------------------------ misscore reports ----
+  /**
+   * A claim about a RESULT, and the smite that keeps the queue from being a weapon.
+   *
+   * Three things that are easy to get wrong: a second claim on the same match from the same
+   * person must be a no-op rather than a second row (the unique index), resolving must be
+   * idempotent under two moderators (the `status = 'open'` guard), and the smite must be
+   * RECORDED on the row it was issued against. The standing charge itself goes through the
+   * ordinary ledger and is covered with the rest of standing.
+   */
+  await repo.ensureProfile('sr-user', 'Filer');
+  const srFiled = await repo.submitScoreReport({
+    reporterId: 'sr-user',
+    roomCode: 'ROOM1',
+    detail: 'the last artifact scored and was not counted',
+  });
+  check('score reports: a claim is filed', srFiled === true);
+  const srDupe = await repo.submitScoreReport({
+    reporterId: 'sr-user',
+    roomCode: 'ROOM1',
+    detail: 'saying it again',
+  });
+  check('score reports: the same match from the same person is a no-op, not a second row', srDupe === false);
+  const srOther = await repo.submitScoreReport({
+    reporterId: 'sr-user',
+    roomCode: 'ROOM2',
+    detail: 'a different match',
+  });
+  check('score reports: ...but a different match still lands', srOther === true);
+
+  const srOpen = await repo.listScoreReports({ status: 'open' });
+  check('score reports: the queue lists open claims', srOpen.length === 2, `${srOpen.length}`);
+  check(
+    'score reports: each row carries the filer history a smite decision needs',
+    srOpen[0].reporterFiled === 2 && srOpen[0].reporterRejected === 0,
+    `filed=${srOpen[0].reporterFiled} rejected=${srOpen[0].reporterRejected}`,
+  );
+
+  const srDone = await repo.resolveScoreReport(srOpen[0].id, 'rejected', 'admin-1', 50);
+  check('score reports: resolving returns the reporter to charge', srDone?.reporterId === 'sr-user');
+  const srAgain = await repo.resolveScoreReport(srOpen[0].id, 'upheld', 'admin-2', 0);
+  check('score reports: ...and a second moderator on the same row changes nothing', srAgain === null);
+  const srAll = await repo.listScoreReports({});
+  const srRejected = srAll.find((r) => r.id === srOpen[0].id);
+  check(
+    'score reports: the smite is recorded on the claim it was issued against',
+    srRejected?.status === 'rejected' && srRejected?.smite === 50,
+    `status=${srRejected?.status} smite=${srRejected?.smite}`,
+  );
+  const srStillOpen = await repo.listScoreReports({ status: 'open' });
+  check(
+    'score reports: ...and the rejected count is what the next moderator sees',
+    srStillOpen[0]?.reporterRejected === 1,
+    `${srStillOpen[0]?.reporterRejected}`,
+  );
+
   await db.close();
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
   process.exit(failures === 0 ? 0 : 1);

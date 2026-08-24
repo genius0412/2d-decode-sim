@@ -176,6 +176,11 @@ export class ServerSession implements NetSession {
     this.transport.send(encodeMsg({ t: 'report', robotId, reason, detail }));
   }
 
+  /** file a MISSCORE claim about this match — see the protocol note on `reportScore` */
+  sendScoreReport(detail: string): void {
+    this.transport.send(encodeMsg({ t: 'reportScore', detail }));
+  }
+
   sendInput(tick: number, cmd: RobotCommand): void {
     if (this.spectator) return; // a spectator controls nothing
     // Hot-path lane: inputs are sent every tick and the server holds-last, so a

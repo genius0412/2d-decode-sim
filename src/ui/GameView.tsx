@@ -15,6 +15,7 @@ import { DEFAULT_MOBILE_LAYOUT } from '../settings';
 import type { MatchResultInfo, NetSession, NetStatus } from '../net/session';
 import { clearActiveGame } from '../net/activeGame';
 import { ReportDialog } from './ReportDialog';
+import { ScoreReportDialog } from './ScoreReportDialog';
 import type { RecordRankInfo } from '../net/protocol';
 import type { Replay } from '../sim/replay';
 import { CHAIN_MODE_LABELS } from '../games/chain/labels';
@@ -495,6 +496,9 @@ export function GameView({
               ? (rid, reason, detail) => session.sendReport?.(rid, reason, detail)
               : undefined
           }
+          onReportScore={
+            session?.sendScoreReport ? (detail) => session.sendScoreReport?.(detail) : undefined
+          }
           matchResult={controllerRef.current?.getMatchResult() ?? null}
           recordResult={controllerRef.current?.getRecordResult() ?? null}
           signedIn={signedIn}
@@ -896,6 +900,7 @@ function Results({
   onWatchReplay,
   reportable,
   onReport,
+  onReportScore,
 }: {
   hud: HudSnapshot;
   /** performance.now() ms the whoosh fires — the reveal (count-up + winner slam)
@@ -921,8 +926,12 @@ function Results({
   reportable?: { robotId: number; name: string }[];
   /** send a report; absent in solo / on an older session */
   onReport?: (robotId: number, reason: string, detail: string) => void;
+  /** file a MISSCORE claim about this match — see ScoreReportDialog */
+  onReportScore?: (detail: string) => void;
 }) {
   const [reporting, setReporting] = useState(false);
+  const [scoreReporting, setScoreReporting] = useState(false);
+  const [scoreReported, setScoreReported] = useState(false);
   const red = hud.alliance === 'red' ? hud.score : hud.oppScore;
   const blue = hud.alliance === 'blue' ? hud.score : hud.oppScore;
   const winner: Alliance | 'tie' =
@@ -1114,6 +1123,31 @@ function Results({
           <button className="ds-linkbtn results-report" onClick={() => setReporting(true)}>
             ⚑ Report a player
           </button>
+        )}
+        {/* ...and the SCORE itself. A separate action from reporting a player because it is a
+            separate claim: the score is the server's arithmetic, so a wrong one is nobody's
+            misconduct and asking the reporter to name a culprit would be asking them to
+            invent one. Only offered on a match that actually SCORED (a record run has its own
+            number and no opponent to dispute it with). */}
+        {onReportScore && matchResult && !scoreReporting && !scoreReported && (
+          <button className="ds-linkbtn results-report" onClick={() => setScoreReporting(true)}>
+            ⚖ Report a misscore
+          </button>
+        )}
+        {scoreReported && (
+          <p className="results-report-done">
+            Misscore reported — a moderator will check the replay.
+          </p>
+        )}
+        {scoreReporting && onReportScore && (
+          <ScoreReportDialog
+            onSubmit={(detail) => {
+              onReportScore(detail);
+              setScoreReported(true);
+              setScoreReporting(false);
+            }}
+            onClose={() => setScoreReporting(false)}
+          />
         )}
         {reporting && onReport && reportable && (
           <ReportDialog

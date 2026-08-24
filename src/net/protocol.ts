@@ -301,6 +301,15 @@ export type ClientMsg =
    * somebody actually in the match it is actually in.
    */
   | { t: 'report'; robotId: number; reason: string; detail?: string }
+  /**
+   * REPORT A MISSCORE — a claim about the RESULT, not about a person.
+   *
+   * It carries no target at all, which is the whole difference: the score is the server's
+   * arithmetic, so if it is wrong there is no opponent at fault and naming one would be a
+   * lie the reporter has no way to check. The server resolves the reporter and the match it
+   * wrote from its own roster, exactly as it does for a player report.
+   */
+  | { t: 'reportScore'; detail: string }
   | { t: 'update'; patch: PlayerPatch }
   | { t: 'start' } // host only: build + broadcast the match world
   | { t: 'restart' } // host only: re-author the match with a fresh seed

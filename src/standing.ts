@@ -46,6 +46,9 @@ export const WINDOW_HOURS: Record<StandingEventKind, number> = {
   afk: 24 * 7,
   leave: 24 * 7,
   reportUpheld: 24 * 30,
+  // remembered as long as an upheld verdict is: both are a moderator's finding about a
+  // person rather than a bad night, and the repeat multiplier should still see the last one
+  falseReport: 24 * 30,
 };
 
 export type StandingEventKind =
@@ -53,7 +56,18 @@ export type StandingEventKind =
   | 'afk'
   | 'leave'
   | 'report'
-  | 'reportUpheld';
+  | 'reportUpheld'
+  /**
+   * A report a moderator read and found to be FALSE — the mirror of `reportUpheld`.
+   *
+   * Every other event here is charged to someone who did something in a match. This one is
+   * charged to someone who used the moderation queue as a weapon: filing a misscore claim
+   * that a human then checked against the replay and found had nothing in it. It is the
+   * heaviest event in the table on purpose, and it is the only one that can only ever be
+   * issued by hand — nothing automatic can tell an honest mistake from a malicious one, and
+   * a rule that guessed would either punish confusion or license brigading.
+   */
+  | 'falseReport';
 
 /**
  * BASE COST of each event, in standing points.
@@ -81,6 +95,17 @@ export const STANDING_COST: Record<StandingEventKind, number> = {
   afk: 12,
   leave: 15,
   reportUpheld: 25,
+  /**
+   * upheld 25 / FALSE 40 — the heaviest, and heavier than being upheld against.
+   *
+   * A player reported for throwing cost three other people one match. Someone filing a
+   * fabricated misscore claim costs a moderator's time and, if it were ever acted on, the
+   * result of a match that was played correctly — and unlike every other line in this table
+   * there is nothing accidental about it: a human read it and found it empty. "If they
+   * maliciously report, I should be able to smite them by taking off a ton of account
+   * standing points."
+   */
+  falseReport: 40,
 };
 
 /** how many distinct reporters can charge one player for a single match. Raw reports are
@@ -137,6 +162,8 @@ export const COOLDOWN_LADDER: Record<StandingEventKind, readonly number[]> = {
   // ladder that meant one upheld verdict against an already-poor account jumped straight to
   // the week. A moderator's first action should not be the harshest one available.
   reportUpheld: [120, 1440, 1440 * 3, 1440 * 7],
+  // the same ladder as an upheld verdict: a moderator has looked at it either way
+  falseReport: [120, 1440, 1440 * 3, 1440 * 7],
 };
 
 /** ranked rating charged for the n-th offence of a kind. Zero everywhere it should be. */
@@ -149,6 +176,9 @@ export const RATING_LADDER: Record<StandingEventKind, readonly number[]> = {
   leave:      [10,  20,  40,  60],
   report:     [0],
   reportUpheld: [20, 40, 60, 80],
+  // it costs rating too, at the same rungs as an upheld verdict: filing a false claim is a
+  // competitive act, not a driving one, and the ladder is where that is already expressed
+  falseReport: [0, 10, 20, 30],
 };
 
 /**
@@ -407,4 +437,5 @@ export const STANDING_EVENT_LABEL: Record<StandingEventKind, string> = {
   leave: 'Left a match in progress',
   report: 'Reported by other players',
   reportUpheld: 'A moderator upheld reports against you',
+  falseReport: 'A moderator found a report you filed to be false',
 };

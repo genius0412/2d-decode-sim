@@ -73,6 +73,9 @@ export interface BehaviourReport {
 export interface PersistOutcome {
   elo?: EloOutcome[];
   record?: RecordRankInfo;
+  /** the row this match was written as, when it was written. The room keeps it so a MISSCORE
+   *  claim filed from the results screen can point at the match a moderator has to open. */
+  matchId?: string;
 }
 
 const ZERO_CMD: RobotCommand = { driveX: 0, driveY: 0, rotate: 0, leftDrive: 0, rightDrive: 0, intake: false, fire: false };
@@ -269,6 +272,9 @@ export class Room {
   // would desync since each runs a different src/sim.
   private channel = 'stable';
   private strategyDeadline = 0;
+  /** the match row this room last wrote, for a misscore claim to point at (see
+   *  `resolveScoreReport`). Empty until the result has persisted. */
+  private lastMatchId: string | null = null;
   private strategyTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly slotOf = new Map<string, number>(); // clientId -> roster slot (= robotId)
 
@@ -1325,7 +1331,9 @@ export class Room {
       if (ret && typeof (ret as Promise<unknown>).then === 'function') {
         void (ret as Promise<PersistOutcome | void>)
           .then((out) => {
-            if (!out || this.clients.size === 0) return;
+            if (!out) return;
+            if (out.matchId) this.lastMatchId = out.matchId;
+            if (this.clients.size === 0) return;
             if (out.record) {
               this.broadcast({ t: 'recordResult', info: out.record });
             }
@@ -1630,6 +1638,24 @@ export class Room {
     }
     if (!reportedId || reportedId === reporter.userId) return null;
     return { reporterId: reporter.userId, reportedId };
+  }
+
+  /**
+   * A MISSCORE claim from one of this room's players.
+   *
+   * Unlike `resolveReport` there is no target to resolve — the claim is about the RESULT, so
+   * all this has to answer is who is filing it and which match they are looking at. Signed in
+   * only, for the same reason reports are: an anonymous claim cannot be smited for being
+   * false, and a queue that cannot cost the filer anything is a queue that fills with noise.
+   */
+  resolveScoreReport(reporterClientId: string): {
+    reporterId: string;
+    matchId: string | null;
+    roomCode: string;
+  } | null {
+    const reporter = this.clients.get(reporterClientId);
+    if (!reporter?.userId) return null;
+    return { reporterId: reporter.userId, matchId: this.lastMatchId, roomCode: this.code };
   }
 
   /** TEST SEAM: fire the strategy deadline synchronously (no real timer). */

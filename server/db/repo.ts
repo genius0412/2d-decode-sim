@@ -1574,6 +1574,112 @@ export interface StandingEventRow {
   at: string;
 }
 
+// -------------------------------------------------------- score reports ------
+
+export interface ScoreReportRow {
+  id: string;
+  matchId: string | null;
+  roomCode: string;
+  game: string;
+  detail: string;
+  status: string;
+  smite: number;
+  createdAt: string;
+  reporterId: string;
+  reporterHandle: string;
+  reporterUsername: string | null;
+  /** how many claims this reporter has EVER filed, and how many were rejected — the pattern
+   * a moderator needs before deciding whether a claim is a mistake or a habit */
+  reporterFiled: number;
+  reporterRejected: number;
+}
+
+/**
+ * File a misscore claim. False when this reporter already has one on this match — the unique
+ * index, surfaced as a no-op, because a second look at the same result is the same claim.
+ */
+export async function submitScoreReport(r: {
+  reporterId: string;
+  matchId?: string | number | null;
+  roomCode?: string;
+  game?: Game;
+  detail: string;
+}): Promise<boolean> {
+  const rows = await q<{ id: string }>(
+    `insert into score_reports (reporter_id, match_id, room_code, game, detail)
+     values ($1, $2, $3, $4, $5)
+     on conflict do nothing
+     returning id::text as id`,
+    [r.reporterId, r.matchId ? String(r.matchId) : null, r.roomCode ?? '', g(r.game ?? 'decode'), r.detail],
+  );
+  return rows.length > 0;
+}
+
+/** the moderation queue: newest first, with the reporter's own history alongside each row. */
+export async function listScoreReports(opts: { status?: string; limit?: number } = {}): Promise<ScoreReportRow[]> {
+  const limit = Math.min(200, Math.max(1, Math.floor(opts.limit ?? 50)));
+  const rows = await q<{
+    id: string; match_id: string | null; room_code: string; game: string; detail: string;
+    status: string; smite: number; created_at: string; reporter_id: string;
+    handle: string; username: string | null; filed: string; rejected: string;
+  }>(
+    `select sr.id::text as id, sr.match_id::text as match_id, sr.room_code, sr.game, sr.detail,
+            sr.status, sr.smite, sr.created_at, sr.reporter_id, p.handle, p.username,
+            (select count(*) from score_reports x where x.reporter_id = sr.reporter_id) as filed,
+            (select count(*) from score_reports x
+              where x.reporter_id = sr.reporter_id and x.status = 'rejected') as rejected
+       from score_reports sr
+       join profiles p on p.user_id = sr.reporter_id
+      where ($1::text is null or sr.status = $1::text)
+      order by sr.created_at desc
+      limit $2`,
+    [opts.status ?? null, limit],
+  );
+  return rows.map((x) => ({
+    id: x.id,
+    matchId: x.match_id,
+    roomCode: x.room_code,
+    game: x.game,
+    detail: x.detail,
+    status: x.status,
+    smite: Number(x.smite ?? 0),
+    createdAt: x.created_at,
+    reporterId: x.reporter_id,
+    reporterHandle: x.handle,
+    reporterUsername: x.username,
+    reporterFiled: Number(x.filed ?? 0),
+    reporterRejected: Number(x.rejected ?? 0),
+  }));
+}
+
+/**
+ * Resolve one claim: `upheld` or `rejected`, and record the smite that went with it.
+ *
+ * The STANDING charge itself is not written here. It goes through `writeStandingEvent` like
+ * every other offence, so a smite appears in the same ledger the player already reads and is
+ * subject to the same tier and cooldown machinery — a punishment invented in its own table
+ * would be one the player is never shown and no other code path knows about.
+ *
+ * Returns the reporter's id so the caller can charge them, and null if the row is already
+ * resolved (two moderators, one queue).
+ */
+export async function resolveScoreReport(
+  id: string,
+  status: 'upheld' | 'rejected',
+  adminId: string,
+  smite = 0,
+): Promise<{ reporterId: string; roomCode: string; game: string } | null> {
+  const rows = await q<{ reporter_id: string; room_code: string; game: string }>(
+    `update score_reports
+        set status = $2, reviewed_by = $3, reviewed_at = now(), smite = $4
+      where id = $1::bigint and status = 'open'
+      returning reporter_id, room_code, game`,
+    [id, status, adminId, Math.max(0, Math.floor(smite))],
+  );
+  if (!rows.length) return null;
+  return { reporterId: rows[0].reporter_id, roomCode: rows[0].room_code, game: rows[0].game };
+}
+
 // ------------------------------------------------------- player reports ------
 
 /** File a report. Returns false when the same reporter has already filed this category

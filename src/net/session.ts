@@ -109,6 +109,8 @@ export interface NetSession {
   /** REPORT another driver in this match, by robot id. Optional: a solo/record session has
    *  nobody to report, and an older build simply does not offer the button. */
   sendReport?(robotId: number, reason: string, detail: string): void;
+  /** file a MISSCORE claim about the match just played — no target, see the protocol note */
+  sendScoreReport?(detail: string): void;
   /** pull the freshest unconsumed snapshot, or null if none arrived */
   takeSnapshot(): Snapshot | null;
   /** the server's end-of-match result (score + recorded replay), or null before

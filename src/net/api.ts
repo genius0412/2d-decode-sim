@@ -819,6 +819,68 @@ export async function adminSetReportStatus(
   }
 }
 
+/** a MISSCORE claim in the moderation queue */
+export interface ScoreReport {
+  id: string;
+  matchId: string | null;
+  roomCode: string;
+  game: string;
+  detail: string;
+  status: string;
+  smite: number;
+  createdAt: string;
+  reporterId: string;
+  reporterHandle: string;
+  reporterUsername: string | null;
+  /** the filer's own history — how many claims they have ever filed, and how many were
+   *  rejected. The pattern is what separates a mistake from a habit before anyone smites. */
+  reporterFiled: number;
+  reporterRejected: number;
+}
+
+export async function adminFetchScoreReports(status = 'open'): Promise<ScoreReport[] | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(`${base}/api/admin/score-reports?status=${encodeURIComponent(status)}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { reports: ScoreReport[] }).reports ?? [];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve one misscore claim.
+ *
+ * `smite` is standing points taken off the REPORTER, and the server refuses it on anything
+ * but a rejection — upholding a claim means they were right, and charging someone for being
+ * right is the failure this whole feature guards against.
+ */
+export async function adminResolveScoreReport(
+  id: string,
+  verdict: 'upheld' | 'rejected',
+  smite = 0,
+): Promise<boolean> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return false;
+  const q = new URLSearchParams({ id, verdict, smite: String(Math.max(0, Math.round(smite))) });
+  try {
+    const res = await fetch(`${base}/api/admin/score-reports?${q.toString()}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** broadcast a scheduled-restart countdown to every connected client */
 export async function adminAnnounce(seconds: number, message: string): Promise<boolean> {
   const base = gameServerHttpUrl();

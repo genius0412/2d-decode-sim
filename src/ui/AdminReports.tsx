@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react';
 import {
   adminFetchReports,
   adminFetchReportedUser,
+  adminFetchScoreReports,
+  adminResolveScoreReport,
   adminSetReportStatus,
+  type ScoreReport,
 } from '../net/api';
 import { REPORT_LABELS, type ReportedUser, type ReportReason } from '../report';
 import { STANDING_EVENT_LABEL, STANDING_MAX, tierOf, type StandingEventKind } from '../standing';
@@ -39,6 +42,8 @@ export function AdminReports({ onWatchReplay }: { onWatchReplay?: (replayId: str
 
   return (
     <>
+      <ScoreReportQueue onWatchReplay={onWatchReplay} />
+
       <h2 className="ds-h2">Moderation · reports</h2>
       <p className="ds-sub" style={{ margin: '0 0 16px' }}>
         Players other players have reported, most recently reported first. Open one to read the
@@ -150,7 +155,7 @@ function ReportedRow({
                       {r.roomCode && ` · room ${r.roomCode}`}
                       {r.status !== 'open' && ` · ${r.status}`}
                     </span>
-                    {r.detail && <p className="adm-report-detail">{r.detail}</p>}
+                    {r.detail && <p className="sr-detail">{r.detail}</p>}
                   </div>
                 ))}
               </div>
@@ -198,7 +203,7 @@ function ReportedRow({
                 </div>
               )}
 
-              <div className="adm-report-actions">
+              <div className="sr-actions">
                 {/* Triage marks the PLAYER, not each complaint — that is how the queue is
                     actually worked: you watch their matches and then make one call. */}
                 <button className="ds-btn ghost small" disabled={busy || u.open === 0} onClick={() => void triage('dismissed')}>
@@ -222,4 +227,101 @@ function ago(iso: string): string {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
+}
+
+/**
+ * The MISSCORE queue — claims about a RESULT rather than about a person.
+ *
+ * Its own section because it is answered differently. A player report is judged by watching
+ * someone drive; a misscore is judged by opening the replay and checking the arithmetic, and
+ * the verdict is about the SCORE, not about the reporter. The reporter only enters it when
+ * the claim turns out to be empty — which is what SMITE is for, and why every row shows how
+ * many claims that person has filed and how many were rejected before offering it.
+ *
+ * UPHOLD costs nobody anything. There is no automatic re-score behind it: a result that has
+ * been written, rated and published cannot be quietly rewritten from a moderation panel, and
+ * pretending otherwise would be worse than leaving it. What upholding does is mark the claim
+ * as real, which is what stops the filer's rejected-count from growing and is the record that
+ * the sim got something wrong.
+ */
+function ScoreReportQueue({ onWatchReplay }: { onWatchReplay?: (replayId: string) => void }) {
+  const [rows, setRows] = useState<ScoreReport[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = (): void => {
+    void adminFetchScoreReports('open').then((r) => setRows(r ?? []));
+  };
+  useEffect(load, []);
+  if (!rows || rows.length === 0) return null;
+
+  const resolve = (id: string, verdict: 'upheld' | 'rejected', smite: number): void => {
+    setBusy(id);
+    void adminResolveScoreReport(id, verdict, smite).then(() => {
+      setBusy(null);
+      load();
+    });
+  };
+
+  return (
+    <>
+      <h2 className="ds-h2">Moderation · misscores</h2>
+      <p className="ds-sub" style={{ margin: '0 0 16px' }}>
+        Claims that a match scored wrong. Open the replay and check it: UPHELD records that the
+        sim got it wrong, REJECTED closes it. Smite only a claim that was made in bad faith —
+        the count beside each filer is how many of theirs have been rejected before.
+      </p>
+      <div className="sr-list">
+        {rows.map((r) => (
+          <div key={r.id} className="sr-row">
+            <div className="sr-head">
+              <span className="adm-name">{r.reporterUsername ?? r.reporterHandle}</span>
+              <span className="adm-pill">{GAME_LABEL[r.game] ?? r.game}</span>
+              {r.reporterRejected > 0 && (
+                <span className="adm-pill standing">
+                  {r.reporterRejected} of {r.reporterFiled} rejected
+                </span>
+              )}
+              <span className="ds-muted">{new Date(r.createdAt).toLocaleString()}</span>
+            </div>
+            <p className="adm-report-detail">{r.detail}</p>
+            <div className="adm-report-actions">
+              {r.matchId && onWatchReplay && (
+                <button className="ds-btn ghost" onClick={() => onWatchReplay(r.matchId!)}>
+                  WATCH
+                </button>
+              )}
+              <button
+                className="ds-btn ghost"
+                disabled={busy === r.id}
+                onClick={() => resolve(r.id, 'upheld', 0)}
+              >
+                UPHELD
+              </button>
+              <button
+                className="ds-btn ghost"
+                disabled={busy === r.id}
+                onClick={() => resolve(r.id, 'rejected', 0)}
+              >
+                REJECT
+              </button>
+              {/* the smite, sized by the moderator. Three rungs rather than a free number:
+                  "wrong", "wrong again", and "using the queue as a weapon" are the three
+                  judgements actually being made, and a text box invites a fourth that is just
+                  a mood. */}
+              {[25, 50, 100].map((n) => (
+                <button
+                  key={n}
+                  className="ds-btn danger"
+                  disabled={busy === r.id}
+                  onClick={() => resolve(r.id, 'rejected', n)}
+                  title={`Reject and take ${n} standing points off ${r.reporterUsername ?? r.reporterHandle}`}
+                >
+                  SMITE −{n}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
 }

@@ -13,7 +13,9 @@ import { persistMatch, persistDodges } from './persist';
 import { routeTarget } from './routing';
 import { SERVER_CHANNEL, isAlphaServer } from './channel';
 import { chargeStanding, rankedLock } from './standing';
-import { lockRemaining, tierOf } from '../src/standing';
+import { lockRemaining, tierOf,
+  STANDING_MAX,
+} from '../src/standing';
 import { isReportReason, REPORT_DETAIL_MAX } from '../src/report';
 import { handleApi } from './api';
 import { Matchmaker } from './matchmaking';
@@ -53,6 +55,9 @@ import {
   standingsFor,
   listReportedUsers,
   listReportsFor,
+  listScoreReports,
+  resolveScoreReport,
+  submitScoreReport,
   setReportsStatus,
   userRecentMatches,
   getMaintenance,
@@ -748,6 +753,61 @@ const httpServer = createServer((req, res) => {
         res.end(JSON.stringify({
           users: users.map((u) => ({ ...u, standing: standings[u.userId]?.score ?? null })),
         }));
+        return;
+      }
+      /**
+       * GET/POST /api/admin/score-reports — the MISSCORE queue.
+       *
+       * A separate queue from the player one because it is a different question. A player
+       * report asks "is this person behaving"; a misscore claim asks "did the server get the
+       * arithmetic wrong", which is answered by opening the replay, not by watching someone
+       * drive. Each row carries the claim, the match it points at, and the reporter's own
+       * history — how many they have filed and how many were rejected — because that history
+       * is what separates an honest confusion from a habit before anyone reaches for a smite.
+       *
+       * POST ?id=&verdict=upheld|rejected&smite=N. The smite is standing points taken off the
+       * REPORTER for a claim found malicious, and it goes through the ordinary standing ledger
+       * (`falseReport`) rather than a private one, so the player sees it where they see every
+       * other penalty and the tier/cooldown machinery treats it like any other offence.
+       */
+      if (u.pathname === '/api/admin/score-reports') {
+        if (!isAdmin) {
+          res.writeHead(403, cors);
+          res.end('forbidden');
+          return;
+        }
+        if (!dbEnabled) {
+          res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ reports: [] }));
+          return;
+        }
+        if (req.method === 'POST') {
+          const id = u.searchParams.get('id');
+          const verdict = u.searchParams.get('verdict');
+          const smite = Math.max(0, Math.min(STANDING_MAX, Number(u.searchParams.get('smite') ?? 0) || 0));
+          if (!id || (verdict !== 'upheld' && verdict !== 'rejected')) {
+            res.writeHead(400, cors);
+            res.end('bad request');
+            return;
+          }
+          const done = await resolveScoreReport(id, verdict, user?.userId ?? 'admin', smite);
+          // A SMITE ONLY EVER FOLLOWS A REJECTION. Upholding a claim means the reporter was
+          // right; charging them for being right is the failure mode this whole feature is
+          // supposed to guard against, so the server refuses it rather than trusting the UI
+          // to never offer it.
+          if (done && verdict === 'rejected' && smite > 0) {
+            void chargeStanding(done.reporterId, 'falseReport', {
+              roomCode: done.roomCode,
+              points: smite,
+            }).catch((e) => console.error('[standing] smite failed:', e));
+          }
+          res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: Boolean(done) }));
+          return;
+        }
+        const reports = await listScoreReports({ status: u.searchParams.get('status') ?? undefined });
+        res.writeHead(200, { ...cors, 'content-type': 'application/json' });
+        res.end(JSON.stringify({ reports }));
         return;
       }
       /**
@@ -1683,6 +1743,30 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
         } else {
           send({ t: 'rejoined', ok: false });
         }
+      } else if (msg.t === 'reportScore') {
+        /**
+         * A MISSCORE claim from this room. No target to resolve — see the protocol note —
+         * so the only questions are who filed it and which match they were looking at.
+         *
+         * Answered `ok` unconditionally, like a player report and for the same reason: a
+         * duplicate and a signed-out filer must be indistinguishable from a filed claim, or
+         * the button becomes a probe. Unlike a player report it charges NOTHING on arrival:
+         * an unreviewed claim about arithmetic is evidence of nothing until a moderator has
+         * opened the replay, and the only standing that ever moves for it is the SMITE that
+         * follows a rejection.
+         */
+        const sc = room ? room.resolveScoreReport(id) : null;
+        const detail = typeof msg.detail === 'string' ? msg.detail.slice(0, REPORT_DETAIL_MAX).trim() : '';
+        if (sc && detail && dbEnabled) {
+          void submitScoreReport({
+            reporterId: sc.reporterId,
+            matchId: sc.matchId,
+            roomCode: sc.roomCode,
+            game: room!.gameId,
+            detail,
+          }).catch((e) => console.error('[report] score report failed:', e));
+        }
+        send({ t: 'reported', ok: true });
       } else if (msg.t === 'report') {
         /**
          * A player reporting another driver in their room. The ROOM resolves the robot id
