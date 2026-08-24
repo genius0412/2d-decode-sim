@@ -2654,6 +2654,68 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- turning carries the velocity round with the chassis --------------------------
+/**
+ * "When I drive straight and turn with tank, I feel like I get shifted slightly in a weird
+ * way. This might be from centripetal force or the lack of it. Tank does not slide much
+ * because of its very grippy treads."
+ *
+ * The lack of it, exactly. Velocity is integrated in the WORLD frame and the heading was
+ * turned out from under it, so every drivetrain side-slipped through every turn and the motor
+ * model then dragged the leftover lateral component away over the following ticks. Turning
+ * while moving needs a lateral force of m·v·ω, and the wheels supply it up to their own
+ * traction limit — so the velocity bends round with the nose as far as they can carry it, and
+ * slides the rest. That ceiling is the drivetrain's own (LATERAL_GRIP × its traction accel):
+ * treads scrub sideways harder than they drive forward, omni rollers hardly at all.
+ *
+ * Measured as the fraction of the velocity that is SIDEWAYS in the robot's own frame, over a
+ * turn taken at speed.
+ */
+{
+  const slip = (drivetrain: DrivetrainType) => {
+    const w = mkWorld('match', 'blue', 5, { drivetrain });
+    startMatch(w);
+    w.match.phase = 'teleop';
+    const r = w.robots[0];
+    r.pos = { x: -40, y: -40 };
+    r.heading = 0;
+    r.fieldCentric = false;
+    let peak = 0;
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < Math.round(1.8 / SIM_DT); i++) {
+      const turning = i * SIM_DT > 0.8;
+      const c =
+        drivetrain === 'tank'
+          ? cmd({ leftDrive: 1, rightDrive: turning ? 0.35 : 1 })
+          : cmd({ driveY: 1, rotate: turning ? 0.6 : 0 });
+      step(w, SIM_DT, new Map([[0, c]]));
+      if (!turning) continue;
+      const vr = rot(r.vel, -r.heading);
+      const speed = hyp(vr.x, vr.y);
+      if (speed < 15) continue; // only while actually moving
+      const f = Math.abs(vr.y) / speed;
+      peak = Math.max(peak, f);
+      sum += f;
+      n++;
+    }
+    return { peak, mean: sum / Math.max(n, 1) };
+  };
+  const tank = slip('tank');
+  const mec = slip('mecanum');
+  const x = slip('xdrive');
+  check(
+    'a TANK barely side-slips through a turn — its treads carry the velocity round',
+    tank.mean < 0.01 && tank.peak < 0.05,
+    `mean ${(tank.mean * 100).toFixed(1)}% of its velocity sideways, peak ${(tank.peak * 100).toFixed(1)}% (5.2% and 8.1% before the velocity turned with the chassis)`,
+  );
+  check(
+    '...and the ones that CAN slide sideways still do, in the right order',
+    mec.mean > tank.mean && x.mean > mec.mean,
+    `tank ${(tank.mean * 100).toFixed(1)}% < mecanum ${(mec.mean * 100).toFixed(1)}% < x-drive ${(x.mean * 100).toFixed(1)}% — treads, then rollers, then omnis`,
+  );
+}
+
 // ---- a focused text field owns the keyboard ---------------------------------------
 /**
  * "I can't type properly in the report a player menu because some keys are counted as game

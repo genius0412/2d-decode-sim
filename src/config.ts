@@ -1,4 +1,4 @@
-import type { RobotSpec } from './types';
+import type { DrivetrainType, RobotSpec } from './types';
 
 /**
  * Single source of truth for all field geometry, physics constants, and
@@ -719,6 +719,39 @@ export const DRIVETRAIN_PRESETS = {
    * default; `BUTTERFLY_MODES` below holds both halves and `driveParams` picks. */
   butterfly: { strafeMult: 0.76, speedMult: 0.87, accelMult: 1.05, pushMult: 0.74, turnMult: 0.96, saturation: 'sum' },
 } as const;
+
+/**
+ * LATERAL GRIP — how much of a TURN the wheels can carry the chassis' momentum through, as a
+ * fraction of that drivetrain's own traction limit.
+ *
+ * Turning while moving needs a sideways force of m·v·ω to bend the velocity around with the
+ * heading. Where the wheels can supply it the robot CARVES: the velocity follows the nose,
+ * which is what a tank does, because treads grip sideways as hard as they grip forward. Where
+ * they cannot, the chassis keeps going the way it was pointed and slides through the turn,
+ * which is what mecanum rollers actually do.
+ *
+ * The sim had no term for this at all. Velocity is integrated in the WORLD frame and the
+ * heading turned out from under it, so every drivetrain side-slipped through every turn and
+ * the motor model then dragged the leftover lateral component away at its own accel. On tank
+ * that reads as being shoved sideways mid-turn — "when I drive straight and turn with tank, I
+ * feel like I get shifted slightly in a weird way ... tank does not slide much because of its
+ * very grippy treads."
+ *
+ * A fraction of the drivetrain's traction ceiling (accelMult × BASE_DRIVE_ACCEL), because that
+ * ceiling already IS μ·g for its wheels. So the carve is not free: past what the tyres can
+ * supply — fast enough, turning hard enough — the robot slides anyway, and it slides sooner on
+ * omnis than on treads.
+ */
+export const LATERAL_GRIP: Record<DrivetrainType, number> = {
+  // TREADS ARE NOT THE SAME SIDEWAYS AS FORWARD — they are BETTER. Forward the wheels roll and
+  // the limit is drive traction; sideways the whole tread has to scrub across the tile, which
+  // is why a tank cannot strafe at all. So its lateral ceiling is well above its drive one.
+  tank: 1.8,
+  swerve: 0.9, // proper wheels, but four of them steering
+  butterfly: 0.7, // dropped onto its traction wheels
+  mecanum: 0.45, // 45-degree rollers — they carry some of it and slide the rest
+  xdrive: 0.3, // omnis at 45 degrees, the least grip of the four
+};
 
 /**
  * BUTTERFLY DRIVE — the two halves.

@@ -257,7 +257,35 @@ export function updateRobot(world: World, r: RobotState, cmd: RobotCommand, dt: 
   // Rapier (solveRobots) integrates POSITION from r.vel and resolves collisions
   // this same tick; heading is integrated here (rotation is locked in Rapier and
   // the bespoke square-up nudge owns it).
-  r.heading = wrapAngle(r.heading + r.angVel * dt);
+  const turn = r.angVel * dt;
+  r.heading = wrapAngle(r.heading + turn);
+  /**
+   * ...AND THE VELOCITY TURNS WITH IT, as far as the wheels can carry it.
+   *
+   * Velocity lives in the WORLD frame, so turning the heading used to leave it pointing where
+   * the chassis USED to face: every drivetrain side-slipped through every turn, and the motor
+   * model then dragged the leftover lateral component away at its own accel over the following
+   * ticks. On tank — which cannot strafe at all and whose treads have enormous lateral grip —
+   * that reads as being shoved sideways mid-turn. "When I drive straight and turn with tank, I
+   * feel like I get shifted slightly in a weird way."
+   *
+   * Bending the velocity round with the heading is what the wheels DO: turning while moving
+   * needs a lateral force of m·v·ω, and the tyres supply it up to their own traction limit.
+   * So the carve is what that limit can pay for — all of it for treads, most of it for swerve,
+   * less than half for mecanum's rollers — and past what they can supply the robot slides
+   * through the corner exactly as it did before, which is the honest failure mode rather than
+   * a permanent one.
+   */
+  if (turn !== 0) {
+    const speed = hyp(r.vel.x, r.vel.y);
+    if (speed > 0.01) {
+      const grip = C.LATERAL_GRIP[r.spec.drivetrain] ?? 0.5;
+      const supply = grip * dp.accel; // this drivetrain's traction ceiling, sideways
+      const need = speed * Math.abs(r.angVel); // the lateral accel the turn demands
+      const carry = need <= 1e-6 ? 1 : Math.min(1, supply / need);
+      r.vel = rot(r.vel, turn * carry);
+    }
+  }
 }
 
 /**
