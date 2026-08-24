@@ -285,7 +285,11 @@ export const POSSESSION_CONFIRM = 0.35; // s, per artifact
  *   · push it across the field    — contact runs for seconds, and past this it counts.
  * Hopper room does not enter into it: a full robot ploughs exactly as hard as an empty one.
  */
-export const POSSESSION_ACQUIRE_S = 0.4; // s of grace per artifact in the mouth
+// 0.4 -> 1.0: the window has to cover a real APPROACH, not just the swallow. A driver noses
+// into a clump, the artifacts take a moment to reach the rollers, and the first one is in the
+// hopper about a second later — measured, a 1.2s nose-and-back-off was fouling at 0.4. What it
+// must NOT cover is herding, which runs for seconds, so a second is the honest split.
+export const POSSESSION_ACQUIRE_S = 1.0; // s of grace per artifact in the mouth
 
 /**
  * G408's YELLOW CARD, and the manual defines "excessive" rather than leaving it to taste:

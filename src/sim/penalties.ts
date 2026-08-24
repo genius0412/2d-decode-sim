@@ -1,4 +1,4 @@
-import type { Alliance, RobotCommand, RobotState, World } from '../types';
+import type { Artifact, Alliance, RobotCommand, RobotState, World } from '../types';
 import * as C from '../config';
 import {
   baseZone,
@@ -13,6 +13,7 @@ import {
 } from './field';
 import type { Rect } from './field';
 import {
+  clampBallPosToStatics,
   closestPointOnRobot,
   robotCorners,
   robotIntersectsRect,
@@ -345,6 +346,38 @@ function updatePossession(
  * outright, and holding a pile against a wall for thirty seconds drawing nothing is the same
  * complaint from the other end.
  */
+/**
+ * IS THIS ARTIFACT TRAPPED — pressed by the robot against something it cannot move past?
+ *
+ * TRAPPING is "preventing the movement of a SCORING ELEMENT against a FIELD element", and the
+ * second half of that is not decoration. Without it the trapping clock catches a robot that is
+ * merely STANDING among artifacts: after the transition, a robot sitting at its start pose
+ * touching the spike marks was billed the whole tariff and then re-billed every few seconds
+ * for doing nothing at all. "I'm getting spammed with over-possession continuing penalties
+ * just by standing still."
+ *
+ * So the test is the one the definition names: push the artifact away from the robot by its
+ * own radius and ask the field whether it may go. Refused — a wall, a goal face, the
+ * classifier — and the robot is holding it against something. Free to move and the robot is
+ * just near it, which is not control of anything.
+ *
+ * This is NOT the old bulldozing carve-out coming back. That one removed jammed artifacts
+ * from the count entirely, which is what made the whole rule impossible to trip; this adds a
+ * requirement to the TRAPPING half only, and possession is untouched.
+ */
+function pinnedByRobot(r: RobotState, b: Artifact): boolean {
+  // the direction the ROBOT would shove it — outward from the chassis centre through the
+  // artifact. (From the nearest POINT on the robot instead, an artifact beside a robot that is
+  // pressed on a wall reads as free to slide along the wall, which is true and beside the
+  // point: the question is whether it can go where it is being pushed.)
+  const dx = b.pos.x - r.pos.x;
+  const dy = b.pos.y - r.pos.y;
+  const d = hyp(dx, dy) || 1;
+  const away = { x: b.pos.x + (dx / d) * C.BALL_RADIUS, y: b.pos.y + (dy / d) * C.BALL_RADIUS };
+  const c = clampBallPosToStatics(away);
+  return hyp(away.x - c.x, away.y - c.y) > C.BALL_PIN_SLOP;
+}
+
 function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: boolean): number {
   const pen = world.penalties;
   const home = loadZone(r.alliance);
@@ -436,7 +469,7 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
     const carried = hyp(b.vel.x, b.vel.y) >= C.POSSESSION_MOVE_SPEED;
     if (moving && carried) {
       if (t >= C.POSSESSION_CONFIRM) held.add(b.id);
-    } else if (!harvesting && t >= C.MOMENTARY_S) {
+    } else if (!harvesting && t >= C.MOMENTARY_S && pinnedByRobot(r, b)) {
       held.add(b.id);
     }
   }
@@ -458,9 +491,24 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
       .map((id) => {
         const b = loose.find((x) => x.id === id)!;
         const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
-        return { id, ahead: loc.x };
+        return { id, ahead: loc.x, hold: pen.ballHold[`${r.id}:${b.id}`] ?? 0 };
       })
-      .filter((m) => m.ahead > 0)
+      /**
+       * ...AND ONLY FOR AS LONG AS ACQUIRING TAKES.
+       *
+       * Hopper room alone is not enough, and this is exactly how it fails: a driver who keeps
+       * shooting keeps three slots open, so three artifacts are excused permanently, and
+       * herding up to six of them in a straight line with the intake held costs nothing.
+       * Reported as "I am able to completely avoid penalties in some cases where I'm simply
+       * herding going straight."
+       *
+       * An intake takes what is in its mouth in well under a second. Past that window an
+       * artifact has had every chance to be taken, so whatever is happening to it, it is not
+       * being acquired — it is being pushed along. The window is per ARTIFACT, so a robot
+       * genuinely working through a pile keeps its exemption on each new one it meets while
+       * the ones it is merely shoving age out of it.
+       */
+      .filter((m) => m.ahead > 0 && m.hold < C.POSSESSION_CONFIRM + C.POSSESSION_ACQUIRE_S)
       .sort((p1, p2) => p1.ahead - p2.ahead);
     for (const m of mouth) {
       if (room <= 0) break;

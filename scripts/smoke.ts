@@ -7151,17 +7151,25 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
       `blueMinor=${crept.match.fouls.blue.minor}`,
     );
 
-    // A robot doing NOTHING AT ALL is outside the test, which is conditional on the robot
-    // moving or changing orientation. (Sitting inert on a pile is G405/G423 territory —
-    // impeding access — not G408, and neither is modelled.)
+    /**
+     * A robot doing NOTHING AT ALL, in open floor, is outside BOTH halves of the definition.
+     *
+     * POSSESSION is conditional on the robot moving or turning, and TRAPPING is "preventing
+     * the movement of a SCORING ELEMENT against a FIELD element" — with nothing to press them
+     * against, a robot parked among artifacts is holding none of them. Without that second
+     * half the trapping clock caught exactly this: a robot sitting where the transition left
+     * it, touching the spike marks, billed the whole tariff and re-billed every few seconds
+     * for standing still. "I'm getting spammed with over-possession continuing penalties just
+     * by standing still."
+     *
+     * The wall case is the other half of the same check, and it is in the wall-clump block
+     * above: pressing a pile against the perimeter with a full robot still costs.
+     */
     const inert = hoard(4, () => {});
-    // ...and a motionless robot is outside the POSSESSION half of the definition, but not
-    // outside CONTROL: holding artifacts against the field past MOMENTARY is TRAPPING, which
-    // is the one piece of the alpha engine kept through the revert, because it only ever adds.
     check(
-      'a motionless robot holding a pile is TRAPPING, and that is control',
-      inert.match.fouls.blue.minor > 0,
-      `blueMinor=${inert.match.fouls.blue.minor} after the MOMENTARY hold (0 while only the possession half was tested)`,
+      'a motionless robot in open floor is holding nothing — no G408',
+      inert.match.fouls.blue.minor === 0,
+      `blueMinor=${inert.match.fouls.blue.minor}`,
     );
   }
 
