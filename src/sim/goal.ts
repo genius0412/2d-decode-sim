@@ -924,7 +924,21 @@ export function updateRails(
             carrier = rs.v;
           }
         }
-        if (bestGap < Infinity) {
+        /**
+         * THE COLUMN CAN CARRY A RIDER ALONG. IT CANNOT HOLD ONE STILL.
+         *
+         * This pulled the rider toward the carrier's speed in BOTH directions, which quietly
+         * turns a stopped column into a brake: a rider resting on the top of a pile held
+         * against a shut gate was dragged to zero and parked there — measured, two artifacts
+         * sat at s = 52 and 47 for twenty-five seconds with a clear ramp under them.
+         * "Overflows keep getting stuck in the classifier."
+         *
+         * A rider is a sphere on a lumpy slope, not a box on a conveyor. What is underneath it
+         * can push it along when it is moving faster; what it cannot do is grip. So the carry
+         * only ever speeds a rider UP, and a rider on a stationary pile is left to the ride's
+         * own pull, which is what gets it over the crest and off the end.
+         */
+        if (bestGap < Infinity && Math.abs(carrier) > Math.abs(st.v)) {
           st.v = approach(st.v, carrier, C.OVERFLOW_CARRY * dt);
           /**
            * ...AND IT CANNOT OUTRUN WHAT IT IS RIDING ON. A rider is rolling on the column,

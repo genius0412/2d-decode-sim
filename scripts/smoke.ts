@@ -2722,6 +2722,54 @@ function queueTenth(w: World): void {
     stuck === 0,
     `${riders.length - stuck} of ${riders.length} left the ramp in 15s (0 of 4 when the lurch met the pull)`,
   );
+  /**
+   * ...INCLUDING THE ONE PERCHED ON THE END OF A STOPPED COLUMN.
+   *
+   * The carry — how a rider takes the speed of what it is rolling over — pulled toward the
+   * carrier in BOTH directions, which makes a stationary pile a brake rather than a surface.
+   * A rider that arrived over the top of a column held against a shut gate was dragged to zero
+   * and parked: measured, two artifacts sat at s = 52 and 47 for twenty-five seconds with a
+   * clear ramp beneath them. "Overflows keep getting stuck in the classifier."
+   *
+   * A rider is a sphere on a lumpy slope, not a box on a conveyor: what is underneath can push
+   * it along when it is moving faster, and cannot grip it. So the carry only ever speeds a
+   * rider up, and this is the case that proves it — riders spaced ABOVE the top of the pile,
+   * gate shut, nothing moving anywhere.
+   */
+  {
+    const w2 = mkWorld('match', 'blue', 42);
+    startMatch(w2);
+    w2.match.phase = 'teleop';
+    const perched: number[] = [];
+    let j = 0;
+    for (const b of w2.balls) {
+      if (j < 9) {
+        const sPos = GATE_STOP_S + j * RAIL_PITCH;
+        b.state = { kind: 'rail', goal: 'blue', s: sPos, v: 0, overflow: false };
+        b.pos = railPos('blue', sPos);
+        b.vel = { x: 0, y: 0 };
+        b.z = RAMP_SURFACE_Z;
+        b.vz = 0;
+      } else if (j < 13) {
+        // ABOVE the column's top (which ends near s = 43), where the carry grabbed them
+        const sPos = RAIL_S_MAX - (j - 9) * RAIL_PITCH * 1.4;
+        b.state = { kind: 'rail', goal: 'blue', s: sPos, v: 0, overflow: true };
+        b.pos = railPos('blue', sPos);
+        b.vel = { x: 0, y: 0 };
+        b.z = OVERFLOW_Z;
+        b.vz = 0;
+        perched.push(b.id);
+      } else b.state = { kind: 'held', robot: 99 };
+      j++;
+    }
+    for (let i = 0; i < Math.round(15 / SIM_DT); i++) step(w2, SIM_DT, new Map());
+    const parked = w2.balls.filter((b) => perched.includes(b.id) && b.state.kind === 'rail').length;
+    check(
+      '...including one perched on the end of a column that is not moving at all',
+      parked === 0,
+      `${perched.length - parked} of ${perched.length} got off a STOPPED pile (2 of 4 sat there for 25s when the carry could brake them)`,
+    );
+  }
   // ...and it is still a LURCH rather than a glide: what varies is how hard it is being
   // pulled tick to tick, which is the crest-and-hollow shape of what it is rolling over
   const gains = speeds.slice(1).map((v, i) => (v - speeds[i]) / SIM_DT);
@@ -7459,14 +7507,27 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   };
   const shut = ride(false);
   const open = ride(true);
+  /**
+   * A RIDER ON A STOPPED COLUMN CRAWLS. IT DOES NOT SIT.
+   *
+   * This asked for under 4in of travel in two seconds — "sits on a STATIONARY column" — and
+   * that is what parked them: the carry pulled a rider toward the carrier in both directions,
+   * so a stopped pile was a brake, and a rider that arrived over one stayed for as long as the
+   * gate was shut. "Overflows keep getting stuck in the classifier."
+   *
+   * What it should be is SLOW, not stopped: the ride's own net pull, clambering over crest
+   * after crest, which at 9in in two seconds is a crawl next to the 40in/s the ramp itself
+   * delivers. The relation the check is really about survives — a moving column still carries
+   * a rider along at twice that.
+   */
   check(
-    'an overflow artifact sits on a STATIONARY column instead of racing down it',
-    shut < 4,
-    `${shut.toFixed(1)}in of travel in 2s against a shut gate`,
+    'an overflow artifact CRAWLS over a stationary column rather than racing or parking',
+    shut > 4 && shut < 20,
+    `${shut.toFixed(1)}in of travel in 2s against a shut gate (under 4 was "sits on it", and sitting is how they got stuck)`,
   );
   check(
     '...and takes the momentum of the column once it is running',
-    open > shut * 3 + 5,
+    open > shut * 1.8,
     `${open.toFixed(1)}in in the same 2s with the gate held open, against ${shut.toFixed(1)}in shut`,
   );
 }
