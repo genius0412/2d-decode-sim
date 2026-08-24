@@ -2734,6 +2734,44 @@ function queueTenth(w: World): void {
   );
 }
 
+// ---- a card costs account standing ------------------------------------------------
+/**
+ * "Getting a yellow card in a game should decrease someone's account standing."
+ *
+ * Every other automatic standing event is the server noticing an ABSENCE — a dodge, an AFK,
+ * a walk-out. A card is the sim's referee finding that someone broke a rule hard enough to be
+ * sanctioned for it, which is a behaviour finding with the evidence already attached: it is
+ * in the match record, on the results screen and in the replay.
+ *
+ * Priced between a walk-out (15) and a moderator's upheld verdict (25): worse than wasting
+ * one match's worth of other people's time, lighter than a human's judgement, because no
+ * human has looked at it. A RED is charged double — it is the second card, and it voids the
+ * alliance's score on top.
+ *
+ * No cooldown for a first one, deliberately: the card already cost the alliance the match, so
+ * locking the driver out of the queue for it is a second punishment for one act.
+ */
+{
+  const clean = { score: STANDING_MAX, restrictedUntil: null };
+  const yellow = applyStandingEvent(clean, 'card', { now: 0, priorSameKind: 0 });
+  check(
+    'a card costs standing, between a walk-out and an upheld report',
+    yellow.points > STANDING_COST.leave && yellow.points < STANDING_COST.reportUpheld,
+    `${yellow.points} points (leave ${STANDING_COST.leave}, upheld ${STANDING_COST.reportUpheld})`,
+  );
+  check(
+    '...and a FIRST card does not lock the queue — the match already paid for it',
+    yellow.cooldownMin === 0 && yellow.ratingCharge === 0,
+    `cooldown ${yellow.cooldownMin}min, rating ${yellow.ratingCharge}`,
+  );
+  const repeat = applyStandingEvent(clean, 'card', { now: 0, priorSameKind: 1 });
+  check(
+    '...but a second one inside the week does',
+    repeat.points > yellow.points && repeat.cooldownMin > 0,
+    `${repeat.points} points and a ${repeat.cooldownMin}min lock`,
+  );
+}
+
 // ---- turning carries the velocity round with the chassis --------------------------
 /**
  * "When I drive straight and turn with tank, I feel like I get shifted slightly in a weird

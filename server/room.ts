@@ -61,6 +61,13 @@ export interface DodgeReport {
  */
 export interface BehaviourReport {
   offenders: { userId: string; kind: 'afk' | 'leave' }[];
+  /**
+   * Drivers the referee CARDED in this match, with the colour, so the standing charge can
+   * price a red above a yellow. Separate from `offenders` because the two are found
+   * differently: an AFK is the server noticing an absence, a card is the sim's own rule
+   * engine sanctioning a violation it watched happen.
+   */
+  carded?: { userId: string; colour: 'yellow' | 'red' }[];
   /** everyone who played it clean, credited toward working a penalty off */
   cleanUserIds: string[];
   mode: '1v1' | '2v2';
@@ -1380,9 +1387,27 @@ export class Room {
       if (kind) offenders.push({ userId: p.userId, kind });
       else cleanUserIds.push(p.userId);
     }
-    if (!offenders.length && !cleanUserIds.length) return;
+    /**
+     * CARDS travel with the behaviour report, from the world the match was played in.
+     *
+     * `world.penalties.carded` is keyed by ROBOT id and holds the colour each carded robot
+     * currently shows — a second card escalates the same robot to red rather than adding a
+     * row, which is exactly the shape a standing charge wants: one event per carded driver,
+     * priced by what they ended the match holding.
+     */
+    const carded: { userId: string; colour: 'yellow' | 'red' }[] = [];
+    const held = this.world?.penalties.carded ?? {};
+    for (const p of participants) {
+      if (!p.userId) continue;
+      const rid = this.robotOf.get(p.clientId) ?? this.robotIdOfUser(p.userId);
+      if (rid === undefined) continue;
+      const colour = held[rid];
+      if (colour === 'yellow' || colour === 'red') carded.push({ userId: p.userId, colour });
+    }
+    if (!offenders.length && !cleanUserIds.length && !carded.length) return;
     this.onBehaviour({
       offenders,
+      carded,
       cleanUserIds,
       mode: participants.length > 2 ? '2v2' : '1v1',
       game: this.game,

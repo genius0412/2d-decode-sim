@@ -10,6 +10,7 @@ import {
   saveReplay,
   submitRecord,
 } from './db/repo';
+import { STANDING_COST } from '../src/standing';
 import { chargeStanding, creditCleanMatch } from './standing';
 import { persistVersusMatch } from './ranked';
 import { scrubName } from './moderation';
@@ -218,7 +219,27 @@ export async function persistBehaviour(b: BehaviourReport): Promise<void> {
     for (const o of b.offenders) {
       await chargeStanding(o.userId, o.kind, { game: b.game, mode: b.mode, roomCode: b.roomCode });
     }
-    await creditCleanMatch(b.cleanUserIds);
+    /**
+     * A CARD IS A BEHAVIOUR FINDING WITH EVIDENCE ATTACHED, so it is charged like one.
+     *
+     * The referee in the sim issues it for a rule broken hard enough to be sanctioned —
+     * excessive over-possession, or a second offence escalating to red — and it is already in
+     * the match record, on the results screen and in the replay. A RED costs more than a
+     * yellow because it is the second one, and because it voids the alliance's score.
+     */
+    for (const c of b.carded ?? []) {
+      await chargeStanding(c.userId, 'card', {
+        game: b.game,
+        mode: b.mode,
+        roomCode: b.roomCode,
+        points: c.colour === 'red' ? STANDING_COST.card * 2 : undefined,
+      });
+    }
+    // ...and a carded driver did NOT play it clean, whatever else the participation test
+    // said about them: crediting the heal beside the charge would hand part of it straight
+    // back on the same match.
+    const cardedIds = new Set((b.carded ?? []).map((c) => c.userId));
+    await creditCleanMatch(b.cleanUserIds.filter((id) => !cardedIds.has(id)));
   } catch (e) {
     console.error('[standing] FAILED recording match behaviour:', e);
   }

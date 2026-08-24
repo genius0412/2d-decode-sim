@@ -398,7 +398,47 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
     }
     const t = (pen.ballHold[key] ?? 0) + dt;
     pen.ballHold[key] = t;
-    if (t >= (moving ? C.POSSESSION_CONFIRM : C.MOMENTARY_S)) held.add(b.id);
+    /**
+     * ...AND A ROBOT THAT IS STILL TAKING THEM IS NOT TRAPPING THEM.
+     *
+     * The two halves of CONTROL want different things from a stalled robot. POSSESSION is
+     * conditional on moving, so a robot pressed against a jammed clump falls to the TRAPPING
+     * clock — and trapping is "preventing the movement of a SCORING ELEMENT against a FIELD
+     * element", which is about DENIAL. A robot with its intake running, working artifacts out
+     * of a pile against the wall, is denying nothing: it is removing them.
+     *
+     * "When I intake from a clump and keep pushing into it against the wall, I get an
+     * overpossession penalty. Can a velocity constraint or something similar be added?"
+     *
+     * The constraint is that one — not on the robot's velocity, which is zero either way when
+     * it is leaning on a jam, but on whether artifacts are still LEAVING. Taking one inside
+     * the last MOMENTARY says harvesting; going that long against the same pile without
+     * taking anything says the pile is not the point any more, and the clock runs from there.
+     * Nothing else is relaxed: the moment the robot backs off and drives with them, it is the
+     * POSSESSION half's business again and station is what decides.
+     */
+    const harvesting = world.time - r.lastIntakeAt < C.MOMENTARY_S;
+    /**
+     * ...AND POSSESSION MEANS IT IS ACTUALLY GOING SOMEWHERE.
+     *
+     * "The object remains in approximately the same position RELATIVE TO THE ROBOT" is a test
+     * that says nothing when neither of them is going anywhere: a pile jammed on a wall keeps
+     * its station perfectly, because it cannot do anything else. So the station test carries
+     * the second half of the definition with it — the artifact has to be TRAVELLING with the
+     * robot, at the same threshold the robot's own motion is judged by. A herded pile rolls
+     * along in front of the bumper and passes; a jammed one is at rest in the world and does
+     * not, however hard it is being leaned on.
+     *
+     * That leaves the leaning case to the TRAPPING clock above, which is where it belongs —
+     * and to the harvest exemption beside it, so working artifacts out of a pile is not the
+     * same act as sitting on one.
+     */
+    const carried = hyp(b.vel.x, b.vel.y) >= C.POSSESSION_MOVE_SPEED;
+    if (moving && carried) {
+      if (t >= C.POSSESSION_CONFIRM) held.add(b.id);
+    } else if (!harvesting && t >= C.MOMENTARY_S) {
+      held.add(b.id);
+    }
   }
 
   /**

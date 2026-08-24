@@ -49,6 +49,9 @@ export const WINDOW_HOURS: Record<StandingEventKind, number> = {
   // remembered as long as an upheld verdict is: both are a moderator's finding about a
   // person rather than a bad night, and the repeat multiplier should still see the last one
   falseReport: 24 * 30,
+  // a week, like walking out of matches: one card is a bad match, cards on two weekends
+  // running is how someone plays
+  card: 24 * 7,
 };
 
 export type StandingEventKind =
@@ -67,7 +70,18 @@ export type StandingEventKind =
    * issued by hand — nothing automatic can tell an honest mistake from a malicious one, and
    * a rule that guessed would either punish confusion or license brigading.
    */
-  | 'falseReport';
+  | 'falseReport'
+  /**
+   * A CARD issued by the head referee inside a match.
+   *
+   * Every other automatic event here is the server noticing an absence — a dodge, an AFK, a
+   * walk-out. A card is the sim's referee finding that someone broke a RULE hard enough to be
+   * sanctioned for it (excessive over-possession, a second offence escalating to red), and
+   * that is a behaviour finding with evidence attached: it is in the match record, on the
+   * results screen, and in the replay. "Getting a yellow card in a game should decrease
+   * someone's account standing."
+   */
+  | 'card';
 
 /**
  * BASE COST of each event, in standing points.
@@ -106,6 +120,15 @@ export const STANDING_COST: Record<StandingEventKind, number> = {
    * standing points."
    */
   falseReport: 40,
+  /**
+   * card 20 — between an AFK (12) and a walk-out (15) at the low end and an upheld report
+   * (25) at the top, and that is the right neighbourhood: it is worse than wasting one
+   * match's worth of other people's time, because a carded robot has usually been taking
+   * artifacts out of the game or interfering with someone, and it is not as heavy as a
+   * moderator's verdict, because no human has looked at it. A RED costs more than a yellow —
+   * the caller passes the amount, since the sim decides which colour it was.
+   */
+  card: 20,
 };
 
 /** how many distinct reporters can charge one player for a single match. Raw reports are
@@ -164,6 +187,11 @@ export const COOLDOWN_LADDER: Record<StandingEventKind, readonly number[]> = {
   reportUpheld: [120, 1440, 1440 * 3, 1440 * 7],
   // the same ladder as an upheld verdict: a moderator has looked at it either way
   falseReport: [120, 1440, 1440 * 3, 1440 * 7],
+  // NO cooldown for a first card. It happened inside a match that has already been played
+  // and scored — the card itself cost the alliance the game — so the standing hit is the
+  // point and locking someone out for one is a second punishment for one act. A repeat is
+  // where it starts to bite.
+  card: [0, 60, 240, 1440],
 };
 
 /** ranked rating charged for the n-th offence of a kind. Zero everywhere it should be. */
@@ -179,6 +207,8 @@ export const RATING_LADDER: Record<StandingEventKind, readonly number[]> = {
   // it costs rating too, at the same rungs as an upheld verdict: filing a false claim is a
   // competitive act, not a driving one, and the ladder is where that is already expressed
   falseReport: [0, 10, 20, 30],
+  // a card is a match-conduct finding, not a driving one, so rating only enters on repeats
+  card: [0, 0, 10, 20],
 };
 
 /**
@@ -438,4 +468,5 @@ export const STANDING_EVENT_LABEL: Record<StandingEventKind, string> = {
   report: 'Reported by other players',
   reportUpheld: 'A moderator upheld reports against you',
   falseReport: 'A moderator found a report you filed to be false',
+  card: 'Carded by the referee during a match',
 };
