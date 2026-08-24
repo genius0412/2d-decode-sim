@@ -2358,9 +2358,12 @@ input.admin-months {
   overflow-y: auto;
   padding-right: 4px;
 }
+/* the left edge CARRIES the announcement's kind (season vs act, see the two rules below), so
+   it stays — but at the same 2px the event log uses for the same idiom rather than the 4px
+   slab it was, which reads as decoration rather than as a category marker */
 .ann-item {
   border: 1px solid var(--ds-line);
-  border-left: 4px solid var(--ds-accent);
+  border-left: 2px solid var(--ds-accent);
   border-radius: var(--ds-round-md);
   background: var(--ds-tile);
   padding: 13px 15px;
