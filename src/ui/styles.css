@@ -569,11 +569,24 @@ button {
   overflow: hidden;
 }
 
+/**
+ * The fill is FULL WIDTH and CLIPPED to the level, rather than a width that animates.
+ *
+ * Animating `width` is a layout property, and this bar is on the in-match HUD — the one
+ * surface in the app where frame time is a stated concern (there is a `?perf=1` readout for
+ * exactly this). Clipping is not layout, and unlike the usual `transform: scaleX` fix it
+ * leaves the rounded caps circular instead of stretching them into ellipses, which is the
+ * reason bars like this are so often written with width in the first place.
+ *
+ * `--pg` is the level, 0..1, set inline by the HUD.
+ */
 .power-gauge .pg-fill {
+  width: 100%;
   height: 100%;
   border-radius: var(--ds-round-full);
   background: var(--ds-ok);
-  transition: width 0.1s linear, background 0.2s;
+  clip-path: inset(0 calc((1 - var(--pg, 1)) * 100%) 0 0 round var(--ds-round-full));
+  transition: clip-path 0.1s linear, background 0.2s;
 }
 
 .power-gauge .pg-fill.warm {

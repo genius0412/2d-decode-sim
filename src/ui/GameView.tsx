@@ -122,7 +122,9 @@ function PowerGauge({ draw }: { draw: number }) {
     >
       <span className="pg-label">PWR</span>
       <span className="pg-bar">
-        <span className={`pg-fill ${cls}`} style={{ width: `${frac * 100}%` }} />
+        {/* the LEVEL, not a width: the fill is full-width and clipped to it, so the bar
+            animates without laying anything out — see .pg-fill */}
+        <span className={`pg-fill ${cls}`} style={{ ['--pg' as string]: String(frac) }} />
       </span>
       <span className="pg-num">{pct}%</span>
     </span>
