@@ -44,8 +44,12 @@ export const MATCH_SETTLE_S = MATCH_RESULT_REVEAL_MS / 1000;
  * build that produced it. Do NOT auto-derive this from a file hash — that would
  * reset every season on a trivial, non-gameplay edit. See docs/netcodeplan.md
  * Phase 3 + the phase3-leaderboards spec. */
-export const BALANCE_VERSION = 3; // 2: real-motor drivetrain retune (torque–speed curve + mecanum losses)
+export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–speed curve + mecanum losses)
 // 3: swerve wobble ↓ + faster turning (REF_TURN 8.5 / cap 12) + tank control-style at input layer
+// 4: robot-on-robot pushing rebuilt — push is a stated FORCE and the collider mass is derived
+//    from it, so weight, gearing and power draw each act ONCE instead of cancelling or landing
+//    twice (a 250 rpm minimum-weight mecanum used to out-push a 42 lb 435 rpm tank). Every
+//    head-to-head outcome moves, and the stiffer robot contact moves solo record scores too.
 // Bumping this INVALIDATES older replays for playback (they only re-sim exactly under their own
 // version's build): ReplayView gates on it and shows "recorded on an older version" instead.
 
@@ -73,8 +77,17 @@ export const BALANCE_VERSION = 3; // 2: real-motor drivetrain retune (torque–s
  *    test + a pin count that survives its own flicker and recognises goal/classifier
  *    traps), so any match with contact re-sims to a different foul total. All of it
  *    moves `step()` output.
+ * 3: robot-on-robot pushing, rebuilt. The shove is now stated as a FORCE and the collider
+ *    mass derived from it (`pushForce`/`shoveMass`), so weight, gearing and power draw each
+ *    act once instead of cancelling or landing twice; a shoved chassis gets a real two-body
+ *    contact impulse, so an off-centre hit spins it; the press that scales every robot-robot
+ *    response is the pair's CLOSING velocity rather than each robot's absolute one; a robot
+ *    held against a surface by an opponent now feels that load; an auto-path robot is solid
+ *    instead of intangible; the pair and static responses are summed before either is
+ *    written; and robot contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12). Every match with
+ *    contact re-sims differently.
  */
-export const SIM_VERSION = 2;
+export const SIM_VERSION = 3;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).
@@ -437,15 +450,12 @@ export const BALL_RELAX_PASSES = 6;
 // ------------------------------------------------- robot contact torque ----
 /** per-tick angular correction cap from a single contact group (rad), at rest */
 export const CONTACT_ALIGN_RATE = 0.03;
-/** contact bias: keeps torque alive under light steady pressure so the wall
- * finishes squaring the chassis instead of stalling at a small angle */
-export const CONTACT_BIAS = 0.2;
 /**
  * How much deeper than its neighbours a contact must be before the neighbour stops bearing —
  * the bumper's compliance, in inches of squash.
  *
  * The load at each corner is shared by how far it is compressed, and this is the distance over
- * which that share falls to nothing. It replaces a flat CONTACT_BIAS floor, which handed load
+ * which that share falls to nothing. It replaces a flat bias floor, which handed load
  * to corners that were not touching at all: with two front corners whose lever arms differ
  * (the intake extends the front, so they are not mirror images), that fabricated vote can
  * outweigh the real contact and reverse the torque — "it's turning me the other way sometimes".
@@ -511,18 +521,100 @@ export const PHYS_LENGTH_UNIT = 10;
 /** Rapier constraint solver iterations per step — high enough that a full-speed
  * pin is fully separated each tick (no penetration accumulation / axis flip) */
 export const PHYS_SOLVER_ITERS = 8;
-/** Rapier contact stiffness (Hz): LOW = soft contacts, so a body starting deep
- * in a wall (e.g. intake reach) is bled out gently over several ticks instead of
- * ejected with a huge recovery velocity (solver explosion). */
-export const PHYS_CONTACT_FREQ = 8;
+/**
+ * Rapier contact stiffness (Hz) for the ROBOT world, and the slack it resolves to.
+ *
+ * These were 8 Hz / 0.01 on the reasoning that SOFT contacts let a body starting deep inside
+ * a wall (a spec change can grow the footprint under a parked robot) bleed out gently instead
+ * of being ejected with a huge recovery velocity. The gentleness is real and worth keeping —
+ * but 8 Hz was paying far more for it than the hazard costs. Measured, a max-push tank
+ * holding an opponent against the wall sank the victim 1.22in into the wall and 1.50in into
+ * itself: ~9% of a chassis, and visible.
+ *
+ * SWEPT, rather than argued about. Across 8/15/20/25/30/40/60 Hz the recovery velocity from
+ * BOTH hazard cases — a robot seeded 2in inside the wall, and two robots seeded 6in
+ * overlapped — came out at 0.0 in/s at every single setting, because Rapier's positional
+ * correction here does not feed velocity. There is no explosion to buy off. What the sweep
+ * did show is where the penetration stops improving: 1.22in at 8 Hz, 0.59 at 12, 0.55 at 15,
+ * 0.49 at 25, and then it creeps back up past 30.
+ *
+ * 12 Hz, NOT the 25 the penetration curve would pick, and the slack is UNCHANGED. Everything
+ * above 12 cost something else: 15 Hz broke the classifier-jitter ratchet, and 25 Hz also
+ * broke two G408 possession checks and the wall-ram torque bound. 12 is the largest step with
+ * no collateral, and it is worth roughly half the remaining penetration.
+ *
+ * THE ITERATION COUNT IS NOT A LEVER HERE. `PHYS_SOLVER_ITERS` is shared with the BALL world
+ * (`makeWorld` parameterises the frequency and the slack but not the iterations), so raising
+ * it moved artifact behaviour that has nothing to do with robots pushing each other.
+ */
+export const PHYS_CONTACT_FREQ = 12;
 /** normalized allowed penetration error (× lengthUnit ⇒ inches): a little slack
  * so shallow resting contacts aren't fought every tick */
 export const PHYS_ALLOWED_ERROR = 0.01;
+/**
+ * Post-solve speed ceiling for a robot, in in/s. A pure solver-explosion guard — see
+ * `solveRobots`.
+ *
+ * ABSOLUTE, NOT A MULTIPLE OF THE ROBOT'S OWN TOP SPEED. It was `maxSpeed × 2`, which sounds
+ * safer and is not: what sets a shoved robot's velocity is the PUSHER's speed, not its own, and
+ * the legal envelope runs from 30.1 in/s (x-drive, 18 lb, 200 rpm) to 120.9 (tank, 560 rpm) —
+ * so the slowest legal build's ceiling sat at 60.3, well BELOW what the fastest legal build can
+ * legitimately shove it to. Measured, it fired on 27 of 65 ticks of a plain open-field push
+ * with no wall and nothing over-constrained, throttling the push 12% and putting a
+ * discontinuity in the rpm slider that has no physical cause.
+ *
+ * 300 in/s is ~2.5× the fastest thing that can exist here, so nothing a robot can do to another
+ * robot reaches it, while the one genuinely over-constrained case still does: a chassis crushed
+ * between a wall and an auto-path robot (kinematic, and it does not yield) left the step at
+ * 959 in/s — six field widths a second — before this clamp.
+ */
+export const PHYS_MAX_ROBOT_SPEED = 300;
+/**
+ * How far a robot's footprint may sit outside the field before it is walked back in.
+ *
+ * The perimeter is a hard containment invariant for robots, the same way `clampBallPosToStatics`
+ * is for artifacts — and it was only ever enforced by the solver, which is not enough now that a
+ * robot on an AUTO PATH is a kinematic body that does not yield: a bystander crushed between one
+ * and the far wall was driven 15.2in past it, with its reported velocity reading 0.00 the whole
+ * time (Rapier's positional correction does not feed velocity), so no speed guard can see it.
+ *
+ * The slop matters. Ordinary soft contact leaves a chassis resting a little INTO a wall — 0.59in
+ * at the worst measured shove — and a containment pass that fought that every tick is exactly
+ * the two-passes-taking-turns failure the artifact solve had to be rebuilt to avoid. This sits
+ * above the worst honest penetration and far below "outside the field", so it only ever acts
+ * when the solver has already given up.
+ */
+export const PHYS_CONTAIN_SLOP = 0.75; // in
+/**
+ * How much of the robot-robot point impulse's ROTATION reaches the chassis.
+ *
+ * The impulse in `squareUpPair` is the textbook two-body contact solve, and only its rotation
+ * is taken — Rapier owns the linear half, and its bodies are rotation-locked. That split is
+ * what makes a shoved robot spin at all, and it also leaves the model without the two things
+ * that relieve a SUSTAINED contact in reality: the bumpers slipping, and the rotating chassis
+ * shoving the other robot aside. So a held pair settles into a frozen geometry and the torque
+ * repeats, unrelieved, every tick.
+ *
+ * Unscaled that torque out-muscles the wheels outright, and — the part that makes it a defect
+ * rather than a hard-but-fair matchup — it does so almost regardless of how hard the push is.
+ * Measured at full stick against 2748 degrees of free rotation in five seconds: an x-drive
+ * pusher FOUR AND A HALF TIMES weaker than its victim still held it to 103 degrees, the same
+ * as a tank six times STRONGER. A torque that ignores how hard it is being applied is not a
+ * torque.
+ *
+ * At 0.6 the weak pusher no longer arrests anybody (820 degrees, i.e. a real fight rather than
+ * a handbrake) while an equal or stronger one still pins you, which is the honest outcome for
+ * a full-force corner bulldoze. It costs the ram: a near-corner hit spins the victim 17.5
+ * degrees rather than 28, still clearly graded by how far off centre you catch them. Raising
+ * it back toward 1 restores the ram and brings back the weak-pusher handbrake; the real fix is
+ * a contact that can slip, which is a bigger piece of work than this dial.
+ */
+export const CONTACT_PAIR_SPIN = 0.6;
 /** friction between chassis and walls / other chassis — resists a pinned robot
  * sliding out of a squeeze (the old model squared-and-held; 0 let it squirt) */
 export const PHYS_FRICTION = 0.7;
 /** BALL contact stiffness (Hz) for the ball solve — stiffer than the robot world
- * (8 Hz), which let two grounded balls sit visibly overlapping for many ticks.
+ * (12 Hz), which let two grounded balls sit visibly overlapping for many ticks.
  * Tuned to 25: separates a resting overlapping clump within ~0.5s (as clean as a
  * much higher value) WITHOUT the explosive ejection a very stiff contact (≥60 Hz)
  * gives the tightly-packed column draining out of the gate — at 120 Hz those exit
@@ -595,6 +687,27 @@ export const MOTOR_MIN_TORQUE_FRAC = 0.06;
 /** braking torque multiplier: reversing / slowing pulls harder than peak drive
  * accel (motor back-EMF + reverse), so stops feel crisp. */
 export const MOTOR_BRAKE_MULT = 1.4;
+
+// --- PUSHING POWER ----------------------------------------------------------
+/**
+ * GEARING'S EFFECT ON SHOVE, and the band it is allowed to act over.
+ *
+ * Wheel torque is inversely proportional to the gearing, so a drivetrain geared for speed
+ * has less of it to put into a shove: the factor is `REF_DRIVE_RPM / driveRpm`, clamped so
+ * neither end of the rpm slider becomes the whole game. Over the sliders' 200-600 range the
+ * raw ratio runs 2.175 down to 0.725, and the clamp bites only at the torquey end.
+ *
+ * IT IS APPLIED EXACTLY ONCE. `driveParams().accel` already carries its own `REF_DRIVE_RPM /
+ * rpm` term, and because the sim pushes by SETTING VELOCITY the delivered force is
+ * `collider mass × that accel` — so a gearing factor baked into the collider mass landed a
+ * SECOND time and the spread came out 7.45x instead of 2.48x, which made the rpm slider a
+ * stronger pushing lever than the drivetrain pick (a 250 rpm minimum-weight mecanum
+ * out-pushed a 42 lb 435 rpm tank). `shoveMass()` in drivetrain.ts is the one place that
+ * divides the accel back out; do not re-introduce a gearing, mass, or power-draw term here
+ * without checking whether `accel` already has it.
+ */
+export const PUSH_RPM_MIN = 0.6;
+export const PUSH_RPM_MAX = 1.8;
 
 /** SWERVE module steer rate (rad/s): how fast the four steered pods re-aim to a
  * new drive direction. With MODULE OPTIMIZATION (pod flip — see robot.ts) the pods

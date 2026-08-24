@@ -23,6 +23,7 @@ import { solveBalls, solveRobots } from './physicsEngine';
 import { decodeColliders } from '../games/decode/colliders';
 import { classifierRect } from './field';
 import { intakeClaims, updateRobot, updateRobotActions } from './robot';
+import { driveParams } from './drivetrain';
 import { checkGoalEntry, doorwayArtifact, gateColliderPos, updateBasins, updateGates, updateRails } from './goal';
 import { updateHumanPlayers } from './humanPlayer';
 import { robotsEnabled, stepMatch } from './match';
@@ -69,10 +70,37 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
         }
         // Update robot's position and heading directly via path traversal
         // Capture the command returned by updatePathTraversal, which now includes intake/fire states.
+        const wasAt = { x: r.pos.x, y: r.pos.y };
         currentCmd = updatePathTraversal(r, world, dt);
-        // Zero out velocity and angular velocity for path-following robots
-        // so physics engine doesn't try to move them based on old velocities.
-        r.vel = { x: 0, y: 0 };
+        /**
+         * ...AND `vel` IS THE SWEEP IT JUST MADE, not zero.
+         *
+         * The path TELEPORTS the chassis (1.56 in/tick at the default spec), and the velocity
+         * used to be zeroed here on the reasoning that physics must not move a path robot from
+         * its old velocity. Physics no longer can — the body is KINEMATIC now — but the solver
+         * still needs to know it is moving, or the only thing acting on whatever is in its way
+         * is the soft positional correction, which cannot keep up with a teleport. Measured
+         * with the velocity zeroed: overlap grew monotonically to 15.2 in on an 17.5 in pair
+         * until the SAT min axis flipped and the bystander was squirted 4 in sideways and 3 in
+         * backwards, after which the path robot passed straight through it. With the sweep
+         * velocity set, peak penetration is 0.00 in and the bystander is pushed along.
+         *
+         * `solveBalls` has always given its kinematic chassis body `r.vel` for the same reason;
+         * the robot solve was the inconsistent one. It is also simply the truth — this robot IS
+         * travelling at that speed, and everything else that reads `vel` (the HUD, shot lead
+         * compensation, the G422 pin test's speed gate) was being told otherwise.
+         *
+         * A JUMP IS NOT A SWEEP. `initializePathTraversal` places the chassis on the path's
+         * start point, and a sequence can step between segments that do not touch — both are
+         * teleports of arbitrary size, and dividing one by `dt` gives thousands of in/s that
+         * would fire everything nearby across the field (measured: the initial placement alone
+         * blasted a bystander 60 in). A displacement the robot could not have driven is not
+         * motion this model can represent, so it reports none. The margin is slack for a path
+         * whose nominal speed sits a hair above the drivetrain's own.
+         */
+        const swept = { x: (r.pos.x - wasAt.x) / dt, y: (r.pos.y - wasAt.y) / dt };
+        const walkable = driveParams(r.spec, r.butterflyTank).maxSpeed * 1.5;
+        r.vel = hyp(swept.x, swept.y) <= walkable ? swept : { x: 0, y: 0 };
         r.angVel = 0;
       } else {
         // If autoPathActive was true but no path data found in robot, deactivate

@@ -90,6 +90,7 @@ function decodeGateArms(
 /** The static geometry is CONSTANT; compute once (identical numbers ⇒ identical
  * colliders ⇒ determinism), matching the old module-global `STATIC_SPECS` cache. */
 export const decodeColliders: FieldColliders = {
+  bounds: { halfX: C.FIELD_HALF, halfY: C.FIELD_HALF },
   statics: computeStaticSpecs(),
   dynamic: decodeGateArms,
 };

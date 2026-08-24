@@ -77,6 +77,59 @@ export function driveParams(spec: RobotSpec, tankMode = false): DriveParams {
   };
 }
 
+/**
+ * PUSHING FORCE — what this drivetrain can put into a shove, in lb·in/s².
+ *
+ * Traction-limited, so it scales with WEIGHT: a heavier robot presses its wheels into the
+ * tile harder and can transmit more before they slip. `pushMult` is the drivetrain's share of
+ * that traction (tank's treads bite, mecanum's rollers scrub), `rpmPush` is the wheel torque
+ * the gearing leaves for pushing, and `1 − powerDraw` is the current the flywheel and intake
+ * are not taking.
+ *
+ * THIS IS THE NUMBER THAT DECIDES A PUSHING MATCH, and it is stated here rather than implied
+ * by a collider mass. Two robots leaning on each other reach equilibrium when their forces
+ * match, so anything wrong in this expression shows up as a routed opponent, not as a slightly
+ * off feel. Balance-edit HERE; `shoveMass` below only converts it into what Rapier needs.
+ */
+export function pushForce(spec: RobotSpec, tankMode = false, powerDraw = 0): number {
+  const { p, rpm } = activeDrive(spec, tankMode);
+  const rpmPush = clamp(C.REF_DRIVE_RPM / rpm, C.PUSH_RPM_MIN, C.PUSH_RPM_MAX);
+  return spec.massLb * C.BASE_DRIVE_ACCEL * p.pushMult * rpmPush * (1 - powerDraw);
+}
+
+/**
+ * ...AND THE COLLIDER MASS THAT DELIVERS IT.
+ *
+ * The sim pushes by SETTING VELOCITY, not by applying force: `updateRobot` hands Rapier a
+ * velocity each tick and the contact resolves as an inelastic collision between two masses.
+ * The momentum a robot injects per tick is therefore `mass × accel × dt` — so the FORCE it
+ * delivers is `mass × accel`, and the collider mass that produces a wanted force is that force
+ * divided by the accel the motor model actually used this tick.
+ *
+ * Everything else was double-counted before this existed, because `accel` already carries
+ * `REF_MASS_LB / massLb`, `REF_DRIVE_RPM / rpm` and `1 − powerDraw`:
+ *   • massLb cancelled outright — a 20 lb robot pushed exactly as hard as a 42 lb one
+ *     (measured: force 5591 at BOTH ends of the slider) while the comment claimed weight was
+ *     the headline term;
+ *   • the rpm factor landed twice (7.45x spread instead of 2.48x, clamp defeated);
+ *   • power draw landed twice (x0.64 at the cap instead of x0.80).
+ * Dividing the accel back out makes `pushForce` the whole answer and each factor act once.
+ *
+ * `powerDraw` cancels between the two expressions TODAY. It is written out anyway: the point
+ * is that the force is right whatever `accel` happens to contain, and a future edit to either
+ * side must not silently re-open the double-count.
+ *
+ * ONE NUMBER, THREE JOBS. Rapier reads this mass for the sustained shove, for the momentum
+ * split of a ram, and for the positional split when two chassis overlap; the bespoke pair
+ * impulse in physics.ts reads it for rotational inertia. They are all "how much authority does
+ * this robot have in a collision", which is what the quantity means — it is NOT the robot's
+ * weight, and `driveParams().accel` still uses the real `massLb`.
+ */
+export function shoveMass(spec: RobotSpec, tankMode = false, powerDraw = 0): number {
+  const accel = driveParams(spec, tankMode).accel * (1 - powerDraw);
+  return pushForce(spec, tankMode, powerDraw) / Math.max(accel, 1e-6);
+}
+
 /** advance a velocity toward `target` for one tick using a DC-motor torque–speed
  * curve: available (stall) accel falls ~linearly from full at rest to
  * MOTOR_MIN_TORQUE_FRAC near the free speed `vFree`, so speed approaches the top
@@ -134,11 +187,23 @@ export function motorStepVec(
 
 /** dev/tuning table: the resulting free speed / strafe / stall accel / push for
  * each drivetrain at the reference RPM+mass. Printed by the smoke suite so a
- * balance edit's effect is visible at a glance. */
+ * balance edit's effect is visible at a glance.
+ *
+ * `push` is the REAL delivered force (lb·in/s², `pushForce` at the reference mass and rpm),
+ * not the raw `pushMult`. It used to print the multiplier, which meant the column moved only
+ * when someone edited that one number — the shipped model also read mass, gearing and power
+ * draw, so the table quietly disagreed with the sim. A table nobody can trust is worse than no
+ * table, and this is the surface a balance pass reads. */
 export function driveSummary(): { dt: string; fwd: number; strafe: number; accel: number; push: number }[] {
   const row = (dt: string, p: { speedMult: number; strafeMult: number; accelMult: number; pushMult: number }) => {
     const fwd = C.SPEED_PER_RPM * C.REF_DRIVE_RPM * p.speedMult;
-    return { dt, fwd, strafe: fwd * p.strafeMult, accel: C.BASE_DRIVE_ACCEL * p.accelMult, push: p.pushMult };
+    return {
+      dt,
+      fwd,
+      strafe: fwd * p.strafeMult,
+      accel: C.BASE_DRIVE_ACCEL * p.accelMult,
+      push: C.REF_MASS_LB * C.BASE_DRIVE_ACCEL * p.pushMult,
+    };
   };
   const out = (Object.keys(C.DRIVETRAIN_PRESETS) as DrivetrainType[])
     // butterfly is listed as its two HALVES instead — a single row would imply one

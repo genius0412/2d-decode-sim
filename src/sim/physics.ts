@@ -2,7 +2,7 @@ import type { Alliance, Artifact, RobotState, Vec2, World } from '../types';
 import * as C from '../config';
 import { classifierRect, footprintExtents, gateHandleRect, goalFaceNormal, goalLineValue, type Rect } from './field';
 import { dot, rot, clamp, hyp, datan2, wrapAngle } from '../math';
-import { driveParams } from './drivetrain';
+import { driveParams, shoveMass } from './drivetrain';
 
 const ALLIANCES: Alliance[] = ['red', 'blue'];
 
@@ -233,6 +233,21 @@ function contactTorqueDelta(
    * are, only how quickly it gets there changes.
    */
   rateMult = 1,
+  /**
+   * Whether this surface's heuristic `spin` flick applies at all.
+   *
+   * ROBOT-ROBOT passes 0, because a robot pair now takes its rotation from the real two-body
+   * point impulse in `squareUpPair` instead — moment arm, both shove masses, both rotational
+   * inertias, and a Coulomb friction term. Running both would count one collision twice, and
+   * the flick is the half that cannot describe a VICTIM: it scales with the robot's OWN
+   * press, so a robot that is not driving gets nothing, which is exactly the case that
+   * matters when somebody corners you.
+   *
+   * Every STATIC surface keeps it at 1. The flick is tuned against the walls, the goal faces
+   * and the classifier, its ceilings are pinned by smoke checks, and a full physical rewrite
+   * of the static path was tried once and reverted (small angles rocked ±9 degrees).
+   */
+  spinMult = 1,
 ): { align: number; spin: number; bleed: boolean; flushErr: number } {
   /**
    * LOAD IS SHARED BY COMPRESSION, and a corner that is not bearing carries none of it.
@@ -308,7 +323,7 @@ function contactTorqueDelta(
    * it to `align` passes trivially whenever `align` has been zeroed for pointing the wrong way
    * — exactly when the guard is needed.
    */
-  const spinRaw = torque * press * C.CONTACT_IMPACT_SPIN * rateMult;
+  const spinRaw = torque * press * C.CONTACT_IMPACT_SPIN * rateMult * spinMult;
   const spin = !squareTo || spinRaw * relSigned <= 0 ? spinRaw : 0;
   return { align, spin, bleed: r.angVel * align < 0, flushErr };
 }
@@ -389,96 +404,6 @@ export function pointDepthInRobot(r: RobotState, p: Vec2): number {
   return Math.min(dx, dy);
 }
 
-/** OBB-vs-OBB robot collision (SAT over both robots' axes). Near-inelastic
- * shoving with MASS-weighted resolution: the heavier robot yields less, both
- * chassis get the contact-torque response (bumpers square up against each
- * other). Registers the contact pair into `out` (for the penalty engine). */
-export function collideRobots(
-  a: RobotState,
-  b: RobotState,
-  out: { a: number; b: number }[] | null,
-): void {
-  const ca = robotCorners(a);
-  const cb = robotCorners(b);
-  const axes = [
-    rot({ x: 1, y: 0 }, a.heading),
-    rot({ x: 0, y: 1 }, a.heading),
-    rot({ x: 1, y: 0 }, b.heading),
-    rot({ x: 0, y: 1 }, b.heading),
-  ];
-  let minPen = Infinity;
-  let minAxis: Vec2 | null = null;
-  for (const ax of axes) {
-    let aMin = Infinity;
-    let aMax = -Infinity;
-    for (const c of ca) {
-      const p = c.x * ax.x + c.y * ax.y;
-      aMin = Math.min(aMin, p);
-      aMax = Math.max(aMax, p);
-    }
-    let bMin = Infinity;
-    let bMax = -Infinity;
-    for (const c of cb) {
-      const p = c.x * ax.x + c.y * ax.y;
-      bMin = Math.min(bMin, p);
-      bMax = Math.max(bMax, p);
-    }
-    const overlap = Math.min(aMax, bMax) - Math.max(aMin, bMin);
-    if (overlap <= 0) return; // separated
-    if (overlap < minPen) {
-      minPen = overlap;
-      minAxis = ax;
-    }
-  }
-  if (!minAxis) return;
-  // normal oriented a -> b
-  let nx = minAxis.x;
-  let ny = minAxis.y;
-  if ((b.pos.x - a.pos.x) * nx + (b.pos.y - a.pos.y) * ny < 0) {
-    nx = -nx;
-    ny = -ny;
-  }
-  if (out) out.push(a.id < b.id ? { a: a.id, b: b.id } : { a: b.id, b: a.id });
-
-  // mass-weighted positional split: the heavier robot yields less
-  const ma = a.spec.massLb;
-  const mb = b.spec.massLb;
-  const wa = mb / (ma + mb);
-  const wb = ma / (ma + mb);
-  a.pos.x -= nx * minPen * wa;
-  a.pos.y -= ny * minPen * wa;
-  b.pos.x += nx * minPen * wb;
-  b.pos.y += ny * minPen * wb;
-
-  // per-robot pressure into the contact (for the torque response), then a
-  // near-inelastic normal impulse: closing velocity dies, masses decide who
-  // gets moved
-  const pressA = Math.max(0, a.vel.x * nx + a.vel.y * ny);
-  const pressB = Math.max(0, -(b.vel.x * nx + b.vel.y * ny));
-  const rvn = (b.vel.x - a.vel.x) * nx + (b.vel.y - a.vel.y) * ny;
-  if (rvn < 0) {
-    // impulse for restitution 0 split by mass
-    a.vel.x += nx * rvn * wa;
-    a.vel.y += ny * rvn * wa;
-    b.vel.x -= nx * rvn * wb;
-    b.vel.y -= ny * rvn * wb;
-  }
-
-  // contact manifold: every corner of one chassis inside the other
-  const contacts: { c: Vec2; d: number }[] = [];
-  for (const c of cb) {
-    const d = pointDepthInRobot(a, c);
-    if (d > -0.05) contacts.push({ c, d: Math.max(d, 0) });
-  }
-  for (const c of ca) {
-    const d = pointDepthInRobot(b, c);
-    if (d > -0.05) contacts.push({ c, d: Math.max(d, 0) });
-  }
-  applyContactTorque(a, -nx, -ny, pressA, contacts, true);
-  applyContactTorque(b, nx, ny, pressB, contacts, true);
-}
-
-/** push the robot out of walls, goal faces and classifier structures */
 /** minimum-translation-vector to separate the robot OBB (intake included) from
  * an axis-aligned rect, oriented to push the robot AWAY from the rect. null if
  * already separated. SAT over the rect's axes + the robot's two axes. */
@@ -572,65 +497,6 @@ function classifierMTV(r: RobotState, rect: Rect): { nx: number; ny: number; dep
   return mtvOf(robotCorners(r), r.heading, rect, r.pos);
 }
 
-export function constrainRobot(r: RobotState): void {
-  const f = C.FIELD_HALF;
-  for (let pass = 0; pass < 3; pass++) {
-    let corners = robotCorners(r);
-
-    // perimeter walls: all touching corners contribute contact torque
-    const walls: [number, number, (c: Vec2) => number][] = [
-      [-1, 0, (c) => c.x - f],
-      [1, 0, (c) => -f - c.x],
-      [0, -1, (c) => c.y - f],
-      [0, 1, (c) => -f - c.y],
-    ];
-    for (const [nx, ny, depthOf] of walls) {
-      let depth = 0;
-      const contacts: { c: Vec2; d: number }[] = [];
-      for (const c of corners) {
-        const d = depthOf(c);
-        if (d > -0.05) contacts.push({ c, d: Math.max(d, 0) });
-        if (d > depth) depth = d;
-      }
-      if (depth > 0) pushRobotAt(r, nx, ny, depth, contacts);
-    }
-
-    // goal front faces (diagonal walls in the far corners)
-    for (const a of ALLIANCES) {
-      let worst = 0;
-      const contacts: { c: Vec2; d: number }[] = [];
-      for (const c of robotCorners(r)) {
-        const d = goalLineValue(c, a); // perpendicular distance behind the face
-        if (d > -0.05) contacts.push({ c, d: Math.max(d, 0) });
-        if (d > worst) worst = d;
-      }
-      if (worst > 0) {
-        const n = goalFaceNormal(a);
-        pushRobotAt(r, n.x, n.y, worst, contacts);
-      }
-    }
-
-    // classifier ramp structures along the side walls. Evict via the true
-    // minimum-translation-vector of the robot OBB (intake INCLUDED) vs the
-    // channel rect, so ramming a CORNER pushes out the right way and the intake
-    // never stays clipped — with contact torque so a ram squares the chassis up.
-    // The channel's outer edge IS the field wall, so a push whose normal points
-    // (predominantly) toward that wall is skipped — the wall constraint handles
-    // it — to avoid a wall-vs-structure fight.
-    for (const a of ALLIANCES) {
-      const rect = classifierRect(a);
-      const mtv = classifierMTV(r, rect);
-      if (!mtv) continue;
-      const wallDir = rect.x0 <= -C.FIELD_HALF + 0.01 ? -1 : 1; // toward the side wall
-      if (mtv.nx * wallDir > 0.5) continue; // predominantly wall-ward — let the wall win
-      const contacts = robotCorners(r)
-        .filter((c) => c.x > rect.x0 && c.x < rect.x1 && c.y > rect.y0 && c.y < rect.y1)
-        .map((c) => ({ c, d: mtv.depth }));
-      pushRobotAt(r, mtv.nx, mtv.ny, mtv.depth, contacts, contacts.length > 1);
-    }
-  }
-}
-
 // ------------------------------------------- square-up (Rapier robot slice) --
 // Rapier (physicsEngine.ts) now owns robot translation + velocity: wall/robot
 // pushout, velocity-kill, mass-weighted shoving. These run AFTER the Rapier
@@ -653,6 +519,136 @@ function pressAlong(preVel: Vec2 | undefined, nx: number, ny: number): number {
   if (!preVel) return 0;
   const vn = preVel.x * nx + preVel.y * ny; // >0 = moving along the push (outward)
   return vn < 0 ? -vn : 0; // driving IN
+}
+
+/**
+ * ...AND THE LOAD SOMEBODY ELSE IS PUTTING THROUGH YOU INTO IT.
+ *
+ * `pressAlong` reads the robot's OWN drive, which is the whole story for a robot leaning on a
+ * wall of its own accord and none of it for one held there by an opponent. Measured: a 42 lb
+ * tank rams an idle robot into the field corner and the victim sits at the 22.9-degree tilt it
+ * arrived with for four seconds — it never squares up, because by its own reckoning nothing is
+ * pressing on it.
+ *
+ * `ext` is the push a robot is receiving from robot-robot contacts this tick, summed as a
+ * vector in the same units `pressAlong` returns (in/s of refused approach per tick). Its
+ * component pointing INTO this surface (the −n direction; `n` is the way the surface pushes
+ * the robot out) is load the surface must hold, and the chassis flattens against it just as it
+ * would under its own drive.
+ *
+ * MAX, not sum. Physically the two loads add, but the alignment rate saturates at roughly
+ * 4.2 in/s of press and a robot driving into something re-injects about that much every tick,
+ * so summing changes nothing there — while the uncapped `spin` flick would double on a robot
+ * that is both driving and being shoved. Taking the larger of the two sources is the honest
+ * reading of "what is holding this chassis against the surface" without that risk.
+ */
+function pressOn(preVel: Vec2 | undefined, ext: Vec2 | undefined, nx: number, ny: number): number {
+  const own = pressAlong(preVel, nx, ny);
+  if (!ext) return own;
+  const into = -(ext.x * nx + ext.y * ny);
+  return into > own ? into : own;
+}
+
+/**
+ * ONE TICK'S CONTACT RESPONSE FOR THE WHOLE FIELD, collected before any of it is written.
+ *
+ * `deltas` are the settling contributions (`sumTurn` folds them), `dw` is angular velocity
+ * from real collision impulses, and `ext` is the robot-robot push each chassis is carrying,
+ * which the static surfaces then read through `pressOn`.
+ *
+ * IT EXISTS BECAUSE THE PAIRS USED TO WRITE FIRST. `squareUpRobots` ran every robot-robot pair
+ * to completion — rotating both chassis — and only then asked the walls, the goal faces, the
+ * classifier and the gate arm what they thought, so those surfaces worked out their contact
+ * geometry against a robot an opponent had already turned. That is exactly the path-dependence
+ * `sumTurn` was written to kill for the statics, with the robot-robot half left outside it; in
+ * a three-robot pile it also meant the answer depended on which robot held which id (measured:
+ * the same geometry with the ids permuted landed ~1in and ~1.2 degrees apart).
+ *
+ * Now every surface and every pair reads the SAME pose — the one the Rapier solve left — and
+ * the writes happen once per robot at the end.
+ */
+type ContactAcc = {
+  deltas: Map<number, TurnDelta[]>;
+  dw: Map<number, number>;
+  ext: Map<number, Vec2>;
+};
+
+function newAcc(): ContactAcc {
+  return { deltas: new Map(), dw: new Map(), ext: new Map() };
+}
+
+/** this robot's delta list, created on demand — the static pass appends to the same array
+ * the pair pass filled, so one `sumTurn` sees every surface touching this chassis. */
+function accList(acc: ContactAcc, id: number): TurnDelta[] {
+  let list = acc.deltas.get(id);
+  if (!list) {
+    list = [];
+    acc.deltas.set(id, list);
+  }
+  return list;
+}
+
+function accDelta(acc: ContactAcc, id: number, d: TurnDelta): void {
+  accList(acc, id).push(d);
+}
+
+function accSpin(acc: ContactAcc, id: number, dw: number): void {
+  acc.dw.set(id, (acc.dw.get(id) ?? 0) + dw);
+}
+
+function accPush(acc: ContactAcc, id: number, nx: number, ny: number, press: number): void {
+  const v = acc.ext.get(id);
+  if (v) {
+    v.x += nx * press;
+    v.y += ny * press;
+  } else {
+    acc.ext.set(id, { x: nx * press, y: ny * press });
+  }
+}
+
+/**
+ * Write one robot's accumulated contact response: the collision impulses first, then the
+ * settling nudge, mirroring the order `squareUpStatics` already uses for the gate handle.
+ *
+ * The impulse turns the CHASSIS by `dw · dt` as well as adding to `angVel`, because the
+ * drivetrain owns `angVel` and `motorStep` pulls it back toward the commanded turn at
+ * turnAccel — hundreds of rad/s² — which erases anything a contact injects before the next
+ * tick's heading integration ever sees it. Setting `angVel` alone is a rotation that never
+ * happens. So the hit turns you now and the wheels fight what is left, which is the real pair.
+ *
+ * `angVel` stays clamped to the robot's own `maxTurn`: it is a generous ceiling (≈487°/s on
+ * the default chassis) that only a violent hit reaches, and the wall checks pin the peak a
+ * contact may produce.
+ */
+function applyAcc(world: World, acc: ContactAcc, dt: number): void {
+  for (const r of world.robots) {
+    // a robot on an auto path has its pose written by the path, not by contact
+    if (!r.autoPathActive) {
+      const dw = acc.dw.get(r.id);
+      if (dw) {
+        const maxTurn = driveParams(r.spec, r.butterflyTank).maxTurn;
+        r.heading = wrapAngle(r.heading + dw * dt);
+        r.angVel = clamp(r.angVel + dw, -maxTurn, maxTurn);
+      }
+      const deltas = acc.deltas.get(r.id);
+      if (deltas) sumTurn(r, deltas);
+    }
+    /**
+     * ...AND THE STEP ENDS WITH NOBODY MOVING FASTER THAN A ROBOT CAN.
+     *
+     * The same solver-explosion guard `solveRobots` applies on write-back, repeated here so it
+     * holds for the WHOLE robot phase rather than for one pass of it. The bespoke passes add
+     * velocity too — the gate handle resolves a point impulse straight onto `r.vel` — so a
+     * robot crushed against structure could still leave this function at 812 in/s after the
+     * solve had been bounded. Dead code in ordinary play; if it ever binds there, something
+     * upstream is wrong.
+     */
+    const speed = hyp(r.vel.x, r.vel.y);
+    if (speed > C.PHYS_MAX_ROBOT_SPEED) {
+      r.vel.x *= C.PHYS_MAX_ROBOT_SPEED / speed;
+      r.vel.y *= C.PHYS_MAX_ROBOT_SPEED / speed;
+    }
+  }
 }
 
 /** torque-only static square-up: Rapier already resolved translation, so this
@@ -699,8 +695,8 @@ function squareUpWalls(
   preVel: Vec2 | undefined,
   halfX: number,
   halfY: number,
-  out: TurnDelta[] = [],
-  own = true,
+  out: TurnDelta[],
+  ext: Vec2 | undefined,
 ): void {
   const eps = C.CONTACT_TOUCH_EPS;
   const corners = robotCorners(r);
@@ -716,15 +712,20 @@ function squareUpWalls(
       const d = depthOf(c);
       if (d > -eps) contacts.push({ c, d: Math.max(d, 0) });
     }
-    if (contacts.length > 0) out.push(contactTorqueDelta(r, nx, ny, pressAlong(preVel, nx, ny), contacts, true));
+    if (contacts.length > 0) out.push(contactTorqueDelta(r, nx, ny, pressOn(preVel, ext, nx, ny), contacts, true));
   }
-  if (own) sumTurn(r, out);
 }
 
-function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, dt: number, world?: World): void {
+function squareUpStatics(
+  r: RobotState,
+  preVel: Vec2 | undefined,
+  dt: number,
+  world: World | undefined,
+  out: TurnDelta[],
+  ext: Vec2 | undefined,
+): void {
   const eps = C.CONTACT_TOUCH_EPS;
-  const out: TurnDelta[] = [];
-  squareUpWalls(r, preVel, C.FIELD_HALF, C.FIELD_HALF, out, false);
+  squareUpWalls(r, preVel, C.FIELD_HALF, C.FIELD_HALF, out, ext);
   const corners = robotCorners(r);
 
   for (const a of ALLIANCES) {
@@ -735,7 +736,7 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, dt: number, wo
     }
     if (contacts.length > 0) {
       const n = goalFaceNormal(a);
-      out.push(contactTorqueDelta(r, n.x, n.y, pressAlong(preVel, n.x, n.y), contacts, true));
+      out.push(contactTorqueDelta(r, n.x, n.y, pressOn(preVel, ext, n.x, n.y), contacts, true));
     }
   }
 
@@ -901,7 +902,7 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, dt: number, wo
        * expression covers both regimes — a hard hit is one big value, a steady push is a small
        * one repeated — which is what a contact actually is.
        */
-      const press = pressAlong(preVel, nx, ny);
+      const press = pressOn(preVel, ext, nx, ny);
       if (press <= 0) continue; // separating, or not driving into it — no contact force
       const iOverM = (r.spec.length * r.spec.length + r.spec.width * r.spec.width) / 12;
       const rxn = lx * ny - ly * nx;
@@ -980,20 +981,38 @@ function squareUpStatics(r: RobotState, preVel: Vec2 | undefined, dt: number, wo
      * specific angles, weird." The walls have always passed `true` here for the same reason.
      */
     if (contacts.length > 0)
-      out.push(contactTorqueDelta(r, cn.x, cn.y, pressAlong(preVel, cn.x, cn.y), contacts, true));
+      out.push(contactTorqueDelta(r, cn.x, cn.y, pressOn(preVel, ext, cn.x, cn.y), contacts, true));
   }
-
-  sumTurn(r, out);
 }
 
-/** torque + rrContacts for a robot pair. Rapier resolved the shove; this only
- * squares the two chassis against each other and records the contact for the
- * penalty engine. Detection mirrors collideRobots' SAT (touch within EPS). */
+/**
+ * ROBOT-ROBOT CONTACT: the record the penalty engine reads, the settling nudge, and the
+ * rotation Rapier cannot produce.
+ *
+ * Rapier resolved the shove (translation + velocity) with rotations LOCKED, so a chassis
+ * carries no angular response out of the solve at all. This supplies it, and it supplies the
+ * ONE number both robots' responses are scaled by: the CLOSING velocity along the contact
+ * normal.
+ *
+ * THE PRESS IS RELATIVE, AND IT USED NOT TO BE. Each robot's press was its own ABSOLUTE
+ * velocity projected on the normal — a load reading that does not need the other robot to be
+ * there at all. Two robots cruising side by side in contact, no relative motion and nothing
+ * compressed, squared each other up at 0.45 rad/s; a pair actively SEPARATING (gap 14.7in to
+ * 19.5in over half a second) still had the trailing one snapped from 11.46 degrees to flush.
+ * A contact that is opening cannot carry a load, and `contactTorqueDelta`'s own rule is "no
+ * load, no torque" — the rule was right, the input was wrong.
+ *
+ * `out` (rrContacts) is recorded BEFORE any of that, on geometric overlap alone. Every
+ * protected-zone rule in both games reads it — G424/G425/G426/G427/G402/G422/G408 and CR's
+ * G05/G06 — and touching an opponent in their loading zone is a foul whether or not either of
+ * you is pressing.
+ */
 function squareUpPair(
   a: RobotState,
   b: RobotState,
   preVels: Map<number, Vec2>,
   out: { a: number; b: number }[],
+  acc: ContactAcc,
 ): void {
   const ca = robotCorners(a);
   const cb = robotCorners(b);
@@ -1004,7 +1023,7 @@ function squareUpPair(
     rot({ x: 0, y: 1 }, b.heading),
   ];
   let minPen = Infinity;
-  let minAxis: Vec2 | null = null;
+  const found: { axis: Vec2; ov: number }[] = [];
   for (const ax of axes) {
     let aMin = Infinity;
     let aMax = -Infinity;
@@ -1022,18 +1041,35 @@ function squareUpPair(
     }
     const overlap = Math.min(aMax, bMax) - Math.max(aMin, bMin);
     if (overlap <= -C.CONTACT_TOUCH_EPS) return; // clearly separated
-    if (overlap < minPen) {
-      minPen = overlap;
-      minAxis = ax;
-    }
+    found.push({ axis: ax, ov: overlap });
+    if (overlap < minPen) minPen = overlap;
   }
-  if (!minAxis) return;
-  let nx = minAxis.x;
-  let ny = minAxis.y;
-  if ((b.pos.x - a.pos.x) * nx + (b.pos.y - a.pos.y) * ny < 0) {
-    nx = -nx;
-    ny = -ny;
+
+  /**
+   * THE NORMAL AT A CORNER IS BETWEEN THE TWO FACES THAT MEET THERE — the same correction
+   * `mtvOf` already makes for the gate handle and the classifier, for the same reason.
+   *
+   * Plain SAT returns the single least-overlapping axis, which is right in the middle of a
+   * face and ill-conditioned at a corner: two of the four candidates sit within numerical
+   * noise of each other and the normal flips between them as the chassis slide a hair past
+   * the diagonal. Corner-on-corner is most of what robot-robot contact IS, so axes within
+   * CONTACT_NORMAL_BLEND of the minimum are summed, weighted by how close each is to being
+   * the answer. Away from a corner the second axis carries no weight and this is plain SAT.
+   */
+  let bx = 0;
+  let by = 0;
+  for (const { axis, ov } of found) {
+    const w = 1 - (ov - minPen) / C.CONTACT_NORMAL_BLEND;
+    if (w <= 0) continue;
+    const flip = (b.pos.x - a.pos.x) * axis.x + (b.pos.y - a.pos.y) * axis.y < 0 ? -1 : 1;
+    bx += axis.x * flip * w;
+    by += axis.y * flip * w;
   }
+  const bl = hyp(bx, by);
+  if (bl < 1e-9) return;
+  const nx = bx / bl; // a -> b: the way the contact pushes b, and pushes a back along
+  const ny = by / bl;
+
   out.push(a.id < b.id ? { a: a.id, b: b.id } : { a: b.id, b: a.id });
 
   const contacts: { c: Vec2; d: number }[] = [];
@@ -1045,42 +1081,220 @@ function squareUpPair(
     const d = pointDepthInRobot(b, c);
     if (d > -C.CONTACT_TOUCH_EPS) contacts.push({ c, d: Math.max(d, 0) });
   }
-  const pva = preVels.get(a.id);
-  const pvb = preVels.get(b.id);
-  const pressA = pva ? Math.max(0, pva.x * nx + pva.y * ny) : 0;
-  const pressB = pvb ? Math.max(0, -(pvb.x * nx + pvb.y * ny)) : 0;
-  applyContactTorque(a, -nx, -ny, pressA, contacts, true);
-  applyContactTorque(b, nx, ny, pressB, contacts, true);
+  if (contacts.length === 0) return;
+
+  // the load-weighted centre of the manifold — where the pair actually bear on each other.
+  // ONE point, shared by both responses, so they cannot disagree about where they are touching.
+  let cx = 0;
+  let cy = 0;
+  let wsum = 0;
+  let dMax = -Infinity;
+  for (const { d } of contacts) dMax = Math.max(dMax, d);
+  for (const { c, d } of contacts) {
+    const load = Math.max(0, Math.min(d, 2) - (Math.min(dMax, 2) - C.CONTACT_COMPLIANCE));
+    if (load <= 0) continue;
+    cx += c.x * load;
+    cy += c.y * load;
+    wsum += load;
+  }
+  if (wsum <= 0) return;
+  cx /= wsum;
+  cy /= wsum;
+
+  /**
+   * Relative velocity of the pair, from the PRE-solve LINEAR velocities — Rapier has already
+   * taken the normal part out of `r.vel`, so the pre-solve reading is the approach the pair is
+   * re-injecting this tick: one big value for a ram, a small one repeated for a sustained lean,
+   * which is what a contact actually is.
+   *
+   * DELIBERATELY LINEAR — the ω×r terms are NOT in here, and putting them in is a trap.
+   * They are the textbook contact-point velocity and adding them looks like an obvious
+   * improvement; what it actually produces is a hard limit cycle. A robot PIVOTING against
+   * another has ω×r ≈ 9 rad/s × 10 in ≈ 90 in/s at the contact, so a chassis that is not
+   * driving anywhere generates an enormous press every tick. The settling `align` then slams
+   * into its per-tick ceiling while the impulse's `dw` writes the heading the other way, and
+   * the `press <= 0` gate below flickers as the sign turns over: measured, a robot commanded
+   * to pivot off a defender reversed direction on 53% of ticks with swings up to 2.34°/tick,
+   * ended up rotating 0.4° in two seconds against a full stick, and made the idle victim
+   * shudder too. Both chassis buzz visibly at 60 Hz, in the most ordinary defensive situation
+   * there is.
+   *
+   * So `press` — which GATES this whole response and scales the settling term — is the LINEAR
+   * closing speed and nothing else. The rotation still reaches the IMPULSE below, where it
+   * belongs and where it is stable: there it only damps, because a body turning into a contact
+   * gets an impulse opposing the turn rather than a per-tick heading rewrite.
+   */
+  const pva = preVels.get(a.id) ?? a.vel;
+  const pvb = preVels.get(b.id) ?? b.vel;
+  const rax = cx - a.pos.x;
+  const ray = cy - a.pos.y;
+  const rbx = cx - b.pos.x;
+  const rby = cy - b.pos.y;
+  const vrx = pva.x - pvb.x;
+  const vry = pva.y - pvb.y;
+  const press = vrx * nx + vry * ny; // > 0 = closing
+  if (press <= 0) return; // touching but unloaded — no torque, no spin, nothing transmitted
+
+  /**
+   * SETTLING: bumpers are compliant, so a pair held together flattens toward flush. The
+   * heuristic spin flick is suppressed (spinMult 0) — the impulse below is this pair's rotation.
+   *
+   * ...AND THE PAIR GETS NO VETO OVER THE FIELD. `sumTurn` clamps the SUMMED alignment to the
+   * tightest `flushErr` any contributor reports, which is right for static faces (turning past
+   * one would be turning into it) and wrong for an opponent, who will simply slide. When two
+   * chassis are parallel the SAT normal lands on one of their own axes, so the pair's flushErr
+   * is ~0 — and a robot pinned face-to-face against a wall at 20° had the wall's own −2.86°/tick
+   * correction thrown away every tick and sat there. Sweeping the pinner's heading, the pair was
+   * the binding cap over most of the range: 40° off flush at some angles, against 0.3° once the
+   * veto is removed. So the pair keeps its own align (already capped internally at its own flush)
+   * and reports `Infinity` outward.
+   */
+  const noVeto = (d: TurnDelta): TurnDelta => ({ ...d, flushErr: Infinity });
+  accDelta(acc, a.id, noVeto(contactTorqueDelta(a, -nx, -ny, press, contacts, true, 1, 0)));
+  accDelta(acc, b.id, noVeto(contactTorqueDelta(b, nx, ny, press, contacts, true, 1, 0)));
+
+  // ...and each chassis carries this push into whatever ELSE it is resting on, which is what
+  // squares a robot up against the wall an opponent is holding it against. See `pressOn`.
+  accPush(acc, a.id, -nx, -ny, press);
+  accPush(acc, b.id, nx, ny, press);
+
+  /**
+   * THE ROTATION, as a real two-body point impulse rather than a heuristic flick.
+   *
+   *   J_n = (1 + e)(v_rel · n) / (1/mA + 1/mB + (rA × n)²/IA + (rB × n)²/IB)
+   *   J_t = min(v_t / k_t, µ·J_n)                     dω = (r × J) / I
+   *
+   * the textbook case, and the same model `squareUpStatics` already uses for the gate handle
+   * — a point contact on a rigid body — extended to a second body that can move. `shoveMass`
+   * is the mass on both counts because it is the mass Rapier just solved this pair with.
+   *
+   * IT EXISTS BECAUSE A SHOVED ROBOT DID NOT TURN AT ALL. Rapier locks rotation, and the only
+   * other source scaled with the robot's OWN press, which is zero for anybody who is not
+   * driving. Measured, ramming an idle robot at y-offsets 0/4/8/12in — the last grazing a
+   * corner of a 16.5in chassis — left the victim at heading 0.00° and angVel 0.000 every
+   * time, while the AGGRESSOR yawed 3.5°. Cornering an opponent to spin them is the most
+   * basic defensive move in FTC and it could not happen.
+   *
+   * J_t IS WHAT MAKES A FLANK HIT TURN YOU INTO IT rather than away: a normal push through a
+   * point can only ever swing a chassis off what it touched, and catching an opponent with
+   * your flank does the opposite because they drag that side back. Nothing else in a contact
+   * produces it, which is why µ here is a material constant and not a dial.
+   *
+   * A dead-centre hit has no moment arm on either body and no slip, so both terms vanish and
+   * a square ram stays square. That falls out of the geometry; it is not a special case.
+   */
+  const ma = shoveMass(a.spec, a.butterflyTank, a.powerDraw);
+  const mb = shoveMass(b.spec, b.butterflyTank, b.powerDraw);
+  const ia = (ma * (a.spec.length * a.spec.length + a.spec.width * a.spec.width)) / 12;
+  const ib = (mb * (b.spec.length * b.spec.length + b.spec.width * b.spec.width)) / 12;
+  const raxn = rax * ny - ray * nx;
+  const rbxn = rbx * ny - rby * nx;
+  const kn = 1 / ma + 1 / mb + (raxn * raxn) / ia + (rbxn * rbxn) / ib;
+  /**
+   * ...and HERE the contact-point velocity is the full one, rotation included.
+   *
+   * This is where ω×r belongs and the only place it is stable, because the impulse can only
+   * ever OPPOSE the closing it is given: a chassis already turning into the contact hands the
+   * solve a bigger `vn`, gets a bigger impulse, and is damped. Take it out and the rotation has
+   * nothing acting against it — a sustained corner push spun a victim to 55° and 9.4 rad/s,
+   * which is the drivetrain's own top spin rate, from a shove.
+   *
+   * ROTATION MAY ONLY DAMP THIS IMPULSE, NEVER DRIVE IT — hence the clamp to [0, press].
+   *
+   * Zero at the bottom because a contact pushes and never pulls: a body rotating AWAY reports
+   * a negative closing speed and would otherwise be dragged back in. `press` at the top is the
+   * more interesting half. A chassis turning INTO the contact reports a LARGER closing speed,
+   * and taking that at face value is a deadlock: the resistance scales up to meet the turn,
+   * while the reaction that would resolve it in reality — the corner shoving the other robot
+   * aside — cannot appear here, because this impulse deliberately contributes no translation
+   * and Rapier's bodies are rotation-locked, so the push only arrives on the NEXT tick via the
+   * new overlap. Measured with the top clamp missing: a robot at full rotate stick while being
+   * shoved managed 84° in five seconds against 2747° free, and a tank managed −13°. You could
+   * not spin off a defender at all.
+   *
+   * Damping still works, because that is the rotVn < 0 half: a victim spun by an off-centre hit
+   * turns away from the contact, reports less closing, and converges. Removing rotVn entirely
+   * was tried and it is the other failure — a sustained corner push wound the victim up to 55°
+   * and 9.4 rad/s, its own top spin rate, with nothing acting against it.
+   */
+  const rotVn = (-a.angVel * ray + b.angVel * rby) * nx + (a.angVel * rax - b.angVel * rbx) * ny;
+  const vn = clamp(press + rotVn, 0, press);
+  const jn = ((1 + C.CONTACT_RESTITUTION) * vn) / kn;
+  let jx = -jn * nx; // impulse ON a; b takes the opposite
+  let jy = -jn * ny;
+  const tvx = vrx - a.angVel * ray + b.angVel * rby - nx * vn;
+  const tvy = vry + a.angVel * rax - b.angVel * rbx - ny * vn;
+  const vt = hyp(tvx, tvy);
+  if (vt > 1e-6) {
+    const tx = tvx / vt;
+    const ty = tvy / vt;
+    const raxt = rax * ty - ray * tx;
+    const rbxt = rbx * ty - rby * tx;
+    const kt = 1 / ma + 1 / mb + (raxt * raxt) / ia + (rbxt * rbxt) / ib;
+    const jt = Math.min(vt / kt, C.CONTACT_MU * jn);
+    jx -= jt * tx;
+    jy -= jt * ty;
+  }
+  /**
+   * ...AND ONLY THE ROTATION IS TAKEN. Rapier already resolved the linear half, inelastically
+   * and mass-weighted, so adding this impulse's translation on top would bounce apart a pair
+   * whose restitution is deliberately zero. Rotation is the one thing the locked bodies could
+   * not give us, and it is the one thing taken.
+   */
+  accSpin(acc, a.id, ((rax * jy - ray * jx) / ia) * C.CONTACT_PAIR_SPIN);
+  accSpin(acc, b.id, ((rbx * -jy - rby * -jx) / ib) * C.CONTACT_PAIR_SPIN);
 }
 
-/** post-Rapier bespoke pass: square tilted chassis flush and record robot-robot
- * contacts (rrContacts) for the penalty engine. `preVels` are the pre-solve
- * velocities from solveRobots (drive-in pressure the torque scales with). */
-export function squareUpRobots(world: World, preVels: Map<number, Vec2>, dt: number): void {
+/** every robot-robot pair, in a stable id order (determinism). Shared by both games. */
+function squareUpPairs(world: World, preVels: Map<number, Vec2>, acc: ContactAcc): void {
   for (let i = 0; i < world.robots.length; i++) {
     for (let j = i + 1; j < world.robots.length; j++) {
-      squareUpPair(world.robots[i], world.robots[j], preVels, world.rrContacts);
+      squareUpPair(world.robots[i], world.robots[j], preVels, world.rrContacts, acc);
     }
   }
-  for (const r of world.robots) squareUpStatics(r, preVels.get(r.id), dt, world);
+}
+
+/** post-Rapier bespoke pass: square tilted chassis flush, spin a chassis that was hit
+ * off-centre, and record robot-robot contacts (rrContacts) for the penalty engine.
+ * `preVels` are the pre-solve velocities from solveRobots. Pairs run FIRST but only
+ * accumulate, so the statics work out their geometry against the pose the solve left rather
+ * than one an opponent has already turned — see `ContactAcc`. */
+export function squareUpRobots(world: World, preVels: Map<number, Vec2>, dt: number): void {
+  const acc = newAcc();
+  squareUpPairs(world, preVels, acc);
+  for (const r of world.robots) {
+    // A ROBOT ON AN AUTO PATH IS SKIPPED HERE, not just in `applyAcc`. Everything the static
+    // pass produces is routed through the accumulator and discarded for a path robot — except
+    // the gate handle, which resolves a point impulse and writes `vel`/`heading`/`angVel`
+    // straight onto the chassis. That used to be unreachable for a path robot, whose own
+    // velocity is zero so `pressAlong` returned 0; `pressOn`'s transmitted load gives it a
+    // press it never had. Measured: an opponent ramming a path robot parked on the blue gate
+    // handle rotated it 7.4 degrees off the heading its path commands, and a `wait` segment
+    // never rewrites heading, so it stayed there after the pusher left.
+    if (r.autoPathActive) continue;
+    squareUpStatics(r, preVels.get(r.id), dt, world, accList(acc, r.id), acc.ext.get(r.id));
+  }
+  applyAcc(world, acc, dt);
 }
 
 /** post-Rapier square-up for a game whose only statics are perimeter WALLS (Chain
- * Reaction). Same robot-robot squaring + `rrContacts` as DECODE, but the static pass
- * aligns to the four walls at ±halfX/±halfY only — no DECODE goal-face / classifier
- * geometry. This is what makes a CR robot settle flush when it drives into a wall. */
+ * Reaction). Same robot-robot pass as DECODE, but the static half aligns to the four walls
+ * at ±halfX/±halfY only — no DECODE goal-face / classifier geometry. This is what makes a CR
+ * robot settle flush when it drives into a wall. */
 export function squareUpRobotsWalls(
   world: World,
   preVels: Map<number, Vec2>,
   halfX: number,
   halfY: number,
+  dt: number,
 ): void {
-  for (let i = 0; i < world.robots.length; i++) {
-    for (let j = i + 1; j < world.robots.length; j++) {
-      squareUpPair(world.robots[i], world.robots[j], preVels, world.rrContacts);
-    }
+  const acc = newAcc();
+  squareUpPairs(world, preVels, acc);
+  for (const r of world.robots) {
+    if (r.autoPathActive) continue; // the path owns the pose — see squareUpRobots
+    squareUpWalls(r, preVels.get(r.id), halfX, halfY, accList(acc, r.id), acc.ext.get(r.id));
   }
-  for (const r of world.robots) squareUpWalls(r, preVels.get(r.id), halfX, halfY);
+  applyAcc(world, acc, dt);
 }
 
 // ------------------------------------------------------------ ball steps ----

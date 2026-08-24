@@ -52,6 +52,16 @@ export interface FieldColliders {
    * classifier channels). CONSTANT numbers → identical colliders each build →
    * determinism preserved. Compute once at module load. */
   statics: StaticSpec[];
+  /**
+   * The PERIMETER, as a hard containment invariant rather than merely a collider.
+   *
+   * `solveRobots` uses it to guarantee that a robot which began a tick inside the field cannot
+   * be pushed out of it — the same guarantee `clampBallPosToStatics` gives artifacts, and for
+   * the same reason: a soft contact against a body that will not yield is not enough on its
+   * own. It says nothing about a robot that was ALREADY outside (a seeded pose, a probe on the
+   * outflow mouth); containment keeps you in, it does not teleport you in.
+   */
+  bounds: { halfX: number; halfY: number };
   /** per-step dynamic cuboids (DECODE: the physical gate handles). Omit for a
    * game with no moving field geometry (CR shell). `gateCol` is DECODE's
    * anticipated gate-lift fraction per alliance. */

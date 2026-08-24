@@ -31,4 +31,7 @@ const stands: StaticSpec[] = ringStandBoxes().map((c) => ({
   rot: 0,
 }));
 
-export const chainColliders: FieldColliders = { statics: [...walls, ...stands] };
+export const chainColliders: FieldColliders = {
+  statics: [...walls, ...stands],
+  bounds: { halfX: CHAIN_HALF_X, halfY: CHAIN_HALF_Y },
+};

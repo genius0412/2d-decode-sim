@@ -140,6 +140,65 @@ if it names a game element (artifact, gate, particle, catalyst, beam) it belongs
   into the canonical `RobotState`. The bespoke square-up torque + `rrContacts` stay in
   `physics.ts`. `RAPIER.init()` is async → **`initPhysics()` must be awaited** in smoke, the
   server, and `main.tsx` before any step.
+  - **EVERY robot gets a body, including one on an AUTO PATH** — a KINEMATIC one, so it is
+    solid to everybody and pushed by nobody while `updatePathTraversal` keeps owning its pose.
+    It used to get no body at all, i.e. a 30-second ghost you could drive straight through.
+    It needs the **SWEEP VELOCITY** too (`world.ts` derives it from the pose delta, reporting
+    none when the displacement exceeds what the robot could have driven — an init teleport or a
+    segment jump is not a sweep): a kinematic body the solver believes is stationary has only
+    the soft positional correction acting on whatever is in its way, and that cannot keep up
+    with a teleport. The whole STATIC pass is skipped for a path robot, because the gate
+    handle writes `vel`/`heading`/`angVel` straight onto the chassis and bypasses `applyAcc`.
+  - **ROTATION IS LOCKED on the bodies, so the solve produces NO angular response** — that is
+    what `squareUpPair` supplies (below), and why an off-centre shove is not something Rapier
+    can be asked for here.
+- **ROBOT-ROBOT CONTACT RESPONSE lives in `squareUpPair`** (`physics.ts`) and has three parts,
+  all scaled by ONE shared number: the pair's **CLOSING velocity** along the contact normal.
+  It was each robot's *absolute* velocity, which is a load reading that does not need the other
+  robot to exist — two robots cruising side by side squared each other up at 0.45 rad/s, and a
+  pair actively separating still got torqued. `contactTorqueDelta`'s "no load, no torque" rule
+  was right; the input was wrong.
+  1. **`rrContacts` is recorded FIRST, on geometric overlap alone** — before any press test.
+     Every protected-zone rule in both games reads it (G424/G425/G426/G427/G402/G422/G408 and
+     CR's G05/G06) and touching an opponent in their zone fouls whether or not anyone is pressing.
+  2. **A settling nudge** (`contactTorqueDelta`, `spinMult` 0) — compliant bumpers flatten a
+     held pair toward flush.
+  3. **A real two-body point impulse**, from which only the **ROTATION** is taken (Rapier already
+     resolved the linear half inelastically; adding it back would bounce apart a pair whose
+     restitution is deliberately 0). Same model `squareUpStatics` uses for the gate handle,
+     extended to a second movable body, with `shoveMass` as the mass and a Coulomb `J_t` — which
+     is what makes a FLANK hit turn you INTO what you caught. A dead-centre hit has no moment arm
+     and no slip, so a square ram stays square without a special case.
+     Scaled by **`CONTACT_PAIR_SPIN`** (0.6), because taking only the rotation leaves out the two
+     things that relieve a SUSTAINED contact in reality — the bumpers slipping, and the turning
+     chassis shoving the other robot aside — so a held pair freezes into one geometry and the
+     torque repeats unrelieved. Unscaled it out-muscled the wheels almost regardless of the push:
+     a pusher 4.5× WEAKER than its victim held it to 103° of a possible 2748, the same as one 6×
+     stronger. The dial is honest about being a dial; a contact that can slip is the real fix.
+     `rotVn` (the ω×r term) belongs ONLY here, clamped to `[0, press]` — it damps a spin, and it
+     must not amplify one, and it must never reach the settling term, where it limit-cycles.
+- **THE PAIR PASS ACCUMULATES; IT DOES NOT WRITE** (`ContactAcc`). It used to rotate both chassis
+  before the walls / goal faces / classifier / gate arm were asked anything, so those surfaces
+  worked out their geometry against a robot an opponent had already turned — the exact
+  path-dependence `sumTurn` exists to kill, with the robot-robot half left outside it. Now every
+  surface reads the pose the solve left and each robot is turned ONCE. (Rapier's own body order
+  still follows `world.robots`, which is inherent to the solver and stays deterministic.)
+- **THE PERIMETER IS A HARD INVARIANT** (`FieldColliders.bounds` + `outsideBy`/`grewOut` in
+  `solveRobots`), because a collider alone stopped being enough once one body in the solve could
+  not yield: a chassis crushed between the far wall and an AUTO-PATH robot was driven 15.2in
+  past it and, on a longer path, out of the field entirely — with its `r.vel` reading 0.00 the
+  whole time, so no speed guard can see it. It clamps **GROWTH, past a slop**: a robot that began
+  the tick inside cannot be pushed out, one already outside is left alone (DECODE's outflow
+  mouth is at x=−69 and the drain probes park a chassis past the wall plane on purpose), and
+  `PHYS_CONTAIN_SLOP` keeps it clear of ordinary resting penetration — without that it fights
+  the wall square-up, which is the two-passes-taking-turns failure the ball solve was rebuilt to
+  avoid. `PHYS_MAX_ROBOT_SPEED` is the velocity half of the same guard, and is **absolute**: as
+  a multiple of the robot's own top speed it fired on ordinary shoves of a slow chassis by a fast
+  one, because what sets a shoved robot's velocity is the PUSHER's.
+- **`pressOn` = max(own drive-in, load transmitted through the chassis)**. `pressAlong` reads only
+  the robot's own drive, which is the whole story for a robot leaning on a wall by itself and none
+  of it for one held there by an opponent — measured, a rammed robot sat at its arrival angle for
+  four seconds. `ContactAcc.ext` carries the pair's push into the static pass.
 - **GROUND artifacts are Rapier too** (`solveBalls`): circle bodies against the static field
   AND each robot's **CHASSIS** (kinematic — the robot pushes artifacts and is never pushed
   back, which is product decision #7's outflow-no-shove). Flight/basin/rail stay scripted.
@@ -225,10 +284,25 @@ modeled motor is the **MATRIX / goBILDA 5000-series 12VDC** brushed motor (5800 
   drift + yaw wobble driving straight. X-drive renders as a proper X (omnis at ±45°).
 - **NICHES:** tank raw power/no-strafe · swerve strongest-but-imprecise · mecanum
   light/instant/precise but weaker · x-drive deliberately-weak novelty.
-- **PUSHING POWER = effective Rapier shove mass** (`physicsEngine.ts` `setMass`):
-  `massLb · pushMult · rpmPush · (1−powerDraw)`, `rpmPush = clamp(REF_DRIVE_RPM/driveRpm,
-  0.6, 1.8)` — geared-for-speed ⇒ less torque. `driveParams.accel` uses REAL mass, so
-  inflating shove mass never touches linear accel.
+- **PUSHING POWER IS A FORCE, and the collider mass is DERIVED from it** (`drivetrain.ts`):
+  `pushForce = massLb · BASE_DRIVE_ACCEL · pushMult · rpmPush · (1−powerDraw)` (traction-
+  limited, so weight is a real term), `rpmPush = clamp(REF_DRIVE_RPM/driveRpm, PUSH_RPM_MIN,
+  PUSH_RPM_MAX)`. **`shoveMass = pushForce / accel`** is what `physicsEngine.setMass` gets.
+  The division is the whole point: the sim pushes by SETTING VELOCITY, so the delivered force
+  is `mass × accel`, and `driveParams().accel` already carries `REF_MASS_LB/massLb`,
+  `REF_DRIVE_RPM/rpm` and `1−powerDraw`. Writing the shove straight in as a mass therefore
+  cancelled weight entirely (20 lb and 42 lb both delivered 5591) and applied gearing and
+  power draw twice (7.45× rpm spread instead of 2.48×, ×0.64 instead of ×0.80) — a 250 rpm
+  minimum-weight mecanum out-pushed a 42 lb 435 rpm tank. **Never add a factor to `pushForce`
+  without checking whether `accel` already has it.** `driveParams.accel` still uses REAL mass,
+  so the shove never touches linear accel.
+  **ONE NUMBER, THREE JOBS**: Rapier reads `shoveMass` for the sustained shove, for a ram's
+  momentum split, and for the positional split of an overlap, and the pair impulse reads it
+  for rotational inertia. It is push AUTHORITY, not weight — and because `accel ∝ 1/massLb`,
+  it comes out ∝ massLb², so a 2:1 weight difference separates ~4:1 on a seeded overlap. That
+  is the price of `accel` staying motor-limited (heavy = sluggish) while push stays
+  traction-limited (heavy = stronger); one Rapier mass cannot be both, so it is the pushing one.
+  `driveSummary()`'s `push` column prints the real force, not `pushMult`.
 - **Per-drivetrain CLAMPS** live in `DRIVETRAIN_LIMITS`; the mass FLOOR is raised by flywheel
   inertia (`INERTIA_MASS_FLOOR` 14) via `massLimits(dt, inertia)`.
 
@@ -928,6 +1002,12 @@ more clearance RAISES the centre of gravity (`cogFactor`) and makes the drive sl
 `CHAIN_COG_PENALTY` 0.16 generally, and `CHAIN_COG_SWERVE_PENALTY` 0.6 on a squared curve for
 SWERVE (tall modules tip and scrub). `chainStep` scales the whole movement command by
 `cogFactor` BEFORE the drivetrain model.
+**CoG does NOT scale PUSHING FORCE, deliberately.** It scales the COMMAND, i.e. target speed and
+turn rate, not accel — so a high-clearance robot is slow but shoves at full strength. That was
+checked rather than inherited: total traction is `mass · µ` whichever way the load transfers
+between axles, so a raised centre of gravity costs you tipping margin and dynamic response, not
+grip. Making clearance a push penalty too would be a CR balance change with no physics behind it.
+
 
 **Beam crossing is modeled PER WHEEL**, not by chassis overlap: a beam drags only while one of
 the four `wheelContacts` is perched on the ridge (within `CHAIN_BEAM_WHEEL_R` 2.5" of the beam
@@ -1064,6 +1144,8 @@ human-player restock, gamepad + keyboard, physical basin/rail/gate classifier, c
 physics, driver assists, audio, pre-match countdown, Electron packaging, three intake presets
 with the physical `mouth` capture model, power draw, the drivetrain retune (`BALANCE_VERSION`
 2), configurable G304 start positions with the canvas editor, and the Phase C penalty engine.
+Robot-on-robot pushing was rebuilt (`SIM_VERSION` 3): push is a stated FORCE, a shoved chassis
+spins, and the contact response is closing-velocity-scaled — see **Physics** above.
 
 **Chain Reaction** — complete and scored: 300-particle bespoke physics with pre-match
 randomization + the accelerator score/recycle loop, three archetypes (turret/drum/dumper) with
@@ -1081,8 +1163,9 @@ Glicko-2 ranked, leaderboards, records, admin, version gate) are LIVE.
 
 1. **Rapier slice 2 — balls/particles.** Port to Rapier bodies/sensors while KEEPING the
    scripted basin/rail/gate (the contact-time classified-vs-overflow commit must stay exact).
-   ONLY after that: delete the dead `collideRobots`/`constrainRobot` and drop the
-   `dsin/dcos/datan2` discipline.
+   ONLY after that: drop the `dsin/dcos/datan2` discipline. (`collideRobots`/`constrainRobot`
+   are already GONE — they were provably dead and the closing-velocity impulse `squareUpPair`
+   now runs superseded the one thing worth keeping from them.)
 2. **DECODE penalty hitbox audit** — the rules are right; re-verify the ZONE GEOMETRY each one
    tests (`gateZone`/`gateTapeSegments`, `tunnelStrip`, `allianceArea`, `pinnedAgainstWall`
    slop, the SAT `rrContacts` test) against the manual figures. Tighten with smoke cases.

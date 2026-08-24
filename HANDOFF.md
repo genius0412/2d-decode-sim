@@ -1,4 +1,236 @@
-# HANDOFF — 2026-08-22 (contact geometry: the closest FEATURE, and one turn per tick) — alpha only
+# HANDOFF — 2026-08-24 (robots pushing robots: a force, not a mass) — alpha only
+
+Branch **alpha**. Working tree has the change below UNCOMMITTED at time of writing.
+`npm test` ALL PASS · `npm run build` green · `npm run server:check` green. **Not deployed.**
+
+Do not merge to main. Standing rule.
+
+## READ FIRST — where this session ended
+
+An audit of every live path for robot-on-robot pushing found eight defects; all eight are
+fixed. `SIM_VERSION` 2 → **3**. **`BALANCE_VERSION` was NOT bumped — that decision is still
+open** (see *Open* below), and the server has NOT been redeployed, so lobby/ranked/record play
+is still running the old physics.
+
+### The one that mattered: the shove was a mass, and it should have been a force
+
+The sim pushes by **setting velocity**, not by applying force. So the momentum a robot injects
+per tick is `collider mass × accel × dt`, and the force it delivers is `mass × accel`. The old
+`shoveMass = massLb · pushMult · rpmPush · (1−powerDraw)` was written as if it were the answer
+on its own — but `driveParams().accel` already carries `REF_MASS_LB/massLb`,
+`REF_DRIVE_RPM/rpm` and `1−powerDraw`. Measured consequences:
+
+| factor | intended | actual before |
+|---|---|---|
+| `massLb` | push ∝ weight | **cancelled outright** — 20 lb and 42 lb both delivered 5591 |
+| `rpmPush` | clamped 2.48× spread | **7.45×**, the clamp defeated by the second application |
+| `powerDraw` | ×0.80 at the cap | **×0.64** (squared) |
+| `pushMult` | tank:xdrive 4.9× | 12.1×, because `accelMult` rode along |
+
+Verified empirically, not just algebraically: pairs with equal predicted force stalemate, pairs
+with unequal force rout. The headline symptom was an inversion — **a 250 rpm minimum-weight
+mecanum out-pushed a 42 lb 435 rpm tank**, i.e. the rpm slider was a stronger pushing lever
+than the drivetrain pick, which is the opposite of every word in `DRIVETRAIN_PRESETS`.
+
+Now `src/sim/drivetrain.ts` states the force and derives the mass:
+
+```ts
+pushForce = massLb · BASE_DRIVE_ACCEL · pushMult · rpmPush · (1 − powerDraw)   // traction-limited
+shoveMass = pushForce / (driveParams(spec, tankMode).accel · (1 − powerDraw))  // what delivers it
+```
+
+`powerDraw` cancels between the two today. It is written out anyway, on purpose: the identity
+must hold whatever `accel` happens to contain. **Never add a term to `pushForce` without
+checking whether `accel` already has it.**
+
+**The tradeoff this forces, and why it was taken.** Because `accel ∝ 1/massLb`, `shoveMass`
+comes out ∝ massLb². Rapier's one `mass` also decides a ram's momentum split and the positional
+split of an overlap, so a 2:1 weight difference now separates ~4:1 there. That is the price of
+`accel` staying motor-limited (heavy = sluggish, the point of the mass slider) while push stays
+traction-limited (heavy = stronger, which is real). One number cannot be both; it is the pushing
+one, because that is what a match turns on. The alternative — dropping `REF_MASS_LB/massLb` from
+`accel` — makes both correct at once but removes mass's only downside, and everyone would build
+max-mass.
+
+### A shoved robot could not turn AT ALL
+
+Rapier locks robot rotation, so the solve produces no angular response; the only other source
+was the heuristic `spin` flick, scaled by the robot's **own** press — zero for anybody who is
+not driving. Measured, ramming an idle robot at y-offsets 0/4/8/12 in (the last grazing a corner
+of a 16.5 in chassis) left the victim at heading **0.00° and angVel 0.000 every single time**,
+while the aggressor yawed 3.5°. Cornering an opponent to spin them is the most basic defensive
+move in FTC and it could not happen.
+
+`squareUpPair` now runs the real two-body point impulse — the same model `squareUpStatics`
+already used for the gate handle, extended to a second movable body — and takes **only the
+rotation** (Rapier owns the linear half; adding it back would bounce apart a pair whose
+restitution is deliberately 0). Coulomb `J_t` is in it, which is what makes a flank hit turn you
+INTO what you caught. Now: 0 in → 0.00°, 2 in → 4.7°, 4 in → 9.4°, 8 in → 19.1°, 12 in → 27.9°,
+and it **settles** rather than running away (checked to 15 s).
+
+### The press was absolute velocity, so contacts carrying no load still torqued
+
+Each robot's press was its own velocity on the normal — a load reading that does not need the
+other robot to be there. Two robots cruising side by side in contact, nothing compressed,
+squared each other up at 0.45 rad/s; a pair actively **separating** (gap 14.7 → 19.5 in) still
+had the trailing one snapped from 11.46° to flush. It is the pair's **closing** velocity now,
+shared by both. `contactTorqueDelta`'s "no load, no torque" rule was right all along; the input
+was wrong.
+
+### ...and a robot held against a wall by an opponent never squared up
+
+Same root cause on the static side: `pressAlong` reads only the robot's own drive. A 42 lb tank
+rammed an idle robot into the field corner and the victim sat at its 22.9° arrival angle for
+four seconds. `pressOn` now takes `max(own drive-in, load transmitted through the chassis)`,
+with the transmitted part carried from the pair pass in `ContactAcc.ext`. Four tilts (±20°,
+±11.5°) all come flush inside 2° now.
+
+### Four more, smaller
+
+- **An auto-path robot was a GHOST.** `solveRobots` skipped body creation entirely for
+  `autoPathActive`, so for the whole 30 s of AUTO an opponent drove clean through it (measured:
+  end to end, the path robot never moved a thousandth of an inch) and it passed through walls
+  too. It gets a **kinematic** body now: solid to everyone, pushed by nobody, path still owns
+  the pose. CR never sets the flag, so this is DECODE-only in practice.
+- **The pair pass wrote before the statics read.** It rotated both chassis before the walls /
+  goal faces / classifier / gate arm worked out their geometry — the exact path-dependence
+  `sumTurn` exists to kill, with the robot-robot half left outside it. `ContactAcc` accumulates
+  everything and each robot is turned once. Pinned by a check: identical geometry with the robot
+  ids permuted now gives bit-identical headings. (Rapier's own body order still follows
+  `world.robots`; that is inherent to the solver and stays deterministic.)
+- **Penetration.** A max-push tank holding an opponent against the wall buried it ~2.4 in.
+  Halving the force fixed most of it; `PHYS_CONTACT_FREQ` 8 → **12** took it to 0.57 in.
+- **Dead code.** `collideRobots` and `constrainRobot` (zero call sites) and `CONTACT_BIAS`
+  (superseded by `CONTACT_COMPLIANCE`) are gone. `driveSummary()`'s `push` column now prints the
+  real force instead of the raw `pushMult`, which had quietly disagreed with the shipped model.
+
+### Round two: eight more, found by attacking the fixes
+
+The first pass was reviewed adversarially and the review found real defects in it. Everything
+below was introduced (or newly exposed) by the round-one work and is now fixed, with a check
+each. Worth knowing that the review's own second pass died on a usage limit with every verifier
+agent unrun — its "0 confirmed" was an artifact of missing verdicts, not a clean bill. All seven
+of its findings were checked by hand and three were real.
+
+1. **A shoved robot could not turn under its own power.** The pair impulse is recomputed at full
+   strength every tick, and for a sustained contact `press` is a constant 8.49 in/s (most of it
+   the victim's own braking), giving a permanent −0.7 rad/s that exactly cancelled the wheels'
+   +0.6. At full rotate stick a victim managed 87° of a possible 2748 in five seconds; a tank
+   managed −13°. The damning part was the sweep: **an x-drive 4.5× WEAKER than its victim held
+   it to 103°, the same as a tank 6× stronger.** A torque that ignores how hard it is applied is
+   not a torque. `CONTACT_PAIR_SPIN` 0.6 scales the impulse's rotation — the weak pusher now
+   holds it to nothing (820°) while an equal or stronger one still pins you. It costs the ram
+   (near-corner spin 28° → 17.5°, still clearly offset-graded). The real fix is a contact that
+   can SLIP; this is a dial, and it says so.
+2. **A moving auto-path robot buried and passed through a bystander.** The kinematic body had no
+   linvel, so the solver saw a stationary thing that had teleported 1.56 in — overlap grew to
+   15.2in on a 17.5in pair, the SAT min axis flipped, the bystander was ejected sideways, and
+   the path robot went through. `world.ts` now sets `r.vel` from the pose delta (which is also
+   simply the truth — the HUD, shot-lead and the G422 speed gate were all being told zero).
+   Carrying is now perfect: a 1.4in GAP, never touching.
+3. **...but a jump is not a sweep.** `initializePathTraversal` teleports the chassis onto the
+   path's start point, and dividing that by `dt` gave thousands of in/s that blasted a bystander
+   60in. Displacement beyond `maxSpeed × 1.5` reports no velocity at all.
+4. **The gate handle wrote straight onto an auto-path robot.** `applyAcc` skips path robots, but
+   the gate's point impulse writes `vel`/`heading`/`angVel` directly and bypassed it — newly
+   REACHABLE because `pressOn`'s transmitted load gave a non-driving robot a press it never had.
+   An opponent ramming a path robot parked on the blue gate handle rotated it 7.4° off the
+   heading its path commands, permanently (a `wait` segment never rewrites heading). The whole
+   static pass is skipped for a path robot now.
+5. **A pair contact VETOED the wall square-up.** `sumTurn` clamps the summed alignment to the
+   tightest `flushErr` any contributor reports — right for a static face, wrong for an opponent,
+   who will simply slide. Two parallel chassis put the pair's flushErr at ~0, so a robot pinned
+   face-to-face had the wall's own −2.86°/tick correction thrown away every tick and sat 18–40°
+   off flush. `noVeto()` reports `Infinity` outward while keeping the pair's own capped align.
+   The existing pin check could not see it: at exactly π/2 the two normals agree.
+6. **A robot crushed between a wall and a kinematic path robot left the step at 959 in/s** — six
+   field widths a second. `PHYS_MAX_ROBOT_SPEED` bounds it, applied both on solve write-back and
+   at the end of `applyAcc` (the gate impulse adds velocity after the solve).
+7. **...and that guard's first form fired in ORDINARY play.** It was `maxSpeed × 2`, scaled to
+   the victim's own top speed when what sets a shoved robot's velocity is the PUSHER's. The legal
+   envelope runs 30.1 to 120.9 in/s, so the slowest build's ceiling sat BELOW what the fastest
+   could legitimately shove it to: 27 of 65 ticks of a plain open-field push were clamped,
+   throttling it 12% and putting a discontinuity in the rpm slider with no physical cause. It is
+   an absolute 300 in/s now — ~2.5× anything that can exist here.
+8. **A robot could be pushed clean out of the field.** No speed guard can see this: Rapier's
+   positional correction does not feed velocity, so the victim's `r.vel` read 0.00 for every tick
+   it was travelling through the wall. `FieldColliders.bounds` + `outsideBy`/`grewOut` in
+   `solveRobots` hold the invariant, and hold it as GROWTH: a robot that began the tick inside
+   cannot be pushed out, while one already outside is left alone — DECODE's outflow mouth sits
+   at x = −69 and the drain probes park a whole chassis past the wall plane on purpose.
+   `PHYS_CONTAIN_SLOP` 0.75in keeps it off ordinary resting penetration (0.57in at the worst
+   shove); without that slop the wall square-up lost flush by 1.4° and artifacts began jittering
+   against the classifier again — the two-passes-taking-turns failure, exactly as advertised.
+
+**Also from round one, and worth keeping in mind:** two REAL findings were pre-existing and are
+NOT fixed here — (a) Free Drive with an auto path enabled freezes the robot completely
+(`world.ts` runs path traversal only in `auto` but skips `updateRobot` whenever `autoPathActive`,
+and `free` never reaches `auto`); (b) `server/db/repo.ts` `saveReplay` never stores
+`replay.sim`, so the `SIM_VERSION` gate refuses every DB-served replay. (b) matters more now that
+`SIM_VERSION` moved.
+
+### The stiffness sweep, so nobody re-litigates it
+
+`PHYS_CONTACT_FREQ` was 8 Hz on the reasoning that SOFT contacts let a body starting deep inside
+a wall bleed out instead of being ejected. Swept 8/15/20/25/30/40/60 Hz against both hazard
+cases (a robot seeded 2 in inside a wall; two robots seeded 6 in overlapped): **recovery velocity
+was 0.0 in/s at every single setting** — Rapier's positional correction here does not feed
+velocity, so there is no explosion to buy off. Penetration under a max shove: 1.22 in at 8 Hz,
+0.59 at 12, 0.55 at 15, 0.49 at 25, then it creeps back up. **12 was chosen, not 25**, because
+15 Hz broke the classifier-jitter ratchet and 25 Hz also broke two G408 possession checks and
+the wall-ram torque bound. 12 is the largest step with zero collateral.
+
+### Test coverage
+
+`npm test` gained ~20 checks and lost nothing. The three that changed MEANING:
+
+- `heavier robot yields less (42 vs 21 lb ≈ 1:2 push)` → `(42 vs 21 lb, by shove mass)`, ratio
+  now >2 rather than ≈2. It seeds two robots OVERLAPPING at rest and steps ONCE, which measures
+  the solver's positional split — **not** a pushing match. That is exactly why the double-counts
+  survived so long: under this test 20 lb and 42 lb looked 1:2 apart while delivering identical
+  force. The real coverage is the new `pushContest()` helper (both robots driving, 3 s).
+- `geared-for-speed (600 rpm) robot yields more than a torquey (300 rpm) one` — deleted and
+  replaced by a driven contest. Shove mass is rpm-INDEPENDENT inside the clamp band now
+  (`rpmPush · rpm = 435`), so the seeded-overlap version could not express it; the force is not,
+  and the driven version rules on it decisively.
+- `chain endgame: ascended a ring stand` placed the robot at `ringStands()[3]`, i.e. **inside**
+  the solid post — the thing `CHAIN_START_POSES`' own comment says the stand anchors exist to
+  avoid. It only ever passed because the contact was soft enough that 0.1 s of ejection stayed
+  under `endgameOf`'s 12 in/s gate. It uses the anchor now.
+
+## Open
+
+- **`BALANCE_VERSION` 3 → 4 — DECIDED, a fresh ranked season.** Every head-to-head outcome
+  moves and the stiffer contact moves solo record scores too, so the current DECODE and Chain
+  Reaction standings are archived and the boards start over. `SIM_VERSION` 2 → 3 handles replay
+  invalidation on its own axis.
+- **Deployed to the ALPHA PREVIEW only** (`./scripts/fly-deploy.sh --alpha` → `dsim-alpha`,
+  its own database, no live players). ⚠️ **Production `dohun-sim-decode` is still on the OLD
+  physics**, so a production client built from this branch would predict the new sim against a
+  server stepping the old one — constant reconcile snap-back. Ship it with
+  `ADMIN_SECRET=… scripts/announce-deploy.sh` when the season reset is wanted for real.
+- The **residual order-dependence is Rapier's own body order** (`world.robots` order), not the
+  bespoke pass. It is deterministic and identical for identical inputs; it only shows if you
+  permute which robot holds which id, which never happens in a real match.
+- CR's **ring-stand colliders still get no contact-torque square-up** — `squareUpRobotsWalls`
+  aligns to the four perimeter walls only. Out of scope here; worth a look if a robot leaning on
+  a stand feels wrong.
+
+## Gotchas earned here
+
+- **Probe worlds are full of field geometry.** A "two robots travelling together" check placed at
+  x=−60 has both chassis reaching past x=−66 into the classifier channel, and one catching it and
+  the other not IS relative motion — the check failed for a real reason that had nothing to do
+  with what it was testing. Stay mid-field, and park the artifacts
+  (`state = { kind: 'held', robot: 99 }`).
+- **`flywheelInertia: 0` for any two-robot symmetry check.** The flywheel's power draw ramps with
+  distance to your own goal, so two robots at different positions otherwise have different accels
+  — real relative motion that will be mistaken for a contact bug.
+- **`PHYS_SOLVER_ITERS` is SHARED with the ball world** (`makeWorld` takes freq/error as
+  parameters but not iterations). Raising it 8 → 12 moved two artifact-possession checks; the
+  robot-only levers are freq and allowed-error.
+
+## (older) HANDOFF — 2026-08-22 (contact geometry: the closest FEATURE, and one turn per tick) — alpha only
 
 Branch **alpha**, commit `fb75a83`. Working tree **CLEAN**. `npm test` ALL PASS ·
 `npm run build` green · `npm run server:check` green. **Not deployed.**
@@ -18,7 +250,7 @@ absent ⇒ disabled, every name allowed, ZERO network. FAILS OPEN on outage/time
 Backward-compatible: no key ⇒ no-op, and the `reason:'inappropriate'` field is additive
 so old clients ignore it. No CSS/colour change (reused `--ds-danger`).
 
-## READ FIRST — where this session ended
+### (older) Where that session ended
 
 *"Collision with the gate/corner of the gate is still very weird."* Three structural
 things, all in `src/sim/physics.ts`:

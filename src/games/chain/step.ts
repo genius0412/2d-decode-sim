@@ -69,7 +69,7 @@ export function chainStep(world: World, dt: number, commands: Map<number, RobotC
   const preVels = solveRobots(world, dt, chainColliders);
   // square a tilted chassis flush against the walls (and other robots) — the same
   // contact-torque pass DECODE runs, restricted to CR's perimeter walls.
-  squareUpRobotsWalls(world, preVels, CHAIN_HALF_X, CHAIN_HALF_Y);
+  squareUpRobotsWalls(world, preVels, CHAIN_HALF_X, CHAIN_HALF_Y, dt);
   // then hard-block any robot whose frame can't clear a beam (kept on its side).
   beamBlock(world);
   // and curb-block a mecanum strafing sideways into a beam (can't climb the ridge laterally —

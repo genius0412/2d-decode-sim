@@ -55,7 +55,7 @@ import {
   footprintCorners,
 } from '../src/sim/field';
 import { addClassified, addOverflow, assessMatchEnd, awardCard, awardFoul } from '../src/sim/scoring';
-import type { Alliance, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
+import type { Alliance, AutoPathData, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
 import {
   SIM_DT,
   PRE_COUNTDOWN as C_PRE_COUNTDOWN,
@@ -119,6 +119,8 @@ import {
   START_POSES,
   SPEED_PER_RPM,
   REF_DRIVE_RPM,
+  PUSH_RPM_MAX,
+  PHYS_MAX_ROBOT_SPEED,
   DRIVE_EFFICIENCY,
   WHEEL_DIAMETER_MM,
   BASE_DRIVE_ACCEL,
@@ -141,7 +143,7 @@ import {
   wheelContacts,
 } from '../src/sim/physics';
 import { beamBlock, beamDrag, beamDragFactor, beamStrafeBlock, beamForwardness, beamRide, canCrossBeams, cogFactor, wheelsOnBeam, CHAIN_BEAMS } from '../src/games/chain/beams';
-import { butterflyTankRpmLimits, driveParams, massLimits, rpmLimits, motorStep, driveSummary, widthLimits } from '../src/sim/drivetrain';
+import { butterflyTankRpmLimits, driveParams, massLimits, rpmLimits, motorStep, driveSummary, widthLimits, pushForce, shoveMass } from '../src/sim/drivetrain';
 import { coerceSettings, defaultSettings, switchGame, syncAudioMirrors } from '../src/settings';
 import type { RobotSetup } from '../src/sim/spawn';
 import { DEFAULT_BINDINGS, mergeBindings } from '../src/input/bindings';
@@ -4776,7 +4778,629 @@ const setup = (
   step(w, SIM_DT, new Map());
   const da = Math.hypot(a.pos.x - a0.x, a.pos.y - a0.y);
   const db = Math.hypot(b.pos.x - b0.x, b.pos.y - b0.y);
-  check('heavier robot yields less (42 vs 21 lb ≈ 1:2 push)', Math.abs(db / da - 2) < 0.15, `da=${da.toFixed(2)} db=${db.toFixed(2)}`);
+  /**
+   * The positional split of a seeded overlap goes by SHOVE MASS, which is push authority and
+   * deliberately NOT weight: it is `pushForce / accel`, and since `accel` carries 1/massLb the
+   * mass term comes through squared. A 2:1 weight difference therefore separates ~4:1 here.
+   *
+   * That is the price of `accel` staying motor-limited (heavy = sluggish, which is the point
+   * of the mass slider) while push stays traction-limited (heavy = stronger, which is real).
+   * One Rapier `mass` cannot be both, so it is the pushing one — that is the number a match
+   * turns on. What this check pins is only that the heavier robot yields LESS; the driven
+   * contests above are where the magnitudes are asserted.
+   */
+  check('heavier robot yields less (42 vs 21 lb, by shove mass)', db / da > 2, `da=${da.toFixed(2)} db=${db.toFixed(2)} ratio ${(db / da).toFixed(2)}`);
+}
+
+// =============================================================================
+// ROBOT-ROBOT CONTACT RESPONSE — the rotation Rapier cannot give us, and the
+// closing-velocity press that scales it. See `squareUpPair`.
+// =============================================================================
+
+/** how far off flush (mod 90°, the chassis is square) a heading sits, in degrees */
+const offFlush = (h: number) => {
+  const q = Math.PI / 2;
+  let rel = h;
+  rel -= Math.round(rel / q) * q;
+  return Math.abs((rel * 180) / Math.PI);
+};
+
+/** A drives +x into an idle B whose centre is `offset` inches to the side. */
+function ramOffCentre(offset: number, ticks = 90): { victim: number; peakW: number; aggressor: number } {
+  const w = createWorld('free', 7, [setup(0, 'blue', {}, 0), setup(1, 'red', {}, 1)]);
+  const [a, b] = w.robots;
+  a.pos = { x: -30, y: offset }; a.heading = 0; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+  b.pos = { x: 0, y: 0 }; b.heading = 0; b.vel = { x: 0, y: 0 }; b.angVel = 0; b.fieldCentric = false;
+  const cmds = new Map([[0, cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })], [1, cmd({})]]);
+  let peakW = 0;
+  for (let i = 0; i < ticks; i++) {
+    step(w, SIM_DT, cmds);
+    peakW = Math.max(peakW, Math.abs(b.angVel));
+  }
+  const d = (h: number) => (h * 180) / Math.PI;
+  return { victim: d(b.heading), peakW, aggressor: d(a.heading) };
+}
+
+// ---- a shoved robot TURNS: an off-centre hit spins the chassis it lands on ----
+{
+  /**
+   * This could not happen at all before. Rapier locks robot rotation, so the only angular
+   * response was the heuristic `spin` flick — scaled by the robot's OWN press, which is zero
+   * for anybody who is not driving. Measured across offsets 0/4/8/12in on a 16.5in chassis,
+   * the VICTIM came out at heading 0.00° and angVel 0.000 every single time while the
+   * aggressor yawed 3.5°. Cornering an opponent to spin them is the most basic defensive move
+   * in FTC. `squareUpPair` now runs a real two-body point impulse.
+   */
+  const square = ramOffCentre(0);
+  check(
+    'a DEAD-CENTRE ram does not spin either robot',
+    Math.abs(square.victim) < 0.5 && Math.abs(square.aggressor) < 0.5,
+    `victim ${square.victim.toFixed(2)}° aggressor ${square.aggressor.toFixed(2)}°`,
+  );
+  const hits = [2, 4, 8, 12].map((o) => ramOffCentre(o));
+  check(
+    'an OFF-CENTRE ram spins the robot it lands on',
+    hits.every((h) => Math.abs(h.victim) > 2 && h.peakW > 0.2),
+    hits.map((h, i) => `${[2, 4, 8, 12][i]}in→${h.victim.toFixed(1)}°`).join(' '),
+  );
+  check(
+    '...and how far grows with how far off centre the hit is',
+    hits.every((h, i) => i === 0 || Math.abs(h.victim) > Math.abs(hits[i - 1].victim)),
+    hits.map((h) => h.victim.toFixed(1)).join(' → '),
+  );
+  check(
+    '...without spinning anyone round (a contact is not a turntable)',
+    hits.every((h) => Math.abs(h.victim) < 45 && h.peakW < 6),
+    `worst ${Math.max(...hits.map((h) => Math.abs(h.victim))).toFixed(1)}° peak|ω| ${Math.max(...hits.map((h) => h.peakW)).toFixed(2)}`,
+  );
+  /**
+   * ...and it SETTLES. A sustained off-centre push is a real torque, so the chassis keeps
+   * turning while it is applied — the question is whether it ever stops. It does: the pair
+   * squares up or slides off, and past that the settling term walks the tilt back toward
+   * flush. So between 10s and 15s the angle must not GROW (bounded, and if it moves at all it
+   * moves toward flush), which is the property that distinguishes a torque from a turntable.
+   */
+  const long = [4, 8, 12].map((o) => ramOffCentre(o, 600));
+  const longer = [4, 8, 12].map((o) => ramOffCentre(o, 900));
+  check(
+    'a sustained off-centre push settles instead of running away',
+    long.every((h, i) => Math.abs(longer[i].victim) <= Math.abs(h.victim) + 1),
+    long.map((h, i) => `${h.victim.toFixed(1)}°→${longer[i].victim.toFixed(1)}°`).join(' '),
+  );
+}
+
+// ---- ...and a contact carrying NO load does nothing at all -------------------
+{
+  /**
+   * The press used to be each robot's own ABSOLUTE velocity on the normal, a load reading that
+   * does not need the other robot to be there. Two robots travelling together in contact got
+   * squared up at 0.45 rad/s with nothing compressed between them, and a pair actively
+   * SEPARATING still had the trailing one snapped from 11.46° to flush.
+   *
+   * `flywheelInertia: 0` matters: the flywheel's power draw ramps with distance to your own
+   * goal, so two robots at different positions otherwise have different accels — real relative
+   * motion, and this check would be measuring that instead.
+   */
+  const twin: Partial<RobotSpec> = { flywheelInertia: 0, driveRpm: 435, massLb: 26 };
+  /** park every artifact out of the way — a spike-mark pile under one robot and not the other
+   * is real relative motion, and this check would be measuring that. `held` by a robot that
+   * does not exist is the idiom here; a position outside the field is snapped back by the
+   * ground clamp and the robot then pivots on a pinned artifact. */
+  const clearBalls = (world: World) => {
+    for (const ball of world.balls) ball.state = { kind: 'held', robot: 99 };
+  };
+  // TANDEM: shoulder to shoulder, both driving along the contact face. Nothing closes.
+  const w = createWorld('free', 7, [setup(0, 'blue', twin, 0), setup(1, 'blue', twin, 1)]);
+  clearBalls(w);
+  const [a, b] = w.robots;
+  // MID-FIELD on purpose: at x=-60 a 14.5in chassis with a sloped intake reaches past x=-66
+  // into the classifier channel, and one robot catching that and the other not IS relative
+  // motion. Diagnosed, not guessed — the response is exactly zero from here.
+  a.pos = { x: -30, y: 0 }; a.heading = 0; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+  b.pos = { x: -30, y: a.spec.width + 0.2 }; b.heading = 0; b.vel = { x: 0, y: 0 }; b.angVel = 0; b.fieldCentric = false;
+  const drive = cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 });
+  let peakW = 0;
+  let peakH = 0;
+  for (let i = 0; i < 40; i++) {
+    step(w, SIM_DT, new Map([[0, drive], [1, drive]]));
+    peakW = Math.max(peakW, Math.abs(a.angVel), Math.abs(b.angVel));
+    peakH = Math.max(peakH, offFlush(a.heading), offFlush(b.heading));
+  }
+  check(
+    'two robots travelling together in contact do not torque each other',
+    peakW < 1e-6 && peakH < 1e-4,
+    `peak|ω| ${peakW.toExponential(1)} peak off-flush ${peakH.toExponential(1)}°`,
+  );
+
+  // SEPARATING: still within the touch epsilon, but the gap is opening.
+  const w2 = createWorld('free', 7, [setup(0, 'blue', twin, 0), setup(1, 'blue', twin, 1)]);
+  clearBalls(w2);
+  const [c, d] = w2.robots;
+  c.pos = { x: -30, y: 0 }; c.heading = 0.2; c.vel = { x: 0, y: 0 }; c.angVel = 0; c.fieldCentric = false;
+  d.pos = { x: -30, y: c.spec.width + 0.2 }; d.heading = 0; d.vel = { x: 0, y: 0 }; d.angVel = 0; d.fieldCentric = false;
+  // d strafes AWAY from c; c does nothing. The contact can only be opening.
+  const tilt0 = offFlush(c.heading);
+  for (let i = 0; i < 40; i++) step(w2, SIM_DT, new Map([[1, cmd({ driveX: -1 })]]));
+  check(
+    'a contact that is OPENING applies no torque to what it is leaving',
+    Math.abs(offFlush(c.heading) - tilt0) < 1e-6 && Math.abs(c.angVel) < 1e-6,
+    `tilt ${tilt0.toFixed(3)}° → ${offFlush(c.heading).toFixed(3)}°, gap ${(d.pos.y - c.pos.y).toFixed(1)}in`,
+  );
+}
+
+// ---- a robot PIVOTING against another does not buzz, and can still turn ------
+{
+  /**
+   * THE TRAP THIS PINS. Feeding the contact-point velocity (linear PLUS ω×r) into the pair
+   * press is the textbook reading and it produces a hard limit cycle: a pivoting chassis has
+   * ~90 in/s of surface speed at the contact, so a robot going nowhere generates an enormous
+   * press every tick, the settling term slams into its per-tick ceiling, the impulse writes
+   * the heading back the other way, and the `press <= 0` gate flickers as the sign turns over.
+   * Measured with ω×r in: direction reversed on 53% of ticks, swings up to 2.34°/tick, and the
+   * robot rotated 0.4° in two seconds against a FULL rotate stick — while the idle victim
+   * shuddered along with it.
+   *
+   * Every other robot-robot check here commands a DRIVE, and a drive hides it completely
+   * (0 reversals). This one must not.
+   */
+  const w = createWorld('free', 7, [setup(0, 'blue', {}, 0), setup(1, 'red', {}, 1)]);
+  for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+  const [a, b] = w.robots;
+  b.pos = { x: 0, y: 0 }; b.heading = 0; b.vel = { x: 0, y: 0 }; b.angVel = 0; b.fieldCentric = false;
+  a.pos = { x: -34, y: 5 }; a.heading = 0; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+  // drive up to a real resting contact (no seeded overlap), then pivot ONLY
+  for (let i = 0; i < 60; i++) {
+    step(w, SIM_DT, new Map([[0, cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })], [1, cmd({})]]));
+  }
+  const h0 = a.heading;
+  const bh0 = b.heading;
+  let flips = 0;
+  let worstTick = 0;
+  let prev = 0;
+  let victimWorst = 0;
+  const pivot = new Map([[0, cmd({ rotate: 1 })], [1, cmd({})]]);
+  for (let i = 0; i < 240; i++) {
+    const before = a.heading;
+    const vBefore = b.heading;
+    step(w, SIM_DT, pivot);
+    // UNWRAP: raw heading deltas read as full 360 turns when the chassis crosses +/-pi, and
+    // this check is about per-tick reversals, so a wrap would look like a 351-degree flip.
+    const d = wrapAngle(a.heading - before);
+    if (i > 120) {
+      if (d !== 0 && prev !== 0 && Math.sign(d) !== Math.sign(prev)) flips++;
+      worstTick = Math.max(worstTick, Math.abs(d));
+      victimWorst = Math.max(victimWorst, Math.abs(wrapAngle(b.heading - vBefore)));
+    }
+    if (d !== 0) prev = d;
+  }
+  const turned = Math.abs(wrapAngle(a.heading - h0));
+  /**
+   * BUZZ IS REVERSALS, NOT MAGNITUDE. A robot commanded to pivot turns ~8.6 °/tick at full
+   * rate, so bounding the per-tick step catches nothing but the turn itself. What a limit cycle
+   * looks like is the DIRECTION flipping — 53% of ticks, measured, when the pair press carried
+   * the rotational term.
+   */
+  check(
+    'a robot pivoting against another does not buzz',
+    flips < 8,
+    `${flips} reversals in 120 ticks, worst step ${((worstTick * 180) / Math.PI).toFixed(2)}°/tick`,
+  );
+  check(
+    '...nor does the robot it is leaning on',
+    (victimWorst * 180) / Math.PI < 0.2 && Math.abs(wrapAngle(b.heading - bh0)) < 0.2,
+    `victim worst ${((victimWorst * 180) / Math.PI).toFixed(3)}°/tick, drift ${(((wrapAngle(b.heading - bh0)) * 180) / Math.PI).toFixed(2)}°`,
+  );
+  check(
+    '...and it can actually turn (a contact is not a handbrake)',
+    turned > 1,
+    `turned ${((turned * 180) / Math.PI).toFixed(1)}° in 4s`,
+  );
+}
+
+// ---- a weaker robot cannot arrest a stronger one's rotation ------------------
+{
+  /**
+   * The contact torque must scale with how hard the push is. It did not: unscaled, the pair
+   * impulse out-muscled the wheels almost regardless of the pusher, and an x-drive FOUR AND A
+   * HALF TIMES weaker than its victim held it to 103° of a possible 2748 in five seconds — the
+   * same as a tank six times STRONGER. See `CONTACT_PAIR_SPIN` for why the sustained case
+   * cannot relieve itself here the way a real contact does.
+   *
+   * The pivot-against-a-robot check above cannot see this: that one has the turning robot at
+   * ZERO linear velocity, so `press <= 0` returns before the impulse is ever computed.
+   */
+  const turnUnderPush = (pusher: Partial<RobotSpec>) => {
+    const w = createWorld('free', 7, [setup(0, 'blue', pusher, 0), setup(1, 'red', { massLb: 26, driveRpm: 435, flywheelInertia: 0 }, 1)]);
+    for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+    const [a, b] = w.robots;
+    a.pos = { x: -34, y: 4 }; a.heading = 0; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+    b.pos = { x: 0, y: 0 }; b.heading = 0; b.vel = { x: 0, y: 0 }; b.angVel = 0; b.fieldCentric = false;
+    const cmds = new Map([[0, cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })], [1, cmd({ rotate: 1 })]]);
+    let turned = 0;
+    let prev = b.heading;
+    for (let i = 0; i < 300; i++) {
+      step(w, SIM_DT, cmds);
+      turned += wrapAngle(b.heading - prev);
+      prev = b.heading;
+    }
+    return (Math.abs(turned) * 180) / Math.PI;
+  };
+  const weak = turnUnderPush({ drivetrain: 'xdrive', massLb: 18, driveRpm: 600, flywheelInertia: 0 });
+  const strong = turnUnderPush({ drivetrain: 'tank', massLb: 42, driveRpm: 200, flywheelInertia: 0 });
+  check(
+    'a much weaker robot cannot hold a stronger one from turning',
+    weak > 400,
+    `pushed by the weakest legal build, the victim still turned ${weak.toFixed(0)}° in 5s`,
+  );
+  check(
+    '...while a much stronger one pins it (the torque tracks the push)',
+    strong < weak / 2,
+    `weak pusher ${weak.toFixed(0)}° vs strong pusher ${strong.toFixed(0)}°`,
+  );
+}
+
+// ---- the post-solve speed guard is dead code in ordinary play ----------------
+{
+  /**
+   * It was `maxSpeed × 2` — scaled to the VICTIM's own top speed, when what sets a shoved
+   * robot's velocity is the PUSHER's. The legal envelope runs 30.1 to 120.9 in/s, so the
+   * slowest build's ceiling sat BELOW what the fastest could legitimately shove it to, and the
+   * guard fired on 27 of 65 ticks of a plain open-field push — throttling it 12% and putting a
+   * discontinuity in the rpm slider with no physical cause.
+   */
+  const w = createWorld('free', 7, [
+    setup(0, 'blue', { drivetrain: 'tank', massLb: 42, driveRpm: 560, flywheelInertia: 0 }, 0),
+    setup(1, 'red', { drivetrain: 'xdrive', massLb: 18, driveRpm: 200, flywheelInertia: 0 }, 1),
+  ]);
+  for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+  const [a, b] = w.robots;
+  a.pos = { x: 0, y: -62 }; a.heading = Math.PI / 2; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+  b.pos = { x: 0, y: -40 }; b.heading = Math.PI / 2; b.vel = { x: 0, y: 0 }; b.angVel = 0; b.fieldCentric = false;
+  let peak = 0;
+  let worstGap = 0;
+  for (let i = 0; i < 80; i++) {
+    step(w, SIM_DT, new Map([[0, cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })], [1, cmd({})]]));
+    const v = Math.hypot(b.vel.x, b.vel.y);
+    peak = Math.max(peak, v);
+    // the stored velocity must agree with the displacement it actually made
+    if (v > 1) worstGap = Math.max(worstGap, Math.abs(v - Math.hypot(b.vel.x, b.vel.y)));
+  }
+  check(
+    'the fastest legal robot can shove the slowest past its own top speed',
+    peak > driveParams({ ...DEFAULT_SPEC, drivetrain: 'xdrive', massLb: 18, driveRpm: 200 } as RobotSpec).maxSpeed * 2 && peak < PHYS_MAX_ROBOT_SPEED,
+    `victim reached ${peak.toFixed(1)} in/s (its own top speed is ${driveParams({ ...DEFAULT_SPEC, drivetrain: 'xdrive', massLb: 18, driveRpm: 200 } as RobotSpec).maxSpeed.toFixed(1)}, the guard is at ${PHYS_MAX_ROBOT_SPEED})`,
+  );
+  void worstGap;
+}
+
+// ---- a robot HELD against a wall by an opponent squares up against it --------
+{
+  /**
+   * `pressAlong` reads the robot's own drive, which is the whole story for a robot leaning on
+   * a wall of its own accord and NONE of it for one held there by somebody else. Measured, a
+   * 42 lb tank rammed an idle robot into the field corner and the victim sat at the 22.9° it
+   * arrived with for four seconds. `pressOn` now adds the load the pair is transmitting
+   * through the chassis — see `ContactAcc.ext`.
+   */
+  const held = (tilt: number, pinnerHeading: number) => {
+    // SWERVE pinner: saturation vec + strafeMult 1, so the commanded push magnitude is the
+    // same at every heading and only the contact GEOMETRY varies across the sweep below.
+    const w = createWorld('free', 7, [
+      setup(0, 'blue', { drivetrain: 'swerve', massLb: 40, driveRpm: 250 }, 0),
+      setup(1, 'red', {}, 1),
+    ]);
+    const [a, b] = w.robots;
+    for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+    b.pos = { x: 0, y: FIELD_HALF - 14 }; b.heading = tilt; b.vel = { x: 0, y: 0 }; b.angVel = 0; b.fieldCentric = false;
+    // dead centre behind it, so the impulse has no moment arm and this isolates the square-up
+    a.pos = { x: 0, y: b.pos.y - 26 }; a.heading = pinnerHeading; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+    /** the robot-centric stick that comes out as a WORLD +y push at THIS heading. Field-centric
+     * would be shorter but routes through viewAngleOf(alliance), which is a second thing to get
+     * right; robot-centric inverts cleanly: robotVec = rot((0,1), -h) = (sin h, cos h), and
+     * updateRobot reads robotVec = { x: stick.y, y: -stick.x }. */
+    const push = cmd({ driveX: -Math.cos(pinnerHeading), driveY: Math.sin(pinnerHeading), leftDrive: 1, rightDrive: 1 });
+    const cmds = new Map([[0, push], [1, cmd({})]]);
+    for (let i = 0; i < 300; i++) { a.heading = pinnerHeading; step(w, SIM_DT, cmds); }
+    return offFlush(b.heading);
+  };
+  const tilts = [0.35, 0.2, -0.2, -0.35];
+  const out = tilts.map((t) => held(t, Math.PI / 2));
+  check(
+    'a robot pinned to a wall by an opponent squares up against it',
+    out.every((o) => o < 2),
+    tilts.map((t, i) => `${((t * 180) / Math.PI).toFixed(0)}°→${out[i].toFixed(2)}°`).join(' '),
+  );
+  /**
+   * ...AT EVERY PINNER HEADING, which is where the first version of this check was blind.
+   * Pinning at exactly π/2 makes the pair normal land on the aggressor's axis, so the pair's
+   * flush error equals the wall's and the veto below never bites. Rotate the pinner and the
+   * pair's `flushErr` — ~0 when the two chassis are parallel — clamped the SUMMED alignment to
+   * zero and threw the wall's own −2.86°/tick correction away every tick: the victim sat 18°
+   * off flush at 110°, 40° at 40°. A movable opponent does not get to veto the field.
+   */
+  const sweep = [Math.PI / 2 + 0.35, Math.PI / 2 + 0.7, Math.PI / 2 - 0.35, Math.PI / 2 - 0.7, 0.7, 2.6];
+  const swept = sweep.map((h) => held(0.35, h));
+  check(
+    '...at every pinner heading, not just the one where the normals happen to agree',
+    swept.every((o) => o < 3),
+    sweep.map((h, i) => `${((h * 180) / Math.PI).toFixed(0)}°→${swept[i].toFixed(2)}°`).join(' '),
+  );
+}
+
+// ---- a robot on an AUTO PATH is solid ---------------------------------------
+{
+  /**
+   * It used to get no Rapier body at all, so for the whole 30s of AUTO it was a GHOST — an
+   * opponent drove clean through it end to end and it never moved a thousandth of an inch.
+   * Kinematic: everybody collides with it, nothing pushes it, and the path still owns its pose.
+   */
+  const w = createWorld('free', 7, [setup(0, 'blue', {}, 0), setup(1, 'red', {}, 1)]);
+  const [a, b] = w.robots;
+  a.pos = { x: -20, y: 0 }; a.heading = 0; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+  b.pos = { x: 0, y: 0 }; b.heading = 0; b.vel = { x: 0, y: 0 }; b.angVel = 0;
+  b.autoPathActive = true;
+  const cmds = new Map([[0, cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })]]);
+  for (let i = 0; i < 120; i++) { a.heading = 0; step(w, SIM_DT, cmds); }
+  check(
+    'a robot on an auto path is SOLID — an opponent cannot drive through it',
+    a.pos.x < b.pos.x - 4,
+    `pusher stopped at x=${a.pos.x.toFixed(2)}, path robot at x=${b.pos.x.toFixed(2)}`,
+  );
+  check(
+    '...and is never shoved off its path by the robot hitting it',
+    Math.abs(b.pos.x) < 1e-9 && Math.abs(b.pos.y) < 1e-9 && Math.abs(b.heading) < 1e-9,
+    `path robot (${b.pos.x.toFixed(4)}, ${b.pos.y.toFixed(4)}) h=${b.heading.toFixed(4)}`,
+  );
+}
+
+// ---- ...and a MOVING one pushes what is in its way, instead of eating it -----
+{
+  /**
+   * The stationary case above is the easy half, and it was the only half. A path robot
+   * TELEPORTS 1.56 in/tick at the default spec, and a kinematic body the solver believes is
+   * stationary leaves nothing but the soft positional correction acting on the bystander —
+   * which cannot keep up. Measured with a zero linvel: the overlap grew monotonically to
+   * 15.2 in on a 17.5 in pair, the SAT min axis then flipped, the bystander was ejected 4 in
+   * sideways and 3 in backwards, and the path robot passed clean through it. `world.ts` gives
+   * the body the sweep velocity now.
+   */
+  const path: AutoPathData = {
+    fileName: 'smoke',
+    startPoint: { x: -50, y: 0, heading: 'constant', degrees: 0 },
+    lines: [{ id: 'l1', endPoint: { x: 50, y: 0, heading: 'constant', degrees: 0 } }],
+    // the sequence is what actually advances the traversal — `lines` alone never moves
+    sequence: [{ kind: 'path', lineId: 'l1' }],
+  };
+  // RED on purpose: paths are stored in the canonical goalSide=+1 (red) frame and MIRRORED for
+  // blue at spawn, so a blue robot would run this one right-to-left and the geometry below
+  // would be measuring the wrong side of it.
+  const w = createWorld('match', 7, [
+    { ...setup(0, 'red', {}, 0), autoPath: path, autoPathEnabled: true },
+    setup(1, 'blue', {}, 1),
+  ]);
+  for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+  const [mover, bystander] = w.robots;
+  w.match.phase = 'auto';
+  w.match.phaseTimeLeft = 30;
+  w.match.preCountdown = undefined;
+  mover.pos = { x: -50, y: 0 }; mover.heading = 0; mover.vel = { x: 0, y: 0 }; mover.angVel = 0;
+  bystander.pos = { x: 0, y: 0 }; bystander.heading = 0; bystander.vel = { x: 0, y: 0 }; bystander.angVel = 0;
+  bystander.fieldCentric = false;
+  /** the footprint's x-interval, for a chassis whose heading is 0 or pi (both are here). */
+  const spanX = (r: RobotState) => {
+    const e = robotExtents(r);
+    const ahead = Math.cos(r.heading) > 0 ? e.front : e.rear;
+    const behind = Math.cos(r.heading) > 0 ? e.rear : e.front;
+    return { lo: r.pos.x - behind, hi: r.pos.x + ahead };
+  };
+  let worstOverlap = -Infinity;
+  let passedThrough = false;
+  let worstSideways = 0;
+  let worstSpeed = 0;
+  let worstOut = -Infinity;
+  const startedAt = bystander.pos.x;
+  let pushed = 0;
+  // DIRECTION-AGNOSTIC, and read AFTER the first tick: a path is stored in the canonical frame
+  // and MIRRORED per alliance, and `initializePathTraversal` teleports the chassis onto its
+  // start point — so which side the mover approaches from is not knowable until it has run.
+  let side0 = 0;
+  // ONLY WHILE THE PATH IS DRIVING, and only while the bystander still has ROOM. Once it
+  // reaches the far wall it is crushed between a wall and a kinematic body that will not
+  // yield, which is a different (and bounded — see below) situation.
+  for (let i = 0; i < 120 && mover.autoPathActive; i++) {
+    step(w, SIM_DT, new Map());
+    worstSpeed = Math.max(worstSpeed, Math.hypot(bystander.vel.x, bystander.vel.y), Math.hypot(mover.vel.x, mover.vel.y));
+    for (const corner of robotCorners(bystander)) {
+      worstOut = Math.max(worstOut, Math.abs(corner.x) - FIELD_HALF, Math.abs(corner.y) - FIELD_HALF);
+    }
+    if (!mover.autoPathActive) break;
+    if (side0 === 0) side0 = Math.sign(mover.pos.x - bystander.pos.x);
+    if (Math.abs(bystander.pos.x) > FIELD_HALF - 16) continue; // out of room — see the crush check
+    const m = spanX(mover);
+    const b2 = spanX(bystander);
+    worstOverlap = Math.max(worstOverlap, Math.min(m.hi, b2.hi) - Math.max(m.lo, b2.lo));
+    worstSideways = Math.max(worstSideways, Math.abs(bystander.pos.y));
+    pushed = Math.abs(bystander.pos.x - startedAt);
+    if (Math.sign(mover.pos.x - bystander.pos.x) === -side0) passedThrough = true;
+  }
+  check(
+    'a MOVING auto-path robot carries a bystander instead of passing through it',
+    !passedThrough && pushed > 20,
+    `bystander driven ${pushed.toFixed(1)}in, mover at x=${mover.pos.x.toFixed(1)}`,
+  );
+  check(
+    '...without burying it (no runaway penetration, no min-axis flip)',
+    worstOverlap < 0 && worstSideways < 1,
+    `worst overlap ${worstOverlap.toFixed(2)}in (negative = never touching), sideways ${worstSideways.toFixed(2)}in`,
+  );
+  /**
+   * ...and crushing it against the far wall is a bounded SHOVE, not a launch. A kinematic body
+   * that will not yield plus a wall that will not move is the one genuinely over-constrained
+   * case on this field; the solver squirted the pair out at 959 in/s — six field widths a
+   * second — before  bounded it.
+   */
+  /**
+   * ...AND IT IS NEVER DRIVEN OUT OF THE FIELD. The crisp invariant is the CENTRE: a chassis
+   * whose centre leaves the board has been expelled, and that is what used to happen — the
+   * bystander reached y=76.88 against a wall at 72, i.e. entirely outside, because a kinematic
+   * body does not yield and nothing else contained it.
+   *
+   * The corner bound is looser than `PHYS_CONTAIN_SLOP` on purpose. Containment acts on
+   * translation, and the square-up pass rotates the chassis afterwards — a 14.5x16.5 footprint
+   * resting on a wall sweeps up to ~3in further out as it turns, which is ordinary and which
+   * the next tick resolves. What is not ordinary is being carried out bodily.
+   */
+  check(
+    '...and is never driven out of the field, however hard it is crushed',
+    worstOut < 2.5 && Math.abs(bystander.pos.x) < FIELD_HALF && Math.abs(bystander.pos.y) < FIELD_HALF,
+    `deepest corner past the wall ${worstOut.toFixed(2)}in, centre (${bystander.pos.x.toFixed(1)}, ${bystander.pos.y.toFixed(1)}) inside +/-${FIELD_HALF}`,
+  );
+  check(
+    '...and crushing it against the wall stays a shove, not a launch',
+    worstSpeed <= PHYS_MAX_ROBOT_SPEED * 1.001,
+    `peak ${worstSpeed.toFixed(1)} in/s vs cap ${PHYS_MAX_ROBOT_SPEED}`,
+  );
+}
+
+// ---- ...and nothing writes to a path robot's chassis behind the accumulator ---
+{
+  /**
+   * `applyAcc` skips auto-path robots, but the GATE HANDLE resolves a point impulse inside
+   * `squareUpStatics` and writes `vel`/`heading`/`angVel` straight onto the chassis, bypassing
+   * it. That was unreachable while the press came only from the robot's own drive (a path
+   * robot's velocity is written by the path, so `pressAlong` returned 0); `pressOn`'s
+   * transmitted load gave it a press it never had, and an opponent ramming a path robot parked
+   * on the blue gate handle rotated it 7.4° off the heading its path commands — permanently,
+   * because a `wait` segment never rewrites heading.
+   */
+  const path: AutoPathData = {
+    fileName: 'smoke-gate',
+    startPoint: { x: -53.65, y: 4.5, heading: 'constant', degrees: 180 },
+    lines: [],
+    sequence: [{ kind: 'wait', durationMs: 20000 }],
+  };
+  const w = createWorld('match', 7, [
+    { ...setup(0, 'blue', {}, 0), autoPath: path, autoPathEnabled: true },
+    setup(1, 'red', {}, 1),
+  ]);
+  for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+  const [parked, pusher] = w.robots;
+  w.match.phase = 'auto';
+  w.match.phaseTimeLeft = 30;
+  w.match.preCountdown = undefined;
+  parked.pos = { x: -53.65, y: 4.5 }; parked.heading = Math.PI; parked.vel = { x: 0, y: 0 }; parked.angVel = 0;
+  pusher.pos = { x: -29.65, y: 10.5 }; pusher.heading = Math.PI; pusher.vel = { x: 0, y: 0 }; pusher.angVel = 0;
+  pusher.fieldCentric = false;
+  const ram = new Map([[1, cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })]]);
+  for (let i = 0; i < 240; i++) { pusher.heading = Math.PI; step(w, SIM_DT, ram); }
+  const drift = Math.abs(wrapAngle(parked.heading - Math.PI));
+  for (let i = 0; i < 240; i++) step(w, SIM_DT, new Map([[1, cmd({ driveY: -1, leftDrive: -1, rightDrive: -1 })]]));
+  check(
+    'ramming a parked auto-path robot onto the gate handle does not rotate it off its path',
+    drift < 1e-9 && Math.abs(wrapAngle(parked.heading - Math.PI)) < 1e-9,
+    `off-heading ${((drift * 180) / Math.PI).toFixed(3)}° during, ${((Math.abs(wrapAngle(parked.heading - Math.PI)) * 180) / Math.PI).toFixed(3)}° after`,
+  );
+}
+
+// ---- the bespoke contact response does not depend on WHICH ROBOT IS WHICH ----
+{
+  /**
+   * The pair pass used to write both chassis' headings before the statics were asked anything,
+   * so a wall/goal/classifier worked out its geometry against a robot an opponent had already
+   * turned — the exact path-dependence `sumTurn` was written to kill, with the robot-robot
+   * half left outside it. In a three-robot pile the answer also depended on which robot held
+   * which id.
+   *
+   * Now every surface reads the pose the solve left. Rapier's OWN body order still depends on
+   * `world.robots` order (that is inherent to the solver and stays deterministic), so this
+   * pins the bespoke half: identical geometry with the ids permuted must produce identical
+   * HEADINGS on a tick where the robots are merely touching and Rapier has nothing to resolve.
+   */
+  const headings = (order: number[]) => {
+    const tilts = [0, 0.25, -0.15];
+    const w = createWorld('free', 7, [setup(0, 'blue', {}, 0), setup(1, 'blue', {}, 1), setup(2, 'red', {}, 0)]);
+    const span = robotExtents(w.robots[0]);
+    w.robots.forEach((r, i) => {
+      r.pos = { x: order[i] * (span.front + span.rear + 0.2), y: 0 };
+      r.heading = tilts[order[i]];
+      r.vel = { x: 0, y: 0 }; r.angVel = 0; r.fieldCentric = false;
+    });
+    const drive = cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 });
+    step(w, SIM_DT, new Map(w.robots.map((r) => [r.id, drive])));
+    const out: number[] = [];
+    w.robots.forEach((r, i) => { out[order[i]] = r.heading; });
+    return out;
+  };
+  const fwd = headings([0, 1, 2]);
+  const rev = headings([2, 1, 0]);
+  check(
+    'the contact-torque pass is invariant to which robot holds which id',
+    fwd.every((h, i) => Math.abs(h - rev[i]) < 1e-12),
+    fwd.map((h, i) => `${((h * 180) / Math.PI).toFixed(4)}/${((rev[i] * 180) / Math.PI).toFixed(4)}`).join(' '),
+  );
+}
+
+// ---- robots do not sink into each other or the wall under a maximum shove ----
+{
+  /**
+   * A RATCHET on interpenetration, which had none on the robot-robot side. A max-push tank
+   * holding an opponent against the wall used to bury the victim 2.4in into the wall — the
+   * push force was double-counted, and the contact was soft enough (8 Hz) to let the surplus
+   * through. Halving the force and stiffening to 12 Hz brings both under an inch.
+   */
+  const w = createWorld('free', 7, [
+    setup(0, 'blue', { drivetrain: 'tank', massLb: 42, driveRpm: 200 }, 0),
+    setup(1, 'red', {}, 1),
+  ]);
+  const [a, b] = w.robots;
+  const ea = robotExtents(a);
+  const eb = robotExtents(b);
+  b.pos = { x: 0, y: FIELD_HALF - eb.half - 0.1 }; b.heading = 0; b.vel = { x: 0, y: 0 }; b.angVel = 0; b.fieldCentric = false;
+  a.pos = { x: 0, y: b.pos.y - eb.half - ea.front - 18 }; a.heading = Math.PI / 2; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+  const cmds = new Map([[0, cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })], [1, cmd({})]]);
+  let wall = 0;
+  let rr = 0;
+  for (let i = 0; i < 240; i++) {
+    a.heading = Math.PI / 2; a.angVel = 0; b.heading = 0; b.angVel = 0;
+    step(w, SIM_DT, cmds);
+    wall = Math.max(wall, b.pos.y + eb.half - FIELD_HALF);
+    rr = Math.max(rr, a.pos.y + ea.front - (b.pos.y - eb.half));
+  }
+  check(
+    'a maximum shove does not bury a robot in the wall or in another robot',
+    wall < 0.9 && rr < 1.0,
+    `wall ${wall.toFixed(3)}in, robot-robot ${rr.toFixed(3)}in`,
+  );
+}
+
+// ---- ...and a deeply overlapping pair still separates gently -----------------
+{
+  /**
+   * The reason the robot world runs SOFTER contacts than the ball world: a body can start a
+   * step deep inside something (a spec change grows the footprint under a parked robot), and a
+   * stiff contact would eject it. Swept across 8..60 Hz the recovery velocity was 0.0 at every
+   * setting — Rapier's positional correction here does not feed velocity — but the property is
+   * what licenses the stiffness, so it is pinned rather than assumed.
+   */
+  for (const seed of [1, 6]) {
+    const w = createWorld('free', 7, [setup(0, 'blue', {}, 0), setup(1, 'red', {}, 1)]);
+    const [a, b] = w.robots;
+    a.pos = { x: 0, y: 0 }; a.heading = 0; a.vel = { x: 0, y: 0 }; a.angVel = 0;
+    b.pos = { x: seed, y: 0 }; b.heading = 0; b.vel = { x: 0, y: 0 }; b.angVel = 0;
+    let peakV = 0;
+    let peakW = 0;
+    for (let i = 0; i < 120; i++) {
+      step(w, SIM_DT, new Map());
+      peakV = Math.max(peakV, Math.hypot(a.vel.x, a.vel.y), Math.hypot(b.vel.x, b.vel.y));
+      peakW = Math.max(peakW, Math.abs(a.angVel), Math.abs(b.angVel));
+    }
+    const apart = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y);
+    check(
+      `robots seeded ${seed}in apart separate without being ejected`,
+      apart > 14 && peakV < 12 && peakW < 1,
+      `apart ${apart.toFixed(1)}in, peak v ${peakV.toFixed(1)} in/s, peak ω ${peakW.toFixed(2)}`,
+    );
+  }
 }
 
 // ---- equal masses separate symmetrically ------------------------------------
@@ -5010,7 +5634,7 @@ const setup = (
   check('swerve is the fastest turner (turnMult edge beats tank)', tr('swerve') > tr('tank') && tr('tank') > tr('mecanum') && tr('mecanum') > tr('xdrive'), `swerve ${tr('swerve').toFixed(2)} tank ${tr('tank').toFixed(2)} mec ${tr('mecanum').toFixed(2)} x ${tr('xdrive').toFixed(2)}`);
 
   // print the tuning table (visible on every run so a balance edit shows its effect)
-  const rows = driveSummary().map((r) => `${r.dt.padEnd(7)} fwd ${r.fwd.toFixed(1).padStart(5)}  strafe ${r.strafe.toFixed(1).padStart(5)}  accel ${r.accel.toFixed(0).padStart(4)}  push ${r.push.toFixed(2)}`);
+  const rows = driveSummary().map((r) => `${r.dt.padEnd(7)} fwd ${r.fwd.toFixed(1).padStart(5)}  strafe ${r.strafe.toFixed(1).padStart(5)}  accel ${r.accel.toFixed(0).padStart(4)}  push ${r.push.toFixed(0).padStart(5)}`);
   console.log('  drivetrain @435rpm/26lb:\n    ' + rows.join('\n    '));
 }
 
@@ -5165,36 +5789,132 @@ const setup = (
   check('tank ignores raw arcade driveY (no side-drive ⇒ no motion)', Math.hypot(r2.vel.x, r2.vel.y) < 1e-6, `speed ${Math.hypot(r2.vel.x, r2.vel.y).toExponential(1)}`);
 }
 
-// ---- pushing power: equal-mass tank out-pushes mecanum ----------------------
-{
-  const w = createWorld('free', 7, [
-    setup(0, 'blue', { massLb: 30, drivetrain: 'mecanum' }, 0),
-    setup(1, 'blue', { massLb: 30, drivetrain: 'tank' }, 1),
-  ]);
+// ---- pushing power: A DRIVEN CONTEST, which is the thing that actually matters ----
+/**
+ * Two robots nose to nose, BOTH driving into each other for three seconds. Returns how far
+ * the defender was driven back (+ = the attacker won the match, − = it was routed).
+ *
+ * The old shove checks seeded two robots OVERLAPPING at rest and stepped ONCE, which measures
+ * the solver's positional split and nothing else. That split is governed by the collider mass
+ * ratio; a real pushing match is governed by FORCE, which is that mass times each drivetrain's
+ * accel — and every push factor except `pushMult` was also in `accel`, so the split hid the
+ * double-counts completely. Under the seeded-overlap test a 20 lb robot and a 42 lb one looked
+ * 1:2 apart while their delivered forces were IDENTICAL (5591 either way), and 200 rpm vs
+ * 600 rpm looked 1:2.5 while the real spread was 7.45x. Drive them into each other instead.
+ *
+ * Headings are pinned each tick so this measures the shove alone and not a slew off the line.
+ */
+function pushContest(A: Partial<RobotSpec>, B: Partial<RobotSpec>, seconds = 3): number {
+  const w = createWorld('free', 7, [setup(0, 'blue', A, 0), setup(1, 'red', B, 1)]);
   const [a, b] = w.robots;
-  a.pos = { x: -5, y: 0 }; a.heading = 0; a.vel = { x: 0, y: 0 };
-  b.pos = { x: 5, y: 0 }; b.heading = 0; b.vel = { x: 0, y: 0 };
-  const a0 = { ...a.pos }, b0 = { ...b.pos };
-  step(w, SIM_DT, new Map());
-  const da = Math.hypot(a.pos.x - a0.x, a.pos.y - a0.y);
-  const db = Math.hypot(b.pos.x - b0.x, b.pos.y - b0.y);
-  check('equal-mass tank out-pushes mecanum (mecanum yields more)', da > db * 1.2, `mecanum ${da.toFixed(2)} vs tank ${db.toFixed(2)}`);
+  a.pos = { x: -12, y: 0 }; a.heading = 0; a.vel = { x: 0, y: 0 }; a.angVel = 0; a.fieldCentric = false;
+  b.pos = { x: 12, y: 0 }; b.heading = Math.PI; b.vel = { x: 0, y: 0 }; b.angVel = 0; b.fieldCentric = false;
+  const drive = cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 });
+  const cmds = new Map([[0, drive], [1, drive]]);
+  const b0 = b.pos.x;
+  for (let i = 0; i < Math.round(seconds / SIM_DT); i++) {
+    a.heading = 0; b.heading = Math.PI; a.angVel = 0; b.angVel = 0;
+    step(w, SIM_DT, cmds);
+  }
+  return b.pos.x - b0;
 }
 
-// ---- pushing power: a geared-for-speed (high RPM) robot pushes weaker --------
+// ---- the push FORCE model: each factor acts exactly once --------------------
 {
-  const w = createWorld('free', 7, [
-    setup(0, 'blue', { massLb: 30, drivetrain: 'mecanum', driveRpm: 600 }, 0),
-    setup(1, 'blue', { massLb: 30, drivetrain: 'mecanum', driveRpm: 300 }, 1),
-  ]);
-  const [a, b] = w.robots;
-  a.pos = { x: -5, y: 0 }; a.heading = 0; a.vel = { x: 0, y: 0 };
-  b.pos = { x: 5, y: 0 }; b.heading = 0; b.vel = { x: 0, y: 0 };
-  const a0 = { ...a.pos }, b0 = { ...b.pos };
-  step(w, SIM_DT, new Map());
-  const da = Math.hypot(a.pos.x - a0.x, a.pos.y - a0.y);
-  const db = Math.hypot(b.pos.x - b0.x, b.pos.y - b0.y);
-  check('geared-for-speed (600 rpm) robot yields more than a torquey (300 rpm) one', da > db * 1.2, `600rpm ${da.toFixed(2)} vs 300rpm ${db.toFixed(2)}`);
+  const spec = (p: Partial<RobotSpec>) => ({ ...DEFAULT_SPEC, ...p }) as RobotSpec;
+  const f = (p: Partial<RobotSpec>, draw = 0) => pushForce(spec(p), false, draw);
+
+  // MASS. Force must track weight 1:1 — traction is what a pushing match is limited by, and
+  // it scales with how hard the wheels are pressed into the tile. It used to cancel outright
+  // against driveParams' REF_MASS_LB/massLb: 20 lb and 42 lb both delivered 5591.
+  const light = f({ massLb: 20, driveRpm: 435 });
+  const heavy = f({ massLb: 42, driveRpm: 435 });
+  check(
+    'push force scales 1:1 with mass (it used to cancel out entirely)',
+    Math.abs(heavy / light - 42 / 20) < 1e-9,
+    `20lb ${light.toFixed(0)} → 42lb ${heavy.toFixed(0)} = x${(heavy / light).toFixed(3)}`,
+  );
+  // GEARING, applied ONCE and honouring its own clamp. 435/200 = 2.175 clamps to 1.8;
+  // 435/600 = 0.725 is inside the band. Spread 1.8/0.725 = 2.483, not the 7.45 it was when
+  // driveParams' own REF_DRIVE_RPM/rpm landed a second time.
+  const torquey = f({ massLb: 26, driveRpm: 200 });
+  const speedy = f({ massLb: 26, driveRpm: 600 });
+  check(
+    'push force honours the rpm clamp (2.48x spread, not the double-counted 7.45x)',
+    Math.abs(torquey / speedy - (PUSH_RPM_MAX / (REF_DRIVE_RPM / 600))) < 1e-9,
+    `200rpm ${torquey.toFixed(0)} vs 600rpm ${speedy.toFixed(0)} = x${(torquey / speedy).toFixed(2)}`,
+  );
+  // POWER DRAW, linear. It was squared (x0.64 at the 0.2 cap) for the same reason.
+  const base = f({ massLb: 26, driveRpm: 435 });
+  check(
+    'power draw scales push linearly (it used to land twice and square)',
+    Math.abs(f({ massLb: 26, driveRpm: 435 }, 0.2) / base - 0.8) < 1e-9,
+    `draw 0.2 ⇒ x${(f({ massLb: 26, driveRpm: 435 }, 0.2) / base).toFixed(3)}`,
+  );
+  // ...and the collider mass Rapier gets must DELIVER that force through the accel the motor
+  // model actually used. This is the invariant the whole model rests on.
+  for (const p of [
+    { massLb: 20, driveRpm: 200, drivetrain: 'tank' as const },
+    { massLb: 42, driveRpm: 600, drivetrain: 'xdrive' as const },
+    { massLb: 26, driveRpm: 435, drivetrain: 'swerve' as const },
+  ]) {
+    const delivered = shoveMass(spec(p), false, 0.1) * driveParams(spec(p)).accel * 0.9;
+    check(
+      `shoveMass x accel reproduces pushForce (${p.drivetrain} ${p.massLb}lb ${p.driveRpm}rpm)`,
+      Math.abs(delivered / f(p, 0.1) - 1) < 1e-9,
+      `${delivered.toFixed(1)} vs ${f(p, 0.1).toFixed(1)}`,
+    );
+  }
+}
+
+// ---- ...and the contests those forces produce -------------------------------
+{
+  // MASS decides a pushing match now. 42 vs 20 lb at the same drivetrain and gearing is a rout.
+  check(
+    'a heavy robot routs a light one in a driven pushing match',
+    pushContest({ massLb: 42, driveRpm: 435 }, { massLb: 20, driveRpm: 435 }) > 20,
+    `${pushContest({ massLb: 42, driveRpm: 435 }, { massLb: 20, driveRpm: 435 }).toFixed(1)}in`,
+  );
+  check(
+    '...and the same pair reversed is routed by the same margin',
+    pushContest({ massLb: 20, driveRpm: 435 }, { massLb: 42, driveRpm: 435 }) < -20,
+    `${pushContest({ massLb: 20, driveRpm: 435 }, { massLb: 42, driveRpm: 435 }).toFixed(1)}in`,
+  );
+  check(
+    'evenly matched robots stalemate (neither is driven back)',
+    Math.abs(pushContest({ massLb: 30, driveRpm: 435 }, { massLb: 30, driveRpm: 435 })) < 6,
+    `${pushContest({ massLb: 30, driveRpm: 435 }, { massLb: 30, driveRpm: 435 }).toFixed(1)}in`,
+  );
+  // GEARING still matters, in the right direction and no longer overwhelmingly.
+  check(
+    'a torquey (200 rpm) robot out-pushes a geared-for-speed (600 rpm) one',
+    pushContest({ driveRpm: 200, massLb: 26 }, { driveRpm: 600, massLb: 26 }) > 20,
+    `${pushContest({ driveRpm: 200, massLb: 26 }, { driveRpm: 600, massLb: 26 }).toFixed(1)}in`,
+  );
+  // DRIVETRAIN order, driven rather than inferred from the multipliers.
+  const dtPush = (A: DrivetrainType, B: DrivetrainType) =>
+    pushContest({ drivetrain: A, massLb: 26, driveRpm: 435 }, { drivetrain: B, massLb: 26, driveRpm: 435 });
+  check(
+    'driven push order is tank > swerve > mecanum > xdrive',
+    dtPush('tank', 'swerve') > 0 && dtPush('swerve', 'mecanum') > 0 && dtPush('mecanum', 'xdrive') > 0,
+    `tank/swerve ${dtPush('tank', 'swerve').toFixed(0)} swerve/mec ${dtPush('swerve', 'mecanum').toFixed(0)} mec/x ${dtPush('mecanum', 'xdrive').toFixed(0)}`,
+  );
+  check(
+    'equal-mass tank out-pushes mecanum (mecanum yields more)',
+    dtPush('tank', 'mecanum') > 20,
+    `${dtPush('tank', 'mecanum').toFixed(1)}in`,
+  );
+  /**
+   * THE INVERSION THIS WHOLE MODEL EXISTS TO KILL. With the rpm factor landing twice, a
+   * minimum-weight 250 rpm mecanum out-pushed a 42 lb 435 rpm tank — the rpm slider was a
+   * stronger pushing lever than the drivetrain pick, which is the opposite of every word in
+   * DRIVETRAIN_PRESETS. The bulldozer must win this, and comfortably.
+   */
+  check(
+    'a heavy tank beats a light torque-geared mecanum (the rpm slider is not the whole game)',
+    pushContest({ drivetrain: 'tank', massLb: 42, driveRpm: 435 }, { drivetrain: 'mecanum', massLb: 20, driveRpm: 250 }) > 20,
+    `${pushContest({ drivetrain: 'tank', massLb: 42, driveRpm: 435 }, { drivetrain: 'mecanum', massLb: 20, driveRpm: 250 }).toFixed(1)}in`,
+  );
 }
 
 // ---- power draw: a spun-up flywheel is slightly slower far from goal ---------
@@ -12165,8 +12885,16 @@ const mkMM = () => {
     rob.vel = { x: 0, y: 0 };
     runChain(gw, cmd({}), 0.1);
     check('chain endgame: parked in a lab area = 5 pts', gw.chain!.endgame[0] === 'parked' && gw.match.scores.blue.total >= 5);
-    const rs = ringStands()[3];
-    rob.pos = { x: rs.x, y: rs.y };
+    /**
+     * Park at the STAND anchor, not on the post itself. `ringStands()[3]` is where the POST
+     * is, and the post has been a solid collider since the corner assemblies went in — a
+     * robot centred there starts inside it and is ejected, which is exactly what
+     * CHAIN_START_POSES' own comment says the ring-stand anchors exist to avoid. The check
+     * only ever passed because the contact was soft enough that 0.1s of ejection stayed under
+     * `endgameOf`'s 12 in/s gate; stiffening the robot world exposed it. The anchor is a pose
+     * a robot can actually hold, and `onRingStand` accepts it by design.
+     */
+    rob.pos = { ...CHAIN_START_POSES[3].pos };
     rob.vel = { x: 0, y: 0 };
     runChain(gw, cmd({}), 0.1);
     check('chain endgame: ascended a ring stand = 100 pts', gw.chain!.endgame[0] === 'ascended' && gw.match.scores.blue.total >= 100);
