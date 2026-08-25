@@ -792,28 +792,71 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
   — NOT driverSide, which was inverted and fouled the alliance sitting on its own side); fires
   when fully on the opponent's side + contact during AUTO, on the CROSSER.
 - **G408 over-possession** (MINOR **per ARTIFACT over the limit**, topped up as a pile GROWS
-  inside one held violation, + a **YELLOW CARD** when excessive). Both of the manual's
-  definitions are implemented literally, and both matter:
-  **CONTROL** is contact "either directly or TRANSITIVELY through other SCORING ELEMENTS", so
-  `controlledArtifacts` seeds on the artifacts touching the footprint and grows the contact
-  chain artifact-to-artifact — a shoved wedge counts WHOLE.
-  **POSSESSION** is "as the ROBOT moves or changes ORIENTATION (... moves forward, turns,
-  backs up, spins in place), the object remains in approximately the same position relative to
-  the ROBOT", so the test is RELATIVE: an artifact counts when its velocity is within
-  `POSSESSION_SLIP` of the robot's rigid-body velocity AT that point (`robotPointVelocity`,
-  ω×r included). That one test replaced a pile of absolute-velocity heuristics and is what
-  makes the rule hold up — TURNING triggers it on its own (a corralled pile spun on the spot
-  is possessed), speed does not matter (a load crept at 5 in/s is still a load), direction does
-  not matter (a rear hoard driven in reverse is the same violation), and the exempt cases fall
-  out for free: an artifact you drive PAST slips at road speed and one DEFLECTING off leaves at
-  its own, which is G408's "BULLDOZING"/"DEFLECTING". A completely motionless robot is outside
-  the test, as the definition is conditional on the robot doing something — sitting inert on a
-  pile is G405/G423 (impeding) territory and neither is modelled. Artifacts in the robot's own
-  LOADING ZONE are skipped, the rule's third carve-out. EXCESSIVE is defined by the rule, not by taste:
-  5+ at once (clause A) or 3+ separate stretches of greater-than-MOMENTARY (glossary: "fewer
-  than approximately 3 seconds", `MOMENTARY_S`) control of 4+ (clause B). G408 cards a robot at
-  most ONCE per match, per its own "REPEATED excessive violations ... do not result in
-  additional YELLOW CARDS".
+  inside one held violation, + a **YELLOW CARD** when excessive). DECODE defines exactly ONE
+  term here — **CONTROL** — and the engine is written against it. It used to be written against
+  an FRC-style **POSSESSION** and an invented **TRAPPING**, and *neither term exists in the
+  DECODE manual*: there is no POSSESSION entry and no TRAPPING entry in the Section 16 glossary,
+  the word TRAPPING appears nowhere in Section 11, and DECODE's PIN/PINNING is about opponent
+  ROBOTS. (The quoted "TRAPPING" was PIN/PINNING with "opponent ROBOT" swapped for "SCORING
+  ELEMENT".) Two invented tests were carrying most of the rule.
+  The real definition: *"the SCORING ELEMENT is fully supported by or stuck in, on, or under the
+  ROBOT **or** it intentionally pushes a SCORING ELEMENT to a desired location or in a preferred
+  direction (i.e., herding). CONTROL requires contact ... either directly or transitively through
+  other SCORING ELEMENTS. Typically ... A. The SCORING ELEMENT is fully supported by the ROBOT
+  B. The ROBOT is moving the SCORING ELEMENT in a preferred direction with a flat or concave
+  face of the ROBOT."* So there are two ways in, and `controlledArtifacts` is those two:
+  - **A. FULLY SUPPORTED** is the hopper.
+  - **B. HERDING** is `contactPush`: contact on a **flat or concave face** — a convex CORNER
+    returns null, the one piece of clause B the engine had never modelled — with the robot's own
+    rigid-body velocity at the contact (`robotPointVelocity`, ω×r included, so a SPIN counts)
+    carrying it, and not backing away from it. Sustained past `POSSESSION_CONFIRM` while the
+    artifact keeps its **station** (`POSSESSION_DRIFT`, measured in the ROBOT frame — a rigid
+    rotation does not move it). The manual gives no numeric test for "intentionally", so the
+    confirm window plus the station test are the sim's proxy for a referee's eye, and they ARE
+    the BULLDOZING and DEFLECTING carve-outs: something clipped in passing never lasts, and
+    something that bounces off leaves at once.
+  - **CONTROL LATCHES**, because the phrase is "pushes ... **to a desired location** or in a
+    preferred direction": once herding is established it holds while contact and station hold,
+    whether or not the robot is still shoving. This replaced the invented TRAPPING branch and
+    lands in the same place from the real text — a robot that drove a pile into the perimeter
+    and sits on it is controlling the pile. A robot that never pushed anything never latches,
+    which is how "I'm getting spammed with over-possession penalties just by standing still"
+    stays fixed without a velocity threshold.
+  - **THERE IS NO SPEED FLOOR ANYWHERE IN THE DEFINITION**, and the two absolute-speed gates
+    that used to stand in front of the rule (`POSSESSION_MOVE_SPEED`, `POSSESSION_TURN_RATE`)
+    were exploitable from both ends: a six-artifact pile CREPT below 1.5 in/s drew nothing over
+    twelve seconds, and a pile jammed on a wall read as uncontrolled precisely BECAUSE it could
+    not move. `POSSESSION_PUSH_MIN` replaces them and sits low on purpose — it only keeps
+    numerical noise in a resting contact from reading as a push.
+  - **CARVE-OUT C is the LOADING ZONE, scoped to the ROBOT being in it** — "inadvertent contact
+    ... while attempting to acquire a SCORING ELEMENT **from the LOADING ZONE**". It used to key
+    on the ARTIFACT's position alone, which made the whole 23×23 corner a control-free sanctuary;
+    G432.D settles that it is not one ("ARTIFACT CONTROL begins when the ROBOT is in the LOADING
+    ZONE, and ... is still CONTROLLED ... when the ROBOT leaves"). The separate mouth exemption
+    (`POSSESSION_ACQUIRE_S`, capped at hopper ROOM) is the SIM's own, not the manual's: the sim's
+    intake is a multi-tick animation where a real one is instantaneous. It reads
+    `cmd.intake || r.autoIntake`, the same condition that actually runs the intake — reading the
+    raw button made the auto-intake assist HARSHER for its users than a driver holding it.
+  - **AN EXCUSED ARTIFACT CONDUCTS BUT IS NOT COUNTED.** Both halves matter: counting it anyway
+    means the chain re-adds everything the mouth exemption just removed, and severing the chain
+    means a robot nosing into a six-clump controls nothing at all.
+  - **EXCESSIVE is defined by the rule**: 5+ at once (clause A) or 3+ separate greater-than-
+    MOMENTARY (glossary: "fewer than approximately 3 seconds", `MOMENTARY_S`) stretches of
+    controlling 4+ (clause B — the manual reads "3 or more separate **violations** in a MATCH";
+    an older note here invented a manual typo). G408 cards a robot at most ONCE per match, per
+    its own "REPEATED excessive violations ... do not result in additional YELLOW CARDS".
+  - ⚠️ **`POSSESSION_REBILL_S` IS A HOUSE RULE — G408 has no continuing clause.** Its violation
+    line is one assessment, and the omission is deliberate: G422, G423 and G434 all carry
+    "an additional MINOR FOUL ... for every 3 seconds in which the situation is not corrected",
+    and G434's is the exact per-artifact shape. It is kept because billed once, the whole tariff
+    for hoarding six artifacts was three MINORs and then free for the match ("the over-possession
+    penalty is way too lenient"). Set it to `Infinity` for the rule as written.
+  - **The per-(robot,artifact) clocks are SWEPT** when an artifact stops being a loose ground
+    ball, and cleared outside auto/teleop. They were only deleted on the not-touching path, so
+    an artifact that got INTAKEN kept its clock all match — unbounded growth in `world.penalties`
+    (plain JSON, on every snapshot and replay) and, because ids are `max(id)+1` and
+    `humanPlayer.ts` splices balls out, a stale key can rebind to a DIFFERENT artifact that then
+    arrives pre-latched, skipping the confirm window that is the whole bulldozing filter.
 - **CARDS** (`awardCard` in scoring.ts) attach to a ROBOT (a team). A second card from ANY rule
   ESCALATES to a RED, and a RED sets `ScoreBreakdown.voided` so that alliance's `total` reads 0
   while the breakdown still shows everything earned — the loss the card is meant to be. Shown
@@ -1189,9 +1232,16 @@ Glicko-2 ranked, leaderboards, records, admin, version gate) are LIVE.
    ONLY after that: drop the `dsin/dcos/datan2` discipline. (`collideRobots`/`constrainRobot`
    are already GONE — they were provably dead and the closing-velocity impulse `squareUpPair`
    now runs superseded the one thing worth keeping from them.)
-2. **DECODE penalty hitbox audit** — the rules are right; re-verify the ZONE GEOMETRY each one
-   tests (`gateZone`/`gateTapeSegments`, `tunnelStrip`, `allianceArea`, `pinnedAgainstWall`
-   slop, the SAT `rrContacts` test) against the manual figures. Tighten with smoke cases.
+2. **DECODE penalty hitbox audit** — G408 and G422 have now been rewritten against the manual's
+   own text; what is left is the ZONE GEOMETRY each of the OTHER rules tests
+   (`gateZone`/`gateTapeSegments`, `tunnelStrip`, `allianceArea`, `pinnedAgainstWall` slop, the
+   SAT `rrContacts` test) versus the manual figures. Tighten with smoke cases.
+   **Get the rule text from `/ftc/archive/2026/game/manual-NN`** — the live `/ftc/game/manual`
+   now serves the 2026-27 pre-season manual and `manual-11` 404s there. WebFetch's own PDF
+   extractor returns binary garbage on these; download the PDF and run `pdftotext -layout`
+   (`pdftotext` without `-layout` for the glossary, whose two columns interleave otherwise).
+   **Check every quoted definition against the real glossary before trusting it** — G408 shipped
+   for months against two definitions that are not in this manual at all.
 3. **Chain Reaction manual refinement** — replace the `APPROX` constants (ring-stand inset,
    Lab-Area size/geometry, exact zone coordinates) with measured manual values. This is the
    last real gap in CR; everything else there is feature-complete.

@@ -55,7 +55,7 @@ import {
   footprintCorners,
 } from '../src/sim/field';
 import { addClassified, addOverflow, assessMatchEnd, awardCard, awardFoul } from '../src/sim/scoring';
-import type { Alliance, AutoPathData, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
+import type { Alliance, ArtifactColor, AutoPathData, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
 import {
   SIM_DT,
   PRE_COUNTDOWN as C_PRE_COUNTDOWN,
@@ -125,9 +125,10 @@ import {
   WHEEL_DIAMETER_MM,
   BASE_DRIVE_ACCEL,
   POWER_DRAW_SWERVE,
-  POSSESSION_MOVE_SPEED,
+  POSSESSION_PUSH_MIN,
   POSSESSION_CONFIRM,
   POSSESSION_GRACE,
+  POSSESSION_REBILL_S,
   PTS_FOUL_MAJOR,
   MAX_SAVED_STARTS,
   MAX_SAVED_STARTS_SUPPORTER,
@@ -6738,10 +6739,10 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r.pos = { x: 0, y: -8 };
   r.heading = 0;
   r.hopper = ['green', 'green', 'green']; // full hopper = 3 stored (at the limit)
-  r.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 }; // driving = herding
+  r.vel = { x: POSSESSION_PUSH_MIN + 5, y: 0 }; // driving = herding
   // a loose ground ball being BULLDOZED: touching, ahead along the direction of
   // travel, and carried along at the robot's own speed -> 4 controlled, over the limit
-  w.balls.push({ id: 9001, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_MOVE_SPEED + 4, y: 0 }, z: 0, vz: 0 });
+  w.balls.push({ id: 9001, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_PUSH_MIN + 5, y: 0 }, z: 0, vz: 0 });
   // hold the over-possession just past the grace window
   for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 2; i++) {
     w.time = i / 60;
@@ -6776,7 +6777,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   const r3 = w3.robots[0];
   r3.pos = { x: 0, y: -8 };
   r3.hopper = ['green', 'green', 'green'];
-  r3.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
+  r3.vel = { x: POSSESSION_PUSH_MIN + 5, y: 0 };
   for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 2; i++) {
     w3.time = i / 60;
     updatePenalties(w3, 1 / 60, new Map());
@@ -6793,8 +6794,8 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r4.pos = { x: 0, y: -8 };
   r4.heading = 0;
   r4.hopper = ['green', 'green', 'green'];
-  r4.vel = { x: POSSESSION_MOVE_SPEED + 4, y: 0 };
-  w4.balls.push({ id: 9003, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_MOVE_SPEED + 4, y: 0 }, z: 0, vz: 0 });
+  r4.vel = { x: POSSESSION_PUSH_MIN + 5, y: 0 };
+  w4.balls.push({ id: 9003, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_PUSH_MIN + 5, y: 0 }, z: 0, vz: 0 });
   for (let i = 0; i < Math.floor((POSSESSION_GRACE / 2) / (1 / 60)); i++) { // well under confirm+grace
     w4.time = i / 60;
     updatePenalties(w4, 1 / 60, new Map());
@@ -7904,12 +7905,19 @@ function pinScene(
 // bumper, so POSSESSION_ACQUIRE_S has to sit well under that or it excuses everything - at
 // 1.0s it was completely inert, which is how the plateau got noticed.
 {
-  const clump = (n: number, drive: (t: number) => RobotCommand, secs: number, cy = -10, ry = -22) => {
+  const clump = (
+    n: number,
+    drive: (t: number) => RobotCommand,
+    secs: number,
+    cy = -10,
+    ry = -22,
+    hopper: ArtifactColor[] = [],
+  ) => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
     w.match.phase = 'teleop';
     const r = w.robots[0];
-    r.hopper = [];
+    r.hopper = [...hopper];
     for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
     let k = 0;
     for (const b of w.balls) {
@@ -7929,10 +7937,28 @@ function pinScene(
     return w.match.fouls.blue.minor;
   };
   const push = () => cmd({ driveY: 1, intake: true });
+  /**
+   * A SUSTAINED HERD, at a third throttle and started from the bottom of the field.
+   *
+   * At full throttle this scene does not do what it is named: the robot covers eighty inches
+   * in a second and a half, swallows three artifacts on the way, scatters the rest, and spends
+   * the remaining six and a half seconds PARKED against the far wall with exactly three in the
+   * hopper — which is at the limit and not a violation at all. It used to "pass" because the
+   * engine's invented TRAPPING branch fired on a stationary robot resting near an artifact that
+   * happened to be against a wall. Slowing the drive and giving it room to run is what makes it
+   * an actual push across open floor.
+   */
+  const herd = () => cmd({ driveY: 0.35, intake: true });
   check(
     'pushing a clump across open floor fouls even with the intake held',
-    clump(5, push, 8) > 0 && clump(6, push, 8) > 0,
-    `5-clump ${clump(5, push, 8)} MINORs, 6-clump ${clump(6, push, 8)}`,
+    clump(5, herd, 6, -40, -52) > 0 && clump(6, herd, 6, -40, -52) > 0,
+    `5-clump ${clump(5, herd, 6, -40, -52)} MINORs, 6-clump ${clump(6, herd, 6, -40, -52)}`,
+  );
+  // ...and three of them, which is all an empty robot may take, stays clean at the same throttle
+  check(
+    '...while herding only THREE with an empty hopper is exactly the limit',
+    clump(3, herd, 6, -40, -52) === 0,
+    `3-clump ${clump(3, herd, 6, -40, -52)} MINORs`,
   );
   // ...and the three cases that must stay clean, all previously reported
   check(
@@ -7945,9 +7971,13 @@ function pinScene(
     clump(4, (t) => (t < 1.2 ? cmd({ driveY: 1, intake: true }) : cmd({ driveY: -1, intake: true })), 5) === 0,
     'acquiring is not controlling',
   );
+  // ...and shoving one against a wall with a FULL robot does. The hopper is now passed in,
+  // because the helper always emptied it: this check has said "with a FULL robot" since it was
+  // written and has never once had one, which mattered the moment the acquire carve-out started
+  // depending on hopper room.
   check(
     '...but shoving one against a wall with a FULL robot does',
-    clump(6, push, 8, FIELD_HALF - BALL_RADIUS - 5, FIELD_HALF - 30) > 0,
+    clump(6, push, 8, FIELD_HALF - BALL_RADIUS - 5, FIELD_HALF - 30, ['green', 'green', 'green']) > 0,
     'a full robot is acquiring nothing, and the field holding the pile is not an excuse',
   );
 }
@@ -8051,9 +8081,9 @@ function pinScene(
   r3.pos = { x: 0, y: -8 };
   r3.heading = 0; // facing +x...
   r3.hopper = ['green', 'green', 'green'];
-  r3.vel = { x: -(POSSESSION_MOVE_SPEED + 4), y: 0 }; // ...but DRIVING in reverse, toward −x
+  r3.vel = { x: -(POSSESSION_PUSH_MIN + 5), y: 0 }; // ...but DRIVING in reverse, toward −x
   // the ball is behind the chassis and ahead along the direction of travel, carried along
-  w3.balls.push({ id: 9103, color: 'purple', state: { kind: 'ground' }, pos: { x: -2, y: 0 }, vel: { x: -(POSSESSION_MOVE_SPEED + 4), y: 0 }, z: 0, vz: 0 });
+  w3.balls.push({ id: 9103, color: 'purple', state: { kind: 'ground' }, pos: { x: -2, y: 0 }, vel: { x: -(POSSESSION_PUSH_MIN + 5), y: 0 }, z: 0, vz: 0 });
   for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 4; i++) {
     w3.time = i / 60;
     updatePenalties(w3, 1 / 60, new Map());
@@ -8075,7 +8105,7 @@ function pinScene(
   r4.pos = { x: 0, y: -8 };
   r4.heading = 0;
   r4.hopper = ['green', 'green', 'green']; // 3 stored = at the limit
-  const push = POSSESSION_MOVE_SPEED + 4;
+  const push = POSSESSION_PUSH_MIN + 5;
   r4.vel = { x: push, y: 0 };
   // a CHAIN of four: only the first touches the bumper, the rest touch each other
   for (let i = 0; i < 4; i++) {
@@ -8226,6 +8256,109 @@ function pinScene(
       inert.match.fouls.blue.minor === 0,
       `blueMinor=${inert.match.fouls.blue.minor}`,
     );
+
+    /**
+     * ...BUT A ROBOT THAT PUSHED THEM THERE AND THEN STOPPED IS STILL CONTROLLING THEM.
+     *
+     * "intentionally pushes a SCORING ELEMENT TO A DESIRED LOCATION or in a preferred
+     * direction" — the first half of that phrase does not stop being true the moment the
+     * wheels stop. This is the LATCH, and it is the difference between the two checks: the one
+     * above never pushed anything, this one pushed and then held. It replaces an invented
+     * TRAPPING rule that reached the same place by asking whether the FIELD was holding the
+     * artifacts, which fouled a robot for merely standing near a wall.
+     */
+    const heldOn = hoard(4, (r) => { r.vel = { x: 20, y: 0 }; });
+    const before = heldOn.match.fouls.blue.minor;
+    heldOn.robots[0].vel = { x: 0, y: 0 };
+    heldOn.robots[0].angVel = 0;
+    for (const b of heldOn.balls) if (b.state.kind === 'ground') b.vel = { x: 0, y: 0 };
+    for (let i = 0; i < Math.round(POSSESSION_REBILL_S * 2 * 60); i++) {
+      heldOn.time = 10 + i / 60;
+      updatePenalties(heldOn, 1 / 60, new Map());
+    }
+    check(
+      'a pile HERDED and then held while stationary stays controlled (the latch)',
+      before > 0 && heldOn.match.fouls.blue.minor > before,
+      `${before} MINORs while pushing -> ${heldOn.match.fouls.blue.minor} after holding still`,
+    );
+
+    /**
+     * CLAUSE B NAMES THE GEOMETRY: herding is done "with a FLAT OR CONCAVE FACE of the ROBOT".
+     * A convex CORNER is neither — an artifact met by a vertex squirts off it rather than being
+     * taken anywhere — so a pile stacked diagonally off a corner is not control however hard
+     * the robot drives at it. This was the one piece of clause B the engine had never modelled.
+     */
+    const cornered = (() => {
+      const w = foulWorld();
+      const r = w.robots[0];
+      r.pos = { x: 0, y: -8 };
+      r.heading = 0;
+      r.hopper = ['green', 'green', 'green'];
+      r.vel = { x: 20, y: 0 };
+      const e = footprintExtents(r.spec);
+      for (let i = 0; i < 4; i++) {
+        // beyond BOTH face planes at once: the nearest feature is the front-left vertex
+        const x = e.front + BALL_RADIUS * 0.7 + i * 3.6;
+        const y = e.half + BALL_RADIUS * 0.7 + i * 3.6;
+        w.balls.push({ id: 9700 + i, color: 'purple', state: { kind: 'ground' }, pos: { x, y: -8 + y }, vel: { x: 20, y: 0 }, z: 0, vz: 0 });
+      }
+      for (let i = 0; i < 300; i++) { w.time = i / 60; updatePenalties(w, 1 / 60, new Map()); }
+      return w.match.fouls.blue.minor;
+    })();
+    check(
+      'artifacts stacked off a convex CORNER are not herded (CONTROL clause B: a flat or concave face)',
+      cornered === 0,
+      `blueMinor=${cornered}`,
+    );
+  }
+
+  /**
+   * THE PER-ARTIFACT CLOCKS ARE SWEPT when an artifact stops being a loose ground ball.
+   *
+   * They keyed "robotId:ballId" and were only ever deleted along the NOT-TOUCHING path, so an
+   * artifact that got INTAKEN while in contact kept its clock and station for the rest of the
+   * match. That is unbounded growth inside `world.penalties` — which is plain JSON and rides
+   * every snapshot and replay — and, because ids are handed out as max(id)+1 and humanPlayer
+   * SPLICES balls out, a stale key can rebind to a DIFFERENT artifact that then arrives
+   * pre-latched, skipping the confirm window that is the whole bulldozing filter.
+   */
+  {
+    const w = mkWorld('match', 'blue', 31);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    const r = w.robots[0];
+    r.pos = { x: 0, y: -30 };
+    r.heading = Math.PI / 2;
+    r.fieldCentric = false;
+    r.hopper = [];
+    w.balls.length = 0;
+    for (let i = 0; i < 3; i++) {
+      w.balls.push({ id: 9600 + i, color: 'purple', state: { kind: 'ground' }, pos: { x: -2.5 + i * 5.1, y: -14 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
+    }
+    run(w, cmd({ driveY: 1, intake: true }), 4);
+    const stale = Object.keys(w.penalties.ballHold).filter((k) => {
+      const id = Number(k.split(':')[1]);
+      const b = w.balls.find((x) => x.id === id);
+      return !b || b.state.kind !== 'ground';
+    });
+    check(
+      'per-artifact G408 clocks do not outlive the artifact leaving the ground',
+      stale.length === 0 && r.hopper.length > 0,
+      `${stale.length} stale key(s) ${JSON.stringify(stale)}, hopper=${r.hopper.length}`,
+    );
+
+    // ...and the whole set is dropped when play is not live. Robots are FROZEN across the
+    // transition, so a clock carried through it resumes at the teleop buzzer with its grace
+    // already spent — the same reason the gate/ramp tracking is dropped there.
+    w.match.phase = 'transition';
+    updatePenalties(w, 1 / 60, new Map());
+    check(
+      'G408 clocks are cleared outside auto/teleop',
+      Object.keys(w.penalties.ballHold).length === 0 &&
+        Object.keys(w.penalties.ballAnchor).length === 0 &&
+        Object.keys(w.penalties.possession).length === 0,
+      `holds=${Object.keys(w.penalties.ballHold).length} anchors=${Object.keys(w.penalties.ballAnchor).length} clocks=${Object.keys(w.penalties.possession).length}`,
+    );
   }
 
   // The LOADING ZONE carve-out: "inadvertent contact with a SCORING ELEMENT while attempting
@@ -8256,6 +8389,37 @@ function pinScene(
       w.time = i / 60;
       updatePenalties(w, 1 / 60, new Map());
     }
+    /**
+     * ...AND THE CARVE-OUT IS SCOPED TO A ROBOT ACTUALLY IN THERE ACQUIRING.
+     *
+     * G408's carve-out C is "inadvertent contact with a SCORING ELEMENT while attempting to
+     * acquire a SCORING ELEMENT FROM THE LOADING ZONE", so the robot's position is the test.
+     * It used to key on the ARTIFACT's position alone, which made the whole 23x23 corner a
+     * control-free sanctuary — and G432.D settles that it is not one, describing an artifact
+     * whose "CONTROL begins when the ROBOT is in the LOADING ZONE" and which "is still
+     * CONTROLLED by the ROBOT when the ROBOT leaves". A robot OUTSIDE the zone herding a line
+     * whose far end lies inside it is controlling the whole line.
+     */
+    const reachIn = (() => {
+      const w2 = foulWorld();
+      const r2 = w2.robots[0];
+      const lz2 = loadZone(r2.alliance);
+      r2.pos = { x: 20, y: (lz2.y0 + lz2.y1) / 2 };
+      r2.heading = 0;
+      r2.hopper = ['green', 'green', 'green'];
+      r2.vel = { x: 20, y: 0 };
+      for (let i = 0; i < 5; i++) {
+        w2.balls.push({ id: 9950 + i, color: 'purple', state: { kind: 'ground' }, pos: { x: 32.9 + i * 5.1, y: r2.pos.y }, vel: { x: 20, y: 0 }, z: 0, vz: 0 });
+      }
+      for (let i = 0; i < 120; i++) { w2.time = i / 60; updatePenalties(w2, 1 / 60, new Map()); }
+      return w2.match.fouls.blue.minor;
+    })();
+    check(
+      '...but a robot OUTSIDE its loading zone gets no exemption for a pile reaching into it',
+      reachIn > 0,
+      `blueMinor=${reachIn} — the zone is not a sanctuary (G432.D)`,
+    );
+
     check(
       'acquiring artifacts from your own LOADING ZONE is not control (no G408)',
       w.match.fouls.blue.minor === 0,

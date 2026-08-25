@@ -236,7 +236,6 @@ export function createChainWorld(
       possession: {},
       possessionBilled: {},
     possessionRebill: {},
-      ballTrap: {},
       controlHeld: {},
       ballHold: {},
       ballAnchor: {},

@@ -464,38 +464,39 @@ export interface PenaltyState {
   pinFouls: Record<number, number>;
   /** G408 over-possession: an ACCUMULATED, leaky clock of seconds a robot (by id) has
    * controlled more than POSSESSION_LIMIT artifacts. It fills while over the limit and
-   * drains at POSSESSION_LEAK while under, so a violation broken into repeated flicks
-   * still reaches POSSESSION_GRACE. Reset to 0 when the foul fires. */
+   * drains at POSSESSION_LEAK while under, so a violation broken into repeated flicks still
+   * reaches POSSESSION_GRACE. It is NOT reset when the foul fires — the continuing tariff is
+   * measured against this same reading, so it has to keep running for as long as the
+   * violation does. Cleared outside auto/teleop. */
   possession: Record<number, number>;
-  /** G408 card bookkeeping. `controlHeld` = seconds a robot has continuously controlled
-   * CARD_CONTROL_FREQUENT or more artifacts (the clause-B stretch); `controlInstances` =
-   * how many such stretches have run longer than MOMENTARY this match; `carded` = the
-   * colour each robot currently holds, since a second yellow becomes a red. */
   /** how many artifacts OVER the limit have already been billed in the current G408
    * episode, so a pile that grows while the violation is held tops the tariff up rather
    * than riding free on the first assessment */
   possessionBilled: Record<number, number>;
-  /** the possession-clock reading at which the CONTINUING tariff was last charged, so a
-   * violation that is simply held keeps costing every POSSESSION_REBILL_S rather than being
-   * paid off once. Optional for back-compat with snapshots/replays that predate it. */
+  /** the `possession` reading at which the CONTINUING tariff was last charged. Anchored to
+   * the clock on the opening tick and clamped to it, so the first continuing charge lands one
+   * POSSESSION_REBILL_S after the violation opens rather than two, and a partial drain cannot
+   * leave the cursor ahead of the clock. */
   possessionRebill: Record<number, number>;
-  /** PER-ARTIFACT trap clock, `"<robotId>:<ballId>"` -> seconds this robot has been pressing
-   * this artifact against the field. Past MOMENTARY_S that is TRAPPING, which is CONTROL
-   * whether or not the robot is moving. */
-  ballTrap: Record<string, number>;
+  /** G408 clause-B bookkeeping: seconds a robot has continuously controlled
+   * CARD_CONTROL_FREQUENT or more artifacts. Drains rather than resetting, so a pile that
+   * dips under four for a tick does not wipe a nearly-complete instance. */
   controlHeld: Record<number, number>;
-  /** PER-ARTIFACT hold: `"<robotId>:<ballId>"` -> seconds this robot has had this artifact,
-   * filling while it is possessed and draining at POSSESSION_LEAK when it is not. An
-   * artifact only counts toward the limit once its own clock passes POSSESSION_CONFIRM,
-   * which is what separates HERDING (the same artifacts, over and over) from crossing a
-   * littered field (a different artifact each moment). Entries are deleted at 0. */
+  /** PER-ARTIFACT hold: `"<robotId>:<ballId>"` -> seconds this robot has been HERDING this
+   * artifact (touching a non-corner face and moving it, per CONTROL clause B), draining at
+   * POSSESSION_LEAK when contact is lost. An artifact counts toward the limit once its own
+   * clock passes POSSESSION_CONFIRM, and KEEPS counting while contact holds — which is what
+   * separates herding (the same artifacts, over and over) from crossing a littered field (a
+   * different artifact each moment). Entries are deleted at 0, and swept when the artifact
+   * stops being a loose ground ball. */
   ballHold: Record<string, number>;
-  /** ...and WHERE that artifact was, in the ROBOT'S OWN FRAME, when the hold began:
-   * `"<robotId>:<ballId>"` -> {x,y}. The possession test is whether it "remains in
-   * approximately the same position relative to the ROBOT", so the anchor is the position
-   * it is compared against. Re-seeded when an artifact moves to a new station, deleted with
-   * the hold. */
+  /** ...and WHERE that artifact sat, in the ROBOT'S OWN FRAME, when the hold began:
+   * `"<robotId>:<ballId>"` -> {x,y}. Being in the robot frame is the point — a rigid rotation
+   * does not move it, so turning with an artifact held in front of you keeps its station,
+   * while one you slide past sweeps the chassis and re-anchors. Re-seeded when an artifact
+   * moves to a new station, deleted with the hold. */
   ballAnchor: Record<string, Vec2>;
+  /** how many clause-B stretches have run longer than MOMENTARY this match */
   controlInstances: Record<number, number>;
   carded: Record<number, CardColor>;
   /** which OPPONENT alliance (if any) is responsible for each goal's gate being

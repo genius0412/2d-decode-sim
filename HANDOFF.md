@@ -1,4 +1,103 @@
-# HANDOFF — 2026-08-24 (robots pushing robots, and what counts as pinning) — alpha only
+# HANDOFF — 2026-08-25 (what CONTROL actually is) — alpha only
+
+Branch **alpha**. `npm test` **1159 checks, ALL PASS** · `npm run build` green ·
+`npm run server:check` green · `npm run test:mm` 58 green.
+
+Do not merge to main. Standing rule.
+
+## READ FIRST — where this session ended
+
+G408 over-possession, rewritten from the manual's own text. `SIM_VERSION` 4 → **5**.
+`BALANCE_VERSION` left at **4** (see *Open*).
+
+### The finding: the engine was built on two definitions that are not in the DECODE manual
+
+`controlledArtifacts` was written against an FRC-style **POSSESSION** ("as the ROBOT moves or
+changes ORIENTATION ... the object remains in approximately the same position relative to the
+ROBOT") and a **TRAPPING** ("preventing the movement of a SCORING ELEMENT against a FIELD
+element"), both quoted in the code as if they were DECODE's. Verified by extracting Sections 11
+and 16 of the archived manual and grepping both:
+
+* there is **no POSSESSION glossary entry**; the only occurrence of the word in Section 11 is
+  G404's "pre-load possession limit";
+* there is **no TRAPPING glossary entry**, and the word does not appear in Section 11 at all.
+  The quoted definition is DECODE's **PIN/PINNING** with "opponent ROBOT" swapped for "SCORING
+  ELEMENT";
+* "bulldozing" and "deflecting" are not glossary terms either — they exist only as G408's own
+  non-CONTROL examples.
+
+DECODE defines exactly one term, **CONTROL**, and the rewrite is written against it clause by
+clause. See the G408 bullet in CLAUDE.md for the full mapping.
+
+### What changed behaviourally
+
+| | before | after |
+|---|---|---|
+| a pile CREPT below 1.5 in/s | 0 fouls over 12 s | controlled (no speed floor in the definition) |
+| a pile driven into a wall and held | 4 MINORs, then free all match | keeps billing (the LATCH) |
+| a robot parked near a wall, never pushed anything | fouled by the invented TRAPPING rule | clean |
+| artifacts off a convex CORNER | counted | not control (clause B names the face) |
+| anything inside your own loading zone | never counted, robot anywhere | only while the ROBOT is in there |
+| an artifact excused at the mouth | re-added by the transitive chain | conducts, not counted |
+| first continuing tariff | 2 × REBILL_S (measured 6.02 s) | one interval after the violation opens |
+| per-(robot,artifact) clocks | leaked forever, ids recycle | swept, and cleared outside auto/teleop |
+| the acquire carve-out | raw intake button only | `cmd.intake \|\| r.autoIntake`, as robot.ts does |
+
+### ⚠️ ONE DELIBERATE DEVIATION, now labelled as one
+
+`POSSESSION_REBILL_S` — the "another tariff every 3 s" rule — **is not in G408**. Its violation
+line is one assessment. The same manual writes the continuing clause three times (G422, G423,
+G434) at exactly this interval, and G434's is the identical per-artifact shape, so the omission
+from G408 reads as deliberate. It is kept because you asked for it ("the over-possession penalty
+is way too lenient") and because billed once the whole tariff for hoarding six artifacts was
+three MINORs and then free. **Set `POSSESSION_REBILL_S` to `Infinity` for the rule as written.**
+Measured cost of keeping it: leaning a six-pile on a wall for 30 s now bills **40 MINORs**
+(200 pts). That is the dial to turn if it reads as too harsh.
+
+### Two smoke scenes were mislabelled and are now fixed
+
+Both were passing for the wrong reason, and both hid behind the invented TRAPPING rule:
+
+* *"pushing a clump across open floor"* drove at full throttle, swallowed three artifacts, and
+  spent 6.5 of its 8 seconds **parked against the far wall** with exactly three in the hopper —
+  which is at the limit and not a violation. It now herds at a third throttle from the bottom
+  of the field, which is what the name says.
+* *"...with a FULL robot"* never had one: the `clump` helper always emptied the hopper. It now
+  takes the hopper as an argument.
+
+### Gotchas worth keeping
+
+* **Get DECODE rule text from `/ftc/archive/2026/game/manual-NN`.** The live `/ftc/game/manual`
+  serves the 2026-27 pre-season manual and `manual-11` 404s there. WebFetch's own PDF extractor
+  returns binary garbage on these — download and run `pdftotext -layout`, and **without**
+  `-layout` for the glossary, whose two columns interleave otherwise.
+* **Check every quoted definition against the real glossary.** This rule shipped for months
+  against two that do not exist.
+* **Do not snap a contact to a face by nearest distance.** The first cut of `contactPush` picked
+  the nearest face plane; on a square-ish chassis an artifact dead ahead is exactly equidistant
+  from the front face and a flank, and a 1e-11 rounding sent it to the flank — which zeroed the
+  push for a robot driving straight at it. The direction now comes from the contact itself.
+* **`world.penalties` has no `unslimWorld` backfill.** Nothing was added this session, so
+  nothing breaks — but any NEW `PenaltyState` field will be `undefined` on a client talking to
+  the older Fly server, and the sim indexes these maps directly. Backfill or read defensively.
+  (`ballTrap` was REMOVED, which is safe in both directions: nothing ever read it.)
+
+## Open
+
+* **`BALANCE_VERSION` stays at 4.** It went to 4 yesterday for the push rewrite, and that season
+  has only ever existed on the alpha preview, so the standings a second bump would archive are
+  empty. G422 and G408 both land inside that same fresh season. Bump it if alpha standings start
+  being treated as real.
+* **Not deployed yet this session** — the alpha preview is still on `SIM_VERSION` 4. Redeploy
+  (`./scripts/fly-deploy.sh --alpha`) to put the G408 rewrite in front of players.
+* Two pre-existing bugs, still unfixed and still not requested: `saveReplay` never stores
+  `replay.sim` (so the `SIM_VERSION` gate refuses every DB-served replay — and that gate now
+  matters more, since 4 → 5 changes foul totals), and Free Drive with an auto path enabled
+  freezes the robot.
+
+---
+
+## 2026-08-24 — robots pushing robots, and what counts as pinning (superseded as READ FIRST)
 
 Branch **alpha**, commit `fd05c68`, pushed. Working tree CLEAN.
 `npm test` ALL PASS · `npm run build` green · `npm run server:check` green ·

@@ -13,10 +13,11 @@ import {
 } from './field';
 import type { Rect } from './field';
 import {
-  clampBallPosToStatics,
   closestPointOnRobot,
   robotCorners,
+  robotExtents,
   robotIntersectsRect,
+  robotPointVelocity,
 } from './physics';
 import { pushingGate, ZERO_CMD } from './goal';
 import { awardCard, awardFoul } from './scoring';
@@ -40,10 +41,11 @@ import { activeDrive } from './drivetrain';
  *   G402  AUTO opponent interference   (MAJOR) — fully on the opponent's side
  *                                       (own side = goalSide: robots stage near
  *                                       their GOAL) while contacting an opponent
- *   G408  over-possession / plowing    (MINOR) — CONTROLLING more than
- *                                       POSSESSION_LIMIT artifacts (hopper +
+ *   G408  over-possession               (MINOR per artifact over the limit, + a
+ *                                       YELLOW CARD if excessive) — CONTROLLING more
+ *                                       than POSSESSION_LIMIT artifacts (hopper +
  *                                       herded loose balls) past a short grace
- *   G422  pinning ≥3 s                 (MINOR, MAJOR on a repeat by the same pinner)
+ *   G422  pinning ≥3 s                 (MINOR, and another every 3 s it is not corrected)
  *   G417  operating an OPPONENT's GATE  (MAJOR) — contacting/working their gate
  *   G418  artifact off an opponent RAMP (MAJOR per artifact) — each classified
  *                                       ball that leaves an opponent's ramp
@@ -93,6 +95,20 @@ export function updatePenalties(
       pen.gateCulprit[a] = null;
       pen.rampBallIds[a] = [];
     }
+    /**
+     * ...and the same goes for G408's clocks, for the same reason. Robots are FROZEN across
+     * the eight-second transition, so nothing that happens in it is anybody's control: an
+     * artifact resting on a motionless bumper is exactly the case the rule excuses. Carrying
+     * the clocks through meant a violation that was live at the AUTO buzzer resumed at the
+     * TELEOP one with its grace already spent and its continuing tariff mid-interval —
+     * measured, a 0.52 s clock and four ball holds survived the whole gap untouched.
+     */
+    pen.possession = {};
+    pen.possessionBilled = {};
+    pen.possessionRebill = {};
+    pen.controlHeld = {};
+    pen.ballHold = {};
+    pen.ballAnchor = {};
     return;
   }
   const byId = new Map(world.robots.map((r) => [r.id, r] as const));
@@ -237,8 +253,41 @@ function updatePossession(
   fire: FireFn,
 ): void {
   const pen = world.penalties;
+  /**
+   * SWEEP THE PER-(ROBOT,ARTIFACT) CLOCKS FIRST.
+   *
+   * `ballHold`/`ballAnchor` are keyed "robotId:ballId" and were only ever deleted along the
+   * NOT-TOUCHING path — so an artifact that left the ground state while in contact (the
+   * ordinary way one leaves: it gets intaken) kept its clock and its station for the rest of
+   * the match. Two consequences, and the second is the sharp one:
+   *   · the maps grow without bound inside `world.penalties`, which is plain JSON and rides
+   *     every 30 Hz snapshot and every stored replay;
+   *   · artifact ids are handed out as `max(id)+1` and `humanPlayer.ts` SPLICES balls out, so
+   *     ids are genuinely recycled. A stale key can therefore rebind to a DIFFERENT physical
+   *     artifact, which then arrives pre-latched and skips the confirm window entirely — the
+   *     one thing standing between herding and BULLDOZING.
+   * Iteration is over a snapshot of the keys, in insertion order, so it stays deterministic.
+   */
+  const live = new Set<string>();
   for (const r of world.robots) {
-    const controlled = controlledArtifacts(world, r, dt, commands.get(r.id)?.intake === true);
+    for (const b of world.balls) if (b.state.kind === 'ground') live.add(`${r.id}:${b.id}`);
+  }
+  for (const key of Object.keys(pen.ballHold)) {
+    if (!live.has(key)) {
+      delete pen.ballHold[key];
+      delete pen.ballAnchor[key];
+    }
+  }
+  for (const key of Object.keys(pen.ballAnchor)) if (!live.has(key)) delete pen.ballAnchor[key];
+
+  for (const r of world.robots) {
+    // `cmd.intake || r.autoIntake` is what actually RUNS the intake (robot.ts), and the
+    // acquire carve-out has to ask the same question. Reading the raw button alone meant the
+    // AUTO-INTAKE assist — a menu option, and forced on for an auto-path robot — silently
+    // turned the exemption off for everyone who used it: the assist made the rule HARSHER for
+    // its users than for a driver holding the button, which is the opposite of an assist.
+    const intaking = (commands.get(r.id)?.intake ?? false) || r.autoIntake;
+    const controlled = controlledArtifacts(world, r, dt, intaking);
     const over = controlled - C.POSSESSION_LIMIT;
 
     // CLAUSE B's clock: one continuous stretch of controlling 4+. The INSTANCE is counted
@@ -252,7 +301,10 @@ function updatePossession(
         pen.controlInstances[r.id] = (pen.controlInstances[r.id] ?? 0) + 1;
       }
     } else {
-      pen.controlHeld[r.id] = 0;
+      // ...and it DRAINS rather than snapping to zero, for the same reason the clock below
+      // does. A pile shuffling against a bumper dips under four for a tick or two constantly,
+      // and a hard reset let a single dropped frame wipe a nearly-complete instance.
+      pen.controlHeld[r.id] = Math.max(0, (pen.controlHeld[r.id] ?? 0) - dt * C.POSSESSION_LEAK);
     }
 
     // A LEAKY CLOCK, not a resetting one. It fills while over the limit and DRAINS at
@@ -306,10 +358,19 @@ function updatePossession(
        * grace) are what keep a legitimate pass through a clump from ever reaching a second
        * billing.
        */
-      const since = pen.possessionRebill[r.id] ?? 0;
+      // The cursor is ANCHORED at the opening tick and CLAMPED to the clock. It used to start
+      // at 0 and be guarded by `since > 0`, which quietly ate the first interval: the first
+      // continuing charge landed at TWICE POSSESSION_REBILL_S (measured, 6.02 s on a 3 s
+      // interval), and after a partial drain the cursor could sit AHEAD of the clock and bank
+      // a free window of hoarding until the clock climbed back past it.
+      let since = pen.possessionRebill[r.id] ?? 0;
+      if (since === 0 || since > t) {
+        since = t;
+        pen.possessionRebill[r.id] = t;
+      }
       if (t - since >= C.POSSESSION_REBILL_S) {
         pen.possessionRebill[r.id] = t;
-        if (since > 0) {
+        {
           for (let i = 0; i < over; i++) {
             awardFoul(world, r.alliance, 'minor', 'G408 over-possession (continuing)');
           }
@@ -328,56 +389,119 @@ function updatePossession(
 }
 
 /**
- * HOW MANY ARTIFACTS THIS ROBOT IS CONTROLLING — reverted to the rule main ships.
+ * HOW MANY ARTIFACTS THIS ROBOT IS CONTROLLING.
  *
- * The alpha engine grew four filters in front of this number: a per-artifact CONFIRM clock, a
- * station test in the robot's frame, a BULLDOZING carve-out for anything the field was holding,
- * and an ACQUIRE carve-out for what the intake was drawing in. Each was added for a real false
- * positive and together they made the rule hard to trip in play — reported three times, ending
- * in "I'm still not getting any overpossession penalties. Maybe just revert the penalty engine
- * for the overpossession to the MAIN branch."
+ * DECODE DEFINES EXACTLY ONE TERM HERE, and it is CONTROL. This function used to be written
+ * against two others — an FRC-style POSSESSION ("as the ROBOT moves or changes ORIENTATION,
+ * the object remains in approximately the same position relative to the ROBOT") and a TRAPPING
+ * ("preventing the movement of a SCORING ELEMENT against a FIELD element") — and NEITHER IS IN
+ * THIS MANUAL. There is no POSSESSION entry and no TRAPPING entry in the DECODE glossary; the
+ * word TRAPPING does not appear in Section 11 at all, and the only PIN/PINNING definition is
+ * about opponent ROBOTS. The quoted TRAPPING was DECODE's PIN/PINNING with "opponent ROBOT"
+ * swapped for "SCORING ELEMENT". Two invented tests carried most of the weight of the rule.
  *
- * So this is main's: the hopper, plus every loose GROUND artifact touching the footprint, while
- * the robot is MOVING. Nothing is forgiven for being jammed, being acquired, or having only
- * just arrived. The trade is the false positives those filters existed for — driving through a
- * clump on your way somewhere is now control while you are in it — and that is the trade asked
- * for, twice over.
+ * The real definition, verbatim (Section 16, V2):
  *
- * The one thing kept from the alpha engine is TRAPPING, because it only ever ADDS: a robot
- * pressing artifacts against the field is stationary, so main's motion test excuses it
- * outright, and holding a pile against a wall for thirty seconds drawing nothing is the same
- * complaint from the other end.
+ *   "an action by a ROBOT in which the SCORING ELEMENT is fully supported by or stuck in, on,
+ *    or under the ROBOT or it intentionally pushes a SCORING ELEMENT to a desired location or
+ *    in a preferred direction (i.e., herding). CONTROL requires contact with a ROBOT, either
+ *    directly or transitively through other SCORING ELEMENTS. Typically, CONTROL requires one
+ *    of the following to be true:
+ *      A. The SCORING ELEMENT is fully supported by the ROBOT
+ *      B. The ROBOT is moving the SCORING ELEMENT in a preferred direction with a flat or
+ *         concave face of the ROBOT"
+ *
+ * So there are exactly two ways to control an artifact, and this function is the two of them:
+ *
+ *   A. FULLY SUPPORTED — the hopper. `r.hopper.length`, added at the bottom.
+ *   B. HERDING — "intentionally pushes ... to a desired location or in a preferred direction",
+ *      which decomposes into four things the code can actually ask:
+ *        · CONTACT with the footprint (the definition says so outright), directly or
+ *          TRANSITIVELY through other artifacts;
+ *        · a FLAT OR CONCAVE FACE — `contactFace` returns null off a convex CORNER, which is
+ *          the one piece of geometry clause B names and the engine had never modelled;
+ *        · IN A PREFERRED DIRECTION — the robot's own rigid-body velocity AT the contact point
+ *          must carry it INTO the artifact along that face's outward normal. A direction, not
+ *          a speed: the previous test was the artifact's ABSOLUTE speed, which says nothing
+ *          about who is moving it or where;
+ *        · INTENTIONALLY — sustained past POSSESSION_CONFIRM while the artifact keeps its
+ *          station on the chassis. The manual gives no numeric test for intent, so this is the
+ *          sim's proxy for a referee's eye, and it is the whole of the BULLDOZING and
+ *          DEFLECTING carve-outs: something you clip in passing never lasts, and something
+ *          that bounces off leaves at once.
+ *
+ * ...AND "TO A DESIRED LOCATION" IS WHY CONTROL LATCHES.
+ *
+ * Once herding has been established the artifact stays controlled while contact and station
+ * hold, whether or not the robot is still pushing — because having pushed it somewhere and
+ * held it there is the first half of that phrase. This is what replaced the invented TRAPPING
+ * branch, and it lands in the same place from the real definition: a robot that drove a pile
+ * into the perimeter and sits on it is controlling the pile. Measured before this change, that
+ * robot paid four MINORs once and then held the pile for the rest of the match for free.
+ *
+ * It also removes the two ABSOLUTE-SPEED gates that stood in front of the whole rule. There is
+ * no speed floor anywhere in the definition, and the floors were exploitable in both
+ * directions: a hoard crept below POSSESSION_MOVE_SPEED was invisible (measured: a six-artifact
+ * pile walked for twelve seconds, zero fouls), and a jammed pile read as uncontrolled precisely
+ * because it could not move. A robot that never pushed anything never latches, so the case that
+ * these gates were reached for — "I'm getting spammed with over-possession continuing penalties
+ * just by standing still" — is answered by intent rather than by a velocity threshold.
  */
+
 /**
- * IS THIS ARTIFACT TRAPPED — pressed by the robot against something it cannot move past?
+ * HOW HARD THE ROBOT IS PUSHING this artifact, in in/s along the outward contact direction —
+ * or NULL if the artifact is not on a face the rule allows you to herd with.
  *
- * TRAPPING is "preventing the movement of a SCORING ELEMENT against a FIELD element", and the
- * second half of that is not decoration. Without it the trapping clock catches a robot that is
- * merely STANDING among artifacts: after the transition, a robot sitting at its start pose
- * touching the spike marks was billed the whole tariff and then re-billed every few seconds
- * for doing nothing at all. "I'm getting spammed with over-possession continuing penalties
- * just by standing still."
- *
- * So the test is the one the definition names: push the artifact away from the robot by its
- * own radius and ask the field whether it may go. Refused — a wall, a goal face, the
- * classifier — and the robot is holding it against something. Free to move and the robot is
- * just near it, which is not control of anything.
- *
- * This is NOT the old bulldozing carve-out coming back. That one removed jammed artifacts
- * from the count entirely, which is what made the whole rule impossible to trip; this adds a
- * requirement to the TRAPPING half only, and possession is untouched.
+ * This is CONTROL clause B in one number: "The ROBOT is moving the SCORING ELEMENT in a
+ * preferred direction with a FLAT OR CONCAVE FACE of the ROBOT."
+ *   · the FACE half is the null: a corner is neither flat nor concave, and a ball met by a
+ *     vertex squirts off it rather than being taken anywhere, which is why the rule names the
+ *     geometry at all;
+ *   · the PREFERRED DIRECTION half is the sign: the robot's own rigid-body velocity at the
+ *     contact, projected onto the direction it would drive the artifact.
  */
-function pinnedByRobot(r: RobotState, b: Artifact): boolean {
-  // the direction the ROBOT would shove it — outward from the chassis centre through the
-  // artifact. (From the nearest POINT on the robot instead, an artifact beside a robot that is
-  // pressed on a wall reads as free to slide along the wall, which is true and beside the
-  // point: the question is whether it can go where it is being pushed.)
-  const dx = b.pos.x - r.pos.x;
-  const dy = b.pos.y - r.pos.y;
-  const d = hyp(dx, dy) || 1;
-  const away = { x: b.pos.x + (dx / d) * C.BALL_RADIUS, y: b.pos.y + (dy / d) * C.BALL_RADIUS };
-  const c = clampBallPosToStatics(away);
-  return hyp(away.x - c.x, away.y - c.y) > C.BALL_PIN_SLOP;
+function contactPush(r: RobotState, b: Artifact, cp: Vec2, loc: Vec2): number | null {
+  const e = robotExtents(r);
+  // how far the artifact's centre lies BEYOND each face plane; the nearest feature is a convex
+  // CORNER precisely when it is beyond both at once, which is the whole of the clause-B test
+  const ox = loc.x > e.front ? loc.x - e.front : loc.x < -e.rear ? loc.x + e.rear : 0;
+  const oy = loc.y > e.half ? loc.y - e.half : loc.y < -e.half ? loc.y + e.half : 0;
+  if (ox !== 0 && oy !== 0) return null; // a convex CORNER — neither flat nor concave
+  /**
+   * The outward direction is taken from the CONTACT, not by snapping to a face: for an artifact
+   * resting on a face it IS that face's normal, and it has no degenerate case. Snapping was
+   * tried and is subtly broken — an artifact equidistant from the front face and a flank (which
+   * a square-ish chassis makes an ordinary position, not a corner case) picks its face on a
+   * 1e-11 rounding, and picking the flank means a robot driving dead ahead reads as pushing
+   * NOTHING. Measured, that silently zeroed the whole rule for a centred artifact.
+   */
+  let dx = b.pos.x - cp.x;
+  let dy = b.pos.y - cp.y;
+  let m = hyp(dx, dy);
+  if (m < 1e-6) {
+    // centre INSIDE the footprint (a deep overlap): the way the chassis would shove it out
+    dx = b.pos.x - r.pos.x;
+    dy = b.pos.y - r.pos.y;
+    m = hyp(dx, dy);
+  }
+  if (m < 1e-6) return null;
+  /**
+   * "MOVING the SCORING ELEMENT" is the magnitude; "in a PREFERRED DIRECTION" is the sign, and
+   * the sign is only ever used to rule out the robot pulling AWAY. Projecting onto the outward
+   * normal and using THAT as the magnitude is too strong: a robot spinning a corralled pile has
+   * a purely TANGENTIAL point velocity, so its outward component is zero and a pile swung round
+   * on the spot read as uncontrolled — which is the opposite of what anyone watching would say.
+   *
+   * Relaxing the magnitude costs nothing, because what stops a DRIVE-PAST from counting is not
+   * the sign but the STATION test above: an artifact the robot slides past sweeps the length of
+   * the chassis and re-anchors in a few hundredths of a second, where one carried round by a
+   * spin holds a constant `loc` (the anchor is in the ROBOT frame, so rigid rotation does not
+   * move it). Direction still rules out reversing off an artifact, and the tolerance is there
+   * so a tangential contact cannot be tipped negative by rounding.
+   */
+  const pv = robotPointVelocity(r, cp);
+  if ((pv.x * dx + pv.y * dy) / m < -C.POSSESSION_PUSH_MIN) return 0; // backing away, not herding
+  return hyp(pv.x, pv.y);
 }
 
 function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: boolean): number {
@@ -385,25 +509,8 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
   const home = loadZone(r.alliance);
   const reach = C.BALL_RADIUS + C.POSSESSION_CONTROL_MARGIN; // touching the footprint
   const chain = C.BALL_RADIUS * 2 + C.POSSESSION_CONTROL_MARGIN; // ...or touching one that is
-  const moving =
-    hyp(r.vel.x, r.vel.y) >= C.POSSESSION_MOVE_SPEED || Math.abs(r.angVel) >= C.POSSESSION_TURN_RATE;
-  const loose = world.balls.filter((b) => b.state.kind === 'ground' && !inRect(b.pos, home));
+  const loose = world.balls.filter((b) => b.state.kind === 'ground');
 
-  /**
-   * ONE TEST PER DEFINITION, and the definitions are the manual's.
-   *
-   * POSSESSION: "as the ROBOT moves or changes ORIENTATION ... the object remains in
-   * approximately the same position RELATIVE TO THE ROBOT." So: where does it sit in the
-   * robot's own frame, and does it stay there. That single question is also what separates
-   * herding from the two things G408 excuses — an artifact you drive PAST sweeps the length of
-   * the chassis and is gone, one that DEFLECTS leaves at once, and neither keeps its station.
-   * BULLDOZING and DEFLECTING need no carve-out of their own; they fail this.
-   *
-   * TRAPPING is the other half of CONTROL ("carrying, herding, launching, TRAPPING") and is
-   * not conditional on moving — a robot pinning artifacts against the field is holding them.
-   * It is the same station test with a longer clock, because resting against something for a
-   * moment is not trapping and the glossary's MOMENTARY is where that line is.
-   */
   const held = new Set<number>();
   for (const b of loose) {
     const key = `${r.id}:${b.id}`;
@@ -425,55 +532,39 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
     const stationed =
       anchor !== undefined && hyp(loc.x - anchor.x, loc.y - anchor.y) <= C.POSSESSION_DRIFT;
     if (!stationed) {
-      // first contact, or it has moved to a NEW station on the robot — start the hold here
-      // rather than crediting travel across the chassis as if it had stayed put
+      /**
+       * First contact, or it has slid to a NEW station on the chassis — re-anchor there rather
+       * than crediting travel across the robot as if it had stayed put. `loc` is in the ROBOT
+       * frame, so turning with an artifact held in front of you does not move it: only an
+       * artifact actually slipping relative to the chassis re-anchors.
+       *
+       * A re-anchor RESTARTS the clock but does NOT break an ESTABLISHED hold, because the two
+       * are different questions: the clock is how control is ACQUIRED, and contact is how it is
+       * KEPT. An artifact still touching the robot has not got away from it. Resetting an
+       * established hold here silently unmade the rule in the one place it bites hardest — a
+       * pile driven into the perimeter COMPRESSES as it jams, every artifact re-anchors on the
+       * same tick, and a stalled robot has no push left to rebuild the clock with. Measured,
+       * shoving a six-clump onto a wall and leaning on it drew nothing at all.
+       */
       pen.ballAnchor[key] = { x: loc.x, y: loc.y };
-      pen.ballHold[key] = dt;
+      const was = pen.ballHold[key] ?? 0;
+      pen.ballHold[key] = was >= C.POSSESSION_CONFIRM ? was : 0;
+      if (was >= C.POSSESSION_CONFIRM) held.add(b.id);
       continue;
     }
-    const t = (pen.ballHold[key] ?? 0) + dt;
+    /**
+     * CLAUSE B, as the clause actually reads: a FLAT OR CONCAVE FACE, and the ROBOT moving the
+     * artifact IN A PREFERRED DIRECTION. `robotPointVelocity` carries the ω×r term, so a robot
+     * turning a corralled pile is moving it just as surely as one driving into it — which is
+     * how "changes ORIENTATION" survives the loss of the FRC definition it used to come from.
+     */
+    const push = contactPush(r, b, cp, loc);
+    let t = pen.ballHold[key] ?? 0;
+    if (push !== null && push >= C.POSSESSION_PUSH_MIN) t += dt;
     pen.ballHold[key] = t;
-    /**
-     * ...AND A ROBOT THAT IS STILL TAKING THEM IS NOT TRAPPING THEM.
-     *
-     * The two halves of CONTROL want different things from a stalled robot. POSSESSION is
-     * conditional on moving, so a robot pressed against a jammed clump falls to the TRAPPING
-     * clock — and trapping is "preventing the movement of a SCORING ELEMENT against a FIELD
-     * element", which is about DENIAL. A robot with its intake running, working artifacts out
-     * of a pile against the wall, is denying nothing: it is removing them.
-     *
-     * "When I intake from a clump and keep pushing into it against the wall, I get an
-     * overpossession penalty. Can a velocity constraint or something similar be added?"
-     *
-     * The constraint is that one — not on the robot's velocity, which is zero either way when
-     * it is leaning on a jam, but on whether artifacts are still LEAVING. Taking one inside
-     * the last MOMENTARY says harvesting; going that long against the same pile without
-     * taking anything says the pile is not the point any more, and the clock runs from there.
-     * Nothing else is relaxed: the moment the robot backs off and drives with them, it is the
-     * POSSESSION half's business again and station is what decides.
-     */
-    const harvesting = world.time - r.lastIntakeAt < C.MOMENTARY_S;
-    /**
-     * ...AND POSSESSION MEANS IT IS ACTUALLY GOING SOMEWHERE.
-     *
-     * "The object remains in approximately the same position RELATIVE TO THE ROBOT" is a test
-     * that says nothing when neither of them is going anywhere: a pile jammed on a wall keeps
-     * its station perfectly, because it cannot do anything else. So the station test carries
-     * the second half of the definition with it — the artifact has to be TRAVELLING with the
-     * robot, at the same threshold the robot's own motion is judged by. A herded pile rolls
-     * along in front of the bumper and passes; a jammed one is at rest in the world and does
-     * not, however hard it is being leaned on.
-     *
-     * That leaves the leaning case to the TRAPPING clock above, which is where it belongs —
-     * and to the harvest exemption beside it, so working artifacts out of a pile is not the
-     * same act as sitting on one.
-     */
-    const carried = hyp(b.vel.x, b.vel.y) >= C.POSSESSION_MOVE_SPEED;
-    if (moving && carried) {
-      if (t >= C.POSSESSION_CONFIRM) held.add(b.id);
-    } else if (!harvesting && t >= C.MOMENTARY_S && pinnedByRobot(r, b)) {
-      held.add(b.id);
-    }
+    // ...and once it is established it LATCHES: "pushes a SCORING ELEMENT TO A DESIRED
+    // LOCATION" does not stop being true when the robot stops shoving.
+    if (t >= C.POSSESSION_CONFIRM) held.add(b.id);
   }
 
   /**
@@ -481,12 +572,18 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
    *
    * POSSESSION_LIMIT and HOPPER_CAPACITY are the same three, so an artifact being drawn in is
    * already charged against the limit by the slot waiting for it — counting it in the mouth as
-   * well charges that slot twice. That is the manual's "inadvertent contact ... while
-   * attempting to acquire", and the whole of the exemption: it is capped at the room actually
-   * LEFT, nearest the mouth first. A FULL robot is acquiring nothing, so it gets none of it and
-   * ploughs exactly as hard with the intake running as without — which is the case that made
-   * this exemption worth capping rather than deleting.
+   * well charges that slot twice. It is capped at the room actually LEFT, nearest the mouth
+   * first. A FULL robot is acquiring nothing, so it gets none of it and ploughs exactly as hard
+   * with the intake running as without — the case that made this worth capping rather than
+   * deleting.
+   *
+   * NOTE this is NOT G408's carve-out C, which is narrower ("inadvertent contact with a SCORING
+   * ELEMENT while attempting to acquire a SCORING ELEMENT FROM THE LOADING ZONE" — that one is
+   * `inHome` below). This is the sim's own, and it exists because the sim's intake is a
+   * multi-tick animation where a real one is instantaneous: an artifact the rollers already own
+   * would otherwise be billed for the fraction of a second it spends visibly outside the frame.
    */
+  const excused = new Set<number>();
   let room = Math.max(0, C.HOPPER_CAPACITY - r.hopper.length);
   if (room > 0 && intaking) {
     const mouth = [...held]
@@ -511,11 +608,40 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
        * the ones it is merely shoving age out of it.
        */
       .filter((m) => m.ahead > 0 && m.hold < C.POSSESSION_CONFIRM + C.POSSESSION_ACQUIRE_S)
-      .sort((p1, p2) => p1.ahead - p2.ahead);
+      .sort((p1, p2) => p1.ahead - p2.ahead || p1.id - p2.id);
     for (const m of mouth) {
       if (room <= 0) break;
       held.delete(m.id);
+      excused.add(m.id);
       room--;
+    }
+  }
+
+  /**
+   * ...AND CARVE-OUT C: THE LOADING ZONE, scoped the way the rule scopes it.
+   *
+   * "inadvertent contact with a SCORING ELEMENT while attempting to acquire a SCORING ELEMENT
+   * FROM THE LOADING ZONE". The exemption is about a robot IN there collecting its restock, so
+   * that is the test. It used to key on the ARTIFACT's position alone, which is a different
+   * rule and a worse one in both directions: a robot parked OUTSIDE the zone reaching in and
+   * holding a pile was excused, and the whole 23x23 corner became a control-free sanctuary the
+   * manual does not grant — G432.D settles that outright by describing an ARTIFACT whose
+   * "CONTROL begins when the ROBOT is in the LOADING ZONE" and which "is still CONTROLLED by
+   * the ROBOT when the ROBOT leaves", so CONTROL demonstrably applies in there.
+   *
+   * Carrying one OUT is therefore control again, correctly, and always was.
+   */
+  if (robotInRect(r, home)) {
+    for (const b of loose) {
+      // unconditionally, NOT just the ones already held: the artifact the robot has not got a
+      // grip on yet still has to be excused, or the CHAIN reaches it through one that is and
+      // the carve-out leaks. That is exactly how the restock row fouled — one of the three was
+      // on a flank with no push behind it, so it was never in `held`, never excused, and came
+      // straight back in as a chain member off the two beside it.
+      if (inRect(b.pos, home)) {
+        held.delete(b.id);
+        excused.add(b.id);
+      }
     }
   }
 
@@ -524,23 +650,34 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
    * TRANSITIVELY through other SCORING ELEMENTS". The transitive half asks for CONTACT and
    * nothing else — an artifact three deep in a shoved wedge is controlled because it is
    * pressed against one that is, however much it rolls on the way.
+   *
+   * An EXCUSED artifact CONDUCTS but is not COUNTED. Both halves matter and they used to be
+   * wrong in opposite directions. It used to be counted anyway — the chain simply re-added
+   * every artifact the mouth exemption had just removed, which is the same number with extra
+   * steps. Making it neither went too far the other way: severing the chain at the mouth means
+   * a robot nosing into a six-clump controls NOTHING, because the only artifacts touching it
+   * are the excused ones and nothing behind them can be reached. The exemption is about what
+   * you are CHARGED for; it cannot repeal the physical fact that the pile behind is pressed
+   * against the robot through the artifact in the mouth.
    */
-  const controlled = new Set(held);
+  const reached = new Set([...held, ...excused]);
   for (let grew = true; grew; ) {
     grew = false;
     for (const b of loose) {
-      if (controlled.has(b.id)) continue;
+      if (reached.has(b.id)) continue;
       for (const o of loose) {
-        if (!controlled.has(o.id)) continue;
+        if (!reached.has(o.id)) continue;
         if (hyp(b.pos.x - o.pos.x, b.pos.y - o.pos.y) <= chain) {
-          controlled.add(b.id);
+          reached.add(b.id);
           grew = true;
           break;
         }
       }
     }
   }
-  return r.hopper.length + controlled.size;
+  let controlled = 0;
+  for (const id of reached) if (!excused.has(id)) controlled++;
+  return r.hopper.length + controlled;
 }
 
 type FireFn = (key: string, offender: Alliance, severity: 'minor' | 'major', rule: string) => boolean;

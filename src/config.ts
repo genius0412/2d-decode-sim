@@ -91,8 +91,19 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    instead of intangible; the pair and static responses are summed before either is
  *    written; and robot contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12). Every match with
  *    contact re-sims differently.
+ * 5: G408 over-possession, rewritten against DECODE's CONTROL definition instead of an FRC
+ *    POSSESSION and an invented TRAPPING (neither term exists in this manual). Control is now
+ *    ACQUIRED by herding — contact on a flat-or-concave face, the robot moving the artifact,
+ *    sustained past the confirm window — and LATCHES while contact holds, replacing two
+ *    absolute-speed gates that let a crept hoard go free and read a jammed pile as
+ *    uncontrolled. The own-loading-zone exemption is scoped to a robot actually in there, an
+ *    excused artifact conducts the transitive chain without being counted, the continuing
+ *    tariff lands one interval after the violation opens rather than two, the per-artifact
+ *    clocks are swept when an artifact leaves the ground and cleared outside auto/teleop, and
+ *    the acquire carve-out sees the auto-intake assist. Every match with loose artifacts near
+ *    a robot re-sims to a different foul total.
  */
-export const SIM_VERSION = 4;
+export const SIM_VERSION = 5;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).
@@ -215,46 +226,24 @@ export const POSSESSION_LIMIT = 3; // == HOPPER_CAPACITY
  * A touch tolerance, not a catchment radius. */
 export const POSSESSION_CONTROL_MARGIN = 0.4; // in
 /**
- * The POSSESSION test is CONDITIONAL on the robot doing something, and these are the two
- * things the glossary names: an artifact is possessed if "as the ROBOT moves or changes
- * ORIENTATION (for example, moves forward, turns, backs up, SPINS IN PLACE), the object
- * remains in approximately the same position relative to the ROBOT."
+ * How hard the robot has to be driving INTO an artifact, along the outward normal of the face
+ * it is touching, to be "moving the SCORING ELEMENT in a preferred direction" (CONTROL clause
+ * B). Measured with `robotPointVelocity`, so the ω×r term is in it and a robot TURNING a
+ * corralled pile is moving it too.
  *
- * So there are TWO gates, not one — and TURNING is a first-class trigger. An earlier model
- * gated on linear speed alone at 6-9 in/s, which meant a robot could corral a pile, spin on
- * the spot, and control nothing at all, and a robot that crept below the threshold was
- * likewise invisible. Both are now caught, so the gates only have to separate "doing
- * something" from "parked", and they sit accordingly low.
+ * This replaced two ABSOLUTE-SPEED gates — POSSESSION_MOVE_SPEED (the robot moving at all,
+ * 1.5 in/s) and POSSESSION_TURN_RATE (0.15 rad/s) — which came from an FRC POSSESSION
+ * definition that is not in the DECODE manual. There is no speed floor anywhere in DECODE's
+ * CONTROL, and those floors were exploitable from both ends: a six-artifact pile CREPT below
+ * 1.5 in/s drew nothing over twelve seconds, while a pile jammed against the perimeter read as
+ * uncontrolled precisely BECAUSE it could not move.
+ *
+ * It sits low on purpose. It is not a threshold for "is this a violation" — that is what the
+ * confirm window and the station test decide — it is only there so numerical noise in a
+ * resting contact cannot read as a push. Anything a driver would recognise as leaning on an
+ * artifact clears it.
  */
-export const POSSESSION_MOVE_SPEED = 1.5; // in/s — the robot is moving at all
-export const POSSESSION_TURN_RATE = 0.15; // rad/s — ...or changing orientation at all
-/**
- * How far an artifact may DRIFT relative to the robot and still count as "approximately the
- * same position relative to the ROBOT" — the glossary's own words, measured the only way
- * that phrase can be measured continuously: the artifact's velocity against the RIGID-BODY
- * velocity of the robot AT THAT POINT (`robotPointVelocity`, which carries the ω×r term, so
- * a spin counts).
- *
- * Being RELATIVE is the whole point, and is what makes this the manual's test rather than a
- * heuristic. It needs no direction check (a rear-bumper hoard driven in reverse holds
- * station just as well as one pushed by the nose) and no speed floor (a load crept downfield
- * at 5 in/s is still a load). It also draws the line G408 draws between control and the two
- * things it says are NOT control: an artifact you drive PAST slips at your full road speed,
- * and one DEFLECTING off a bumper leaves at its own. Neither holds station; a possessed one
- * does.
- *
- * THE NUMBER IS MEASURED, not chosen. It was 5 in/s, and at 5 the rule silently switched
- * itself off: artifacts do not RIDE a bumper in this sim, they bounce off it and are
- * re-struck, so contact is a train of micro-impacts. Sampled over a six-second shove of a
- * staged spike row, the slip of the artifacts actually touching the footprint ran p10 7.6,
- * p50 17.2, p90 33.1 in/s — the threshold sat below the TENTH PERCENTILE of a textbook
- * violation, no artifact ever confirmed, and shoving a row down the field drew nothing at
- * all. 40 sits above that distribution and still far below the ~80 in/s a stationary
- * artifact slips at when you simply drive past it, which is the case that must not count.
- *
- * 20 is where the sweep landed: it is above the bulk of a real shove's contact (p50 17.2)
- * and below a deflection off the bumper, so shoving a row fouls while a clipped artifact and
- * a drive-past both stay clean. */
+export const POSSESSION_PUSH_MIN = 0.5; // in/s, along the contact normal
 /**
  * How far an artifact may WANDER, in the robot's own frame, and still count as remaining
  * "in approximately the same position relative to the ROBOT" — the glossary's test, applied
@@ -305,16 +294,27 @@ export const POSSESSION_LEAK = 0.5;
 /**
  * How often a CONTINUING over-possession is billed again.
  *
- * The tariff used to be charged once per episode (plus top-ups as the pile grew), so a robot
- * that gathered six artifacts and simply kept them paid three MINORs — fifteen points — and
- * then hoarded for free for the rest of the match. That is not what the rule is worth: G408 is
- * a foul for the STATE of controlling too many, and a state that persists is a violation that
- * persists. "The over-possession penalty is way too lenient."
+ * *** THIS IS A HOUSE RULE. G408 HAS NO CONTINUING CLAUSE. ***
  *
- * Five seconds is the interval FTC uses for continuous violations elsewhere in the manual, and
- * it is long enough that a legitimate pass through a clump — which is over the limit for a
- * fraction of a second and covered by POSSESSION_CONFIRM and POSSESSION_GRACE before it ever
- * gets here — never reaches a second billing.
+ * Its violation line is exactly "MINOR FOUL per SCORING ELEMENT over the limit. YELLOW CARD if
+ * excessive." — one assessment, full stop. The omission is deliberate on the manual's part,
+ * because the same manual writes the continuing clause three times over when it wants one, and
+ * at this very interval:
+ *
+ *   G422 "MINOR FOUL and an additional MINOR FOUL for every 3 seconds in which the situation
+ *         is not corrected."
+ *   G423 the same sentence, verbatim.
+ *   G434 "MINOR FOUL per ARTIFACT over the limit and an additional MINOR FOUL per ARTIFACT
+ *         over the limit for every 3 seconds in which the situation is not corrected."
+ *         — which is EXACTLY the shape this constant implements, on a rule that has it.
+ *
+ * It is kept because the alternative was measured and is worse: billed once per episode, the
+ * whole tariff for gathering six artifacts and holding them was three MINORs, after which
+ * hoarding them was free for the rest of the match. Reported as "the over-possession penalty
+ * is way too lenient." Three seconds is at least the manual's own cadence for a continuing
+ * foul, so the house rule borrows the number rather than inventing that too.
+ *
+ * SET THIS TO Infinity TO GET THE RULE AS WRITTEN — nothing else depends on the re-billing.
  */
 export const POSSESSION_REBILL_S = 3;
 /**
@@ -360,10 +360,11 @@ export const POSSESSION_ACQUIRE_S = 1.0; // s of grace per artifact in the mouth
 /**
  * G408's YELLOW CARD, and the manual defines "excessive" rather than leaving it to taste:
  *   A. "simultaneous CONTROL of 5 or more ARTIFACTS", or
- *   B. "frequent (i.e., 3 or more separate MATCHES in a MATCH), greater-than-MOMENTARY
+ *   B. "frequent (i.e., 3 or more separate violations in a MATCH), greater-than-MOMENTARY
  *      CONTROL of 4 or more ARTIFACTS."
- * (B reads oddly because of a typo in the manual — "3 or more separate MATCHES in a MATCH"
- * is plainly 3 or more separate INSTANCES in a match, which is how it is implemented.)
+ * (An earlier note here claimed the manual reads "3 or more separate MATCHES in a MATCH" and
+ * called that a typo in the manual. It does not; it reads "violations". The implementation was
+ * right and the citation was invented.)
  *
  * MOMENTARY is itself defined, in the glossary: "fewer than approximately 3 seconds"
  * (MOMENTARY_S). So B is three separate stretches of holding 4+ for longer than that.
