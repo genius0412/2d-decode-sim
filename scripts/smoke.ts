@@ -7168,6 +7168,126 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
+// ---- G422: the geometries the single far-wall scene above cannot see --------
+/**
+ * Every pin check before this one used ONE geometry — both robots square, dead centre, against
+ * the flat far wall — and the push rewrite changed everything G422 reads: the victim now ROTATES
+ * when it is caught off centre, how fast it is driven depends on a push force that was wrong in
+ * four different ways, and how deep it sinks into the wall moved. `pinnedAgainstWall` projects
+ * the victim's leading corner, so a spinning victim is exactly the case that geometry cannot
+ * reach.
+ *
+ * `pins()` returns G422s attributed by OFFENDER. The event line names the alliance CREDITED
+ * (the victim of the foul), so the offender is the other one — counting `fouls.blue` alone would
+ * also sweep up G424/G425/G427, which a pin scene near a wall can easily trip on its own.
+ */
+function pins(w: World): { onBlue: number; onRed: number } {
+  const g422 = w.events.filter((e) => e.includes('G422'));
+  return {
+    onBlue: g422.filter((e) => / RED \+/.test(e)).length,
+    onRed: g422.filter((e) => / BLUE \+/.test(e)).length,
+  };
+}
+
+/**
+ * Blue pins red at `victim`, pressing along `dir` from 20in back.
+ *
+ * THE VICTIM DRIVES AWAY, which is the honest reading of G422's "while it is commanding
+ * movement": a pinned driver is trying to get out. Making it drive INTO the wall alongside the
+ * pinner (which is what the older far-wall scene does) tests something weaker — a robot stuck
+ * against a wall by its own throttle satisfies every clause of the rule whether or not the
+ * opponent behind it could hold it at all, so the WEAKEST legal build "pins" you. Fleeing is
+ * what separates a pin from a robot leaning on you.
+ */
+function pinScene(
+  victim: { x: number; y: number },
+  dir: { x: number; y: number },
+  opts: { offset?: number; pinnerSpec?: Partial<RobotSpec>; seconds?: number; headOn?: boolean } = {},
+): { onBlue: number; onRed: number; moved: number } {
+  const w = createWorld('match', 55, [setup(0, 'blue', opts.pinnerSpec ?? {}, 0), setup(1, 'red', {}, 0)]);
+  w.match.phase = 'teleop';
+  w.match.phaseTimeLeft = 60;
+  for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+  const [p, v] = w.robots;
+  const h = Math.atan2(dir.y, dir.x);
+  // perpendicular offset, so the pinner catches the victim off centre and spins it
+  const off = opts.offset ?? 0;
+  // the victim faces BACK down the push, so its own forward is its escape route
+  v.pos = { x: victim.x, y: victim.y }; v.heading = h + Math.PI; v.vel = { x: 0, y: 0 }; v.angVel = 0; v.fieldCentric = false;
+  p.pos = { x: victim.x - dir.x * 20 - dir.y * off, y: victim.y - dir.y * 20 + dir.x * off };
+  p.heading = h; p.vel = { x: 0, y: 0 }; p.angVel = 0; p.fieldCentric = false;
+  const push = cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 }); // robot-centric forward
+  runCmds(w, new Map([[0, push], [1, push]]), opts.seconds ?? 5);
+  return { ...pins(w), moved: Math.hypot(v.pos.x - victim.x, v.pos.y - victim.y) };
+}
+
+{
+  const FAR = { x: 0, y: 63 };
+  const UP = { x: 0, y: 1 };
+  // OFF CENTRE — the victim gets spun by the impulse, which is new behaviour and is exactly
+  // what moves the leading corner `pinnedAgainstWall` projects.
+  const offs = [0, 4, 8].map((o) => pinScene(FAR, UP, { offset: o }));
+  check(
+    'a pin fouls whether the pinner catches the victim square or off centre',
+    offs.every((r) => r.onBlue >= 1 && r.onRed === 0),
+    offs.map((r, i) => `${[0, 4, 8][i]}in→${r.onBlue}/${r.onRed}`).join(' '),
+  );
+  // EVERY WALL, not just the far one
+  const side = pinScene({ x: 62, y: 20 }, { x: 1, y: 0 });
+  const audience = pinScene({ x: -20, y: -63 }, { x: 0, y: -1 });
+  check(
+    'a pin fouls against the side and audience walls too',
+    side.onBlue >= 1 && side.onRed === 0 && audience.onBlue >= 1 && audience.onRed === 0,
+    `side ${side.onBlue}/${side.onRed}, audience ${audience.onBlue}/${audience.onRed}`,
+  );
+  /**
+   * THE CLASSIFIER CHANNEL — `pinnedAgainstWall` claims it and nothing tested it, and testing it
+   * takes care: the obvious scene tests the PERIMETER instead. The probe point must land inside
+   * `classifierRect` (x −72..−66, and only the +y half — the channel does not run the length of
+   * the wall) while staying INSIDE the perimeter, or `Math.abs(p.x) >= FIELD_HALF` answers first
+   * and the classifier branch is never reached. Victim centre −58 puts its trailing corner at
+   * −65.25 and the probe at −68.25: in the channel, 3.75in clear of the wall.
+   */
+  const chan = pinScene({ x: -58, y: 30 }, { x: -1, y: 0 });
+  check(
+    'a pin against the CLASSIFIER channel fouls the pinner (not just the perimeter)',
+    chan.onBlue >= 1 && chan.onRed === 0,
+    `${chan.onBlue}/${chan.onRed}`,
+  );
+  /**
+   * ...AND A ROBOT TOO WEAK TO HOLD ANYONE NEVER DRAWS ONE. This is new: pushing power used to
+   * be mass-independent and double-counted on gearing, so who could actually pin whom had very
+   * little to do with what either robot was built like. The weakest legal build cannot keep a
+   * default chassis anywhere — the victim simply drives off — and a pin foul for a shove you
+   * could walk out of is a phantom.
+   */
+  const weak = pinScene(FAR, UP, { pinnerSpec: { drivetrain: 'xdrive', massLb: 18, driveRpm: 600 } });
+  check(
+    'a robot too weak to hold anyone never draws a pin foul',
+    weak.onBlue === 0 && weak.moved > 40,
+    `${weak.onBlue} fouls, victim drove ${weak.moved.toFixed(0)}in clear`,
+  );
+  const strong = pinScene(FAR, UP, { pinnerSpec: { drivetrain: 'tank', massLb: 42, driveRpm: 200 } });
+  check(
+    '...while the strongest one pins and is fouled for it',
+    strong.onBlue >= 1 && strong.onRed === 0 && strong.moved < 5,
+    `${strong.onBlue}/${strong.onRed}, victim held to ${strong.moved.toFixed(1)}in`,
+  );
+  /**
+   * NEGATIVE: a head-on stalemate in the middle of the field. Every other clause of G422 is
+   * satisfied — sustained contact, the victim commanding motion, neither robot going anywhere —
+   * and the ONLY thing standing between it and a foul is `pinnedAgainstWall` finding nothing
+   * behind the victim to trap it against. That is the clause this pins, and it is the one that
+   * decides pinner from pinned in every wall scene above.
+   */
+  const open = pinScene({ x: 0, y: 6 }, UP, { seconds: 6 });
+  check(
+    'a head-on stalemate in open field is not a pin — there is nothing to pin against',
+    open.onBlue === 0 && open.onRed === 0,
+    `${open.onBlue}/${open.onRed}, victim moved ${open.moved.toFixed(0)}in`,
+  );
+}
+
 // ---- a drained artifact never passes THROUGH a robot -------------------------------
 // The doorway artifact is exempted from the artifacts a robot is CARRYING (they step aside
 // for something being expelled), and exempting it from the CHASSIS too let it travel
