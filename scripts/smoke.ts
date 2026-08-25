@@ -8087,6 +8087,45 @@ function pinScene(
     `${clump(6, (t) => cmd({ driveY: 0.4 + 0.3 * Math.sin(t * 3) }), 10, -40, -52, ['green', 'green', 'green'])} MINORs`,
   );
 
+  /**
+   * ...AND IT ALL APPLIES IN FREE DRIVE, which is where people actually practise.
+   *
+   * `freeplay` is a live phase everywhere else in the sim — `robotsEnabled` says so, the human
+   * player restocks in it, the shooter fires in it — and `updatePenalties` was the one
+   * subsystem that quietly excluded it, so the ENTIRE penalty engine was off in Free Drive.
+   * Measured on an identical six-clump herd: free drive 0 fouls, match 13. Three rounds of
+   * "I'm still not getting the penalty" were all this, and no amount of tuning the rule could
+   * have shown up.
+   */
+  {
+    const free = (mode: GameMode) => {
+      const w = createWorld(mode, 42, [
+        { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...DEFAULT_ASSISTS }, startIndex: 0 },
+      ]);
+      if (mode === 'match') { w.match.phase = 'teleop'; w.match.phaseTimeLeft = 120; }
+      const r = w.robots[0];
+      r.hopper = ['green', 'green', 'green'];
+      const spare = w.balls.filter((b) => b.state.kind === 'ground').slice(6);
+      w.balls = w.balls.filter((b) => !spare.includes(b));
+      let k = 0;
+      for (const b of w.balls) {
+        if (b.state.kind !== 'ground' || k >= 6) continue;
+        b.pos = { x: -5.1 + (k % 3) * 5.1, y: -40 + Math.floor(k / 3) * 5.1 };
+        b.vel = { x: 0, y: 0 }; b.z = 0; b.vz = 0; k++;
+      }
+      r.pos = { x: 0, y: -52 }; r.heading = Math.PI / 2; r.fieldCentric = false;
+      for (let i = 0; i < Math.round(10 / SIM_DT); i++) step(w, SIM_DT, new Map([[0, cmd({ driveY: 0.5 })]]));
+      return w.match.fouls.blue.minor;
+    };
+    const inFree = free('free');
+    const inMatch = free('match');
+    check(
+      'G408 is assessed in FREE DRIVE too — the same herd costs the same as in a match',
+      inFree > 0 && inFree === inMatch,
+      `free drive ${inFree} MINORs vs match ${inMatch}`,
+    );
+  }
+
   // ...and shoving one against a wall with a FULL robot does. The hopper is now passed in,
   // because the helper always emptied it: this check has said "with a FULL robot" since it was
   // written and has never once had one, which mattered the moment the acquire carve-out started

@@ -1,4 +1,46 @@
-# HANDOFF — 2026-08-25 (making CONTROL reachable again) — alpha only
+# HANDOFF — 2026-08-25 (penalties were OFF in Free Drive) — alpha only
+
+Branch **alpha**. `npm test` **1166 checks, ALL PASS** · `npm run build` green ·
+`npm run server:check` green · `npm run test:mm` 58 green. `SIM_VERSION` 7 → **8**.
+
+Do not merge to main. Standing rule.
+
+## READ FIRST — the actual answer to three rounds of "I'm not getting the penalty"
+
+**The entire penalty engine was switched off in Free Drive.** `updatePenalties` returned early
+for any phase that is not `auto` or `teleop`, and Free Drive runs in `freeplay`. Measured on an
+identical six-clump herd:
+
+| mode | phase | fouls |
+|---|---|---|
+| Free Drive | `freeplay` | **0** |
+| Match | `teleop` | **13** |
+
+`freeplay` is a live phase everywhere ELSE in the sim — `robotsEnabled` includes it, the human
+player restocks in it, the shooter fires in it. Penalties were the one subsystem that excluded
+it. So every round of G408 tuning was invisible to anyone practising in Free Drive, which is
+exactly where you would go to practise pushing a clump around.
+
+Now assessed in `freeplay` too. Phase-specific rules stay correctly inert on their own terms:
+G402 tests `phase === 'auto'`, `endgame` tests `phase === 'teleop'`. CR is untouched —
+`updateChainPenalties` gates on `isAuto`/`isTeleop` explicitly, which is right for G05/G06.
+
+**Checked for spam**: 45 s of ordinary free driving with practice dummies drew 0 fouls on the
+player. A passive dummy can never be PINNED either, since G422 needs the victim attempting to
+move and a passive robot issues no command. The only event was a G426 against a dummy parked in
+a loading zone, which is correct.
+
+## Lesson for next time
+
+Three sessions were spent tuning a rule that could not fire in the mode it was being tested in.
+**Before tuning a sim rule, confirm the rule RUNS in the mode the report came from.** The
+phase gate at the top of `updatePenalties` is the first thing to check, and `robotsEnabled`
+(`src/sim/match.ts`) is the list of phases the rest of the sim considers live — any subsystem
+whose phase list disagrees with it is a suspect.
+
+---
+
+## 2026-08-25c — making CONTROL reachable again (superseded as READ FIRST)
 
 Branch **alpha**. `npm test` **1165 checks, ALL PASS** · `npm run build` green ·
 `npm run server:check` green · `npm run test:mm` 58 green. `SIM_VERSION` 6 → **7**.

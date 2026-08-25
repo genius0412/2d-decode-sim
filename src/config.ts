@@ -91,6 +91,11 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    instead of intangible; the pair and static responses are summed before either is
  *    written; and robot contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12). Every match with
  *    contact re-sims differently.
+ * 8: PENALTIES ARE ASSESSED IN FREE DRIVE. `freeplay` is a live phase everywhere else in the
+ *    sim (robotsEnabled, the human player, the shooter) and `updatePenalties` was the one
+ *    place that excluded it, so the whole engine was off in the mode people practise in —
+ *    measured, an identical herd drew 0 fouls in free drive and 13 in a match. Phase-specific
+ *    rules stay inert on their own terms (G402 is auto-only, endgame is teleop-only).
  * 7: G408 reach — an ESTABLISHED hold now keeps counting while it DRAINS, instead of only on
  *    the ticks the artifact is actually touching. Artifacts bounce off a bumper here rather
  *    than riding it, so contact is intermittent: the moment a driver steered at all, a robot
@@ -114,7 +119,7 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    the acquire carve-out sees the auto-intake assist. Every match with loose artifacts near
  *    a robot re-sims to a different foul total.
  */
-export const SIM_VERSION = 7;
+export const SIM_VERSION = 8;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).

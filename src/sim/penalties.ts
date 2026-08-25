@@ -90,7 +90,20 @@ export function updatePenalties(
   // gate/ramp tracking on the way out: robots are frozen across the transition, so a
   // ramp that keeps draining through it is nobody's foul, and a stale rampBallIds
   // would otherwise bill the whole gap the instant play resumes.
-  if (phase !== 'auto' && phase !== 'teleop') {
+  /**
+   * FREE DRIVE COUNTS. `freeplay` is a live phase everywhere else in the sim — `robotsEnabled`
+   * says so, the human player restocks in it, the shooter fires in it — and penalties were the
+   * one subsystem that quietly excluded it. So the whole engine was OFF in the mode people
+   * actually practise in: measured on an identical six-clump herd, free drive drew 0 fouls
+   * where a match drew 13. That is why three rounds of "I'm still not getting the penalty" all
+   * came back negative no matter what the rule did.
+   *
+   * Free Drive is DRIVER PRACTICE, and practising without the fouls a match would give you is
+   * the opposite of practice. Phase-specific rules stay correctly inert here on their own
+   * terms: G402 tests `phase === 'auto'`, and `endgame` tests `phase === 'teleop'`, so neither
+   * fires in a mode that has no auto and no clock.
+   */
+  if (phase !== 'auto' && phase !== 'teleop' && phase !== 'freeplay') {
     for (const a of ALLIANCES) {
       pen.gateCulprit[a] = null;
       pen.rampBallIds[a] = [];

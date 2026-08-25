@@ -922,6 +922,17 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
   - `PIN_STUCK_SPEED` is the sim's own stand-in for a referee's eye on "preventing", measured as
     progress along the ESCAPE direction rather than raw speed — a victim bulldozed sideways along
     a wall is moving quickly and is no less pinned.
+- **PENALTIES ARE ASSESSED IN FREE DRIVE.** `updatePenalties` runs for `auto`, `teleop` AND
+  `freeplay`. `freeplay` is a live phase everywhere else in the sim — `robotsEnabled` says so,
+  `humanPlayer` restocks in it, the shooter fires in it — and penalties were the one subsystem
+  that excluded it, so the ENTIRE engine was off in the mode people actually practise in
+  (measured: an identical six-clump herd drew 0 fouls in free drive and 13 in a match). Free
+  Drive is DRIVER PRACTICE and practising without match fouls is the opposite of practice.
+  Phase-specific rules stay inert on their own terms: G402 tests `phase === 'auto'` and
+  `endgame` tests `phase === 'teleop'`, so neither fires in a mode with no auto and no clock.
+  CR is unaffected — `updateChainPenalties` gates on `isAuto`/`isTeleop` explicitly, which is
+  right for G05/G06. Ordinary free driving with practice dummies draws nothing (measured over
+  45 s); a passive dummy can never be PINNED either, since it never attempts to move.
 - **Fouls are EDGE-triggered — NO cooldown/timer** (user was emphatic): fire on the false→true
   edge, once while held, and AGAIN immediately on re-entry. `fire()` is idempotent within a
   tick. All penalty state is plain JSON.
