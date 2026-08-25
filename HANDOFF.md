@@ -1,6 +1,6 @@
-# HANDOFF — 2026-08-24 (robots pushing robots: a force, not a mass) — alpha only
+# HANDOFF — 2026-08-24 (robots pushing robots, and what counts as pinning) — alpha only
 
-Branch **alpha**, commit `7ea642b`, pushed. Working tree CLEAN.
+Branch **alpha**, commit `fd05c68`, pushed. Working tree CLEAN.
 `npm test` ALL PASS · `npm run build` green · `npm run server:check` green ·
 `npm run test:mm` green. **Deployed to the alpha preview** (`dsim-alpha`), production untouched.
 
@@ -10,8 +10,8 @@ Do not merge to main. Standing rule.
 
 An audit of every live path for robot-on-robot pushing found eight defects; all eight are
 fixed. `SIM_VERSION` 2 → **3**. **`BALANCE_VERSION` was NOT bumped — that decision is still
-open** (see *Open* below), and the server has NOT been redeployed, so lobby/ranked/record play
-is still running the old physics.
+open** (see *Open* below). `SIM_VERSION` is now **4** — the pinning rewrite below moved it
+again — and the ALPHA PREVIEW is deployed on it.
 
 ### The one that mattered: the shove was a mass, and it should have been a force
 
@@ -104,6 +104,58 @@ with the transmitted part carried from the pair pass in `ContactAcc.ext`. Four t
 - **Dead code.** `collideRobots` and `constrainRobot` (zero call sites) and `CONTACT_BIAS`
   (superseded by `CONTACT_COMPLIANCE`) are gone. `driveSummary()`'s `push` column now prints the
   real force instead of the raw `pushMult`, which had quietly disagreed with the shipped model.
+
+### G422 pinning, read against the manual instead of paraphrased from it
+
+The rule was verified verbatim from the ARCHIVED DECODE manual (Team Update 32, Section 11 V15,
+p.112 — note `ftc-resources.../ftc/game/manual` now serves the 2026-27 BIOBUZZ pre-season manual
+and `manual-11` 404s; DECODE is only at `/ftc/archive/2026/game/manual-NN`). What it says:
+
+> A ROBOT is PINNING if it is **preventing the movement** of an opponent ROBOT by contact, either
+> direct or transitive (such as against a FIELD element) and the opponent ROBOT is **attempting to
+> move**. A PIN count ends once any of: **A.** separated by 2 ft for more than 3 seconds, **B.**
+> either ROBOT has moved 2 ft from where the PIN initiated for more than 3 seconds, or **C.** the
+> PINNING ROBOT gets PINNED. [A and B **pause** the count and it **resumes**.]
+> Violation: **MINOR FOUL and an additional MINOR FOUL for every 3 seconds** in which the
+> situation is not corrected.
+
+Five divergences, all fixed:
+
+1. **"Preventing" was not tested at all.** Any contact counted. So a robot driving ITSELF into a
+   wall fouled whoever was behind it — contact, attempting to move, going nowhere, trapped, and
+   the opponent preventing nothing. Measured, the WEAKEST legal build "pinned" a default chassis
+   that way. `isPinning` now requires the pinner to lie along the victim's attempted direction
+   (`PIN_OBSTRUCT_COS`, ~70° either side).
+2. **A tank could not be pinned AT ALL.** "Attempting to move" read `driveX/driveY/rotate`, which
+   a Traditional-tank driver on separate sticks never fills — G422 simply did not protect it.
+   `attemptDir` decodes the command the way `updateRobot` does, side-drive and field-centric
+   included.
+3. **The count died on any lapse.** `PIN_BREAK_S` 0.6 s ended a pin outright when the hold
+   flickered for any reason, so a pinner could wipe a 2.5 s count by easing off for 0.7 s. Only
+   criteria A/B/C end one now, and A/B PAUSE and RESUME — stated twice in the rule.
+4. **Criterion C did not exist.** A mutual hold is nobody's foul.
+5. **The bill was wrong in both directions.** One MINOR however long you held it, plus a
+   MINOR→MAJOR escalation that appears nowhere in G422. It is a MINOR every 3 s now. (G211 lets a
+   Head Referee card egregious repeats — judgement, not this rule.)
+
+**`pinnedAgainstWall` is NOT in the rule and is kept anyway.** A FIELD element is offered as an
+example ("such as"); direct contact alone can pin. It stays because it is the only thing breaking
+the SYMMETRY of a shove, and the cost is small: criterion B ends any pin that travels 2 ft, so the
+only open-field pin the rule sustains is a stationary stalemate — and a stationary stalemate is
+mutual, which criterion C ends. What is left uncovered is narrow: a robot wedged on another robot
+with open field behind it.
+
+**Measured after** (10 s scenes): a static hold bills at 3.05/6.05/9.03 s; a 2 s break pauses and
+resumes; a 3.4 s break ends it and the count restarts; a swerve pinner walking the victim 69 in
+along the wall bills once and stops (criterion B); a tank victim on side-drive alone now bills
+identically to arcade; the drive-into-a-wall scene bills nothing, including against the weakest
+legal pinner.
+
+**Test-scene gotcha this exposed:** several pin checks read `w.match.fouls.blue.minor`, which
+counts EVERY minor foul blue commits. A pin scene that travels drives through protected zones and
+picks up G424/G425 of its own — one probe read 7 "pins" that were 1 pin and 6 zone fouls. Count
+G422 events (`pins()` in smoke.ts), and park the artifacts or the pair ploughs a spike-mark pile
+along with it and you are testing G408.
 
 ### Round two: eight more, found by attacking the fixes
 
