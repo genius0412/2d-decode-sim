@@ -1,7 +1,10 @@
 # HANDOFF — 2026-08-25 (what CONTROL actually is) — alpha only
 
-Branch **alpha**. `npm test` **1159 checks, ALL PASS** · `npm run build` green ·
+Branch **alpha**, commit `9f8e633`, pushed. Working tree CLEAN (bar the untracked `zz-probe-*`
+scratch scripts). `npm test` **1159 checks, ALL PASS** · `npm run build` green ·
 `npm run server:check` green · `npm run test:mm` 58 green.
+**Deployed to the alpha preview** (`dsim-alpha`, `deployment-01M0WAB0NBK0E3FQD9FWX8A59Q`,
+1/1 checks, `/health` ok). Production untouched.
 
 Do not merge to main. Standing rule.
 
@@ -88,8 +91,6 @@ Both were passing for the wrong reason, and both hid behind the invented TRAPPIN
   has only ever existed on the alpha preview, so the standings a second bump would archive are
   empty. G422 and G408 both land inside that same fresh season. Bump it if alpha standings start
   being treated as real.
-* **Not deployed yet this session** — the alpha preview is still on `SIM_VERSION` 4. Redeploy
-  (`./scripts/fly-deploy.sh --alpha`) to put the G408 rewrite in front of players.
 * Two pre-existing bugs, still unfixed and still not requested: `saveReplay` never stores
   `replay.sim` (so the `SIM_VERSION` gate refuses every DB-served replay — and that gate now
   matters more, since 4 → 5 changes foul totals), and Free Drive with an auto path enabled
