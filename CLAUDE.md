@@ -818,10 +818,33 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
   ESCALATES to a RED, and a RED sets `ScoreBreakdown.voided` so that alliance's `total` reads 0
   while the breakdown still shows everything earned — the loss the card is meant to be. Shown
   as a HUD chip on the carded team and a forfeit line on the results screen.
-- **G422 pinning** (MINOR → MAJOR on a repeat by the same pinner): 3 s of contact while the
-  pinned robot commands motion, stays < 8 in/s, and hasn't escaped 24". Pinner-vs-pinned is
-  disambiguated by `pinnedAgainstWall` — the VICTIM must be trapped against a boundary with the
-  pinner on the open-field side; without it a wall shove satisfied BOTH orderings.
+- **G422 pinning** — written against the rule's own clauses, which the sim had drifted a long way
+  from. "A ROBOT is PINNING if it is PREVENTING the movement of an opponent ROBOT by contact,
+  either direct or transitive (such as against a FIELD element) and the opponent ROBOT is
+  ATTEMPTING TO MOVE." So `isPinning` needs all of: contact · the victim attempting to move ·
+  **the pinner IN THE WAY of where the victim is trying to go** (`PIN_OBSTRUCT_COS`) ·
+  `pinnedAgainstWall`.
+  - **The obstruction test is what "preventing" means.** Without it a robot driving ITSELF into a
+    wall fouled whoever was behind it — every other clause was satisfied and the opponent was
+    preventing nothing, so the WEAKEST legal build "pinned" a default chassis.
+  - **"Attempting to move" must read SIDE-DRIVE too** (`attemptDir`). It read only
+    `driveX/driveY/rotate`, which a Traditional-tank driver on separate sticks never fills — a
+    tank robot was never attempting to move and so could not be pinned AT ALL.
+  - **`pinnedAgainstWall` is NOT in the rule** (a FIELD element is an example, "such as"). It is
+    kept because it is the only thing breaking the SYMMETRY of a shove, and it costs little:
+    criterion B ends any pin that travels 2 ft, so the only open-field pin the rule sustains is a
+    stationary stalemate — and a stationary stalemate is mutual, which criterion C ends.
+  - **The count ENDS only on the rule's A/B/C**, never on the hold merely lapsing: (A) 2 ft apart
+    for >3 s, (B) either robot 2 ft from where the pin initiated for >3 s, (C) the pinner is
+    itself pinned. A and B **PAUSE** the count first and it **RESUMES** — that is stated twice in
+    the rule. A 0.6 s lapse timer used to end pins outright, so a pinner could wipe a
+    two-and-a-half-second count by easing off for seven tenths of a second.
+  - **Billing is MINOR, and another MINOR every 3 s it is not corrected.** Nine seconds is three
+    MINORs. There is **no MAJOR escalation anywhere in G422** — the sim invented one. (G211 lets
+    a Head Referee card egregious repeats; that is judgement, not this rule.)
+  - `PIN_STUCK_SPEED` is the sim's own stand-in for a referee's eye on "preventing", measured as
+    progress along the ESCAPE direction rather than raw speed — a victim bulldozed sideways along
+    a wall is moving quickly and is no less pinned.
 - **Fouls are EDGE-triggered — NO cooldown/timer** (user was emphatic): fire on the false→true
   edge, once while held, and AGAIN immediately on re-entry. `fire()` is idempotent within a
   tick. All penalty state is plain JSON.

@@ -7069,7 +7069,17 @@ function pinWorld(): World {
   w.robots[0].pos = { x: 0, y: 44 }; // pinner blue, 1" gap, drives up into it
   return w;
 }
-const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
+/**
+ * The pinner drives INTO the victim; the VICTIM drives the other way, trying to get out.
+ *
+ * Both used to drive at the wall together, which is a different situation and not a pin: a robot
+ * pressing itself into a wall satisfies every clause of G422 — contact, attempting to move,
+ * going nowhere — while the opponent behind it prevents nothing, and the rule is explicit that
+ * PINNING is "PREVENTING the movement". Under that scene the WEAKEST legal build "pinned" a
+ * default chassis. `isPinning` now requires the pinner to be in the way of where the victim is
+ * trying to go, so the victim has to actually be trying to leave.
+ */
+const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
 
 // ---- G422 pinning: 3-count fires, then resets on separation -----------------
 {
@@ -7101,24 +7111,177 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   );
 }
 
-// ---- G422 pinning: a continuous pin is ONE foul; a REPEAT escalates to MAJOR -
+// ---- G422 pinning: it keeps billing, every 3 s, and it is never a MAJOR ------
 {
+  /**
+   * "Violation: MINOR FOUL and an additional MINOR FOUL for every 3 seconds in which the
+   * situation is not corrected."
+   *
+   * These two checks used to assert the opposite of the rule on BOTH counts: that a sustained
+   * pin is a single MINOR however long you hold it, and that a later repeat escalates to a
+   * MAJOR. Neither is in G422 — there is no escalation anywhere in it, and holding a pin is
+   * exactly the "situation not corrected" the additional MINORs are for. Letting a pinner buy
+   * an indefinite hold for one MINOR is the version that actually changes how you would play.
+   */
   const w = pinWorld();
-  runCmds(w, PIN_CMDS, 6.3); // hold the pin continuously well past 6 s
+  runCmds(w, PIN_CMDS, 3.2);
+  check('a pin bills its first MINOR at 3 s', w.match.fouls.blue.minor === 1 && w.match.fouls.blue.major === 0, `${w.match.fouls.blue.minor}/${w.match.fouls.blue.major}`);
+  runCmds(w, PIN_CMDS, 3);
   check(
-    'a sustained pin is a single MINOR foul, not one every 3 s',
-    w.match.fouls.blue.minor === 1 && w.match.fouls.blue.major === 0,
-    `blueMinor=${w.match.fouls.blue.minor} blueMajor=${w.match.fouls.blue.major}`,
+    '...and another MINOR for every 3 s it is not corrected',
+    w.match.fouls.blue.minor === 2 && w.match.fouls.blue.major === 0,
+    `after 6.2 s: ${w.match.fouls.blue.minor}/${w.match.fouls.blue.major}`,
   );
-  // separate, then pin again — the repeat by the same pinner escalates to MAJOR
-  w.robots[0].pos = { x: 0, y: -20 };
-  runCmds(w, new Map(), 0.4); // break contact
-  w.robots[0].pos = { x: 0, y: 44 };
-  runCmds(w, PIN_CMDS, 3.3);
+  runCmds(w, PIN_CMDS, 3);
   check(
-    'a repeat pin (after separating) escalates to MAJOR',
-    w.match.fouls.blue.major === 1,
-    `blueMinor=${w.match.fouls.blue.minor} blueMajor=${w.match.fouls.blue.major}`,
+    '...and it keeps billing for as long as it is held',
+    w.match.fouls.blue.minor === 3 && w.match.fouls.blue.major === 0,
+    `after 9.2 s: ${w.match.fouls.blue.minor}/${w.match.fouls.blue.major}`,
+  );
+  // separate properly (criterion A: 2 ft apart for MORE than 3 s), then pin again
+  w.robots[0].pos = { x: 0, y: 20 };
+  runCmds(w, new Map(), 3.2);
+  const before = w.match.fouls.blue.minor;
+  w.robots[0].pos = { x: 0, y: 44 };
+  runCmds(w, PIN_CMDS, 3.2);
+  check(
+    'a repeat pin is another MINOR — G422 has no escalation',
+    w.match.fouls.blue.minor === before + 1 && w.match.fouls.blue.major === 0,
+    `${before} -> ${w.match.fouls.blue.minor}, majors ${w.match.fouls.blue.major}`,
+  );
+}
+
+// ---- G422 criterion A: separation PAUSES the count; only >3s of it ends the pin ----
+{
+  /**
+   * "For criteria A, the PIN count pauses once ROBOTS are separated by 2 ft. until either the
+   * PIN ends or the PINNING ROBOT moves back within 2 ft., at which point the PIN count is
+   * resumed." — and criterion A itself needs the separation to last MORE THAN 3 seconds.
+   *
+   * The sim used to end a pin after 0.6 s of the hold merely lapsing, for any reason, so a
+   * pinner could wipe a two-and-a-half-second count by easing off for seven tenths of a second.
+   */
+  const resumed = pinWorld();
+  runCmds(resumed, PIN_CMDS, 2.5);
+  resumed.robots[0].pos = { x: 0, y: 20 }; // >2ft clear
+  runCmds(resumed, new Map(), 2.0); // under 3s — pauses, does not end
+  const during = resumed.match.fouls.blue.minor;
+  resumed.robots[0].pos = { x: 0, y: 44 };
+  runCmds(resumed, PIN_CMDS, 0.7); // 2.5 + 0.7 crosses the 3-count
+  check(
+    'backing off briefly PAUSES the pin count — it resumes, it does not reset',
+    during === 0 && resumed.match.fouls.blue.minor === 1,
+    `during the pause ${during}, after resuming ${resumed.match.fouls.blue.minor}`,
+  );
+
+  const ended = pinWorld();
+  runCmds(ended, PIN_CMDS, 2.5);
+  ended.robots[0].pos = { x: 0, y: 20 };
+  runCmds(ended, new Map(), 3.4); // more than 3s apart — criterion A ends it
+  ended.robots[0].pos = { x: 0, y: 44 };
+  runCmds(ended, PIN_CMDS, 0.7);
+  check(
+    '...and separating for more than 3 s ENDS it, so the count starts over',
+    ended.match.fouls.blue.minor === 0,
+    `${ended.match.fouls.blue.minor} fouls after 2.5s + 3.4s apart + 0.7s`,
+  );
+}
+
+// ---- G422 criterion B: 2 ft from where the pin began ends it ----------------
+{
+  /**
+   * A robot being bulldozed ACROSS the field is not being pinned for the whole trip: once
+   * either robot is 2 ft from where the pin initiated, for more than 3 seconds, the count ends.
+   * So a long push bills the first MINOR and then stops, rather than billing forever.
+   */
+  /**
+   * Staged with a SWERVE pinner, because it has to strafe: it presses the victim into the far
+   * wall (which is what makes it a pin at all) while walking it sideways ALONG that wall. A tank
+   * pinner cannot strafe, so the pair never travels and the scene silently tests nothing.
+   *
+   * Counted as G422 EVENTS, not as `fouls.blue.minor` — a pair travelling the length of the far
+   * wall drives through protected zones on the way and picks up G424/G425 of its own.
+   */
+  const w = pinWorld();
+  // park the artifacts: a pair walking the length of the far wall otherwise ploughs a spike-mark
+  // pile along with it, which is a different scene (and G408's, not G422's)
+  for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+  const [p2, v] = w.robots;
+  p2.spec.drivetrain = 'swerve'; p2.spec.massLb = 40; p2.spec.driveRpm = 200;
+  v.pos = { x: -30, y: 63 }; p2.pos = { x: -30, y: 44 };
+  const walk = new Map([
+    [0, cmd({ driveY: 1, driveX: 1, leftDrive: 1, rightDrive: 1 })],
+    [1, cmd({ driveY: -1, leftDrive: -1, rightDrive: -1 })],
+  ]);
+  runCmds(w, walk, 10);
+  const travelled = Math.hypot(v.pos.x + 30, v.pos.y - 63);
+  check(
+    'a pin that travels 2 ft from where it began stops billing (criterion B)',
+    pins(w).onBlue === 1 && travelled > 24,
+    `${pins(w).onBlue} G422 over 10 s while the victim was walked ${travelled.toFixed(0)}in along the wall`,
+  );
+  // ...and the same hold that does NOT travel keeps billing, which is the contrast that
+  // makes the criterion mean something
+  const still = pinWorld();
+  for (const ball of still.balls) ball.state = { kind: 'held', robot: 99 };
+  runCmds(still, PIN_CMDS, 10);
+  check(
+    '...while a hold that stays put bills every 3 s throughout',
+    pins(still).onBlue === 3,
+    `${pins(still).onBlue} G422 over 10 s`,
+  );
+}
+
+// ---- G422 "attempting to move": a TANK on separate sticks is protected too --
+{
+  /**
+   * "...and the opponent ROBOT is attempting to move." The test read only driveX/driveY/rotate,
+   * which a Traditional-tank driver on separate sticks never fills — so a tank robot was never
+   * attempting to move and could not be pinned AT ALL. G422 simply did not protect it.
+   */
+  const held = (victimCmd: Partial<RobotCommand>) => {
+    const w = pinWorld();
+    w.robots[1].spec.drivetrain = 'tank';
+    // a pinner strong enough to hold a tank, or the victim just drives off (correctly)
+    w.robots[0].spec.drivetrain = 'tank';
+    w.robots[0].spec.massLb = 42;
+    w.robots[0].spec.driveRpm = 200;
+    runCmds(w, new Map([[0, cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })], [1, cmd(victimCmd)]]), 3.4);
+    return w.match.fouls.blue.minor;
+  };
+  const sideDriveOnly = held({ leftDrive: -1, rightDrive: -1 });
+  const arcade = held({ driveY: -1, leftDrive: -1, rightDrive: -1 });
+  check(
+    'a tank struggling on side-drive alone counts as attempting to move',
+    sideDriveOnly === 1 && sideDriveOnly === arcade,
+    `side-drive only ${sideDriveOnly}, arcade ${arcade} — the control style must not matter`,
+  );
+  check(
+    '...but a victim commanding nothing at all is not being pinned',
+    held({}) === 0,
+    `${held({})}`,
+  );
+}
+
+// ---- G422 "preventing the movement": the pinner has to be IN THE WAY --------
+{
+  /**
+   * A robot driving ITSELF into a wall satisfies every other clause — contact, attempting to
+   * move, going nowhere, trapped — while the opponent behind it prevents nothing. The rule says
+   * PINNING is "PREVENTING the movement", so the pinner must lie along where the victim is
+   * trying to go. Measured before this: the WEAKEST legal build "pinned" a default chassis.
+   */
+  const intoWall = (pinnerSpec: Partial<RobotSpec>) => {
+    const w = pinWorld();
+    Object.assign(w.robots[0].spec, pinnerSpec);
+    const push = cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 });
+    runCmds(w, new Map([[0, push], [1, push]]), 6); // BOTH drive at the wall
+    return w.match.fouls.blue.minor + w.match.fouls.blue.major;
+  };
+  check(
+    'a robot driving itself into a wall is not being pinned by whoever is behind it',
+    intoWall({}) === 0 && intoWall({ drivetrain: 'xdrive', massLb: 18, driveRpm: 600 }) === 0,
+    `default pinner ${intoWall({})}, weakest legal pinner ${intoWall({ drivetrain: 'xdrive', massLb: 18, driveRpm: 600 })}`,
   );
 }
 
@@ -7156,9 +7319,13 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]);
   const pinr = w.robots[0]; // blue, pressing it there from the field side
   vict.heading = Math.atan2(-n.y, -n.x); // both face the goal (foulWorld is robot-centric)
   pinr.heading = vict.heading;
-  vict.pos = { x: mid.x + n.x * 13.5, y: mid.y + n.y * 13.5 };
-  pinr.pos = { x: mid.x + n.x * 32, y: mid.y + n.y * 32 };
-  const drive = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: 1 })]]); // both push at the face
+  // seated ON the face, not 3in off it: the victim now RESISTS rather than driving at the goal,
+  // so an equally matched pinner stalemates wherever they first touch — start it where a pinned
+  // robot actually ends up
+  vict.pos = { x: mid.x + n.x * 10.5, y: mid.y + n.y * 10.5 };
+  pinr.pos = { x: mid.x + n.x * 29, y: mid.y + n.y * 29 };
+  // the pinner presses at the face; the VICTIM reverses off it, trying to get out (see PIN_CMDS)
+  const drive = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
   runCmds(w, drive, 4.2);
   check(
     'pinning a robot against the GOAL face fouls the pinner (not just the perimeter)',

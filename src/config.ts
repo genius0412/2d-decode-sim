@@ -77,6 +77,11 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    test + a pin count that survives its own flicker and recognises goal/classifier
  *    traps), so any match with contact re-sims to a different foul total. All of it
  *    moves `step()` output.
+ * 4: G422 pinning, rewritten against the rule's own clauses — "preventing the movement" now
+ *    requires the pinner to be IN THE WAY of where the victim is trying to go, "attempting to
+ *    move" reads side-drive so a tank can be pinned at all, the count ends only on criteria
+ *    A/B/C (pausing and resuming rather than dying on a 0.6 s lapse), and the violation bills a
+ *    MINOR every 3 seconds instead of one MINOR with an invented MAJOR escalation.
  * 3: robot-on-robot pushing, rebuilt. The shove is now stated as a FORCE and the collider
  *    mass derived from it (`pushForce`/`shoveMass`), so weight, gearing and power draw each
  *    act once instead of cancelling or landing twice; a shoved chassis gets a real two-body
@@ -87,7 +92,7 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    written; and robot contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12). Every match with
  *    contact re-sims differently.
  */
-export const SIM_VERSION = 3;
+export const SIM_VERSION = 4;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).
@@ -123,10 +128,32 @@ export const PTS_FOUL_MAJOR = 15;
  * seconds". Used by G408's excessive-violation test, which turns on whether CONTROL of 4+
  * artifacts was greater-than-MOMENTARY. */
 export const MOMENTARY_S = 3;
-/** G422 pinning: hold an opponent trapped for this long (s) while it is trying
- * to move and cannot get away -> foul */
+/**
+ * G422, verbatim, because every constant below is a clause of it:
+ *
+ *   "There is a 3-count on PINS. A ROBOT may not PIN an opponent's ROBOT for more than 3
+ *    seconds. A ROBOT is PINNING if it is preventing the movement of an opponent ROBOT by
+ *    contact, either direct or transitive (such as against a FIELD element) and the opponent
+ *    ROBOT is attempting to move. A PIN count ends once any of the following criteria below
+ *    are met:
+ *      A. the ROBOTS have separated by at least 2 ft. (~61 cm) from each other for more than
+ *         3 seconds,
+ *      B. either ROBOT has moved 2 ft. from where the PIN initiated for more than 3 seconds, or
+ *      C. the PINNING ROBOT gets PINNED.
+ *    For criteria A, the PIN count pauses once ROBOTS are separated by 2 ft. until either the
+ *    PIN ends or the PINNING ROBOT moves back within 2 ft., at which point the PIN count is
+ *    resumed. For criteria B, the PIN count pauses once either ROBOT has moved 2ft from where
+ *    the PIN initiated until the PIN ends or until both ROBOTS move back within 2ft., at which
+ *    point the PIN count is resumed.
+ *    Violation: MINOR FOUL and an additional MINOR FOUL for every 3 seconds in which the
+ *    situation is not corrected."
+ *
+ * Note what is NOT in it: any speed threshold, any requirement that the pinned ROBOT be against
+ * a wall, and any escalation to a MAJOR. The sim had all three.
+ */
 export const PIN_SECONDS = 3;
-export const PIN_ESCAPE_DIST = 24; // in — getting this far from the pin, once free, ends it
+/** "2 ft. (~61 cm)" — the separation in criterion A and the displacement in criterion B. */
+export const PIN_ESCAPE_DIST = 24; // in
 /** The pinned robot counts as "prevented from moving" while it is not gaining
  * ground AWAY from the pinner faster than this.
  *
@@ -135,22 +162,48 @@ export const PIN_ESCAPE_DIST = 24; // in — getting this far from the pin, once
  * pinned, and pausing the 3-count every time it slid was one reason real pins
  * almost never reached the threshold. */
 export const PIN_STUCK_SPEED = 8; // in/s
-/** the PINNED robot must be trapped against a SOLID with the pinner on the open-
- * field side: its leading corner (straight away from the pinner) sits within this
- * slop of the perimeter, a goal wedge or a classifier channel. This breaks the
- * symmetry of a shove — without it BOTH robots look "slow + commanding" and the
- * victim was wrongly fouled too. */
-export const PIN_WALL_SLOP = 3; // in
-/** How long the hold may LAPSE before a pin is considered over.
+/**
+ * The PINNED robot must be trapped against a SOLID with the pinner on the open-field side: its
+ * leading corner (straight away from the pinner) sits within this slop of the perimeter, a goal
+ * wedge or a classifier channel.
  *
- * The 3-count needs ~180 consecutive ticks, and every input to it flickers: the SAT
- * contact list drops a tick when the bumpers unload, the victim's stick crosses the
- * dead zone as they saw at it, the wall probe slips past the slop as the pair rocks.
- * Resetting the accumulator on any single-tick lapse meant a genuine 5-second pin
- * routinely counted to 0.6 s and started over, which is why the foul "never
- * happened". The clock now PAUSES on a lapse and only resets once the victim has
- * really been let go for this long (or has separated and driven off). */
-export const PIN_BREAK_S = 0.6; // s
+ * THE RULE DOES NOT REQUIRE THIS — a FIELD element is offered as an EXAMPLE of transitive
+ * contact ("such as"), and direct contact alone can pin. It is kept because it is what breaks
+ * the SYMMETRY of a shove: without something behind one of them, both robots are equally "in
+ * contact, attempting to move, and going nowhere", and the sim has no referee to look at.
+ *
+ * It costs less than it looks. A pin with nothing behind the victim is a pin the victim is
+ * being pushed ACROSS the field, and criterion B ends that as soon as either robot is 2 ft from
+ * where it started — so the only open-field pin the rule would sustain is a stationary
+ * stalemate, and a stationary stalemate is mutual, which criterion C ends anyway. What is left
+ * uncovered is narrow: a robot wedged on another robot with open field behind it.
+ */
+export const PIN_WALL_SLOP = 3; // in
+/**
+ * How closely the pinner must lie along the direction the victim is TRYING to go, as a cosine.
+ *
+ * "Preventing the movement" means the pinner is in the way. Without this the sim fouled a robot
+ * for standing behind an opponent who was driving itself into a wall under its own power — every
+ * clause was satisfied (contact, attempting to move, going nowhere, trapped) and the opponent was
+ * preventing nothing. Measured, the WEAKEST legal build "pinned" a default chassis that way.
+ *
+ * 0.34 is about 70 degrees either side: wide enough that a pinner does not fall out of it as the
+ * pair rocks or as the victim saws at the stick, tight enough that somebody behind you while you
+ * drive forwards is not pinning you.
+ */
+export const PIN_OBSTRUCT_COS = 0.34;
+/**
+ * "for more than 3 seconds" — how long criterion A or B must hold before the PIN is over.
+ *
+ * This replaces a 0.6 s lapse timer that ended a pin the moment the hold flickered for any
+ * reason at all. The rule is far narrower and far more patient than that: only DISTANCE ends a
+ * pin, and only after three full seconds of it. Everything else — the bumpers unloading for a
+ * tick, the victim's stick crossing the dead zone, the wall probe slipping past its slop as the
+ * pair rocks — merely PAUSES the count, which is exactly the flicker tolerance the 0.6 s timer
+ * was reaching for, except that a pinner can no longer wipe a two-and-a-half-second count by
+ * easing off for seven tenths of a second.
+ */
+export const PIN_END_S = 3; // s
 /** G408: "No more than 3 at a time. A ROBOT may not simultaneously CONTROL more than 3
  * ARTIFACTS." Violation: "MINOR FOUL per SCORING ELEMENT over the limit. YELLOW CARD if
  * excessive." The hopper caps at HOPPER_CAPACITY, so the foul bites when a full robot

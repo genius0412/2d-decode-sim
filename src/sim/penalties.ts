@@ -1,4 +1,4 @@
-import type { Artifact, Alliance, RobotCommand, RobotState, World } from '../types';
+import type { Artifact, Alliance, RobotCommand, RobotState, Vec2, World } from '../types';
 import * as C from '../config';
 import {
   baseZone,
@@ -21,6 +21,8 @@ import {
 import { pushingGate, ZERO_CMD } from './goal';
 import { awardCard, awardFoul } from './scoring';
 import { hyp, rot } from '../math';
+import { viewAngleOf } from './field';
+import { activeDrive } from './drivetrain';
 
 /**
  * DECODE penalty engine (Competition Manual Section 11). Pure and
@@ -665,6 +667,70 @@ function pinnedAgainstWall(pinner: RobotState, pinned: RobotState): boolean {
   return false;
 }
 
+/**
+ * The world-frame direction a robot is TRYING to translate, or null if it is not asking to
+ * translate at all. Mirrors `updateRobot`'s own command decode, because "attempting to move"
+ * has to mean the same thing to the referee as it does to the drivetrain.
+ *
+ * TANK IS WHY THIS IS A FUNCTION. A tank (or a butterfly on its traction set) is commanded as
+ * SIDE-DRIVE, and the old test read only `driveX`/`driveY`/`rotate` — which a Traditional-tank
+ * driver on separate sticks never fills. Such a robot was never "attempting to move", so it
+ * could not be pinned at all: G422 simply did not protect it.
+ */
+function attemptDir(r: RobotState, cmd: RobotCommand | undefined): Vec2 | null {
+  if (!cmd) return null;
+  const tank = activeDrive(r.spec, r.butterflyTank).p.saturation === 'tank';
+  // a FIELD-CENTRIC stick is already in the driver frame, so it only needs the camera undone;
+  // a robot-centric one is rotated by the heading, exactly as `updateRobot` does it
+  const world =
+    !tank && r.fieldCentric
+      ? rot({ x: cmd.driveX, y: cmd.driveY }, -viewAngleOf(r.alliance))
+      : rot(
+          tank
+            ? { x: ((cmd.leftDrive ?? 0) + (cmd.rightDrive ?? 0)) / 2, y: 0 }
+            : { x: cmd.driveY, y: -cmd.driveX },
+          r.heading,
+        );
+  const m = hyp(world.x, world.y);
+  return m > 0.1 ? { x: world.x / m, y: world.y / m } : null;
+}
+
+/**
+ * Is `pinner` PINNING `pinned` right now?
+ *
+ * G422: "A ROBOT is PINNING if it is preventing the movement of an opponent ROBOT by contact,
+ * either direct or transitive (such as against a FIELD element) and the opponent ROBOT is
+ * attempting to move."
+ *
+ * Three clauses are the rule's own. The fourth — `pinnedAgainstWall` — is the sim standing in
+ * for a referee; see PIN_WALL_SLOP for why something has to break the symmetry of a shove, and
+ * what leaving it in costs.
+ */
+function isPinning(
+  pinner: RobotState,
+  pinned: RobotState,
+  contact: boolean,
+  cmd: RobotCommand | undefined,
+): boolean {
+  if (!contact) return false;
+  if (!pinnedAgainstWall(pinner, pinned)) return false;
+  const want = attemptDir(pinned, cmd);
+  // a robot only turning on the spot is still asking to move, and a contact can stop that too
+  if (!want) return !!cmd && Math.abs(cmd.rotate) > 0.1;
+  /**
+   * "...PREVENTING the movement..." — so the pinner has to be IN THE WAY of where the victim is
+   * trying to go. Without this the sim fouled a robot for sitting behind an opponent who was
+   * driving itself into a wall under its own power: every other clause was satisfied and the
+   * opponent was preventing nothing. Measured, the WEAKEST legal build "pinned" a default
+   * chassis that way.
+   */
+  const dx = pinner.pos.x - pinned.pos.x;
+  const dy = pinner.pos.y - pinned.pos.y;
+  const d = hyp(dx, dy);
+  if (d < 1e-6) return false;
+  return (dx / d) * want.x + (dy / d) * want.y >= C.PIN_OBSTRUCT_COS;
+}
+
 function updatePins(world: World, dt: number, commands: Map<number, RobotCommand>): void {
   const pen = world.penalties;
   // contacts this tick, as an undirected id-pair set
@@ -672,74 +738,99 @@ function updatePins(world: World, dt: number, commands: Map<number, RobotCommand
   const inContact = (i: number, j: number): boolean =>
     contacts.has(`${Math.min(i, j)}-${Math.max(i, j)}`);
 
+  // every ordered opposing pair's verdict FIRST, because criterion C is about both of them
+  const pinning = new Map<string, boolean>();
+  for (const pinner of world.robots) {
+    for (const pinned of world.robots) {
+      if (pinner.id === pinned.id || pinner.alliance === pinned.alliance) continue;
+      pinning.set(
+        `${pinner.id}-${pinned.id}`,
+        isPinning(pinner, pinned, inContact(pinner.id, pinned.id), commands.get(pinned.id)),
+      );
+    }
+  }
+
   for (const pinner of world.robots) {
     for (const pinned of world.robots) {
       if (pinner.id === pinned.id || pinner.alliance === pinned.alliance) continue;
       const key = `${pinner.id}-${pinned.id}`;
-      const cmd = commands.get(pinned.id);
-      const commandingMove =
-        !!cmd && (hyp(cmd.driveX, cmd.driveY) > 0.1 || Math.abs(cmd.rotate) > 0.1);
+      const held = pinning.get(key) === true;
+      /** criterion C: "the PINNING ROBOT gets PINNED" — a mutual hold is nobody's foul */
+      const mutual = held && pinning.get(`${pinned.id}-${pinner.id}`) === true;
 
-      // Only the ACTUAL pinner is fouled: the pinned robot must be trapped against
-      // a solid with the pinner on the open-field side. Without this, a wall shove
-      // satisfies BOTH orderings (each robot is slow and commanding), and the
-      // victim's alliance was wrongly fouled too.
-      const contact = inContact(pinner.id, pinned.id);
-      const held = contact && commandingMove && pinnedAgainstWall(pinner, pinned);
+      let st = pen.pins[key];
+      if (!st) {
+        if (!held || mutual) continue;
+        st = {
+          seconds: 0,
+          ox: pinned.pos.x,
+          oy: pinned.pos.y,
+          pox: pinner.pos.x,
+          poy: pinner.pos.y,
+          px: pinned.pos.x,
+          py: pinned.pos.y,
+          billed: 0,
+          sepFor: 0,
+          awayFor: 0,
+        };
+        pen.pins[key] = st;
+      }
 
-      const existing = pen.pins[key];
-      if (!held) {
-        // THE CLOCK PAUSES, IT DOES NOT RESET. Every input here flickers — the SAT
-        // contact list drops a tick as bumpers unload, the victim's stick crosses
-        // the dead zone, the wall probe slips past the slop as the pair rocks — and
-        // wiping the accumulator on any one-tick lapse is why a genuine five-second
-        // pin used to count to half a second over and over and never foul.
-        if (!existing) continue;
-        existing.free = (existing.free ?? 0) + dt;
-        // ESCAPED = out of contact AND clear: either the pair is now far apart (the
-        // pinner backed off, which frees the victim just as much as the victim
-        // driving away does) or the victim has left where the pin began.
-        const gone =
-          !contact &&
-          (hyp(pinned.pos.x - pinner.pos.x, pinned.pos.y - pinner.pos.y) > C.PIN_ESCAPE_DIST ||
-            hyp(pinned.pos.x - existing.ox, pinned.pos.y - existing.oy) > C.PIN_ESCAPE_DIST);
-        if (gone || existing.free >= C.PIN_BREAK_S) delete pen.pins[key]; // really let go
+      if (mutual) {
+        delete pen.pins[key]; // C
         continue;
       }
 
-      let st = existing;
-      if (!st) {
-        st = { seconds: 0, ox: pinned.pos.x, oy: pinned.pos.y, px: pinned.pos.x, py: pinned.pos.y };
-        pen.pins[key] = st;
+      /**
+       * A and B, which are the ONLY things that end a pin.
+       *
+       * Both are distances held for MORE THAN THREE SECONDS, and both PAUSE the count in the
+       * meantime rather than resetting it — the rule says so twice, and it is the whole
+       * difference between a pin you can shrug off and one you cannot. The sim used to end a pin
+       * after 0.6 s of the hold merely LAPSING, for any reason at all, which let a pinner wipe a
+       * two-and-a-half-second count by easing off for seven tenths of a second.
+       */
+      const apart = hyp(pinned.pos.x - pinner.pos.x, pinned.pos.y - pinner.pos.y) >= C.PIN_ESCAPE_DIST;
+      const movedPinned = hyp(pinned.pos.x - st.ox, pinned.pos.y - st.oy) >= C.PIN_ESCAPE_DIST;
+      const movedPinner = hyp(pinner.pos.x - st.pox, pinner.pos.y - st.poy) >= C.PIN_ESCAPE_DIST;
+      st.sepFor = apart ? st.sepFor + dt : 0;
+      // "...until the PIN ends or until BOTH ROBOTS move back within 2ft"
+      st.awayFor = movedPinned || movedPinner ? st.awayFor + dt : 0;
+      if (st.sepFor > C.PIN_END_S || st.awayFor > C.PIN_END_S) {
+        delete pen.pins[key];
+        continue;
       }
-      st.free = 0; // the hold is on again
-      if (st.fired) continue; // already fouled this pin — hold until it breaks
 
-      // Progress AWAY from the pinner, from the actual (post-solver) position delta
-      // — robust whether or not a blocked robot's velocity has been zeroed.
-      //
-      // Measured along the ESCAPE direction, not as raw speed: a victim being
-      // bulldozed sideways along a wall is moving quickly and is no less pinned, and
-      // pausing the count every time it slid was the other reason real pins never
-      // reached three seconds. Only actually GAINING GROUND on the pinner counts.
-      const e = escapeDir(pinner, pinned);
-      const moved = { x: pinned.pos.x - st.px, y: pinned.pos.y - st.py };
-      const escapeSpeed = e ? (moved.x * e.x + moved.y * e.y) / dt : 0;
+      // last tick's pose, captured BEFORE it is overwritten — the escape measurement below
+      // needs the delta, and the pose must advance on paused ticks too or the first tick after
+      // a pause reads a whole pause's worth of travel as one tick of escape.
+      const prevX = st.px;
+      const prevY = st.py;
       st.px = pinned.pos.x;
       st.py = pinned.pos.y;
+      if (apart || movedPinned || movedPinner || !held) continue; // paused, not ended
 
-      if (escapeSpeed < C.PIN_STUCK_SPEED) {
-        st.seconds += dt;
-        if (st.seconds >= C.PIN_SECONDS) {
-          const prior = pen.pinFouls[pinner.id] ?? 0;
-          awardFoul(world, pinner.alliance, prior > 0 ? 'major' : 'minor', 'G422 pinning');
-          pen.pinFouls[pinner.id] = prior + 1;
-          // don't re-fire on the SAME pin — require a separation first (that's a
-          // genuine "repeat pin", which then escalates to MAJOR)
-          st.fired = true;
-        }
-      } else {
-        st.seconds = 0; // breaking away under its own power — pause the clock
+      /**
+       * "...preventing the movement..." measured rather than assumed: progress AWAY from the
+       * pinner, taken from the actual post-solver position delta, so it holds whether or not a
+       * blocked robot's velocity was zeroed. Along the ESCAPE direction rather than as raw speed
+       * — a victim bulldozed sideways along a wall is moving quickly and is no less pinned.
+       * PIN_STUCK_SPEED is the sim's own number; the rule leaves this to a referee's eye.
+       */
+      const e = escapeDir(pinner, pinned);
+      const escapeSpeed = e ? ((pinned.pos.x - prevX) * e.x + (pinned.pos.y - prevY) * e.y) / dt : 0;
+      if (escapeSpeed >= C.PIN_STUCK_SPEED) continue; // getting away under its own power
+
+      st.seconds += dt;
+      /**
+       * "Violation: MINOR FOUL and an additional MINOR FOUL for every 3 seconds in which the
+       * situation is not corrected." Nine seconds of pinning is three MINORs. It is never a
+       * MAJOR — the sim used to escalate a repeat pin to one, which the rule does not describe.
+       */
+      while (st.seconds >= C.PIN_SECONDS * (st.billed + 1)) {
+        st.billed += 1;
+        awardFoul(world, pinner.alliance, 'minor', 'G422 pinning');
+        pen.pinFouls[pinner.id] = (pen.pinFouls[pinner.id] ?? 0) + 1;
       }
     }
   }

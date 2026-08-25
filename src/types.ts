@@ -429,24 +429,27 @@ export interface HumanPlayerState {
 /** accumulator for one ordered pinner→pinned pair (G422). Plain numbers so
  * the whole World stays JSON-serializable / lockstep-safe. */
 export interface PinState {
-  /** seconds the pin condition has held continuously */
+  /** seconds the PIN has counted. Not wall-clock: it pauses (see below) and never resets, so
+   * it is the total the rule bills against — a MINOR at 3 s and another every 3 s after. */
   seconds: number;
-  /** where the pinned robot was when the pin began (escape = 24" from here) */
+  /** where each robot was when the PIN initiated — criterion B measures both against these */
   ox: number;
   oy: number;
-  /** pinned robot pos last tick, to measure actual (post-solver) speed */
+  pox: number;
+  poy: number;
+  /** pinned robot pos last tick, to measure actual (post-solver) progress away */
   px: number;
   py: number;
-  /** this pin already drew a foul — don't re-fire until the pair separates
-   * (a genuine repeat pin), so a sustained push isn't a foul every 3 s */
-  fired?: boolean;
-  /** seconds the hold has been LAPSED. Every input to the pin test flickers tick
-   * to tick (the SAT contact drops as bumpers unload, the victim's stick crosses
-   * the dead zone), so a lapse PAUSES the count instead of wiping it; the pin is
-   * over only once this passes PIN_BREAK_S, or the victim separates and drives
-   * PIN_ESCAPE_DIST away. */
-  free?: number;
+  /** how many MINOR FOULs this PIN has already drawn. G422 bills one at 3 s "and an additional
+   * MINOR FOUL for every 3 seconds in which the situation is not corrected", so a pin held for
+   * nine seconds is three fouls, not one — and not a MAJOR, which the rule never mentions. */
+  billed: number;
+  /** seconds criterion A has held (the pair at least PIN_ESCAPE_DIST apart) */
+  sepFor: number;
+  /** seconds criterion B has held (EITHER robot that far from where the pin initiated) */
+  awayFor: number;
 }
+
 
 /** deterministic penalty-engine state (all plain JSON — serializable) */
 export interface PenaltyState {
@@ -455,8 +458,9 @@ export interface PenaltyState {
   episodes: Record<string, number>;
   /** pinning accumulators, keyed `${pinnerId}-${pinnedId}` */
   pins: Record<string, PinState>;
-  /** how many pin fouls a given pinner (by id) has already committed, for the
-   * MINOR -> MAJOR escalation on a repeat pin */
+  /** how many G422 fouls a given pinner (by id) has committed this match. Bookkeeping only —
+   * the rule has no escalation, every PIN foul is a MINOR — but a per-robot tally is what the
+   * HUD and a post-match breakdown want. */
   pinFouls: Record<number, number>;
   /** G408 over-possession: an ACCUMULATED, leaky clock of seconds a robot (by id) has
    * controlled more than POSSESSION_LIMIT artifacts. It fills while over the limit and
