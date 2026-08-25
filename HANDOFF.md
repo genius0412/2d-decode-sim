@@ -1,4 +1,78 @@
-# HANDOFF — 2026-08-25 (what CONTROL actually is) — alpha only
+# HANDOFF — 2026-08-25 (making CONTROL lenient about running into things) — alpha only
+
+Branch **alpha**. `npm test` **1162 checks, ALL PASS** · `npm run build` green ·
+`npm run server:check` green · `npm run test:mm` 58 green. `SIM_VERSION` 5 → **6**.
+
+Do not merge to main. Standing rule.
+
+## READ FIRST
+
+The CONTROL rewrite below (2026-08-25a) was right about the definition and too eager in play.
+Two false positives were reported and both are fixed:
+
+* *"if you drive into a pile to intake, you get a penalty if you go in too far"*
+* *"you get a penalty if you drive into five balls that are ALREADY at the wall"*
+
+### The fix: "MOVING the SCORING ELEMENT" is a DISTANCE, and it is DIRECTIONAL
+
+Clause B's verb is about the artifact, so it has to have actually gone somewhere. The new
+`POSSESSION_CARRY_DIST` (5 in, one artifact diameter) accumulates per tick as
+`max(0, b.vel · pushDir) * dt`, where `pushDir` is the direction the robot's contact point is
+travelling.
+
+**The projection is the whole trick.** A row already resting on the perimeter squirts SIDEWAYS
+out of the squeeze — fast, but covering no ground in the direction the robot is driving it. A
+herded pile covers it steadily. So running into things is free and taking them somewhere is not,
+and a pile the robot DROVE to the wall still counts through the latch.
+
+Two things that do NOT work, both measured before landing this:
+
+* **an instantaneous speed floor** (what main used, and the obvious first try). Artifacts do not
+  RIDE a bumper in this sim — they bounce off and are re-struck — so a jammed pile reads as
+  moving quickly while going nowhere. At the ball's own rest threshold it still billed 6 MINORs
+  for driving into a wall row.
+* **undirected net travel.** A wall row scatters sideways plenty; only the projection separates
+  it from a herd.
+
+`POSSESSION_CONFIRM` also went 0.35 → 0.8 s. Contact plus a fifth of a second cannot tell
+"taking these somewhere" from "arriving among them". Swept over the thirteen scenes in the probe,
+**0.8 s with a 5 in carry is the only pair where every case comes out right** — 0.35 fouls the
+intake cases, and a longer carry starts letting real herding through.
+
+### Where the line now sits
+
+| scene | fouls |
+|---|---|
+| nose into an open clump to intake, however deep | no |
+| drive into 5 artifacts already on the wall, even leaning 20 s | no |
+| nose into a 9-row on the wall with the intake held | no |
+| parked among artifacts, never pushed | no |
+| herd a 5- or 6-pile across open floor | **yes** |
+| drive a pile INTO the wall and lean on it | **yes** (the latch) |
+| corral a pile and spin in place | **yes** |
+| RAM a wall row from 40 in away, scattering it | **yes** — see below |
+
+That last one is a deliberate judgement call: it covers the carry distance in the push direction
+because it really did move those artifacts 40 in. The line is displacement, not intent.
+
+### Smoke scenes: two more were unsound
+
+The `clump` helper parked unused artifacts at (900,900). Anything outside the perimeter is
+dragged back in by the containment pass in world.ts, so they reappeared on the field and the
+robot met them later — a THREE-artifact clump was drawing a foul off a stray. Unused artifacts
+are now REMOVED from `world.balls`, and the squirting-ball scene clears the field too. Scene
+durations are now derived from the gates (`acquireSecs`/`acquireTicks`) instead of hard-coded
+from the old constants.
+
+### Gotcha
+
+`world.penalties` still has no `unslimWorld` backfill. `ballCarry` is therefore declared
+**optional** and read through `??=`; a snapshot from an older server arrives without it and the
+first index would otherwise throw. Any future `PenaltyState` field needs the same treatment.
+
+---
+
+## 2026-08-25a — what CONTROL actually is (superseded as READ FIRST)
 
 Branch **alpha**, commit `9f8e633`, pushed. Working tree CLEAN (bar the untracked `zz-probe-*`
 scratch scripts). `npm test` **1159 checks, ALL PASS** · `npm run build` green ·

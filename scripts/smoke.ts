@@ -129,6 +129,7 @@ import {
   POSSESSION_CONFIRM,
   POSSESSION_GRACE,
   POSSESSION_REBILL_S,
+  POSSESSION_CARRY_DIST,
   PTS_FOUL_MAJOR,
   MAX_SAVED_STARTS,
   MAX_SAVED_STARTS_SUPPORTER,
@@ -6730,6 +6731,17 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   );
 }
 
+/**
+ * How long a HAND-DRIVEN G408 scene has to run for one artifact to clear every acquisition
+ * gate, given the speed the scene is carrying it at: the artifact must first be carried
+ * POSSESSION_CARRY_DIST in the push direction, then held for POSSESSION_CONFIRM, and only then
+ * does the per-robot POSSESSION_GRACE start. Derived rather than hard-coded so that tuning any
+ * of the three does not silently turn these checks into assertions about the clock.
+ */
+const acquireSecs = (speed: number): number =>
+  POSSESSION_CARRY_DIST / speed + POSSESSION_CONFIRM + POSSESSION_GRACE;
+const acquireTicks = (speed: number): number => Math.round(acquireSecs(speed) / (1 / 60)) + 4;
+
 // ---- G408 over-possession / plowing (MINOR) --------------------------------
 // A robot CONTROLLING more than POSSESSION_LIMIT artifacts (hopper + herded
 // loose balls) past POSSESSION_GRACE draws a MINOR foul on its own alliance.
@@ -6744,7 +6756,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   // travel, and carried along at the robot's own speed -> 4 controlled, over the limit
   w.balls.push({ id: 9001, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: POSSESSION_PUSH_MIN + 5, y: 0 }, z: 0, vz: 0 });
   // hold the over-possession just past the grace window
-  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 2; i++) {
+  for (let i = 0; i < acquireTicks(POSSESSION_PUSH_MIN + 5); i++) {
     w.time = i / 60;
     updatePenalties(w, 1 / 60, new Map());
   }
@@ -6762,7 +6774,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r2.hopper = ['green', 'green', 'green'];
   r2.vel = { x: 0, y: 0 }; // stationary
   w2.balls.push({ id: 9002, color: 'purple', state: { kind: 'ground' }, pos: { x: 2, y: 0 }, vel: { x: 0, y: 0 }, z: 0, vz: 0 });
-  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 2; i++) {
+  for (let i = 0; i < acquireTicks(POSSESSION_PUSH_MIN + 5); i++) {
     w2.time = i / 60;
     updatePenalties(w2, 1 / 60, new Map());
   }
@@ -6778,7 +6790,7 @@ function inGate(w: World, robotIdx: number, gate: 'red' | 'blue'): void {
   r3.pos = { x: 0, y: -8 };
   r3.hopper = ['green', 'green', 'green'];
   r3.vel = { x: POSSESSION_PUSH_MIN + 5, y: 0 };
-  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 2; i++) {
+  for (let i = 0; i < acquireTicks(POSSESSION_PUSH_MIN + 5); i++) {
     w3.time = i / 60;
     updatePenalties(w3, 1 / 60, new Map());
   }
@@ -7918,7 +7930,12 @@ function pinScene(
     w.match.phase = 'teleop';
     const r = w.robots[0];
     r.hopper = [...hopper];
-    for (const b of w.balls) if (b.state.kind === 'ground') b.pos = { x: 900, y: 900 };
+    // REMOVE the artifacts this scene is not using, rather than parking them at (900,900).
+    // Anything outside the perimeter is dragged back in by the containment pass in world.ts,
+    // so the "parked" ones reappear somewhere on the field and the robot meets them later —
+    // which is how a THREE-artifact clump managed to draw a foul.
+    const spare = w.balls.filter((b) => b.state.kind === 'ground').slice(n);
+    w.balls = w.balls.filter((b) => !spare.includes(b));
     let k = 0;
     for (const b of w.balls) {
       if (b.state.kind !== 'ground' || k >= n) continue;
@@ -7948,17 +7965,18 @@ function pinScene(
    * happened to be against a wall. Slowing the drive and giving it room to run is what makes it
    * an actual push across open floor.
    */
-  const herd = () => cmd({ driveY: 0.35, intake: true });
+  const herd = () => cmd({ driveY: 0.2, intake: true });
+  const HERD: [number, number] = [-55, -67]; // clump near the bottom wall, robot behind it
   check(
     'pushing a clump across open floor fouls even with the intake held',
-    clump(5, herd, 6, -40, -52) > 0 && clump(6, herd, 6, -40, -52) > 0,
-    `5-clump ${clump(5, herd, 6, -40, -52)} MINORs, 6-clump ${clump(6, herd, 6, -40, -52)}`,
+    clump(5, herd, 12, ...HERD) > 0 && clump(6, herd, 12, ...HERD) > 0,
+    `5-clump ${clump(5, herd, 12, ...HERD)} MINORs, 6-clump ${clump(6, herd, 12, ...HERD)}`,
   );
   // ...and three of them, which is all an empty robot may take, stays clean at the same throttle
   check(
     '...while herding only THREE with an empty hopper is exactly the limit',
-    clump(3, herd, 6, -40, -52) === 0,
-    `3-clump ${clump(3, herd, 6, -40, -52)} MINORs`,
+    clump(3, herd, 12, ...HERD) === 0,
+    `3-clump ${clump(3, herd, 12, ...HERD)} MINORs`,
   );
   // ...and the three cases that must stay clean, all previously reported
   check(
@@ -7971,6 +7989,63 @@ function pinScene(
     clump(4, (t) => (t < 1.2 ? cmd({ driveY: 1, intake: true }) : cmd({ driveY: -1, intake: true })), 5) === 0,
     'acquiring is not controlling',
   );
+  /**
+   * ...AND RUNNING INTO A PILE THAT IS ALREADY AT THE WALL IS NOT CONTROL OF IT.
+   *
+   * Both of these were reported against the first cut of the CONTROL rewrite — "if you drive
+   * into a pile to intake you get a penalty if you go in too far" and "you get a penalty if you
+   * drive into five balls that are ALREADY at the wall." Neither is a violation: the robot did
+   * not take those artifacts anywhere. G408 names the case itself, as the first thing that is
+   * NOT control — "bulldozing (INADVERTENT contact with a SCORING ELEMENT while in the path of
+   * the ROBOT moving about the FIELD)".
+   *
+   * What makes it work is that POSSESSION_CARRY_DIST is measured ALONG THE PUSH: a row pinned
+   * on the perimeter squirts sideways out of the squeeze, quickly, and covers no ground in the
+   * direction the robot is driving it. Contrast the check below, where the robot drove the pile
+   * to the wall itself and the latch keeps it there.
+   */
+  const wallRow = (n: number, hopper: ArtifactColor[], intake: boolean, secs: number) => {
+    const w = mkWorld('match', 'blue', 42);
+    startMatch(w);
+    w.match.phase = 'teleop';
+    const r = w.robots[0];
+    r.hopper = [...hopper];
+    const spare = w.balls.filter((b) => b.state.kind === 'ground').slice(n);
+    w.balls = w.balls.filter((b) => !spare.includes(b));
+    let k = 0;
+    for (const b of w.balls) {
+      if (b.state.kind !== 'ground' || k >= n) continue;
+      // a ROW resting flush along the far wall — already there, nowhere left to go
+      b.pos = { x: (k - (n - 1) / 2) * 5.1, y: FIELD_HALF - BALL_RADIUS };
+      b.vel = { x: 0, y: 0 };
+      b.z = 0;
+      b.vz = 0;
+      k++;
+    }
+    r.pos = { x: 0, y: FIELD_HALF - BALL_RADIUS - 16 };
+    r.heading = Math.PI / 2;
+    r.fieldCentric = false;
+    for (let i = 0; i < Math.round(secs / SIM_DT); i++) {
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: 1, intake })]]));
+    }
+    return w.match.fouls.blue.minor;
+  };
+  check(
+    'driving into FIVE artifacts already resting on the wall is not control (no G408)',
+    wallRow(5, ['green', 'green', 'green'], false, 8) === 0,
+    `blueMinor=${wallRow(5, ['green', 'green', 'green'], false, 8)}`,
+  );
+  check(
+    '...nor leaning on them for twenty seconds — the robot took them nowhere',
+    wallRow(5, ['green', 'green', 'green'], false, 20) === 0,
+    `blueMinor=${wallRow(5, ['green', 'green', 'green'], false, 20)}`,
+  );
+  check(
+    '...nor nosing DEEP into a nine-row at the wall with the intake held',
+    wallRow(9, ['green', 'green', 'green'], true, 10) === 0,
+    `blueMinor=${wallRow(9, ['green', 'green', 'green'], true, 10)}`,
+  );
+
   // ...and shoving one against a wall with a FULL robot does. The hopper is now passed in,
   // because the helper always emptied it: this check has said "with a FULL robot" since it was
   // written and has never once had one, which mattered the moment the acquire carve-out started
@@ -8040,11 +8115,14 @@ function pinScene(
   r.pos = { x: 0, y: -8 };
   r.heading = 0;
   r.hopper = ['green', 'green', 'green'];
+  // ...and ONLY the squirting ball is on the field, so a long enough window cannot quietly
+  // turn this into a check about whatever the robot drives into next.
+  w.balls = w.balls.filter((b) => b.state.kind !== 'ground');
   // STEPPED, not hand-held: the possession test is about where an artifact STAYS relative to
   // the robot, so a fixture that pins both in place and only calls updatePenalties would show
   // a permanently stationed artifact and assert the opposite of what it means to.
   w.balls.push({ id: 9101, color: 'purple', state: { kind: 'ground' }, pos: { x: 12, y: 0 }, vel: { x: 0, y: 60 }, z: 0, vz: 0 });
-  runCmds(w, new Map([[0, cmd({ driveY: 1 })]]), POSSESSION_CONFIRM + POSSESSION_GRACE + 0.5);
+  runCmds(w, new Map([[0, cmd({ driveY: 1 })]]), acquireSecs(POSSESSION_PUSH_MIN + 5) + 0.5);
   check(
     'a ball squirting sideways off the bumper is not plowed (no G408)',
     w.match.fouls.blue.minor === 0,
@@ -8084,7 +8162,7 @@ function pinScene(
   r3.vel = { x: -(POSSESSION_PUSH_MIN + 5), y: 0 }; // ...but DRIVING in reverse, toward −x
   // the ball is behind the chassis and ahead along the direction of travel, carried along
   w3.balls.push({ id: 9103, color: 'purple', state: { kind: 'ground' }, pos: { x: -2, y: 0 }, vel: { x: -(POSSESSION_PUSH_MIN + 5), y: 0 }, z: 0, vz: 0 });
-  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 4; i++) {
+  for (let i = 0; i < acquireTicks(POSSESSION_PUSH_MIN + 5); i++) {
     w3.time = i / 60;
     updatePenalties(w3, 1 / 60, new Map());
   }
@@ -8119,7 +8197,7 @@ function pinScene(
       vz: 0,
     });
   }
-  for (let i = 0; i < Math.round((POSSESSION_CONFIRM + POSSESSION_GRACE) / (1 / 60)) + 4; i++) {
+  for (let i = 0; i < acquireTicks(POSSESSION_PUSH_MIN + 5); i++) {
     w4.time = i / 60;
     updatePenalties(w4, 1 / 60, new Map());
   }

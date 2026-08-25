@@ -822,12 +822,26 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
     and sits on it is controlling the pile. A robot that never pushed anything never latches,
     which is how "I'm getting spammed with over-possession penalties just by standing still"
     stays fixed without a velocity threshold.
-  - **THERE IS NO SPEED FLOOR ANYWHERE IN THE DEFINITION**, and the two absolute-speed gates
-    that used to stand in front of the rule (`POSSESSION_MOVE_SPEED`, `POSSESSION_TURN_RATE`)
-    were exploitable from both ends: a six-artifact pile CREPT below 1.5 in/s drew nothing over
-    twelve seconds, and a pile jammed on a wall read as uncontrolled precisely BECAUSE it could
-    not move. `POSSESSION_PUSH_MIN` replaces them and sits low on purpose — it only keeps
-    numerical noise in a resting contact from reading as a push.
+  - **"MOVING" IS A DISTANCE, NOT A SPEED** (`POSSESSION_CARRY_DIST`, 5in = one artifact
+    diameter). Clause B's verb is about the artifact, so it has to have actually GONE somewhere,
+    accumulated **along the direction the robot is taking it** — and that projection is the
+    whole trick. A row already resting on the perimeter squirts SIDEWAYS out of the squeeze,
+    quickly, while covering no ground in the push direction; a herded pile covers it steadily.
+    So running into things is free and taking them somewhere is not, which is the two reported
+    false positives ("a penalty if you go in too far" intaking, and "driving into five balls
+    that are ALREADY at the wall") fixed without making a wall pin free.
+    An instantaneous SPEED floor cannot do this and was tried first: artifacts do not RIDE a
+    bumper here, they bounce off and are re-struck, so a jammed pile reads as moving fast while
+    going nowhere — at the ball's own rest threshold it still billed 6 MINORs for driving into
+    a wall row. Net directional distance is immune; jitter cancels.
+    The two ABSOLUTE-speed gates this replaced (`POSSESSION_MOVE_SPEED`, `POSSESSION_TURN_RATE`,
+    both from the FRC definition) leaked the other way too: a pile CREPT below 1.5 in/s drew
+    nothing over twelve seconds. `POSSESSION_PUSH_MIN` is all that is left of them and sits low
+    on purpose — it only keeps numerical noise in a resting contact from reading as a push.
+  - **`POSSESSION_CONFIRM` IS THE OTHER LENIENCY KNOB** (0.35 → 0.8s). Contact plus a fifth of
+    a second cannot tell "taking these somewhere" from "arriving among them", which is what
+    fouled a robot for nosing deep into a clump. Measured over the thirteen scenes in the G408
+    probe, 0.8s with a 5in carry is the ONLY pair where every case comes out right.
   - **CARVE-OUT C is the LOADING ZONE, scoped to the ROBOT being in it** — "inadvertent contact
     ... while attempting to acquire a SCORING ELEMENT **from the LOADING ZONE**". It used to key
     on the ARTIFACT's position alone, which made the whole 23×23 corner a control-free sanctuary;
@@ -851,6 +865,10 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
     and G434's is the exact per-artifact shape. It is kept because billed once, the whole tariff
     for hoarding six artifacts was three MINORs and then free for the match ("the over-possession
     penalty is way too lenient"). Set it to `Infinity` for the rule as written.
+  - **Deliberately still a foul**: RAMMING a wall row from across the field and scattering it
+    40in down the wall. It covers the carry distance in the push direction, because it really
+    did move those artifacts. The line is displacement, not intent, and that is the side of it
+    a referee would call.
   - **The per-(robot,artifact) clocks are SWEPT** when an artifact stops being a loose ground
     ball, and cleared outside auto/teleop. They were only deleted on the not-touching path, so
     an artifact that got INTAKEN kept its clock all match — unbounded growth in `world.penalties`

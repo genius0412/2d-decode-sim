@@ -91,6 +91,12 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    instead of intangible; the pair and static responses are summed before either is
  *    written; and robot contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12). Every match with
  *    contact re-sims differently.
+ * 6: G408 leniency — "the ROBOT is MOVING the SCORING ELEMENT" is now a DISTANCE carried in
+ *    the push direction (POSSESSION_CARRY_DIST) rather than the robot merely pressing, and the
+ *    confirm window went 0.35 -> 0.8 s. Driving into artifacts that are already against a wall,
+ *    or nosing deep into a clump to intake, no longer counts as control of them: they squirt
+ *    sideways out of the squeeze and cover no ground where the robot is driving them. A pile
+ *    the robot DROVE to the wall still counts, via the latch. Foul totals move.
  * 5: G408 over-possession, rewritten against DECODE's CONTROL definition instead of an FRC
  *    POSSESSION and an invented TRAPPING (neither term exists in this manual). Control is now
  *    ACQUIRED by herding — contact on a flat-or-concave face, the robot moving the artifact,
@@ -103,7 +109,7 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    the acquire carve-out sees the auto-intake assist. Every match with loose artifacts near
  *    a robot re-sims to a different foul total.
  */
-export const SIM_VERSION = 5;
+export const SIM_VERSION = 6;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).
@@ -245,6 +251,38 @@ export const POSSESSION_CONTROL_MARGIN = 0.4; // in
  */
 export const POSSESSION_PUSH_MIN = 0.5; // in/s, along the contact normal
 /**
+ * ...and how far the ARTIFACT has to have actually TRAVELLED, from where this robot first got
+ * hold of it, before the robot counts as MOVING it.
+ *
+ * Clause B is "the ROBOT is MOVING the SCORING ELEMENT in a preferred direction", and the verb
+ * is about the artifact, not the wheels. Pressing on something that is going nowhere is not
+ * moving it — which is the whole difference between herding a pile and running into one:
+ *
+ *   · a pile ALREADY resting on the perimeter cannot go anywhere, so driving into it is
+ *     contact and nothing else. G408 names exactly this: "bulldozing (INADVERTENT contact with
+ *     a SCORING ELEMENT while in the path of the ROBOT moving about the FIELD)";
+ *   · nor can a clump you have nosed into far enough to jam. Both were reported — "if you drive
+ *     into a pile to intake you get a penalty if you go in too far" and "you get a penalty if
+ *     you drive into five balls that are ALREADY at the wall."
+ *
+ * IT HAS TO BE DISTANCE, NOT SPEED. An instantaneous-speed floor was tried first and does not
+ * work, because artifacts do not RIDE a bumper in this sim — they bounce off it and are
+ * re-struck, so contact is a train of micro-impacts and a pile jammed on a wall reads as moving
+ * quickly while going nowhere at all. Measured, a speed floor at the ball's own rest threshold
+ * still billed 6 MINORs for driving into five artifacts that were already on the wall. Net
+ * displacement is immune: jitter cancels, travel accumulates.
+ *
+ * ONE BALL DIAMETER is the threshold because it is the one distance in the game that explains
+ * itself — the artifact is no longer where you found it, by its own width. Compression and
+ * squirt as a pile settles are well under it; anything you could call herding is well over.
+ *
+ * This gates ACQUIRING control only. Once herding IS established the latch holds it through a
+ * jam, so driving a pile INTO the wall and leaning on it still counts — those artifacts
+ * travelled on the way there. That split is the whole of the leniency: running into things is
+ * free, taking them somewhere is not.
+ */
+export const POSSESSION_CARRY_DIST = 5; // in — one artifact diameter, carried in the push direction
+/**
  * How far an artifact may WANDER, in the robot's own frame, and still count as remaining
  * "in approximately the same position relative to the ROBOT" — the glossary's test, applied
  * to the thing it actually talks about: POSITION.
@@ -328,8 +366,15 @@ export const POSSESSION_REBILL_S = 3;
  * as you shove; flicking re-strikes the same six every cycle, and because each artifact's
  * clock is LEAKY rather than resetting, those repeated touches add up on the artifacts
  * themselves. Identity is the signal — which artifacts, not how many.
+ *
+ * 0.35 -> 0.8 s, and the pair (this and POSSESSION_CARRY_DIST) is what makes the rule LENIENT
+ * about running into things. At 0.35 a robot nosing into a clump with its intake held was
+ * fouled once it went in deep enough to jam: contact plus a fifth of a second is not enough to
+ * tell "taking these somewhere" from "arriving among them". Measured over the thirteen scenes
+ * in the G408 probe, 0.8 with a 5 in carry is the ONLY setting where every one comes out right
+ * — 0.35 fouls the intake cases, and 1.2 with a longer carry starts letting real herding go.
  */
-export const POSSESSION_CONFIRM = 0.35; // s, per artifact
+export const POSSESSION_CONFIRM = 0.8; // s, per artifact
 /**
  * How long an artifact may sit in a RUNNING intake's mouth before it stops counting as
  * "being acquired" and starts counting as being PLOUGHED.

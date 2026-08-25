@@ -109,6 +109,7 @@ export function updatePenalties(
     pen.controlHeld = {};
     pen.ballHold = {};
     pen.ballAnchor = {};
+    pen.ballCarry = {};
     return;
   }
   const byId = new Map(world.robots.map((r) => [r.id, r] as const));
@@ -272,13 +273,16 @@ function updatePossession(
   for (const r of world.robots) {
     for (const b of world.balls) if (b.state.kind === 'ground') live.add(`${r.id}:${b.id}`);
   }
+  pen.ballCarry ??= {};
   for (const key of Object.keys(pen.ballHold)) {
     if (!live.has(key)) {
       delete pen.ballHold[key];
       delete pen.ballAnchor[key];
+      delete pen.ballCarry[key];
     }
   }
   for (const key of Object.keys(pen.ballAnchor)) if (!live.has(key)) delete pen.ballAnchor[key];
+  for (const key of Object.keys(pen.ballCarry)) if (!live.has(key)) delete pen.ballCarry[key];
 
   for (const r of world.robots) {
     // `cmd.intake || r.autoIntake` is what actually RUNS the intake (robot.ts), and the
@@ -460,7 +464,12 @@ function updatePossession(
  *   · the PREFERRED DIRECTION half is the sign: the robot's own rigid-body velocity at the
  *     contact, projected onto the direction it would drive the artifact.
  */
-function contactPush(r: RobotState, b: Artifact, cp: Vec2, loc: Vec2): number | null {
+function contactPush(
+  r: RobotState,
+  b: Artifact,
+  cp: Vec2,
+  loc: Vec2,
+): { speed: number; dirX: number; dirY: number } | null {
   const e = robotExtents(r);
   // how far the artifact's centre lies BEYOND each face plane; the nearest feature is a convex
   // CORNER precisely when it is beyond both at once, which is the whole of the clause-B test
@@ -500,8 +509,13 @@ function contactPush(r: RobotState, b: Artifact, cp: Vec2, loc: Vec2): number | 
    * so a tangential contact cannot be tipped negative by rounding.
    */
   const pv = robotPointVelocity(r, cp);
-  if ((pv.x * dx + pv.y * dy) / m < -C.POSSESSION_PUSH_MIN) return 0; // backing away, not herding
-  return hyp(pv.x, pv.y);
+  if ((pv.x * dx + pv.y * dy) / m < -C.POSSESSION_PUSH_MIN) return null; // backing away, not herding
+  const speed = hyp(pv.x, pv.y);
+  if (speed < C.POSSESSION_PUSH_MIN) return null;
+  // ...and WHICH WAY it is being taken: the contact point's own direction of travel. Not the
+  // outward normal — under a SPIN the point velocity is purely tangential and the normal
+  // component is zero, so a corralled pile swung round would read as going nowhere.
+  return { speed, dirX: pv.x / speed, dirY: pv.y / speed };
 }
 
 function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: boolean): number {
@@ -523,12 +537,14 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
         if (t <= 0) {
           delete pen.ballHold[key];
           delete pen.ballAnchor[key];
+          if (pen.ballCarry) delete pen.ballCarry[key];
         } else pen.ballHold[key] = t;
       }
       continue;
     }
     const loc = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
     const anchor = pen.ballAnchor[key];
+    const carried = (pen.ballCarry ??= {});
     const stationed =
       anchor !== undefined && hyp(loc.x - anchor.x, loc.y - anchor.y) <= C.POSSESSION_DRIFT;
     if (!stationed) {
@@ -548,8 +564,13 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
        */
       pen.ballAnchor[key] = { x: loc.x, y: loc.y };
       const was = pen.ballHold[key] ?? 0;
-      pen.ballHold[key] = was >= C.POSSESSION_CONFIRM ? was : 0;
-      if (was >= C.POSSESSION_CONFIRM) held.add(b.id);
+      const latched = was >= C.POSSESSION_CONFIRM;
+      pen.ballHold[key] = latched ? was : 0;
+      // the WORLD origin travels with the hold, not with the station: a latched artifact
+      // shuffling along the bumper has not been re-found, and re-zeroing how far it has come
+      // every time it slips would mean a pile that rattles can never be shown to have moved.
+      if (!latched) carried[key] = 0;
+      if (latched) held.add(b.id);
       continue;
     }
     /**
@@ -558,9 +579,30 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
      * turning a corralled pile is moving it just as surely as one driving into it — which is
      * how "changes ORIENTATION" survives the loss of the FRC definition it used to come from.
      */
+    /**
+     * ...and clause B's verb is MOVING: the robot has to be driving into it (`push`), on a face
+     * rather than a corner (`push !== null`), AND THE ARTIFACT HAS TO ACTUALLY BE GOING
+     * SOMEWHERE. Pressing on something that cannot move is contact, not herding — G408's own
+     * "bulldozing ... while in the path of the ROBOT moving about the FIELD".
+     *
+     * This gates ACQUIRING only. The latch below carries an established hold straight through a
+     * jam, so a pile you DROVE into the wall keeps counting while one that was already there
+     * never starts. That split is the whole of the leniency: running into things is free,
+     * taking them somewhere is not.
+     */
     const push = contactPush(r, b, cp, loc);
+    let carry = carried[key] ?? 0;
+    if (push) {
+      // how far the artifact ACTUALLY WENT this tick in the direction the robot is taking it.
+      // Clamped at zero so a bounce-back cannot pay down the distance already carried, and
+      // projected so that squirting SIDEWAYS out of a squeeze earns nothing: a row pinned on
+      // the perimeter is moving quickly and travelling nowhere.
+      const along = b.vel.x * push.dirX + b.vel.y * push.dirY;
+      if (along > 0) carry += along * dt;
+    }
+    carried[key] = carry;
     let t = pen.ballHold[key] ?? 0;
-    if (push !== null && push >= C.POSSESSION_PUSH_MIN) t += dt;
+    if (push && carry >= C.POSSESSION_CARRY_DIST) t += dt;
     pen.ballHold[key] = t;
     // ...and once it is established it LATCHES: "pushes a SCORING ELEMENT TO A DESIRED
     // LOCATION" does not stop being true when the robot stops shoving.

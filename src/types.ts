@@ -496,6 +496,16 @@ export interface PenaltyState {
    * while one you slide past sweeps the chassis and re-anchors. Re-seeded when an artifact
    * moves to a new station, deleted with the hold. */
   ballAnchor: Record<string, Vec2>;
+  /** ...and how far it has actually been CARRIED, in inches, in the direction the robot has
+   * been taking it: `"<robotId>:<ballId>"` -> distance. This is how "the ROBOT is MOVING the
+   * SCORING ELEMENT in a preferred direction" is measured, and it has to be a projected
+   * DISTANCE rather than a speed. Contact in this sim is a train of micro-impacts, so a pile
+   * jammed on the perimeter reads as moving fast while going nowhere — it squirts sideways out
+   * of the squeeze, which earns nothing here. Unlike `ballAnchor` it survives a re-station, so
+   * a pile that rattles along a bumper still shows the ground it has covered. OPTIONAL, and
+   * read through `??=`: `world.penalties` has no `unslimWorld` backfill, so a snapshot from an
+   * older server would otherwise arrive without it and the first index would throw. */
+  ballCarry?: Record<string, number>;
   /** how many clause-B stretches have run longer than MOMENTARY this match */
   controlInstances: Record<number, number>;
   carded: Record<number, CardColor>;
