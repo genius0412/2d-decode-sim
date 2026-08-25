@@ -2,7 +2,7 @@
 
 Branch **alpha**, commit `7ea642b`, pushed. Working tree CLEAN.
 `npm test` ALL PASS · `npm run build` green · `npm run server:check` green ·
-`npm run test:mm` green. **NOT deployed** — flyctl is logged out, see *Open*.
+`npm run test:mm` green. **Deployed to the alpha preview** (`dsim-alpha`), production untouched.
 
 Do not merge to main. Standing rule.
 
@@ -205,14 +205,18 @@ the wall-ram torque bound. 12 is the largest step with zero collateral.
   moves and the stiffer contact moves solo record scores too, so the current DECODE and Chain
   Reaction standings are archived and the boards start over. `SIM_VERSION` 2 → 3 handles replay
   invalidation on its own axis.
-- ⚠️ **NOT DEPLOYED — flyctl is logged out.** The intent is the ALPHA PREVIEW only
-  (`./scripts/fly-deploy.sh --alpha` → `dsim-alpha`, its own database, no live players); the
-  attempt failed with *"no access token available"*. Run `flyctl auth login`, then the wrapper.
-  **Nothing runs this yet**: every server-authoritative mode (lobby, ranked, record) is stepping
-  the OLD physics, so a client built from this branch predicts the new sim against it and gets
-  constant reconcile snap-back. Production `dohun-sim-decode` is a separate, later decision —
-  ship that with `ADMIN_SECRET=… scripts/announce-deploy.sh` when the season reset is wanted
-  for real.
+- **DEPLOYED to the ALPHA PREVIEW** — `./scripts/fly-deploy.sh --alpha` → `dsim-alpha`, image
+  `deployment-01M0V3KPC6YEPRQ9JBH2B2Q3KW`, one machine in `iad`, `/health` returns `ok`. Its own
+  database, no live players. (It reports `stopped` between requests; the preview auto-stops when
+  idle and Fly starts it on the first connection — that is normal for the single-region app.)
+- ⚠️ **Production `dohun-sim-decode` is still on the OLD physics.** A production client built
+  from this branch would predict the new sim against a server stepping the old one — constant
+  reconcile snap-back. Ship it with `ADMIN_SECRET=… scripts/announce-deploy.sh` when the season
+  reset is wanted for real; that is a separate decision from this preview.
+- Gotcha for next time: the `flyctl` token in `~/.fly/config.yml` had expired (well-formed
+  `fm2_` macaroon, `last_login` six weeks earlier), and flyctl reports that as
+  *"no access token available"* rather than a 401 — it reads as a missing credential, not a
+  stale one. `flyctl auth login` is the fix.
 - The **residual order-dependence is Rapier's own body order** (`world.robots` order), not the
   bespoke pass. It is deterministic and identical for identical inputs; it only shows if you
   permute which robot holds which id, which never happens in a real match.
