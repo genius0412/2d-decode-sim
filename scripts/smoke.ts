@@ -8004,7 +8004,7 @@ function pinScene(
    * direction the robot is driving it. Contrast the check below, where the robot drove the pile
    * to the wall itself and the latch keeps it there.
    */
-  const wallRow = (n: number, hopper: ArtifactColor[], intake: boolean, secs: number) => {
+  const wallRow = (n: number, hopper: ArtifactColor[], intake: boolean, secs: number, gain = 1) => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
     w.match.phase = 'teleop';
@@ -8026,7 +8026,7 @@ function pinScene(
     r.heading = Math.PI / 2;
     r.fieldCentric = false;
     for (let i = 0; i < Math.round(secs / SIM_DT); i++) {
-      step(w, SIM_DT, new Map([[0, cmd({ driveY: 1, intake })]]));
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: gain, intake })]]));
     }
     return w.match.fouls.blue.minor;
   };
@@ -8042,8 +8042,49 @@ function pinScene(
   );
   check(
     '...nor nosing DEEP into a nine-row at the wall with the intake held',
-    wallRow(9, ['green', 'green', 'green'], true, 10) === 0,
-    `blueMinor=${wallRow(9, ['green', 'green', 'green'], true, 10)}`,
+    wallRow(9, ['green', 'green', 'green'], true, 10, 0.5) === 0,
+    `blueMinor=${wallRow(9, ['green', 'green', 'green'], true, 10, 0.5)}`,
+  );
+  /**
+   * ...BUT THE LINE IS DISPLACEMENT, NOT INTENT, and this is the other side of it. Nosing into
+   * a row at the wall leaves it where it is; RAMMING the same row at full throttle scatters it
+   * forty inches along the wall, and that really is moving those artifacts somewhere. Measured:
+   * a 0.5-throttle press moves the outer artifacts 33-39 in and draws nothing, because they
+   * squirt SIDEWAYS out of the squeeze rather than covering ground where the robot is driving
+   * them; the full-throttle ram carries four of them past POSSESSION_CARRY_DIST in the push
+   * direction and costs three MINORs. Pinned so the boundary cannot drift unnoticed.
+   */
+  check(
+    '...but RAMMING a nine-row at full throttle, scattering it, does foul',
+    wallRow(9, ['green', 'green', 'green'], true, 10, 1) > 0,
+    `blueMinor=${wallRow(9, ['green', 'green', 'green'], true, 10, 1)}`,
+  );
+
+  /**
+   * ...AND IT FIRES WHEN THE DRIVER IS STEERING, WHICH IS THE ONLY WAY ANYONE DRIVES.
+   *
+   * Reported as "when I just push a clump in open space it doesn't give me [the penalty]", and
+   * the cause was not a threshold. An artifact used to count ONLY on the ticks it was actually
+   * touching the footprint — but artifacts do not ride a bumper here, they bounce off it and
+   * are re-struck, so contact is intermittent. The moment the driver steered at all, a robot
+   * pushing a six-clump controlled exactly THREE (its own hopper) for 97% of ticks and the rule
+   * never fired. An ESTABLISHED hold now keeps counting while it DRAINS, so a re-struck
+   * artifact stays controlled between bounces; the drain is what bounds it.
+   */
+  const steer = (amp: number, freq: number) => (t: number) =>
+    cmd({ driveY: 0.6, rotate: Math.sin(t * freq) * amp, intake: false });
+  check(
+    'herding a clump in open space fouls WHILE STEERING, not only dead straight',
+    clump(6, steer(0.15, 1.3), 10, -40, -52, ['green', 'green', 'green']) > 0 &&
+      clump(6, steer(0.08, 0.5), 10, -40, -52, ['green', 'green', 'green']) > 0,
+    `gentle steer ${clump(6, steer(0.15, 1.3), 10, -40, -52, ['green', 'green', 'green'])} MINORs, ` +
+      `corrective ${clump(6, steer(0.08, 0.5), 10, -40, -52, ['green', 'green', 'green'])}`,
+  );
+  // ...and a throttle that is not held perfectly steady is the same violation
+  check(
+    '...and while the throttle wobbles',
+    clump(6, (t) => cmd({ driveY: 0.4 + 0.3 * Math.sin(t * 3) }), 10, -40, -52, ['green', 'green', 'green']) > 0,
+    `${clump(6, (t) => cmd({ driveY: 0.4 + 0.3 * Math.sin(t * 3) }), 10, -40, -52, ['green', 'green', 'green'])} MINORs`,
   );
 
   // ...and shoving one against a wall with a FULL robot does. The hopper is now passed in,

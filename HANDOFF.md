@@ -1,4 +1,69 @@
-# HANDOFF — 2026-08-25 (making CONTROL lenient about running into things) — alpha only
+# HANDOFF — 2026-08-25 (making CONTROL reachable again) — alpha only
+
+Branch **alpha**. `npm test` **1165 checks, ALL PASS** · `npm run build` green ·
+`npm run server:check` green · `npm run test:mm` 58 green. `SIM_VERSION` 6 → **7**.
+
+Do not merge to main. Standing rule.
+
+## READ FIRST
+
+The leniency pass below (2026-08-25b) went too far the other way: *"when I just push a clump in
+open space it doesn't give me [the penalty]"*. Fixed, and the cause was not a threshold.
+
+### An artifact only counted on the ticks it was TOUCHING
+
+Artifacts do not RIDE a bumper in this sim — they bounce off it and are re-struck — so a herded
+pile is in contact only intermittently. `held.add()` happened solely on touching ticks, so the
+count collapsed to whatever was in the hopper between bounces. Measured, with a six-clump in
+open space:
+
+| driving | ticks controlling >3 | fouls |
+|---|---|---|
+| dead straight | 89% | 9 |
+| gentle steer (±0.15) | **4%** | **0** |
+| hard weave (±0.3 @2 Hz) | **0%** | **0** |
+
+So the rule worked only if you drove perfectly straight. **An established hold now keeps
+counting while it DRAINS**, so a re-struck artifact stays controlled between bounces; the drain
+is what bounds it (an artifact stops counting a couple of confirm windows after the robot really
+has left it, and one that never established has nothing to drain). `POSSESSION_CARRY_DIST` is
+now sticky too — across re-stations and across the hold dying — because ground already covered
+does not un-happen. `POSSESSION_CONFIRM` 0.8 → **0.65**.
+
+Neither `POSSESSION_LEAK` nor `POSSESSION_CONFIRM` could fix this on their own; both were swept
+(0.12–0.5 and 0.35–0.8) and the steering cases stayed at zero. It was never a threshold.
+
+### Where the line sits now
+
+Clean: nosing into an open clump however deep · driving into 5 artifacts already on the wall,
+even leaning 20 s · nosing a 9-row at the wall at half throttle · collecting 3 with an empty
+hopper · driving past artifacts strung along a lane · parked among artifacts.
+
+Fouls: herding 5–6 across open floor straight, steering, or with the throttle wobbling ·
+driving a pile INTO the wall and leaning · spinning a corralled pile · **ramming a 9-row at full
+throttle and scattering it 40 in**.
+
+That last pair is one boundary, and both sides are pinned in smoke: a half-throttle press
+displaces the outer artifacts 33–39 in and draws NOTHING, because they squirt sideways out of
+the squeeze rather than covering ground in the push direction; the full-throttle ram carries
+four of them past the carry distance and costs three MINORs.
+
+### Known limit
+
+A robot WEAVING hard while pushing bats the clump apart and then genuinely controls only its own
+three, so it draws nothing. That is the count being honest rather than the rule failing — but it
+does mean a flailing robot is cheaper than a tidy one. If that ever matters, the fix is in the
+ball–robot contact feel (how far a turning bumper flings artifacts), not in G408.
+
+### Gotcha that cost time here
+
+A `sed` on `cmd({ driveY: 1, intake })` matched an identical line inside an unrelated `gateHold`
+helper and broke the suite at check 538. **`npm test` printing no FAIL is not proof it passed** —
+it can die partway. Check the count, or the `ALL PASS` line at the end.
+
+---
+
+## 2026-08-25b — making CONTROL lenient about running into things (superseded as READ FIRST)
 
 Branch **alpha**. `npm test` **1162 checks, ALL PASS** · `npm run build` green ·
 `npm run server:check` green · `npm run test:mm` 58 green. `SIM_VERSION` 5 → **6**.

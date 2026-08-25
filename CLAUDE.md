@@ -838,10 +838,20 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
     both from the FRC definition) leaked the other way too: a pile CREPT below 1.5 in/s drew
     nothing over twelve seconds. `POSSESSION_PUSH_MIN` is all that is left of them and sits low
     on purpose — it only keeps numerical noise in a resting contact from reading as a push.
-  - **`POSSESSION_CONFIRM` IS THE OTHER LENIENCY KNOB** (0.35 → 0.8s). Contact plus a fifth of
+  - **`POSSESSION_CONFIRM` IS THE OTHER LENIENCY KNOB** (0.35 → 0.65s). Contact plus a fifth of
     a second cannot tell "taking these somewhere" from "arriving among them", which is what
-    fouled a robot for nosing deep into a clump. Measured over the thirteen scenes in the G408
-    probe, 0.8s with a 5in carry is the ONLY pair where every case comes out right.
+    fouled a robot for nosing deep into a clump. Swept against the full case matrix, 0.65s with
+    a 5in carry is the window where every case lands.
+  - **AN ESTABLISHED HOLD KEEPS COUNTING WHILE IT DRAINS**, not only on the ticks the artifact
+    is touching — and this is what makes the rule reachable at all. Artifacts do not RIDE a
+    bumper here, they bounce off and are re-struck, so a herded pile is in contact only
+    intermittently. Counting solely on touching ticks meant that the moment a driver STEERED,
+    a robot pushing a six-clump controlled exactly THREE (its own hopper) for 97% of ticks and
+    the rule never fired — reported as "when I just push a clump in open space it doesn't give
+    me [the penalty]". The drain bounds it: an artifact stops counting a couple of confirm
+    windows after the robot really has left it, and one that never established has nothing to
+    drain. The carry distance is likewise STICKY across re-stations and across the hold dying,
+    because ground already covered does not un-happen.
   - **CARVE-OUT C is the LOADING ZONE, scoped to the ROBOT being in it** — "inadvertent contact
     ... while attempting to acquire a SCORING ELEMENT **from the LOADING ZONE**". It used to key
     on the ARTIFACT's position alone, which made the whole 23×23 corner a control-free sanctuary;
@@ -865,10 +875,16 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
     and G434's is the exact per-artifact shape. It is kept because billed once, the whole tariff
     for hoarding six artifacts was three MINORs and then free for the match ("the over-possession
     penalty is way too lenient"). Set it to `Infinity` for the rule as written.
-  - **Deliberately still a foul**: RAMMING a wall row from across the field and scattering it
-    40in down the wall. It covers the carry distance in the push direction, because it really
-    did move those artifacts. The line is displacement, not intent, and that is the side of it
-    a referee would call.
+  - **Deliberately still a foul**: RAMMING a wall row at full throttle and scattering it 40in
+    along the wall. It covers the carry distance in the push direction, because it really did
+    move those artifacts. NOSING into the same row at half throttle displaces the outer ones
+    just as far and draws nothing, because they squirt SIDEWAYS out of the squeeze rather than
+    covering ground where the robot is driving them — that projection is the whole distinction,
+    and both sides of it are pinned in smoke.
+  - **Known limit**: a robot WEAVING hard while pushing (±0.3 rad at 2 Hz) bats the clump apart
+    and then genuinely controls only its own three, so it draws nothing. That is the count
+    being honest, not the rule failing — but it does mean a flailing robot is cheaper than a
+    tidy one.
   - **The per-(robot,artifact) clocks are SWEPT** when an artifact stops being a loose ground
     ball, and cleared outside auto/teleop. They were only deleted on the not-touching path, so
     an artifact that got INTAKEN kept its clock all match — unbounded growth in `world.penalties`

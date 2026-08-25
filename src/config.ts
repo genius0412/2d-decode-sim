@@ -91,6 +91,11 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    instead of intangible; the pair and static responses are summed before either is
  *    written; and robot contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12). Every match with
  *    contact re-sims differently.
+ * 7: G408 reach — an ESTABLISHED hold now keeps counting while it DRAINS, instead of only on
+ *    the ticks the artifact is actually touching. Artifacts bounce off a bumper here rather
+ *    than riding it, so contact is intermittent: the moment a driver steered at all, a robot
+ *    pushing a six-clump controlled exactly THREE for 97% of ticks and the rule never fired.
+ *    POSSESSION_CONFIRM 0.8 -> 0.65 and the carry distance is now sticky across re-stations.
  * 6: G408 leniency — "the ROBOT is MOVING the SCORING ELEMENT" is now a DISTANCE carried in
  *    the push direction (POSSESSION_CARRY_DIST) rather than the robot merely pressing, and the
  *    confirm window went 0.35 -> 0.8 s. Driving into artifacts that are already against a wall,
@@ -109,7 +114,7 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    the acquire carve-out sees the auto-intake assist. Every match with loose artifacts near
  *    a robot re-sims to a different foul total.
  */
-export const SIM_VERSION = 6;
+export const SIM_VERSION = 7;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).
@@ -280,6 +285,12 @@ export const POSSESSION_PUSH_MIN = 0.5; // in/s, along the contact normal
  * jam, so driving a pile INTO the wall and leaning on it still counts — those artifacts
  * travelled on the way there. That split is the whole of the leniency: running into things is
  * free, taking them somewhere is not.
+ *
+ * The distance is CUMULATIVE and STICKY: it survives the artifact re-stationing on the chassis
+ * and survives its hold clock dying, because ground already covered does not un-happen and
+ * because a clump in open space is pushed in a series of bounces rather than one continuous
+ * shove. It is cleared only when the artifact stops being a loose ground ball, or outside
+ * auto/teleop.
  */
 export const POSSESSION_CARRY_DIST = 5; // in — one artifact diameter, carried in the push direction
 /**
@@ -367,14 +378,14 @@ export const POSSESSION_REBILL_S = 3;
  * clock is LEAKY rather than resetting, those repeated touches add up on the artifacts
  * themselves. Identity is the signal — which artifacts, not how many.
  *
- * 0.35 -> 0.8 s, and the pair (this and POSSESSION_CARRY_DIST) is what makes the rule LENIENT
+ * 0.35 -> 0.65 s, and the pair (this and POSSESSION_CARRY_DIST) is what makes the rule LENIENT
  * about running into things. At 0.35 a robot nosing into a clump with its intake held was
  * fouled once it went in deep enough to jam: contact plus a fifth of a second is not enough to
- * tell "taking these somewhere" from "arriving among them". Measured over the thirteen scenes
- * in the G408 probe, 0.8 with a 5 in carry is the ONLY setting where every one comes out right
- * — 0.35 fouls the intake cases, and 1.2 with a longer carry starts letting real herding go.
+ * tell "taking these somewhere" from "arriving among them". Swept against the full G408 case
+ * matrix, 0.65 with a 5 in carry is the window where every case lands — below it the intake
+ * cases foul, above it real herding starts slipping through.
  */
-export const POSSESSION_CONFIRM = 0.8; // s, per artifact
+export const POSSESSION_CONFIRM = 0.65; // s, per artifact
 /**
  * How long an artifact may sit in a RUNNING intake's mouth before it stops counting as
  * "being acquired" and starts counting as being PLOUGHED.

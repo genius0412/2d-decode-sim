@@ -530,15 +530,32 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
     const key = `${r.id}:${b.id}`;
     const cp = closestPointOnRobot(r, b.pos);
     if (hyp(b.pos.x - cp.x, b.pos.y - cp.y) > reach) {
-      // not touching: its clock drains, and a long enough gap forgets the station entirely
+      /**
+       * Not touching THIS TICK: the clock drains, and a long enough gap forgets the station.
+       *
+       * An ESTABLISHED hold still counts while it drains, though, and that is not a fudge — it
+       * is the difference between the rule working in open space and not. Artifacts do not ride
+       * a bumper here, they bounce off it and are re-struck, so a herded pile is in contact
+       * only intermittently. Counting an artifact solely on the ticks it happens to be touching
+       * meant a robot pushing a six-clump across the floor controlled exactly THREE (its hopper)
+       * for 97% of ticks the moment the driver so much as steered — measured — and the rule
+       * simply never fired. Reported as "when I just push a clump in open space it doesn't
+       * give me [the penalty]".
+       *
+       * The drain is what bounds it: at POSSESSION_LEAK an artifact stops counting a couple of
+       * confirm-windows after the robot really has left it, and one that was never established
+       * has nothing to drain.
+       */
       const prev = pen.ballHold[key];
       if (prev !== undefined) {
         const t = prev - dt * C.POSSESSION_LEAK;
         if (t <= 0) {
           delete pen.ballHold[key];
           delete pen.ballAnchor[key];
-          if (pen.ballCarry) delete pen.ballCarry[key];
-        } else pen.ballHold[key] = t;
+        } else {
+          pen.ballHold[key] = t;
+          if (t >= C.POSSESSION_CONFIRM) held.add(b.id);
+        }
       }
       continue;
     }
@@ -569,7 +586,6 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
       // the WORLD origin travels with the hold, not with the station: a latched artifact
       // shuffling along the bumper has not been re-found, and re-zeroing how far it has come
       // every time it slips would mean a pile that rattles can never be shown to have moved.
-      if (!latched) carried[key] = 0;
       if (latched) held.add(b.id);
       continue;
     }
