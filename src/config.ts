@@ -70,61 +70,44 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  * output. Never reset it. Leaderboards, ELO and seasons DO NOT read it — only
  * replay playback does (`ReplayView` refuses a mismatch and says so).
  *
- * 1: sim-reachable Math.hypot -> hyp (engine-independent; see src/math.ts)
- * 2: the alpha batch — CR butterfly drivetrain / twin turret / catalyst mechanisms /
- *    corner geometry / start legality, DECODE's G418.B fix (a gate tap no longer
- *    bills the standing ramp column), and the G408/G422 retune (a lenient plowing
- *    test + a pin count that survives its own flicker and recognises goal/classifier
- *    traps), so any match with contact re-sims to a different foul total. All of it
- *    moves `step()` output.
- * 4: G422 pinning, rewritten against the rule's own clauses — "preventing the movement" now
- *    requires the pinner to be IN THE WAY of where the victim is trying to go, "attempting to
- *    move" reads side-drive so a tank can be pinned at all, the count ends only on criteria
- *    A/B/C (pausing and resuming rather than dying on a 0.6 s lapse), and the violation bills a
- *    MINOR every 3 seconds instead of one MINOR with an invented MAJOR escalation.
- * 3: robot-on-robot pushing, rebuilt. The shove is now stated as a FORCE and the collider
- *    mass derived from it (`pushForce`/`shoveMass`), so weight, gearing and power draw each
- *    act once instead of cancelling or landing twice; a shoved chassis gets a real two-body
- *    contact impulse, so an off-centre hit spins it; the press that scales every robot-robot
- *    response is the pair's CLOSING velocity rather than each robot's absolute one; a robot
- *    held against a surface by an opponent now feels that load; an auto-path robot is solid
- *    instead of intangible; the pair and static responses are summed before either is
- *    written; and robot contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12). Every match with
- *    contact re-sims differently.
- * 9: G408's mouth carve-out is capped at what the rollers take in one cycle (one artifact, two
- *    for a triangle) instead of at hopper ROOM. With the PLAYER assists — auto-fire keeping all
- *    three slots empty, auto-intake keeping the exemption armed — three artifacts were excused
- *    on every tick forever, and a nine-clump herded in open space drew 2 MINORs where the same
- *    push with auto-intake off drew 15.
- * 8: PENALTIES ARE ASSESSED IN FREE DRIVE. `freeplay` is a live phase everywhere else in the
- *    sim (robotsEnabled, the human player, the shooter) and `updatePenalties` was the one
- *    place that excluded it, so the whole engine was off in the mode people practise in —
- *    measured, an identical herd drew 0 fouls in free drive and 13 in a match. Phase-specific
- *    rules stay inert on their own terms (G402 is auto-only, endgame is teleop-only).
- * 7: G408 reach — an ESTABLISHED hold now keeps counting while it DRAINS, instead of only on
- *    the ticks the artifact is actually touching. Artifacts bounce off a bumper here rather
- *    than riding it, so contact is intermittent: the moment a driver steered at all, a robot
- *    pushing a six-clump controlled exactly THREE for 97% of ticks and the rule never fired.
- *    POSSESSION_CONFIRM 0.8 -> 0.65 and the carry distance is now sticky across re-stations.
- * 6: G408 leniency — "the ROBOT is MOVING the SCORING ELEMENT" is now a DISTANCE carried in
- *    the push direction (POSSESSION_CARRY_DIST) rather than the robot merely pressing, and the
- *    confirm window went 0.35 -> 0.8 s. Driving into artifacts that are already against a wall,
- *    or nosing deep into a clump to intake, no longer counts as control of them: they squirt
- *    sideways out of the squeeze and cover no ground where the robot is driving them. A pile
- *    the robot DROVE to the wall still counts, via the latch. Foul totals move.
- * 5: G408 over-possession, rewritten against DECODE's CONTROL definition instead of an FRC
- *    POSSESSION and an invented TRAPPING (neither term exists in this manual). Control is now
- *    ACQUIRED by herding — contact on a flat-or-concave face, the robot moving the artifact,
- *    sustained past the confirm window — and LATCHES while contact holds, replacing two
- *    absolute-speed gates that let a crept hoard go free and read a jammed pile as
- *    uncontrolled. The own-loading-zone exemption is scoped to a robot actually in there, an
- *    excused artifact conducts the transitive chain without being counted, the continuing
- *    tariff lands one interval after the violation opens rather than two, the per-artifact
- *    clocks are swept when an artifact leaves the ground and cleared outside auto/teleop, and
- *    the acquire carve-out sees the auto-intake assist. Every match with loose artifacts near
- *    a robot re-sims to a different foul total.
+ * ALPHA HOLDS AT 2 AND STAYS THERE. Alpha's whole divergence from main is ONE unreleased
+ * batch, so it is ONE step past main's 1 — bumping again for each change inside that batch
+ * just churns a number nobody can act on, and invalidates alpha replays for no gain. Bump
+ * this again only when MAIN moves, or when alpha ships.
+ *
+ * 1: sim-reachable Math.hypot -> hyp (engine-independent; see src/math.ts) — MAIN is here.
+ * 2: the alpha batch, everything below, which all moves `step()` output:
+ *    · CR butterfly drivetrain / twin turret / catalyst mechanisms / corner geometry /
+ *      start legality;
+ *    · DECODE's G418.B fix — a gate tap no longer bills the standing ramp column;
+ *    · ROBOT-ON-ROBOT PUSHING rebuilt: the shove is a stated FORCE with the collider mass
+ *      derived from it (`pushForce`/`shoveMass`), so weight, gearing and power draw each act
+ *      once instead of cancelling or landing twice; a shoved chassis gets a real two-body
+ *      contact impulse, so an off-centre hit spins it; the press scaling every robot-robot
+ *      response is the pair's CLOSING velocity, not each robot's absolute one; a robot held
+ *      against a surface by an opponent feels that load; an auto-path robot is solid instead
+ *      of intangible; pair and static responses are summed before either is written; and
+ *      contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12);
+ *    · G422 PINNING rewritten against the rule's own clauses — "preventing the movement"
+ *      requires the pinner to be IN THE WAY of where the victim is trying to go, "attempting
+ *      to move" reads side-drive so a tank can be pinned at all, the count ends only on
+ *      criteria A/B/C (pausing and resuming rather than dying on a 0.6 s lapse), and it bills
+ *      a MINOR every 3 s instead of one MINOR with an invented MAJOR escalation;
+ *    · G408 OVER-POSSESSION rewritten against DECODE's CONTROL definition instead of an FRC
+ *      POSSESSION and an invented TRAPPING (neither term is in this manual). Control is
+ *      ACQUIRED by herding — a flat-or-concave face, the robot moving the artifact a real
+ *      DISTANCE in the push direction, sustained past the confirm window — and LATCHES while
+ *      contact holds, so a pile driven into the wall keeps counting while one already resting
+ *      there never starts. An established hold keeps counting while it DRAINS, because
+ *      artifacts bounce off a bumper rather than riding it. The mouth carve-out is capped at
+ *      what the rollers take in one cycle rather than at hopper room, the loading-zone
+ *      carve-out is scoped to a robot actually in there, an excused artifact conducts the
+ *      transitive chain without being counted, and the per-artifact clocks are swept and
+ *      cleared outside auto/teleop;
+ *    · PENALTIES ARE ASSESSED IN FREE DRIVE — `freeplay` is a live phase everywhere else in
+ *      the sim, and `updatePenalties` was the one place that excluded it.
  */
-export const SIM_VERSION = 9;
+export const SIM_VERSION = 2;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).
