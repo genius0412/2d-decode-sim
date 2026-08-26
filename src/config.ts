@@ -91,6 +91,11 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    instead of intangible; the pair and static responses are summed before either is
  *    written; and robot contacts are stiffer (PHYS_CONTACT_FREQ 8 -> 12). Every match with
  *    contact re-sims differently.
+ * 9: G408's mouth carve-out is capped at what the rollers take in one cycle (one artifact, two
+ *    for a triangle) instead of at hopper ROOM. With the PLAYER assists — auto-fire keeping all
+ *    three slots empty, auto-intake keeping the exemption armed — three artifacts were excused
+ *    on every tick forever, and a nine-clump herded in open space drew 2 MINORs where the same
+ *    push with auto-intake off drew 15.
  * 8: PENALTIES ARE ASSESSED IN FREE DRIVE. `freeplay` is a live phase everywhere else in the
  *    sim (robotsEnabled, the human player, the shooter) and `updatePenalties` was the one
  *    place that excluded it, so the whole engine was off in the mode people practise in —
@@ -119,7 +124,7 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *    the acquire carve-out sees the auto-intake assist. Every match with loose artifacts near
  *    a robot re-sims to a different foul total.
  */
-export const SIM_VERSION = 8;
+export const SIM_VERSION = 9;
 
 /** Ranked PLACEMENT: a player is "in placements" until they've completed this
  * many ranked games on a board (counted per mode).

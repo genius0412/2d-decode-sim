@@ -55,7 +55,7 @@ import {
   footprintCorners,
 } from '../src/sim/field';
 import { addClassified, addOverflow, assessMatchEnd, awardCard, awardFoul } from '../src/sim/scoring';
-import type { Alliance, ArtifactColor, AutoPathData, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
+import type { Alliance, ArtifactColor, AssistConfig, AutoPathData, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
 import {
   SIM_DT,
   PRE_COUNTDOWN as C_PRE_COUNTDOWN,
@@ -8123,6 +8123,47 @@ function pinScene(
       'G408 is assessed in FREE DRIVE too — the same herd costs the same as in a match',
       inFree > 0 && inFree === inMatch,
       `free drive ${inFree} MINORs vs match ${inMatch}`,
+    );
+  }
+
+  /**
+   * ...AND IT FIRES FOR A ROBOT USING THE ASSISTS, WHICH IS EVERY REAL PLAYER.
+   *
+   * Every scene in this file used DEFAULT_ASSISTS (auto-intake and auto-fire OFF). The PLAYER
+   * default is PLAYER_ASSISTS, which has BOTH ON — and the rule behaved completely differently
+   * there: a nine-clump herded in open space drew 15 MINORs with auto-intake off and 2 with it
+   * on. The cause was the mouth carve-out being bounded by hopper ROOM: auto-fire keeps all
+   * three slots empty and auto-intake keeps `intaking` true, so THREE artifacts were excused on
+   * every tick, forever. It is now capped at what the rollers actually take in one cycle.
+   *
+   * A robot with auto-intake still controls FEWER artifacts than one without, and that is
+   * honest rather than a bug — it is eating the pile as it pushes, so there is less of a pile.
+   */
+  {
+    const withAssists = (n: number, a: Partial<AssistConfig>) => {
+      const w = createWorld('match', 42, [
+        { id: 0, alliance: 'blue', spec: { ...DEFAULT_SPEC }, assists: { ...PLAYER_ASSISTS, ...a }, startIndex: 0 },
+      ]);
+      w.match.phase = 'teleop';
+      w.match.phaseTimeLeft = 120;
+      const r = w.robots[0];
+      r.hopper = [];
+      const spare = w.balls.filter((b) => b.state.kind === 'ground').slice(n);
+      w.balls = w.balls.filter((b) => !spare.includes(b));
+      let k = 0;
+      for (const b of w.balls) {
+        if (b.state.kind !== 'ground' || k >= n) continue;
+        b.pos = { x: -5.1 + (k % 3) * 5.1, y: -40 + Math.floor(k / 3) * 5.1 };
+        b.vel = { x: 0, y: 0 }; b.z = 0; b.vz = 0; k++;
+      }
+      r.pos = { x: 0, y: -52 }; r.heading = Math.PI / 2; r.fieldCentric = false;
+      for (let i = 0; i < Math.round(12 / SIM_DT); i++) step(w, SIM_DT, new Map([[0, cmd({ driveY: 0.4 })]]));
+      return w.match.fouls.blue.minor;
+    };
+    check(
+      'herding a pile fouls a robot running the PLAYER assists (auto-intake + auto-fire)',
+      withAssists(9, {}) > 0,
+      `${withAssists(9, {})} MINORs with both assists on, ${withAssists(9, { autoIntake: false })} with auto-intake off`,
     );
   }
 

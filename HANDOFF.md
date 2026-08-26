@@ -1,4 +1,60 @@
-# HANDOFF — 2026-08-25 (penalties were OFF in Free Drive) — alpha only
+# HANDOFF — 2026-08-25 (the mouth carve-out vs the player's own assists) — alpha only
+
+Branch **alpha**. `npm test` **1167 checks, ALL PASS** · `npm run build` green ·
+`npm run server:check` green · `npm run test:mm` 58 green. `SIM_VERSION` 8 → **9**.
+
+Do not merge to main. Standing rule.
+
+## READ FIRST
+
+**Every G408 scene in smoke used `DEFAULT_ASSISTS`. Real players use `PLAYER_ASSISTS`, which has
+auto-intake AND auto-fire ON.** The rule behaved completely differently there, and that gap is
+why four rounds of "still not getting the penalty" kept coming back negative.
+
+Nine-clump herded in open space, identical push:
+
+| assists | fouls | artifacts excused per tick |
+|---|---|---|
+| auto-intake OFF | **15** | 0 |
+| auto-intake ON (the default) | **2** | **3** |
+
+The mouth carve-out was bounded by hopper **ROOM**. Auto-fire keeps all three slots empty and
+auto-intake keeps `intaking` true, so three artifacts were excused on every tick, forever — the
+exact failure the constant's own doc comment warned about and believed `POSSESSION_ACQUIRE_S`
+had fixed. It had not: that window is keyed on the herding clock, which barely advances in open
+space, so the excused artifacts never aged out.
+
+**Now capped at what the rollers take in one cycle** — one artifact, two for a triangle's twin
+slots — which is what the exemption was ever meant to model.
+
+## The honest remaining behaviour
+
+A robot with auto-intake still controls FEWER artifacts than one without, because it is eating
+the pile as it pushes. That is the count being truthful, not a bug. It is also exactly why the
+perimeter is where players notice the rule at all: against a wall the artifacts pile up faster
+than the intake can swallow them, so four or more stay in contact.
+
+If open-space herding should bite harder for an intaking robot, the lever is NOT G408 — it is
+that a robot pushing a clump in this sim also consumes it. Changing that is an intake/feel
+change, not a penalty change.
+
+## The whole chain of causes, for the record
+
+Four rounds, four different faults, none of them the rule text:
+1. the model was built on FRC definitions not in the DECODE manual (2026-08-25a);
+2. it was too eager about artifacts already at a wall (2026-08-25b);
+3. an artifact only counted on ticks it was touching, so steering killed it (2026-08-25c);
+4. penalties did not run in Free Drive at all (2026-08-25d);
+5. and the mouth carve-out was permanently open for anyone using the default assists (this one).
+
+**Lesson: reproduce with the PLAYER'S configuration before tuning.** `DEFAULT_ASSISTS` is the
+neutral sim/wire fallback; `PLAYER_ASSISTS` is what a person actually drives with, and the two
+differ on auto-intake and auto-fire. A smoke suite written entirely against the former can be
+green while the feature is dead in play.
+
+---
+
+## 2026-08-25d — penalties were OFF in Free Drive (superseded as READ FIRST)
 
 Branch **alpha**. `npm test` **1166 checks, ALL PASS** · `npm run build` green ·
 `npm run server:check` green · `npm run test:mm` 58 green. `SIM_VERSION` 7 → **8**.

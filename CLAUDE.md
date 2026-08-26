@@ -857,10 +857,20 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
     on the ARTIFACT's position alone, which made the whole 23×23 corner a control-free sanctuary;
     G432.D settles that it is not one ("ARTIFACT CONTROL begins when the ROBOT is in the LOADING
     ZONE, and ... is still CONTROLLED ... when the ROBOT leaves"). The separate mouth exemption
-    (`POSSESSION_ACQUIRE_S`, capped at hopper ROOM) is the SIM's own, not the manual's: the sim's
-    intake is a multi-tick animation where a real one is instantaneous. It reads
-    `cmd.intake || r.autoIntake`, the same condition that actually runs the intake — reading the
-    raw button made the auto-intake assist HARSHER for its users than a driver holding it.
+    (`POSSESSION_ACQUIRE_S`) is the SIM's own, not the manual's: the sim's intake is a multi-tick
+    animation where a real one is instantaneous. It reads `cmd.intake || r.autoIntake`, the same
+    condition that actually runs the intake — reading the raw button made the auto-intake assist
+    HARSHER for its users than a driver holding it.
+    **It is capped at what the ROLLERS TAKE IN ONE CYCLE** (one artifact, two for a triangle's
+    twin slots), NOT at hopper room. Hopper room is the wrong axis and made the rule unreachable
+    for anyone using the assists, which is the default: `autoFire` keeps all three slots empty
+    and `autoIntake` keeps the exemption armed, so THREE artifacts were excused on every tick
+    forever. Measured on a nine-clump herded in open space with `PLAYER_ASSISTS`: 2 MINORs with
+    auto-intake on, 15 with it off.
+  - **A ROBOT WITH AUTO-INTAKE GENUINELY CONTROLS FEWER ARTIFACTS**, and that is the count being
+    honest rather than a bug — it is eating the pile as it pushes, so there is less of a pile.
+    It is also why the wall is where players notice the rule: against the perimeter the
+    artifacts pile up faster than the intake can swallow them.
   - **AN EXCUSED ARTIFACT CONDUCTS BUT IS NOT COUNTED.** Both halves matter: counting it anyway
     means the chain re-adds everything the mouth exemption just removed, and severing the chain
     means a robot nosing into a six-clump controls nothing at all.

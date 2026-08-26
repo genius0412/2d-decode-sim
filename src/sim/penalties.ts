@@ -655,7 +655,23 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
    * would otherwise be billed for the fraction of a second it spends visibly outside the frame.
    */
   const excused = new Set<number>();
-  let room = Math.max(0, C.HOPPER_CAPACITY - r.hopper.length);
+  /**
+   * ...AND IT COVERS WHAT THE ROLLERS ARE ACTUALLY TAKING, WHICH IS ONE ARTIFACT (two for a
+   * triangle's twin slots) — NOT the whole hopper.
+   *
+   * Bounding it by hopper ROOM alone is what made this rule unreachable for anyone playing with
+   * the assists on, which is the default. `autoFire` keeps all three slots empty, `autoIntake`
+   * keeps `intaking` true, so THREE artifacts were excused on every tick forever. Measured on a
+   * six-clump herded in open space with the player's own defaults: the robot was in contact with
+   * SIX artifacts the whole way, three were excused every tick, the count never passed the limit
+   * and the foul never came — 0 MINORs, against 9 for the same push with auto-intake off.
+   *
+   * The exemption exists because the sim's intake is a multi-tick animation where a real one is
+   * instantaneous, so it should cover the artifact the rollers own RIGHT NOW and nothing else.
+   * An intake takes one per cycle; excusing a hopper's worth at once modelled nothing.
+   */
+  const perCycle = C.INTAKE_PRESETS[r.spec.intake].mouth.dual ? 2 : 1;
+  let room = Math.min(perCycle, Math.max(0, C.HOPPER_CAPACITY - r.hopper.length));
   if (room > 0 && intaking) {
     const mouth = [...held]
       .map((id) => {
