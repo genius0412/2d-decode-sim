@@ -838,7 +838,15 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
     both from the FRC definition) leaked the other way too: a pile CREPT below 1.5 in/s drew
     nothing over twelve seconds. `POSSESSION_PUSH_MIN` is all that is left of them and sits low
     on purpose — it only keeps numerical noise in a resting contact from reading as a push.
-  - **`POSSESSION_CONFIRM` IS THE OTHER LENIENCY KNOB** (0.35 → 0.65s). Contact plus a fifth of
+  - **TOTAL TIME-TO-FOUL IS THE THING PLAYERS FEEL.** It is `POSSESSION_CARRY_DIST` (however
+    long 5in takes to cover) + `POSSESSION_CONFIRM` + `POSSESSION_GRACE`, and it must be short
+    enough to survive ordinary driving. Reported as "I still almost never get penalties" while
+    pushing ~10 artifacts: that push DID foul, but only after **1.43s of UNINTERRUPTED
+    herding**, and real driving (nudge, turn, adjust) rarely sustains that. Now **1.05s**
+    (CONFIRM 0.65 → 0.45, GRACE 0.4 → 0.2) with every false-positive case still clean.
+    **0.2 is the floor for GRACE** — at 0.1 the bulldozing carve-out breaks and clipping an
+    artifact in passing starts to foul.
+  - **`POSSESSION_CONFIRM` IS THE OTHER LENIENCY KNOB** (0.35 → 0.45s). Contact plus a fifth of
     a second cannot tell "taking these somewhere" from "arriving among them", which is what
     fouled a robot for nosing deep into a clump. Swept against the full case matrix, 0.65s with
     a 5in carry is the window where every case lands.

@@ -310,12 +310,14 @@ export const POSSESSION_DRIFT = 8; // in, in the ROBOT frame, from where the hol
  * The rule is meant to catch a robot taking a load around the field, not the ordinary
  * business of driving into a clump to collect it or nudging a ball aside.
  *
- * Cut 1 s -> 0.4 s: with the confirm window in front of it the total wait was 1.35 s, which
- * is a long time to hold a violation before anything happens, and G408 itself has no grace
- * at all — control over the limit is a foul the moment a referee sees it. The carve-outs are
- * held by the per-artifact confirm (which artifacts, and for how long each), not by this, so
- * shortening it costs them nothing: every bulldozing case still passes at 0.4. */
-export const POSSESSION_GRACE = 0.4; // s
+ * Cut 1 s -> 0.4 -> 0.2 s. G408 itself has no grace at all — control over the limit is a foul
+ * the moment a referee sees it — and this sits on TOP of the per-artifact confirm, so it is
+ * pure added latency before anything happens. The carve-outs are held by the confirm window
+ * and the carry distance, not by this.
+ *
+ * 0.2 IS THE FLOOR. At 0.1 the bulldozing carve-out breaks: clipping an artifact in passing
+ * starts to foul, which is the one thing G408 names first as NOT control. */
+export const POSSESSION_GRACE = 0.2; // s
 /**
  * ...and how fast that clock DRAINS while control is back within the limit, as a fraction
  * of real time. This is the difference between a clock that accumulates and one that resets,
@@ -371,14 +373,22 @@ export const POSSESSION_REBILL_S = 3;
  * clock is LEAKY rather than resetting, those repeated touches add up on the artifacts
  * themselves. Identity is the signal — which artifacts, not how many.
  *
- * 0.35 -> 0.65 s, and the pair (this and POSSESSION_CARRY_DIST) is what makes the rule LENIENT
- * about running into things. At 0.35 a robot nosing into a clump with its intake held was
+ * TOTAL TIME-TO-FOUL IS WHAT MATTERS, and it is this plus POSSESSION_GRACE plus however long
+ * POSSESSION_CARRY_DIST takes to cover. Reported as "I still almost never get penalties" while
+ * pushing about ten artifacts around — and measured, that push DID foul, but not until 1.43 s
+ * of UNINTERRUPTED herding, which real driving (nudge, turn, adjust) rarely sustains. Trimmed
+ * 0.65 -> 0.45 alongside GRACE 0.4 -> 0.2, taking the whole pipeline to 1.05 s with every
+ * false-positive case still clean. It cannot go much lower: at GRACE 0.1 the bulldozing
+ * carve-out breaks (clipping an artifact in passing starts to foul).
+ *
+ * This and POSSESSION_CARRY_DIST together are what make the rule LENIENT about running into
+ * things. At 0.35 a robot nosing into a clump with its intake held was
  * fouled once it went in deep enough to jam: contact plus a fifth of a second is not enough to
  * tell "taking these somewhere" from "arriving among them". Swept against the full G408 case
  * matrix, 0.65 with a 5 in carry is the window where every case lands — below it the intake
  * cases foul, above it real herding starts slipping through.
  */
-export const POSSESSION_CONFIRM = 0.65; // s, per artifact
+export const POSSESSION_CONFIRM = 0.45; // s, per artifact
 /**
  * How long an artifact may sit in a RUNNING intake's mouth before it stops counting as
  * "being acquired" and starts counting as being PLOUGHED.
