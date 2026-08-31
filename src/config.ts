@@ -346,7 +346,7 @@ export const POSSESSION_GRACE = 0.2; // s
  * a third of the time nets upward) while one genuine pass through a clump drains away in about
  * twice the time it lasted. Intent shows up in the aggregate, which is where it actually lives.
  */
-export const POSSESSION_LEAK = 0.5;
+export const POSSESSION_LEAK = 0.1;
 /**
  * How often a CONTINUING over-possession is billed again.
  *
