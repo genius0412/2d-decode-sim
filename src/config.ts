@@ -342,9 +342,20 @@ export const POSSESSION_GRACE = 0.2; // s
  * version of the same act dodges is worse than no penalty: it does not deter the behaviour,
  * it just selects for the technique.
  *
- * Draining at HALF the fill rate means a repeated violation still climbs (any duty cycle over
- * a third of the time nets upward) while one genuine pass through a clump drains away in about
- * twice the time it lasted. Intent shows up in the aggregate, which is where it actually lives.
+ * 0.5 -> 0.1, because AN INTERRUPTION IS NOT A RELEASE. Reported as "right now I need to be
+ * controlling them for a long time for it to actually give me pens" — and the thresholds were
+ * not the problem. Swept individually, the carry distance, the confirm window, the grace, the
+ * progress floor and even a separate gentler drain for stalling all left the time-to-foul
+ * within a tenth of a second of where it started; the floor there is set by the BULLDOZING
+ * carve-out, since below about a second clipping an artifact in passing starts to foul.
+ *
+ * What actually costs a driver is that real herding is INTERRUPTED — you nudge, you turn, you
+ * clip a corner — and at 0.5 each of those breaks ate back twice what the next contact put in,
+ * so a push that was not clean from start to finish never converged at all. Measured, a slow
+ * STEERED herd went from NEVER fouling to fouling at 2.98 s.
+ *
+ * It still drains: a genuine pass through a clump lets go, just over a few seconds rather than
+ * a fraction of one, and every bulldozing and deflecting case in smoke is unchanged at 0.1.
  */
 export const POSSESSION_LEAK = 0.1;
 /**
