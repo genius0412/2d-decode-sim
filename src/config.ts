@@ -249,6 +249,18 @@ export const POSSESSION_CONTROL_MARGIN = 0.4; // in
  */
 export const POSSESSION_PUSH_MIN = 0.5; // in/s, along the contact normal
 /**
+ * ...and how fast the ARTIFACT has to still be going, along the direction it is being taken,
+ * for the robot to count as still MOVING it rather than just leaning on it.
+ *
+ * An arrival is not a journey. Without this the hold latched on the way in and never released:
+ * shoving two artifacts against a wall billed once for the push, which is fair, and then again
+ * every POSSESSION_REBILL_S for as long as you stayed there, while nothing moved at all.
+ *
+ * It sits at the artifact's own rest threshold, so it separates "going somewhere" from
+ * "stopped" rather than fast from slow — a load crept downfield still counts.
+ */
+export const POSSESSION_MOVE_MIN = 2; // in/s — keep == BALL_REST_SPEED
+/**
  * ...and how far the ARTIFACT has to have actually TRAVELLED, from where this robot first got
  * hold of it, before the robot counts as MOVING it.
  *

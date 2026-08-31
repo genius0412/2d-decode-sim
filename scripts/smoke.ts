@@ -7877,27 +7877,25 @@ function pinScene(
   );
   check('...and it actually intaked (the test is not vacuous)', r.hopper.length > 0, `hopper=${r.hopper.length}`);
   /**
-   * ...BUT STAYING THERE IS TRAPPING, AND TRAPPING IS CONTROL.
+   * ...AND STAYING THERE IS NOT A SECOND VIOLATION. AN ARRIVAL IS NOT A JOURNEY.
    *
-   * The glossary's CONTROL is "carrying, herding, launching, TRAPPING, or triggering", and
-   * the POSSESSION half of it — everything the rest of this engine tests — is conditional on
-   * the robot moving or turning. A robot that parks on a pile against the wall satisfied
-   * neither, so it paid nothing: measured, a full robot holding three artifacts against the
-   * perimeter for thirty seconds drew ZERO fouls. "The over-possession penalty is way too
-   * lenient."
+   * This check used to assert the opposite — that leaning on the pile "keeps costing" — which
+   * came from the invented TRAPPING branch, and it is the behaviour that was reported as wrong:
+   * "I still get penalties when I'm pushing forward against two balls against the wall... it
+   * counts as me moving them even tho its basically staying in place."
    *
-   * What separates this from the case above is TIME, which is also how the manual separates
-   * it: BULLDOZING is "INADVERTENT contact ... while in the path of the ROBOT moving about the
-   * FIELD", so the glossary's own MOMENTARY (about three seconds) is the line. Drive in, take
-   * what you can and leave, and nothing happens; keep holding them there and it is a foul,
-   * and it keeps being one every POSSESSION_REBILL_S for as long as it lasts.
+   * The push that PUT them there is a violation and is billed. Once nothing is moving, control
+   * drains: the per-artifact hold advances only while the artifact is still being taken
+   * somewhere (`POSSESSION_MOVE_MIN`), so it falls back under the confirm window and the
+   * continuing tariff stops. That is also what G408 itself says — its violation line is one
+   * assessment, with no continuing clause at all.
    */
   run(w, cmd({ driveY: 1, intake: true }), 8);
   const holding = w.match.fouls.blue.minor - before - acquiring;
   check(
-    '...but pinning it there past MOMENTARY is TRAPPING, and keeps costing',
-    holding >= 3,
-    `${holding} further MINORs over the next 8s of holding the same pile on the wall (was 0, ever)`,
+    '...and leaning on it afterwards does NOT keep costing (an arrival is not a journey)',
+    holding === 0,
+    `${holding} further MINORs over the next 8s of holding the same pile on the wall`,
   );
 }
 
@@ -8164,6 +8162,53 @@ function pinScene(
       'herding a pile fouls a robot running the PLAYER assists (auto-intake + auto-fire)',
       withAssists(9, {}) > 0,
       `${withAssists(9, {})} MINORs with both assists on, ${withAssists(9, { autoIntake: false })} with auto-intake off`,
+    );
+  }
+
+  /**
+   * ...AND PUSHING FORWARD AGAINST ARTIFACTS THAT ARE ON THE WALL IS NOT AN ONGOING VIOLATION.
+   *
+   * Reported directly: "I still get penalties when I'm pushing forward against two balls
+   * against the wall. Likely because it counts as me moving them even tho its basically staying
+   * in place." Exactly right. Control latched on the way in and then never released, so the
+   * continuing tariff kept charging every POSSESSION_REBILL_S while nothing moved.
+   *
+   * The hold now DRAINS whenever the artifact is not actually going anywhere, even in full
+   * contact, so a robot parked against a wall pile with a full hopper settles at zero.
+   */
+  {
+    const lean = (n: number, secs: number) => {
+      const w = mkWorld('match', 'blue', 42);
+      startMatch(w);
+      w.match.phase = 'teleop';
+      const r = w.robots[0];
+      r.hopper = ['green', 'green', 'green'];
+      const spare = w.balls.filter((b) => b.state.kind === 'ground').slice(n);
+      w.balls = w.balls.filter((b) => !spare.includes(b));
+      let k = 0;
+      for (const b of w.balls) {
+        if (b.state.kind !== 'ground' || k >= n) continue;
+        b.pos = { x: (k - (n - 1) / 2) * 5.2, y: FIELD_HALF - BALL_RADIUS };
+        b.vel = { x: 0, y: 0 }; b.z = 0; b.vz = 0; k++;
+      }
+      // already flush against them, pushing into the wall — no approach, no journey
+      r.pos = { x: 0, y: FIELD_HALF - BALL_RADIUS - 13 };
+      r.heading = Math.PI / 2;
+      r.fieldCentric = false;
+      const early = Math.round(2 / SIM_DT);
+      for (let i = 0; i < Math.round(secs / SIM_DT); i++) step(w, SIM_DT, new Map([[0, cmd({ driveY: 1 })]]));
+      void early;
+      return w.match.fouls.blue.minor;
+    };
+    check(
+      'pushing forward against TWO artifacts on the wall with a full hopper draws nothing',
+      lean(2, 15) === 0,
+      `blueMinor=${lean(2, 15)} over 15s`,
+    );
+    check(
+      '...and it does not start costing if you simply stay longer',
+      lean(2, 30) === 0,
+      `blueMinor=${lean(2, 30)} over 30s`,
     );
   }
 

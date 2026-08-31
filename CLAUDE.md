@@ -815,9 +815,14 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
     confirm window plus the station test are the sim's proxy for a referee's eye, and they ARE
     the BULLDOZING and DEFLECTING carve-outs: something clipped in passing never lasts, and
     something that bounces off leaves at once.
-  - **CONTROL LATCHES**, because the phrase is "pushes ... **to a desired location** or in a
-    preferred direction": once herding is established it holds while contact and station hold,
-    whether or not the robot is still shoving. This replaced the invented TRAPPING branch and
+  - **CONTROL LATCHES WHILE THE ARTIFACT IS STILL GOING SOMEWHERE, AND AN ARRIVAL IS NOT A
+    JOURNEY.** The per-artifact hold advances only while the artifact is still being taken
+    somewhere (`POSSESSION_MOVE_MIN`) and DRAINS when it is merely being leaned on, even in
+    full contact. Without that drain control latched on the way in and never released, so
+    shoving artifacts against a wall billed once for the push — fair, you did herd them there —
+    and then again every `POSSESSION_REBILL_S` for as long as you stayed, while nothing moved.
+    Reported as "I still get penalties when I'm pushing forward against two balls against the
+    wall... it counts as me moving them even tho its basically staying in place."  This replaced the invented TRAPPING branch and
     lands in the same place from the real text — a robot that drove a pile into the perimeter
     and sits on it is controlling the pile. A robot that never pushed anything never latches,
     which is how "I'm getting spammed with over-possession penalties just by standing still"

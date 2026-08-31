@@ -621,17 +621,25 @@ function controlledArtifacts(world: World, r: RobotState, dt: number, intaking: 
      */
     const push = contactPush(r, b, cp, loc);
     let carry = carried[key] ?? 0;
-    if (push) {
-      // how far the artifact ACTUALLY WENT this tick in the direction the robot is taking it.
-      // Clamped at zero so a bounce-back cannot pay down the distance already carried, and
-      // projected so that squirting SIDEWAYS out of a squeeze earns nothing: a row pinned on
-      // the perimeter is moving quickly and travelling nowhere.
-      const along = b.vel.x * push.dirX + b.vel.y * push.dirY;
-      if (along > 0) carry += along * dt;
-    }
+    // how far the artifact ACTUALLY WENT this tick in the direction the robot is taking it,
+    // projected so that squirting SIDEWAYS out of a squeeze earns nothing: a row pinned on the
+    // perimeter is moving quickly and travelling nowhere.
+    const along = push ? b.vel.x * push.dirX + b.vel.y * push.dirY : 0;
+    if (along > 0) carry += along * dt;
     carried[key] = carry;
     let t = pen.ballHold[key] ?? 0;
-    if (push && carry >= C.POSSESSION_CARRY_DIST) t += dt;
+    /**
+     * ...AND AN ARRIVAL IS NOT A JOURNEY. The hold ADVANCES while the artifact is still being
+     * taken somewhere, and DRAINS while it is merely being leaned on — even in full contact.
+     *
+     * Without that drain, control latched on the way in and never let go: shoving two artifacts
+     * against a wall billed once for the push (fair, you did herd them there) and then again
+     * every POSSESSION_REBILL_S for as long as you stayed, while nothing moved at all. Reported
+     * as "I still get penalties when I'm pushing forward against two balls against the wall...
+     * it counts as me moving them even tho its basically staying in place."
+     */
+    if (carry >= C.POSSESSION_CARRY_DIST && along > C.POSSESSION_MOVE_MIN) t += dt;
+    else if (along <= C.POSSESSION_MOVE_MIN) t = Math.max(0, t - dt * C.POSSESSION_LEAK);
     pen.ballHold[key] = t;
     // ...and once it is established it LATCHES: "pushes a SCORING ELEMENT TO A DESIRED
     // LOCATION" does not stop being true when the robot stops shoving.
