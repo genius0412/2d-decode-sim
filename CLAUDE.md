@@ -31,7 +31,7 @@ reverse-chronological log; prepend a new dated section and demote the old "READ 
 ## Commands
 
 - `npm run dev` — dev server (localhost:5173)
-- `npm test` — **headless sim verification** (`scripts/smoke.ts`, 564 checks, BOTH games).
+- `npm test` — **headless sim verification** (`scripts/smoke.ts`, ~1240 checks, BOTH games).
   Run this after ANY change to `src/sim/`, `src/config.ts`, or `src/games/`. It is fast and
   catches almost everything. **Add a check per behavior change.**
 - `npm run test:mm` — **matchmaker verification** (`scripts/mmsmoke.ts`, 36 checks, no DB or
@@ -379,6 +379,24 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
   choppiness signal** — surface it when diagnosing lag reports.
 - **RECONNECTION**: the server holds a dropped slot `RECONNECT_GRACE_MS` (`detach`/`reattach`/
   `checkGrace`), the transport auto-reconnects, the session re-sends `rejoin`.
+- **REPLAY COVERAGE IS PER-ARCHETYPE, not just per-drivetrain.** A replay is `{seed, setups,
+  command log}`, so anything that changes what a robot DOES with the same commands has to be
+  carried by the container — and each such axis needs its own recorded-and-replayed check, or a
+  dropped field re-simulates as the default and still hash-matches because both sides dropped
+  it. Covered: DECODE's five drivetrains (tank/butterfly are the reason `REPLAY_FORMAT` 2
+  exists — they steer through `ld`/`rd` alone) and three intake presets, and CR's four
+  `scoreMode` archetypes × four catalyst mechanisms. The CR ones matter most: drum lateral
+  pick, dumper scatter and the accelerator re-eject are all RNG, seeded off `world.rngState`,
+  and `catalyst`/`fling` are CR-only command bits DECODE never exercises. Every case is checked
+  straight off the recorder AND through a `JSON.parse(JSON.stringify(...))` round-trip, because
+  a stored replay reaches the verifier as JSON and an `undefined` optional spec field does not
+  survive that trip.
+  **A replay check must not be vacuous**: assert the archetype's own code RAN (particles scored,
+  peak hopper > 0), or it only proves that two idle robots idle identically. Two traps cost
+  real time here — `DEFAULT_ASSISTS.fieldCentric` is TRUE, so a scene that turns the chassis and
+  drives "forward" goes nowhere and parks in a corner; and holding the manual FIRE button on a
+  turretless CR archetype hands `rotate` to `chainAimAssist`, which fights any steering trying
+  to close on a target.
 - **DEPLOY**: Fly app `dohun-sim-decode`, `Dockerfile` + `fly.toml` + `docs/deploy.md`,
   `GET /health`; `ws` + `tsx` are runtime `dependencies`. Protocol: commit → **`./scripts/
   fly-deploy.sh`** → verify `/health` → Vercel auto-deploys clients.

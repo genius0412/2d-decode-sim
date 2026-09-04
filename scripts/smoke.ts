@@ -9450,6 +9450,172 @@ function pinScene(
 }
 
 // ---- RECORD -> REPLAY round-trip, per DRIVETRAIN ----------------------------
+/**
+ * REPLAYS CARRY EVERY ARCHETYPE, not just every drivetrain.
+ *
+ * The drivetrain block below exists because TANK is commanded through fields the container had
+ * nowhere to store, and its replays played back dead while every test stayed green. CR's four
+ * ARCHETYPES (`RobotSpec.scoreMode`) are the same shape of risk from the other direction: they
+ * read the SAME command stream but do different things with it, and three of those things are
+ * RANDOMISED — the drum picks a random lateral position across its rollers, the dumper flings
+ * with side-to-side variance, and the accelerator re-ejects everything it scores. All of that
+ * is seeded off `world.rngState`, so it re-simulates exactly — but only if the replay carries
+ * the spec that SELECTS the archetype and the buttons that TRIGGER it, and `catalyst`/`fling`
+ * are CR-only bits that DECODE never exercises.
+ *
+ * Each archetype is checked twice: straight off the recorder, and again through a JSON
+ * round-trip, because a replay reaches the verifier as a stored JSON document and an
+ * `undefined` optional spec field does not survive that trip.
+ */
+{
+  const archetypes = ['turret', 'twinturret', 'drum', 'dumper'] as const;
+  for (const scoreMode of archetypes) {
+    for (const catalystType of ['arm', 'launcher', 'turret', 'rail'] as const) {
+      const label = `${scoreMode}/${catalystType}`;
+      const setup: RobotSetup = {
+        id: 0,
+        alliance: 'blue',
+        spec: coerceSpec({ ...DEFAULT_SPEC, scoreMode, catalystType }, DEFAULT_SPEC, 'chain'),
+        // autoFire ON: a DUMPER only flings inside CHAIN_DUMP_RANGE, and driving it there on
+        // the manual button does not work — holding fire hands `rotate` to `chainAimAssist`,
+        // which fights the steering that is trying to close the distance. The manual bit is
+        // still in the command stream below, so the container still has to carry it.
+        // ROBOT-CENTRIC on purpose: the steering below turns the chassis and then drives
+        // FORWARD, which only means anything if `driveY` is in the robot's frame. Left
+        // field-centric (the player default) `driveY` is a fixed DRIVER-frame direction, the
+        // heading steering does nothing, and the robot just parks in a corner — measured, it
+        // sat at (-63,59) for the whole run with one particle aboard.
+        assists: { ...DEFAULT_ASSISTS, fieldCentric: false, autoIntake: true, autoFire: true },
+        startIndex: 0,
+      };
+      /**
+       * HOME IN on the nearest particle, then intake and fire. Driving a fixed pattern is not
+       * enough here: the field's 300 particles are flung out of the accelerators at match
+       * start and a blind command stream simply misses them, so the archetype's own code —
+       * the drum's random lateral pick, the dumper's scatter — never runs and the determinism
+       * check proves nothing. Steering off the world is fine for a replay: the recorder stores
+       * the commands that were ISSUED, so playback replays those numbers, not this logic.
+       *
+       * Both catalyst buttons are worked too. `fling` is the launcher's catapult and is a
+       * SEPARATE bit from the claw's grab/place, so the container has to carry both.
+       */
+      const src: CommandSource = (tick, w) => {
+        const t = tick / 60;
+        const me = w.robots[0];
+        void t;
+        // EMPTY: hunt the nearest particle. LOADED: take it to the goal — a DUMPER only flings
+        // inside CHAIN_DUMP_RANGE, so a run that never closes on the accelerator never
+        // exercises its scatter at all and the determinism check below is weaker for it than
+        // for the others. Blue's accelerator hangs off the +x wall.
+        let target: { x: number; y: number } | null =
+          me.hopper.length > 0 ? { x: CHAIN_HALF_X, y: 0 } : null;
+        if (!target) {
+          let bestD = Infinity;
+          for (const b of w.balls) {
+            if (b.state.kind !== 'ground') continue;
+            const d = hyp(b.pos.x - me.pos.x, b.pos.y - me.pos.y);
+            if (d < bestD) { bestD = d; target = b.pos; }
+          }
+        }
+        const want = target ? datan2(target.y - me.pos.y, target.x - me.pos.x) : 0;
+        const err = wrapAngle(want - me.heading);
+        return new Map([[0, cmd({
+          driveY: 0.9,
+          rotate: Math.max(-1, Math.min(1, err * 1.5)),
+          intake: true,
+          // FIRE ONLY ONCE LOADED. A turretless archetype (drum/dumper) aims by TURNING, and
+          // `chainAimAssist` hijacks `rotate` the whole time the manual fire button is held —
+          // so holding it while hunting fights the steering above and the robot never reaches
+          // a particle at all. Chase with it off, shoot with it on.
+          fire: me.hopper.length > 0,
+          catalyst: Math.floor(t * 3) % 5 === 0,
+          fling: Math.floor(t * 3) % 7 === 0,
+        })]]);
+      };
+      const run = runRecordMatch(21, [setup], src, { mode: 'free', stopTick: 900, game: 'chain' });
+
+      // not vacuous: the archetype's OWN code has to have run, or the determinism check below
+      // is only asserting that two idle robots idle identically
+      const live = run.world.robots[0];
+      const scored = run.world.chain!.scored.blue;
+      const worked = scored > 0 || live.hopper.length > 0;
+      check(
+        `replay/${label}: the recorded run actually intook and scored`,
+        worked,
+        `scored=${scored} hopper=${live.hopper.length} ticks=${run.replay.ticks} pos=(${live.pos.x.toFixed(0)},${live.pos.y.toFixed(0)})`,
+      );
+
+      check(
+        `replay/${label}: re-simulating the replay reproduces the run exactly`,
+        worldHash(simulateReplay(run.replay)) === worldHash(run.world),
+      );
+      // ...and it still does after the trip through storage, which is JSON
+      const stored: Replay = JSON.parse(JSON.stringify(run.replay));
+      check(
+        `replay/${label}: survives the JSON round-trip a stored replay takes`,
+        worldHash(simulateReplay(stored)) === worldHash(run.world),
+      );
+      // the archetype itself has to be IN the container — a dropped scoreMode would silently
+      // re-simulate as the default and still hash-match only because both sides dropped it
+      check(
+        `replay/${label}: the container carries the archetype and mechanism`,
+        stored.setups[0].spec.scoreMode === scoreMode &&
+          stored.setups[0].spec.catalystType === catalystType &&
+          stored.game === 'chain',
+        `scoreMode=${stored.setups[0].spec.scoreMode} catalystType=${stored.setups[0].spec.catalystType} game=${stored.game}`,
+      );
+    }
+  }
+}
+
+/**
+ * ...AND DECODE'S OWN ARCHETYPE AXIS IS THE INTAKE PRESET.
+ *
+ * The three presets are not cosmetic: each carries its own `mouth` geometry and transfer
+ * cadence, and the TRIANGLE takes TWO artifacts per cycle (`dual`) where the others take one.
+ * A replay that dropped the preset would re-simulate a different robot picking up a different
+ * number of artifacts at a different rate.
+ */
+{
+  for (const intake of ['sloped', 'vector', 'triangle'] as const) {
+    const setup: RobotSetup = {
+      id: 0,
+      alliance: 'blue',
+      spec: coerceSpec({ ...DEFAULT_SPEC, intake }, DEFAULT_SPEC, 'decode'),
+      assists: { ...DEFAULT_ASSISTS, fieldCentric: false, autoIntake: true, autoFire: true },
+      startIndex: 0,
+    };
+    // sweep the spike rows with the intake down, then fire what it gathered. The PEAK hopper
+    // is watched rather than the final one: a run that intakes and then shoots everything ends
+    // at zero, so reading only the end cannot tell it from a run that never picked anything up.
+    let peakHopper = 0;
+    const src: CommandSource = (tick, w) => {
+      peakHopper = Math.max(peakHopper, w.robots[0].hopper.length);
+      return new Map([[0, cmd({
+        driveY: 1,
+        rotate: tick > 200 ? 0.35 : 0,
+        intake: true,
+        fire: tick > 260,
+      })]]);
+    };
+    const run = runRecordMatch(31, [setup], src, { mode: 'free', stopTick: 420 });
+    const live = run.world.robots[0];
+    check(`replay/intake:${intake}: the recorded run actually intook`, peakHopper > 0,
+      `peak hopper=${peakHopper}, ended ${live.hopper.length}`);
+    check(
+      `replay/intake:${intake}: re-simulating the replay reproduces the run exactly`,
+      worldHash(simulateReplay(run.replay)) === worldHash(run.world),
+    );
+    const stored: Replay = JSON.parse(JSON.stringify(run.replay));
+    check(
+      `replay/intake:${intake}: survives the JSON round-trip, preset intact`,
+      worldHash(simulateReplay(stored)) === worldHash(run.world) &&
+        stored.setups[0].spec.intake === intake,
+      `intake=${stored.setups[0].spec.intake}`,
+    );
+  }
+}
+
 // The gap that shipped a broken feature: replays were only ever exercised through the
 // determinism helpers, never by driving a robot and watching the recording drive it back.
 // TANK (and BUTTERFLY, half of whose life is tank mode) is commanded EXCLUSIVELY through
