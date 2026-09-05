@@ -173,10 +173,45 @@ export function replayPlayable(
   balanceVersion: number,
   simVersion: number,
 ): boolean {
+  return replayReadable(r) && replayExact(r, balanceVersion, simVersion);
+}
+
+/**
+ * CAN THIS BUILD STEP THE CONTAINER AT ALL? — the question that decides whether a replay is
+ * WATCHABLE, and the one that must keep answering yes across a patch.
+ *
+ * A replay is an input log, so a sim change means it re-simulates into a different game than
+ * the one that was played. That is unavoidable and it is what `replayExact` reports. What does
+ * NOT follow is that the log should be thrown away: it still describes real inputs, from a real
+ * match, and playing it back with a warning is far better than a stored archive that every
+ * patch silently empties. Records are unaffected either way — the server stores the score it
+ * computed at the time and never re-derives it from the replay.
+ *
+ * Only two things make a container genuinely unplayable:
+ *  • a FORMAT from the future, which we cannot parse;
+ *  • a FORMAT-1 replay of a tank-steered robot, whose drive input was never stored at all (the
+ *    container had nowhere to put `ld`/`rd`). It parses and it steps, but it steps a robot that
+ *    sits still — indistinguishable, to the person watching, from the sim being broken.
+ */
+export function replayReadable(r: Pick<Replay, 'format' | 'setups'>): boolean {
   if (r.format > REPLAY_FORMAT) return false;
-  if (r.balanceVersion !== balanceVersion || (r.sim ?? 0) !== simVersion) return false;
   if (r.format < 2 && r.setups.some((s) => tankSteered(s.spec.drivetrain))) return false;
   return true;
+}
+
+/**
+ * WILL IT REPRODUCE THE MATCH THAT WAS PLAYED? — the accuracy question, kept separate so the
+ * viewer can play a replay it cannot promise is exact and say so, instead of refusing it.
+ *
+ * `sim` ABSENT means the recording build never stamped one, so the behaviour it ran is
+ * genuinely unknown — that is a "cannot promise", not a match against 0.
+ */
+export function replayExact(
+  r: Pick<Replay, 'balanceVersion' | 'sim'>,
+  balanceVersion: number,
+  simVersion: number,
+): boolean {
+  return r.balanceVersion === balanceVersion && r.sim === simVersion;
 }
 
 /** drivetrains commanded through the TANK AXES — the ones a format-1 replay lost. Butterfly

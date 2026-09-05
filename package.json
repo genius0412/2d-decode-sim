@@ -77,7 +77,7 @@
     ]
   },
   "dependencies": {
-    "@dimforge/rapier2d-compat": "^0.19.3",
+    "@dimforge/rapier2d-compat": "0.19.3",
     "@neondatabase/auth": "^0.4.2-beta",
     "@vercel/analytics": "^2.0.1",
     "jose": "^6.1.2",

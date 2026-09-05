@@ -161,6 +161,8 @@ import {
   maxMatchTicks,
   REPLAY_FORMAT,
   replayPlayable,
+  replayReadable,
+  replayExact,
   runRecordMatch,
   trackStride,
   type CommandSource,
@@ -9687,6 +9689,31 @@ function pinScene(
     // this build — but a format-1 TANK replay is refused rather than played back dead
     const legacy: Replay = { ...r, format: 1, tracks: { 0: [1, 0, 0, 0, 0] } };
     check('replay: a format-1 container still parses', simulateReplay(legacy).robots.length === 1);
+    /**
+     * A SIM BUMP MUST NOT EMPTY THE ARCHIVE.
+     *
+     * A replay is an input log, so a sim change means it re-simulates into a different game
+     * than the one that was played — that is unavoidable, and `replayExact` is what reports
+     * it. What does NOT follow is that the log should be refused: it still describes real
+     * inputs from a real match, and the two questions are now separate so the viewer can play
+     * it with a banner instead of throwing it away on every patch. Records are unaffected
+     * either way; the server stores the score it computed at the time and never re-derives it.
+     */
+    const patched: Replay = { ...r, sim: (r.sim ?? 0) + 1 };
+    check(
+      'replay: a sim bump makes a replay INEXACT but still readable (the archive survives)',
+      replayReadable(patched) && !replayExact(patched, patched.balanceVersion, SIM_VERSION),
+      `sim ${patched.sim} vs build ${SIM_VERSION}`,
+    );
+    check(
+      'replay: an UNSTAMPED replay is readable but never claims to be exact',
+      replayReadable({ ...r, sim: undefined }) &&
+        !replayExact({ ...r, sim: undefined }, r.balanceVersion, SIM_VERSION),
+    );
+    check(
+      'replay: a container from a FUTURE build is not readable at all',
+      !replayReadable({ ...r, format: REPLAY_FORMAT + 1 }),
+    );
     check(
       'replay: a format-1 TANK replay is refused, not played back with a dead drivetrain',
       !replayPlayable(legacy, legacy.balanceVersion, legacy.sim ?? 0),

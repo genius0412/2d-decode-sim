@@ -794,6 +794,56 @@ async function main(): Promise<void> {
     `${srStillOpen[0]?.reporterRejected}`,
   );
 
+  // ------------------------------------------------------------------ replays
+  /**
+   * THE REPLAY ROUND-TRIP, which was broken for every replay ever stored.
+   *
+   * `replays` had no column for SIM_VERSION — `balance_version` is the SEASON and `sim_version`
+   * holds the recording build's BALANCE_VERSION — so `getReplay` could not populate
+   * `Replay.sim`, it came back undefined, and the playback gate read an absent `sim` as 0.
+   * Nothing matched, so every DB-served replay was refused as stale on every build. It was
+   * invisible because the replay tests all use in-memory containers, which carry the field.
+   */
+  {
+    const { REPLAY_FORMAT, replayReadable, replayExact } = await import('../src/sim/replay');
+    const stored = {
+      format: REPLAY_FORMAT,
+      balanceVersion: 4,
+      sim: 7,
+      game: 'decode' as const,
+      mode: 'match' as const,
+      seed: 1234,
+      ticks: 120,
+      setups: [] as never[],
+      tracks: { 0: [1, 2, 3, 4, 5, 6, 7] },
+    };
+    const id = await repo.saveReplay(stored, 9, 'decode');
+    const back = await repo.getReplay(id);
+    check('replays: a stored replay comes back', back !== null);
+    check(
+      'replays: the SIM_VERSION survives the round-trip (the gate has something to compare)',
+      back?.sim === 7,
+      `sim=${back?.sim}`,
+    );
+    check(
+      'replays: the season stamp does NOT overwrite the recording build version',
+      back?.balanceVersion === 4,
+      `balanceVersion=${back?.balanceVersion} (season was 9)`,
+    );
+    check(
+      'replays: a round-tripped replay is exact against its own versions',
+      !!back && replayReadable(back) && replayExact(back, 4, 7),
+    );
+    // ...and a row from before the column existed is readable, but never claims exactness
+    await db.query(`update replays set behaviour_version = null where id = $1`, [id]);
+    const legacy = await repo.getReplay(id);
+    check(
+      'replays: a pre-0031 row is readable and honestly not-exact, not silently version 0',
+      !!legacy && legacy.sim === undefined && replayReadable(legacy) && !replayExact(legacy, 4, 7),
+      `sim=${String(legacy?.sim)}`,
+    );
+  }
+
   await db.close();
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
   process.exit(failures === 0 ? 0 : 1);

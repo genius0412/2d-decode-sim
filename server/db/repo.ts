@@ -903,12 +903,16 @@ export async function refundKofiPayment(transactionId: string): Promise<boolean>
  * this replay belongs to (DECODE vs Chain Reaction). */
 export async function saveReplay(replay: Replay, season: number, game?: Game): Promise<string> {
   const rows = await q<{ id: string }>(
-    `insert into replays (format, balance_version, sim_version, seed, ticks, setups, tracks, game)
-     values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+    `insert into replays (format, balance_version, sim_version, behaviour_version, seed, ticks, setups, tracks, game)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
     [
       replay.format,
       season, // balance_version = SEASON (purge key + index, see 0004)
       replay.balanceVersion, // sim_version = the sim-code version that recorded it
+      // ...and behaviour_version = SIM_VERSION, the one the playback gate actually compares.
+      // Without it `getReplay` could not set `Replay.sim`, an absent `sim` reads as 0, and
+      // EVERY stored replay was refused as stale on every build (see migration 0031).
+      replay.sim ?? null,
       replay.seed,
       replay.ticks,
       JSON.stringify(replay.setups),
@@ -924,13 +928,15 @@ export async function getReplay(id: string): Promise<Replay | null> {
     format: number;
     balance_version: number;
     sim_version: number | null;
+    behaviour_version: number | null;
     game: Game;
     seed: string;
     ticks: number;
     setups: Replay['setups'];
     tracks: Replay['tracks'];
   }>(
-    `select format, balance_version, sim_version, game, seed, ticks, setups, tracks from replays where id = $1`,
+    `select format, balance_version, sim_version, behaviour_version, game, seed, ticks, setups, tracks
+       from replays where id = $1`,
     [id],
   );
   const r = rows[0];
@@ -940,6 +946,10 @@ export async function getReplay(id: string): Promise<Replay | null> {
     // the gate re-sims: it needs the CODE version. Fall back to balance_version for
     // any legacy row the sim_version backfill somehow missed.
     balanceVersion: r.sim_version ?? r.balance_version,
+    // LEFT UNDEFINED when the column is null, which is what a row recorded before 0031 is:
+    // the behaviour it ran is genuinely unknown. `replayExact` treats undefined as "cannot
+    // promise", so the viewer plays it with a warning rather than asserting a mismatch.
+    sim: r.behaviour_version ?? undefined,
     game: r.game ?? 'decode', // picks the sim module to re-simulate (CR vs DECODE)
     mode: 'match',
     seed: Number(r.seed),

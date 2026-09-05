@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReplay } from '../net/api';
-import { ReplayPlayer, replayPlayable, replayViewpoint, type Replay } from '../sim/replay';
+import { ReplayPlayer, replayReadable, replayExact, replayViewpoint, type Replay } from '../sim/replay';
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
@@ -34,6 +34,8 @@ export function ReplayView({
   const [error, setError] = useState('');
   // the version a stale replay was recorded under (for the message)
   const [staleVersion, setStaleVersion] = useState<number | null>(null);
+  /** playable, but recorded by a different sim build — watchable, not promised frame-exact */
+  const [inexact, setInexact] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [tick, setTick] = useState(0);
   const [total, setTotal] = useState(1);
@@ -59,11 +61,17 @@ export function ReplayView({
       // decision (see it for the container-vs-behaviour split): an OLDER container is still
       // readable and still plays, a mismatched balance/sim version cannot, and a format-1
       // replay of a tank robot is refused because its drive input was never stored.
-      if (!replayPlayable(r, BALANCE_VERSION, SIM_VERSION)) {
+      // UNREADABLE is the only hard refusal: a container from a future build, or a format-1
+      // tank replay whose drive input was never stored. A version MISMATCH is not that — the
+      // log is real and still worth watching, it just cannot be promised to re-simulate into
+      // the match that was played, so it plays with a banner saying so. Refusing outright
+      // meant every patch silently emptied the archive.
+      if (!replayReadable(r)) {
         setStaleVersion(r.balanceVersion ?? null);
         setStatus('stale');
         return;
       }
+      setInexact(!replayExact(r, BALANCE_VERSION, SIM_VERSION));
       player.current = new ReplayPlayer(r);
       renderer.current = new Renderer();
       setTotal(Math.max(1, r.ticks));
@@ -204,10 +212,15 @@ export function ReplayView({
       {status === 'stale' && (
         <div className="ds-empty" style={{ margin: 'auto' }}>
           <div className="big">Replay unavailable</div>
-          This match was recorded on an older version of the sim
-          {staleVersion !== null ? ` (Season ${staleVersion})` : ''}. Physics and balance have
-          changed since, so it can no longer be played back accurately. The score on the
-          leaderboard still stands.
+          This replay was recorded in a format this build cannot read
+          {staleVersion !== null ? ` (v${staleVersion})` : ''}. The score on the leaderboard
+          still stands.
+        </div>
+      )}
+      {status === 'ready' && inexact && (
+        <div className="ds-replay-warn" role="status">
+          Recorded on a different sim build — physics have changed since, so this playback may
+          drift from the match as it was played. The score on the leaderboard still stands.
         </div>
       )}
       {status === 'ready' && (
