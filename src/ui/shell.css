@@ -2293,19 +2293,6 @@ tr.lb-detail td {
   border-bottom: 1px solid var(--ds-line);
   background: var(--ds-bar);
 }
-/* A replay recorded by a DIFFERENT sim build: watchable, but not promised frame-exact.
-   Sits on the BAR surface like the scoreboard below it, so --ds-warn/--ds-line are the
-   right tokens here (not the --ds-on-field set, which is for things drawn on the canvas).
-   --ds-warn INVERTS between themes because it is read against the surface, not a fill. */
-.ds-replay-warn {
-  padding: 7px 18px;
-  border-bottom: 1px solid var(--ds-line);
-  background: var(--ds-bar);
-  color: var(--ds-warn);
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: center;
-}
 /* live scoreboard over the replay. Mirrors the in-match HUD order (red · clock ·
    blue) so it reads the same way. It sits on the BAR surface, not the canvas, so
    --ds-ink/--ds-line are the correct tokens here (not the --ds-on-field set). */
@@ -2357,6 +2344,10 @@ tr.lb-detail td {
 .ds-replay-controls {
   display: flex;
   align-items: center;
+  /* WRAPS because this row gained a fifth item (Download). The seek is `flex: 1` and would
+     otherwise be the one thing that shrinks, down to nothing on a phone. Wrapping only
+     engages when the row genuinely cannot fit, so desktop layout is unchanged. */
+  flex-wrap: wrap;
   gap: 12px;
   padding: 12px 18px;
   border-top: 1px solid var(--ds-line);

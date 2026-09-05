@@ -161,8 +161,6 @@ import {
   maxMatchTicks,
   REPLAY_FORMAT,
   replayPlayable,
-  replayReadable,
-  replayExact,
   runRecordMatch,
   trackStride,
   type CommandSource,
@@ -9690,29 +9688,37 @@ function pinScene(
     const legacy: Replay = { ...r, format: 1, tracks: { 0: [1, 0, 0, 0, 0] } };
     check('replay: a format-1 container still parses', simulateReplay(legacy).robots.length === 1);
     /**
-     * A SIM BUMP MUST NOT EMPTY THE ARCHIVE.
+     * A SIM BUMP RETIRES OLDER REPLAYS, DELIBERATELY.
      *
-     * A replay is an input log, so a sim change means it re-simulates into a different game
-     * than the one that was played — that is unavoidable, and `replayExact` is what reports
-     * it. What does NOT follow is that the log should be refused: it still describes real
-     * inputs from a real match, and the two questions are now separate so the viewer can play
-     * it with a banner instead of throwing it away on every patch. Records are unaffected
-     * either way; the server stores the score it computed at the time and never re-derives it.
+     * A replay is an input log, so it only re-simulates into the match that was played under
+     * the build that recorded it — a changed sim produces a different game from the same
+     * inputs. Playing one back anyway would show something that never happened, which is worse
+     * than not playing it, so the gate refuses rather than warns. That is a POLICY choice and
+     * these checks pin it: it is also why the viewer offers a DOWNLOAD while a replay is still
+     * playable, since that is the last moment it is provably the real thing.
+     *
+     * Records are unaffected either way — the server stores the score it computed at the time
+     * and never re-derives it from the replay.
      */
     const patched: Replay = { ...r, sim: (r.sim ?? 0) + 1 };
     check(
-      'replay: a sim bump makes a replay INEXACT but still readable (the archive survives)',
-      replayReadable(patched) && !replayExact(patched, patched.balanceVersion, SIM_VERSION),
+      'replay: a SIM bump retires older replays (the gate refuses, it does not warn)',
+      !replayPlayable(patched, patched.balanceVersion, SIM_VERSION),
       `sim ${patched.sim} vs build ${SIM_VERSION}`,
     );
     check(
-      'replay: an UNSTAMPED replay is readable but never claims to be exact',
-      replayReadable({ ...r, sim: undefined }) &&
-        !replayExact({ ...r, sim: undefined }, r.balanceVersion, SIM_VERSION),
+      'replay: an UNSTAMPED replay is refused rather than assumed to be version 0',
+      !replayPlayable({ ...r, sim: undefined }, r.balanceVersion, SIM_VERSION),
     );
     check(
-      'replay: a container from a FUTURE build is not readable at all',
-      !replayReadable({ ...r, format: REPLAY_FORMAT + 1 }),
+      'replay: a container from a FUTURE build is refused',
+      !replayPlayable({ ...r, format: REPLAY_FORMAT + 1 }, r.balanceVersion, r.sim ?? 0),
+    );
+    // ...and the one that MUST stay playable, or the download button would never be offered
+    check(
+      'replay: a replay recorded by THIS build is playable (and so downloadable)',
+      replayPlayable(r, r.balanceVersion, r.sim ?? -1),
+      `bv=${r.balanceVersion} sim=${r.sim}`,
     );
     check(
       'replay: a format-1 TANK replay is refused, not played back with a dead drivetrain',

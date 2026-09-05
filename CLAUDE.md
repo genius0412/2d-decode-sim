@@ -397,6 +397,25 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
   drives "forward" goes nowhere and parks in a corner; and holding the manual FIRE button on a
   turretless CR archetype hands `rotate` to `chainAimAssist`, which fights any steering trying
   to close on a target.
+- **A SIM BUMP RETIRES OLDER REPLAYS, ON PURPOSE — and that is why you can DOWNLOAD one.**
+  `replayPlayable` refuses a version mismatch rather than warning about it: a replay is an
+  input log, so a changed sim produces a DIFFERENT game from the same inputs, and playing it
+  back anyway would show something that never happened. Records are unaffected — the server
+  stores the score it computed at the time and never re-derives it from the replay.
+  The consequence is that an archive has a shelf life, so the viewer offers **↓ Download**
+  whenever `status === 'ready'` — which IS `replayPlayable`, so the offer is never made for a
+  container this build could not reproduce anyway. That is the last moment a replay is provably
+  the real thing. The file is the container verbatim (`{format, versions, seed, setups,
+  tracks}`, the same JSON the server stores), so it stays re-playable by any build whose
+  versions still match and remains readable evidence long after they do not.
+  ⚠️ **Replays are only playable at all because `replays.behaviour_version` exists**
+  (migration 0031). `balance_version` is the SEASON and `sim_version` holds the recording
+  build's BALANCE_VERSION, so before that column there was nowhere to put SIM_VERSION,
+  `getReplay` could not set `Replay.sim`, an absent `sim` read as 0 and EVERY stored replay was
+  refused on EVERY build. It stayed invisible because the replay tests all use in-memory
+  containers, which carry the field — `npm run dbtest` now covers the round-trip.
+  **Rapier is pinned EXACTLY** (not a caret) for the same reason: a fresh `npm install` pulling
+  a new physics engine would change `step()` output with no version bump, making every stamp a lie.
 - **DEPLOY**: Fly app `dohun-sim-decode`, `Dockerfile` + `fly.toml` + `docs/deploy.md`,
   `GET /health`; `ws` + `tsx` are runtime `dependencies`. Protocol: commit → **`./scripts/
   fly-deploy.sh`** → verify `/health` → Vercel auto-deploys clients.

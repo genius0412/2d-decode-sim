@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReplay } from '../net/api';
-import { ReplayPlayer, replayReadable, replayExact, replayViewpoint, type Replay } from '../sim/replay';
+import { ReplayPlayer, replayPlayable, replayViewpoint, type Replay } from '../sim/replay';
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
@@ -34,8 +34,6 @@ export function ReplayView({
   const [error, setError] = useState('');
   // the version a stale replay was recorded under (for the message)
   const [staleVersion, setStaleVersion] = useState<number | null>(null);
-  /** playable, but recorded by a different sim build — watchable, not promised frame-exact */
-  const [inexact, setInexact] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [tick, setTick] = useState(0);
   const [total, setTotal] = useState(1);
@@ -61,17 +59,11 @@ export function ReplayView({
       // decision (see it for the container-vs-behaviour split): an OLDER container is still
       // readable and still plays, a mismatched balance/sim version cannot, and a format-1
       // replay of a tank robot is refused because its drive input was never stored.
-      // UNREADABLE is the only hard refusal: a container from a future build, or a format-1
-      // tank replay whose drive input was never stored. A version MISMATCH is not that — the
-      // log is real and still worth watching, it just cannot be promised to re-simulate into
-      // the match that was played, so it plays with a banner saying so. Refusing outright
-      // meant every patch silently emptied the archive.
-      if (!replayReadable(r)) {
+      if (!replayPlayable(r, BALANCE_VERSION, SIM_VERSION)) {
         setStaleVersion(r.balanceVersion ?? null);
         setStatus('stale');
         return;
       }
-      setInexact(!replayExact(r, BALANCE_VERSION, SIM_VERSION));
       player.current = new ReplayPlayer(r);
       renderer.current = new Renderer();
       setTotal(Math.max(1, r.ticks));
@@ -187,6 +179,35 @@ export function ReplayView({
 
   const pct = Math.round((tick / total) * 100);
   // a record run has one alliance on the field — showing "0" for an opponent that
+  /**
+   * SAVE THE REPLAY WHILE IT IS STILL EXACT.
+   *
+   * A replay is an input log, so it only re-simulates into the match that was played under the
+   * build that recorded it — `replayPlayable` is the gate, and a SIM_VERSION bump deliberately
+   * retires everything older. That is the intended policy, but it means an archive has a
+   * shelf life, and the only moment a replay is provably still the real thing is while this
+   * build can play it. So the button exists exactly then: `status === 'ready'` IS
+   * `replayPlayable`, so an offer to download is never made for a container we could not
+   * reproduce anyway.
+   *
+   * The file is the container verbatim — `{format, versions, seed, setups, tracks}`, the same
+   * JSON the server stores — so it stays re-playable by any build whose versions still match,
+   * and remains readable evidence (who, what robot, how long) long after they do not.
+   */
+  const download = (): void => {
+    const r = replay.current;
+    if (!r) return;
+    const name = `dsim-${r.game ?? 'decode'}-s${r.balanceVersion}-v${r.sim ?? 0}-${replayId ?? r.seed}.json`;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(r)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    // the object URL pins the blob in memory until it is revoked, and the click is synchronous
+    // only as far as STARTING the download — give the browser a tick to take the handle first
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
   // never existed reads as a shutout, so those get a single score instead.
   const alliances = new Set((replay.current?.setups ?? []).map((s) => s.alliance));
   const solo = alliances.size < 2;
@@ -212,15 +233,10 @@ export function ReplayView({
       {status === 'stale' && (
         <div className="ds-empty" style={{ margin: 'auto' }}>
           <div className="big">Replay unavailable</div>
-          This replay was recorded in a format this build cannot read
-          {staleVersion !== null ? ` (v${staleVersion})` : ''}. The score on the leaderboard
-          still stands.
-        </div>
-      )}
-      {status === 'ready' && inexact && (
-        <div className="ds-replay-warn" role="status">
-          Recorded on a different sim build — physics have changed since, so this playback may
-          drift from the match as it was played. The score on the leaderboard still stands.
+          This match was recorded on an older version of the sim
+          {staleVersion !== null ? ` (Season ${staleVersion})` : ''}. Physics and balance have
+          changed since, so it can no longer be played back accurately. The score on the
+          leaderboard still stands.
         </div>
       )}
       {status === 'ready' && (
@@ -261,6 +277,9 @@ export function ReplayView({
             aria-label="Seek"
           />
           <span className="ds-replay-time">{pct}%</span>
+          <button className="ds-btn ghost" onClick={download} title="Save this replay as a file">
+            ↓ Download
+          </button>
         </div>
       )}
     </div>
