@@ -402,12 +402,26 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
   input log, so a changed sim produces a DIFFERENT game from the same inputs, and playing it
   back anyway would show something that never happened. Records are unaffected — the server
   stores the score it computed at the time and never re-derives it from the replay.
-  The consequence is that an archive has a shelf life, so the viewer offers **↓ Download**
-  whenever `status === 'ready'` — which IS `replayPlayable`, so the offer is never made for a
-  container this build could not reproduce anyway. That is the last moment a replay is provably
-  the real thing. The file is the container verbatim (`{format, versions, seed, setups,
-  tracks}`, the same JSON the server stores), so it stays re-playable by any build whose
-  versions still match and remains readable evidence long after they do not.
+  The consequence is that an archive has a shelf life, so the viewer offers TWO exports, both on
+  `status === 'ready'` — which IS `replayPlayable`, so neither is offered for a container this
+  build could not reproduce anyway. That is the last moment a replay is provably the real match.
+  - **↓ Video** (`src/ui/replayVideo.ts`) is the one that LASTS: `MediaRecorder` over
+    `canvas.captureStream(60)`, no dependency. It stops being a re-simulation and becomes a
+    recording, so it outlives every patch, needs no sim, and can be sent to someone without
+    DSIM. It captures in REAL TIME off the live canvas — the replay restarts at tick 0 and
+    plays through — so a full match takes a full match, and every playback control is LOCKED
+    while it runs (scrubbing mid-record would be scrubbing in the file).
+    **The render loop is rAF, which a browser STOPS for a hidden tab**, so the recorder is
+    paused and resumed on `visibilitychange`. Without that the sim stalls while the encoder
+    keeps running on the wall clock and bakes the frozen field into the middle of the file —
+    measured: capturing a canvas whose rAF never fired gave a 110-byte, zero-frame video, and a
+    1 s stall mid-capture stretched a 1.96 s recording to 2.97 s. `pickVideoMime` feature-
+    detects and returns NULL where there is no `MediaRecorder`; the viewer then falls back to
+    the data export rather than offering a button that silently produces nothing.
+  - **↓ Data** is the container verbatim (`{format, versions, seed, setups, tracks}`, the same
+    JSON the server stores) — the only form that is still a REPLAY: re-playable in-sim at full
+    fidelity by any build whose versions match. A video cannot be stepped, seeked in-sim, or
+    verified.
   ⚠️ **Replays are only playable at all because `replays.behaviour_version` exists**
   (migration 0031). `balance_version` is the SEASON and `sim_version` holds the recording
   build's BALANCE_VERSION, so before that column there was nowhere to put SIM_VERSION,

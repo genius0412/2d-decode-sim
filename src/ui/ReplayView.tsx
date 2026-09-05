@@ -4,6 +4,7 @@ import { ReplayPlayer, replayPlayable, replayViewpoint, type Replay } from '../s
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
+import { pickVideoMime, videoExt, saveBlob } from './replayVideo';
 import { SIM_DT, BALANCE_VERSION, SIM_VERSION } from '../config';
 import type { MatchPhase } from '../types';
 
@@ -34,6 +35,14 @@ export function ReplayView({
   const [error, setError] = useState('');
   // the version a stale replay was recorded under (for the message)
   const [staleVersion, setStaleVersion] = useState<number | null>(null);
+  /** a real-time canvas capture is running; playback controls are locked while it is */
+  const [recording, setRecording] = useState(false);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<BlobPart[]>([]);
+  /** set when the user cancels, so `onstop` throws the partial file away instead of saving it */
+  const discard = useRef(false);
+  /** detaches the visibilitychange listener that pauses the encoder with the render loop */
+  const stopVisibility = useRef<(() => void) | null>(null);
   const [playing, setPlaying] = useState(true);
   const [tick, setTick] = useState(0);
   const [total, setTotal] = useState(1);
@@ -128,6 +137,9 @@ export function ReplayView({
         if (p.done && playingRef.current) {
           playingRef.current = false;
           setPlaying(false);
+          // the END of the replay is what ends the recording — a ref, not the `recording`
+          // state, because this loop closes over the render that started it
+          if (recorder.current?.state === 'recording') recorder.current.stop();
         }
       }
       rend.render(ctx, p.world, null, localId);
@@ -142,6 +154,23 @@ export function ReplayView({
       window.removeEventListener('resize', resize);
     };
   }, [status, viewerRobotId]);
+
+  /**
+   * A RECORDING MUST NOT OUTLIVE THE SCREEN THAT STARTED IT. Leaving the viewer mid-capture
+   * would otherwise leave a live `MediaRecorder` holding a stream off a canvas that no longer
+   * exists, plus a document-level listener with nothing to detach it. Discard, don't save: a
+   * video of a match the watcher walked out of is not a file anyone asked for.
+   */
+  useEffect(
+    () => () => {
+      discard.current = true;
+      const cur = recorder.current;
+      if (cur && cur.state !== 'inactive') cur.stop();
+      stopVisibility.current?.();
+      stopVisibility.current = null;
+    },
+    [],
+  );
 
   /** pull tick + scoreboard off the sim in one go, so seeking/restarting can't
    *  leave the score showing a different moment than the field does. */
@@ -180,32 +209,104 @@ export function ReplayView({
   const pct = Math.round((tick / total) * 100);
   // a record run has one alliance on the field — showing "0" for an opponent that
   /**
-   * SAVE THE REPLAY WHILE IT IS STILL EXACT.
+   * SAVE THE REPLAY WHILE IT IS STILL EXACT — as a VIDEO, mainly.
    *
-   * A replay is an input log, so it only re-simulates into the match that was played under the
-   * build that recorded it — `replayPlayable` is the gate, and a SIM_VERSION bump deliberately
-   * retires everything older. That is the intended policy, but it means an archive has a
-   * shelf life, and the only moment a replay is provably still the real thing is while this
-   * build can play it. So the button exists exactly then: `status === 'ready'` IS
-   * `replayPlayable`, so an offer to download is never made for a container we could not
-   * reproduce anyway.
+   * `replayPlayable` retires a replay the moment SIM_VERSION moves, deliberately: a changed sim
+   * re-simulates the same inputs into a different game. So the container is perishable, and the
+   * only moment it is provably the real match is while this build can still play it. Both
+   * exports therefore live on `status === 'ready'`, which IS `replayPlayable` — neither is ever
+   * offered for something we could not reproduce anyway.
    *
-   * The file is the container verbatim — `{format, versions, seed, setups, tracks}`, the same
-   * JSON the server stores — so it stays re-playable by any build whose versions still match,
-   * and remains readable evidence (who, what robot, how long) long after they do not.
+   * The VIDEO is the one that lasts: it stops being a re-simulation and becomes a recording, so
+   * it outlives every patch, needs no sim to watch, and can be sent to someone without DSIM.
+   * It is captured off the live canvas in REAL TIME (see `replayVideo.ts`), so a full match
+   * takes a full match — the replay restarts from tick 0 and plays through while it records.
+   *
+   * The JSON stays as the secondary export because it is the only form that is still a REPLAY:
+   * re-playable in-sim at full fidelity by any build whose versions match, and the shape the
+   * server stores. A video cannot be stepped, seeked in-sim, or verified.
    */
-  const download = (): void => {
+  const filename = (ext: string): string => {
+    const r = replay.current;
+    const id = replayId ?? r?.seed ?? 0;
+    return `dsim-${r?.game ?? 'decode'}-s${r?.balanceVersion ?? 0}-v${r?.sim ?? 0}-${id}.${ext}`;
+  };
+
+  const downloadData = (): void => {
     const r = replay.current;
     if (!r) return;
-    const name = `dsim-${r.game ?? 'decode'}-s${r.balanceVersion}-v${r.sim ?? 0}-${replayId ?? r.seed}.json`;
-    const url = URL.createObjectURL(new Blob([JSON.stringify(r)], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    a.click();
-    // the object URL pins the blob in memory until it is revoked, and the click is synchronous
-    // only as far as STARTING the download — give the browser a tick to take the handle first
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    saveBlob(new Blob([JSON.stringify(r)], { type: 'application/json' }), filename('json'));
+  };
+
+  const startRecording = (): void => {
+    const canvas = canvasRef.current;
+    const mime = pickVideoMime();
+    // no MediaRecorder (some embedded webviews) or no container it will encode ⇒ the data
+    // export is the honest fallback rather than a button that silently does nothing
+    if (!canvas || !mime) {
+      downloadData();
+      return;
+    }
+    const rec = new MediaRecorder(canvas.captureStream(60), {
+      mimeType: mime,
+      // the field is flat colour with hard edges, which compresses well; this is generous
+      // enough that the scoreboard text stays legible after encoding
+      videoBitsPerSecond: 8_000_000,
+    });
+    chunks.current = [];
+    discard.current = false;
+    rec.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.current.push(e.data);
+    };
+    rec.onstop = () => {
+      const parts = chunks.current;
+      chunks.current = [];
+      recorder.current = null;
+      stopVisibility.current?.();
+      stopVisibility.current = null;
+      setRecording(false);
+      if (!discard.current && parts.length) {
+        saveBlob(new Blob(parts, { type: mime }), filename(videoExt(mime)));
+      }
+    };
+    /**
+     * HIDE THE TAB AND THE CAPTURE STARVES — so pause the encoder with it.
+     *
+     * The render loop is `requestAnimationFrame`, which a browser stops for a background tab.
+     * The sim stops advancing (so the replay never reaches its end) but the RECORDER keeps
+     * running on the wall clock, holding the last painted frame — measured directly: a capture
+     * of a canvas whose rAF never fired produced a 110-byte file with zero frames in it. Left
+     * alone, switching tabs for a minute would bake a minute of frozen field into the middle of
+     * a two-and-a-half-minute match and leave the video longer than the run it recorded.
+     *
+     * `pause`/`resume` keeps the encoded timeline aligned with the sim's: both stop together
+     * and both start together, so the file is the match and nothing else.
+     */
+    const onVisibility = (): void => {
+      const cur = recorder.current;
+      if (!cur) return;
+      if (document.hidden && cur.state === 'recording') cur.pause();
+      else if (!document.hidden && cur.state === 'paused') cur.resume();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    stopVisibility.current = () => document.removeEventListener('visibilitychange', onVisibility);
+
+    recorder.current = rec;
+    setRecording(true);
+    // record the whole match, not from wherever the viewer happens to be paused
+    rebuild();
+    rec.start();
+    playingRef.current = true;
+    setPlaying(true);
+  };
+
+  const cancelRecording = (): void => {
+    discard.current = true;
+    const cur = recorder.current;
+    // a PAUSED recorder still has to be stopped to fire `onstop` and release the stream
+    if (cur && cur.state !== 'inactive') cur.stop();
+    playingRef.current = false;
+    setPlaying(false);
   };
 
   // never existed reads as a shutout, so those get a single score instead.
@@ -262,10 +363,12 @@ export function ReplayView({
 
       {status === 'ready' && (
         <div className="ds-replay-controls">
-          <button className="ds-btn primary" onClick={() => setPlay(!playing)}>
+          <button className="ds-btn primary" onClick={() => setPlay(!playing)} disabled={recording}>
             {playing ? '❚❚ Pause' : player.current?.done ? '⟲ Replay' : '▶ Play'}
           </button>
-          <button className="ds-btn" onClick={rebuild}>⟲ Restart</button>
+          <button className="ds-btn" onClick={rebuild} disabled={recording}>⟲ Restart</button>
+          {/* every playback control is locked while recording: the capture is of THIS canvas,
+              so pausing or scrubbing mid-record would be pausing or scrubbing in the file */}
           <input
             type="range"
             className="ds-replay-seek"
@@ -275,11 +378,25 @@ export function ReplayView({
             style={rangeFill(tick, 0, total)}
             onChange={(e) => seek(Number(e.target.value))}
             aria-label="Seek"
+            disabled={recording}
           />
-          <span className="ds-replay-time">{pct}%</span>
-          <button className="ds-btn ghost" onClick={download} title="Save this replay as a file">
-            ↓ Download
-          </button>
+          <span className="ds-replay-time">{recording ? `● REC ${pct}%` : `${pct}%`}</span>
+          {recording ? (
+            <button className="ds-btn ghost" onClick={cancelRecording}>Cancel</button>
+          ) : (
+            <>
+              <button
+                className="ds-btn ghost"
+                onClick={startRecording}
+                title="Play the match through and save it as a video file"
+              >
+                ↓ Video
+              </button>
+              <button className="ds-btn ghost" onClick={downloadData} title="Save the replay data (re-playable in DSIM)">
+                ↓ Data
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

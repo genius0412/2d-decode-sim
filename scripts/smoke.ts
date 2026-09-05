@@ -20,6 +20,7 @@ import { updatePenalties } from '../src/sim/penalties';
 import { aimSolution, robotInLaunchZone } from '../src/sim/robot';
 import { updateHumanPlayers } from '../src/sim/humanPlayer';
 import { startMatch } from '../src/sim/match';
+import { pickVideoMime, videoExt } from '../src/ui/replayVideo';
 import { gateColliderPos, gateRestOn, pushingGate } from '../src/sim/goal';
 import { chassisCorners } from '../src/sim/physics';
 import { pointDepthInChassis } from '../src/sim/physics';
@@ -9713,6 +9714,24 @@ function pinScene(
     check(
       'replay: a container from a FUTURE build is refused',
       !replayPlayable({ ...r, format: REPLAY_FORMAT + 1 }, r.balanceVersion, r.sim ?? 0),
+    );
+    /**
+     * THE VIDEO EXPORT'S FALLBACK BRANCH, which is the half that can be tested headlessly.
+     *
+     * `pickVideoMime` feature-detects `MediaRecorder` and must return NULL where there is none
+     * — Node here, but really any embedded webview without it — because the viewer branches on
+     * that null to fall back to the JSON export rather than offering a button that silently
+     * produces nothing. The recording itself needs a real canvas and is verified in a browser.
+     */
+    check(
+      'replay video: no MediaRecorder ⇒ no mime, so the viewer falls back to the data export',
+      typeof MediaRecorder === 'undefined' ? pickVideoMime() === null : pickVideoMime() !== null,
+    );
+    check(
+      'replay video: the file extension follows the container that was actually recorded',
+      videoExt('video/webm;codecs=vp9') === 'webm' &&
+        videoExt('video/mp4;codecs=avc1') === 'mp4' &&
+        videoExt('video/webm') === 'webm',
     );
     // ...and the one that MUST stay playable, or the download button would never be offered
     check(
