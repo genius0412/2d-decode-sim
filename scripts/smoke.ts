@@ -162,6 +162,7 @@ import {
   maxMatchTicks,
   REPLAY_FORMAT,
   replayPlayable,
+  replayRefusal,
   runRecordMatch,
   trackStride,
   type CommandSource,
@@ -9753,6 +9754,50 @@ function pinScene(
     check(
       'replay: a container from a NEWER build is refused',
       !replayPlayable({ ...r, format: REPLAY_FORMAT + 1 }, r.balanceVersion, r.sim ?? 0),
+    );
+    /**
+     * THE REFUSAL HAS TO SAY WHICH REFUSAL IT IS.
+     *
+     * The viewer used to print one sentence for all of them — "recorded on an older version of
+     * the sim (Season N)" — off `balanceVersion`, which is not the season (in the replays table
+     * the SEASON is the `balance_version` column and this number lives in `sim_version`; see
+     * repo.ts + migration 0031). It was wrong in three separate ways at once: it named the wrong
+     * quantity, it called a FUTURE container old when the fix is to refresh, and it asserted a
+     * specific mismatch for an UNSTAMPED replay whose behaviour is genuinely unknown.
+     *
+     * `unstamped` is a MESSAGE distinction only — the checks above and below pin that the
+     * yes/no policy is unchanged — so it is checked here against the same containers.
+     */
+    check(
+      'replay: a FUTURE container refuses as `future`, not as stale',
+      replayRefusal({ ...r, format: REPLAY_FORMAT + 1 }, r.balanceVersion, r.sim ?? 0) === 'future',
+    );
+    check(
+      'replay: a BALANCE mismatch is named as one',
+      replayRefusal(r, r.balanceVersion + 1, r.sim ?? 0) === 'balance',
+    );
+    check(
+      'replay: a SIM mismatch is behaviour, not balance',
+      replayRefusal(patched, patched.balanceVersion, SIM_VERSION) === 'behaviour',
+    );
+    check(
+      'replay: an UNSTAMPED replay is `unstamped` — unknown, not a named mismatch',
+      replayRefusal({ ...r, sim: undefined }, r.balanceVersion, SIM_VERSION) === 'unstamped',
+    );
+    check(
+      'replay: a format-1 TANK replay names the container, not a version',
+      replayRefusal(legacy, legacy.balanceVersion, legacy.sim ?? 0) === 'tank',
+    );
+    check(
+      'replay: a replay this build CAN play refuses for nothing',
+      replayRefusal(r, r.balanceVersion, r.sim ?? -1) === null,
+    );
+    /* the split must not have moved the POLICY: `(sim ?? 0)` is still the test, so a build
+       running SIM_VERSION 0 still accepts an unstamped container (which is what makes the
+       format-1 MECANUM check above pass) rather than refusing it as unknown. */
+    check(
+      'replay: `unstamped` is a message, not a policy — sim 0 still accepts an unstamped log',
+      replayRefusal({ ...r, sim: undefined }, r.balanceVersion, 0) === null,
     );
   }
 }

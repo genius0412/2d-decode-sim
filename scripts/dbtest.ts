@@ -805,7 +805,7 @@ async function main(): Promise<void> {
    * invisible because the replay tests all use in-memory containers, which carry the field.
    */
   {
-    const { REPLAY_FORMAT, replayReadable, replayExact } = await import('../src/sim/replay');
+    const { REPLAY_FORMAT, replayPlayable, replayRefusal } = await import('../src/sim/replay');
     const stored = {
       format: REPLAY_FORMAT,
       balanceVersion: 4,
@@ -831,16 +831,19 @@ async function main(): Promise<void> {
       `balanceVersion=${back?.balanceVersion} (season was 9)`,
     );
     check(
-      'replays: a round-tripped replay is exact against its own versions',
-      !!back && replayReadable(back) && replayExact(back, 4, 7),
+      'replays: a round-tripped replay plays against its own versions',
+      !!back && replayPlayable(back, 4, 7),
     );
-    // ...and a row from before the column existed is readable, but never claims exactness
+    /* ...and a row from before the column existed comes back UNSTAMPED, which is a different
+       refusal from a known mismatch: the behaviour it ran is unrecoverable, not version 0. This
+       is the only place that distinction is checked against a REAL row rather than a container
+       built in memory — and reading it as 0 is exactly the bug 0031 exists to fix. */
     await db.query(`update replays set behaviour_version = null where id = $1`, [id]);
     const legacy = await repo.getReplay(id);
     check(
-      'replays: a pre-0031 row is readable and honestly not-exact, not silently version 0',
-      !!legacy && legacy.sim === undefined && replayReadable(legacy) && !replayExact(legacy, 4, 7),
-      `sim=${String(legacy?.sim)}`,
+      'replays: a pre-0031 row is honestly UNSTAMPED, not silently version 0',
+      !!legacy && legacy.sim === undefined && replayRefusal(legacy, 4, 7) === 'unstamped',
+      `sim=${String(legacy?.sim)} refusal=${legacy ? replayRefusal(legacy, 4, 7) : 'n/a'}`,
     );
   }
 

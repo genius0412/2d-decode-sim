@@ -1,12 +1,56 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchReplay } from '../net/api';
-import { ReplayPlayer, replayPlayable, replayViewpoint, type Replay } from '../sim/replay';
+import {
+  ReplayPlayer,
+  replayRefusal,
+  replayViewpoint,
+  type Replay,
+  type ReplayRefusal,
+} from '../sim/replay';
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
 import { pickVideoMime, videoExt, saveBlob } from './replayVideo';
 import { SIM_DT, BALANCE_VERSION, SIM_VERSION } from '../config';
 import type { MatchPhase } from '../types';
+
+/** m:ss from seconds. Rounds ONCE, before splitting — rounding the two halves separately
+ *  prints "1:00" for 119.7 s, because the minutes half floors the unrounded value. */
+const mmss = (sec: number): string => {
+  const s = Math.max(0, Math.round(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+/**
+ * WHY this build won't play that replay, said in the terms the watcher cares about.
+ *
+ * Each `ReplayRefusal` is a different situation and only one of them is "it got old" — a
+ * FUTURE container means THEY are behind and a refresh fixes it, and an UNSTAMPED one means
+ * nobody knows. The old copy said "recorded on an older version of the sim (Season N)" for
+ * every case, using `balanceVersion`, which is not the season at all: the season is the
+ * leaderboard period, and in the replays table it is the `balance_version` COLUMN that holds
+ * it while `sim_version` holds this (see repo.ts + migration 0031).
+ */
+const REFUSAL_TEXT: Record<ReplayRefusal, (r: Replay) => string> = {
+  future: () =>
+    'This match was recorded by a NEWER version of DSIM than the one you are running. ' +
+    'Refresh the page to update, then open it again.',
+  balance: (r) =>
+    `This match was played under balance v${r.balanceVersion}; this build runs v${BALANCE_VERSION}. ` +
+    'Robots accelerate, push and shoot differently now, so replaying the same inputs would ' +
+    'produce a different match than the one that happened.',
+  behaviour: (r) =>
+    `This match was played on sim behaviour v${r.sim}; this build runs v${SIM_VERSION}. ` +
+    'The physics or the rules have changed since, so replaying the same inputs would produce ' +
+    'a different match than the one that happened.',
+  unstamped: () =>
+    'This match was recorded before DSIM stamped which sim behaviour produced a replay, so ' +
+    'there is no way to tell whether it would play back accurately. Rather than guess, it is ' +
+    'not played.',
+  tank: () =>
+    'This match was recorded in an early replay format that had nowhere to store tank drive ' +
+    'input, so the robot would sit still for the whole match.',
+};
 
 /**
  * Replay viewer: fetches a deterministic input-log replay and re-simulates it in
@@ -33,8 +77,8 @@ export function ReplayView({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error' | 'stale'>('loading');
   const [error, setError] = useState('');
-  // the version a stale replay was recorded under (for the message)
-  const [staleVersion, setStaleVersion] = useState<number | null>(null);
+  // WHICH refusal, so the stale screen can give the real reason instead of one guess
+  const [refusal, setRefusal] = useState<ReplayRefusal | null>(null);
   /** a real-time canvas capture is running; playback controls are locked while it is */
   const [recording, setRecording] = useState(false);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -43,6 +87,10 @@ export function ReplayView({
   const discard = useRef(false);
   /** detaches the visibilitychange listener that pauses the encoder with the render loop */
   const stopVisibility = useRef<(() => void) | null>(null);
+  /** the download menu, and the byte count measured when it opened (see `openMenu`) */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [dataBytes, setDataBytes] = useState(0);
+  const menuRoot = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(true);
   const [tick, setTick] = useState(0);
   const [total, setTotal] = useState(1);
@@ -55,6 +103,9 @@ export function ReplayView({
   const player = useRef<ReplayPlayer | null>(null);
   const replay = useRef<Replay | null>(null);
   const playingRef = useRef(true);
+  /** measured ONCE: whether this browser can encode video at all decides what the menu offers,
+   *  and this component re-renders 10 times a second off the progress readout. */
+  const [videoMime] = useState<string | null>(() => pickVideoMime());
 
   // fetch the replay (or use a preloaded one) + build the player
   useEffect(() => {
@@ -64,12 +115,13 @@ export function ReplayView({
     const use = (r: Replay): void => {
       replay.current = r;
       // A replay is a deterministic INPUT log — it only re-simulates to its original
-      // outcome under the exact sim build that recorded it. `replayPlayable` owns the whole
+      // outcome under the exact sim build that recorded it. `replayRefusal` owns the whole
       // decision (see it for the container-vs-behaviour split): an OLDER container is still
       // readable and still plays, a mismatched balance/sim version cannot, and a format-1
       // replay of a tank robot is refused because its drive input was never stored.
-      if (!replayPlayable(r, BALANCE_VERSION, SIM_VERSION)) {
-        setStaleVersion(r.balanceVersion ?? null);
+      const why = replayRefusal(r, BALANCE_VERSION, SIM_VERSION);
+      if (why) {
+        setRefusal(why);
         setStatus('stale');
         return;
       }
@@ -172,6 +224,25 @@ export function ReplayView({
     [],
   );
 
+  /** The menu closes on Escape and on a press anywhere outside it. A popover that only closes
+   *  by re-clicking its own button is one people leave open by accident — and this one covers
+   *  the corner of the field. */
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: PointerEvent): void => {
+      if (!menuRoot.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
   /** pull tick + scoreboard off the sim in one go, so seeking/restarting can't
    *  leave the score showing a different moment than the field does. */
   const sync = (): void => {
@@ -207,15 +278,14 @@ export function ReplayView({
   };
 
   const pct = Math.round((tick / total) * 100);
-  // a record run has one alliance on the field — showing "0" for an opponent that
   /**
    * SAVE THE REPLAY WHILE IT IS STILL EXACT — as a VIDEO, mainly.
    *
-   * `replayPlayable` retires a replay the moment SIM_VERSION moves, deliberately: a changed sim
+   * `replayRefusal` retires a replay the moment SIM_VERSION moves, deliberately: a changed sim
    * re-simulates the same inputs into a different game. So the container is perishable, and the
    * only moment it is provably the real match is while this build can still play it. Both
-   * exports therefore live on `status === 'ready'`, which IS `replayPlayable` — neither is ever
-   * offered for something we could not reproduce anyway.
+   * exports therefore live on `status === 'ready'`, which IS playable — neither is ever offered
+   * for something we could not reproduce anyway.
    *
    * The VIDEO is the one that lasts: it stops being a re-simulation and becomes a recording, so
    * it outlives every patch, needs no sim to watch, and can be sent to someone without DSIM.
@@ -240,9 +310,10 @@ export function ReplayView({
 
   const startRecording = (): void => {
     const canvas = canvasRef.current;
-    const mime = pickVideoMime();
+    const mime = videoMime;
     // no MediaRecorder (some embedded webviews) or no container it will encode ⇒ the data
-    // export is the honest fallback rather than a button that silently does nothing
+    // export is the honest fallback rather than a button that silently does nothing. The menu
+    // already says so and disables the option; this is the belt to that braces.
     if (!canvas || !mime) {
       downloadData();
       return;
@@ -309,19 +380,90 @@ export function ReplayView({
     setPlaying(false);
   };
 
+  /** Measure the container ONCE, on open. Stringifying it is cheap, but this component
+   *  re-renders 10 times a second off the progress readout, and a menu that re-serializes the
+   *  whole replay on every one of those is a menu that stutters while it is open. */
+  const openMenu = (): void => {
+    const r = replay.current;
+    if (r && !menuOpen) setDataBytes(new Blob([JSON.stringify(r)]).size);
+    setMenuOpen((v) => !v);
+  };
+  const pick = (fn: () => void): void => {
+    setMenuOpen(false);
+    fn();
+  };
+
+  // a record run has one alliance on the field — showing "0" for an opponent that
   // never existed reads as a shutout, so those get a single score instead.
   const alliances = new Set((replay.current?.setups ?? []).map((s) => s.alliance));
   const solo = alliances.size < 2;
   const soloSide = solo ? ([...alliances][0] ?? 'blue') : null;
   const done = phase === 'post' || (player.current?.done ?? false);
   const clock = `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, '0')}`;
+  // the capture runs at 1×, so what is left of the REPLAY is what is left of the recording
+  const runtime = total * SIM_DT;
+  const remaining = Math.max(0, total - tick) * SIM_DT;
 
   return (
     <div className="ds-replay">
       <div className="ds-replay-top">
         <button className="ds-btn ghost" onClick={onClose}>← Leaderboard</button>
-        <span className="ds-panel-title">Replay · Season {replay.current?.balanceVersion ?? '-'}</span>
-        <span style={{ width: 90 }} />
+        <span className="ds-panel-title">Replay</span>
+        {/* DOWNLOAD BELONGS HERE, not in the transport row below: it is an action on the
+            replay, not on playback, and two ghost buttons wedged between the seek bar and the
+            clock read as two more transport controls. The spacer keeps the title centred on
+            the screens where there is nothing to download. */}
+        {status === 'ready' ? (
+          <div className="ds-dl" ref={menuRoot}>
+            <button
+              className={`ds-btn${menuOpen ? ' primary' : ''}`}
+              onClick={openMenu}
+              disabled={recording}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+            >
+              ↓ Download
+            </button>
+            {menuOpen && (
+              <div className="ds-dl-pop" role="menu">
+                {/* Each option states its COST as well as its name — one takes the length of
+                    the match and one is instant, and a menu of two nouns hides exactly the
+                    difference that decides which you want. */}
+                <button
+                  className="ds-dl-opt"
+                  role="menuitem"
+                  onClick={() => pick(startRecording)}
+                  disabled={!videoMime}
+                >
+                  <span className="dl-h">
+                    Video<em>{videoMime ? `.${videoExt(videoMime)}` : 'unsupported'}</em>
+                  </span>
+                  <span className="dl-d">
+                    {videoMime
+                      ? `Plays the match through and records the screen, so it takes the full ${mmss(runtime)} in real time. Watchable anywhere, by anyone, and it keeps working after DSIM updates.`
+                      : 'This browser cannot record video. Chrome, Edge and Firefox can.'}
+                  </span>
+                </button>
+                <button className="ds-dl-opt" role="menuitem" onClick={() => pick(downloadData)}>
+                  <span className="dl-h">
+                    Replay data
+                    <em>{dataBytes ? `${Math.max(1, Math.round(dataBytes / 1024))} KB` : '.json'}</em>
+                  </span>
+                  <span className="dl-d">
+                    Instant. The input log itself — re-playable in DSIM at full fidelity, but
+                    only by a build running balance v{BALANCE_VERSION} and sim v{SIM_VERSION}.
+                  </span>
+                </button>
+                <p className="ds-dl-note">
+                  A replay is an input log, so it only plays on the sim that recorded it. This
+                  one still matches this build — which is why it can be saved now.
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <span style={{ width: 90 }} />
+        )}
       </div>
 
       {status === 'loading' && <div className="ds-loading" style={{ margin: 'auto' }}>Loading replay…</div>}
@@ -334,10 +476,10 @@ export function ReplayView({
       {status === 'stale' && (
         <div className="ds-empty" style={{ margin: 'auto' }}>
           <div className="big">Replay unavailable</div>
-          This match was recorded on an older version of the sim
-          {staleVersion !== null ? ` (Season ${staleVersion})` : ''}. Physics and balance have
-          changed since, so it can no longer be played back accurately. The score on the
-          leaderboard still stands.
+          {refusal && replay.current ? REFUSAL_TEXT[refusal](replay.current) : ''}
+          {/* a FUTURE container is not a retired one — the score line would read as consolation
+              for something a refresh fixes */}
+          {refusal !== 'future' && ' The score on the leaderboard still stands.'}
         </div>
       )}
       {status === 'ready' && (
@@ -361,14 +503,41 @@ export function ReplayView({
       )}
       <canvas ref={canvasRef} className="ds-replay-canvas" style={{ display: status === 'ready' ? 'block' : 'none' }} />
 
-      {status === 'ready' && (
+      {/* RECORDING REPLACES THE TRANSPORT, it does not sit inside it. Every playback control is
+          locked while a capture runs — the video is of THIS canvas, so pausing or scrubbing
+          mid-record would pause or scrub the FILE — and a row of four dead controls beside a
+          "● REC 12%" label does not say that. This says what is happening, how much longer it
+          takes, why the tab has to stay in front, and offers the one action still available. */}
+      {status === 'ready' && recording && (
+        <div className="ds-replay-rec">
+          <span className="rec-dot" aria-hidden="true" />
+          <span className="rec-label">Recording video</span>
+          <div
+            className="rec-track"
+            role="progressbar"
+            aria-label="Recording progress"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="rec-fill" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="rec-eta">{mmss(remaining)} left</span>
+          <button className="ds-btn ghost" onClick={cancelRecording}>Cancel</button>
+          <p className="rec-note">
+            The match is being captured off the screen in real time, so playback is locked until
+            it finishes. Keep this tab in front — a hidden tab stops drawing, and the recording
+            pauses with it. The file saves itself when the match ends.
+          </p>
+        </div>
+      )}
+
+      {status === 'ready' && !recording && (
         <div className="ds-replay-controls">
-          <button className="ds-btn primary" onClick={() => setPlay(!playing)} disabled={recording}>
+          <button className="ds-btn primary" onClick={() => setPlay(!playing)}>
             {playing ? '❚❚ Pause' : player.current?.done ? '⟲ Replay' : '▶ Play'}
           </button>
-          <button className="ds-btn" onClick={rebuild} disabled={recording}>⟲ Restart</button>
-          {/* every playback control is locked while recording: the capture is of THIS canvas,
-              so pausing or scrubbing mid-record would be pausing or scrubbing in the file */}
+          <button className="ds-btn" onClick={rebuild}>⟲ Restart</button>
           <input
             type="range"
             className="ds-replay-seek"
@@ -378,25 +547,8 @@ export function ReplayView({
             style={rangeFill(tick, 0, total)}
             onChange={(e) => seek(Number(e.target.value))}
             aria-label="Seek"
-            disabled={recording}
           />
-          <span className="ds-replay-time">{recording ? `● REC ${pct}%` : `${pct}%`}</span>
-          {recording ? (
-            <button className="ds-btn ghost" onClick={cancelRecording}>Cancel</button>
-          ) : (
-            <>
-              <button
-                className="ds-btn ghost"
-                onClick={startRecording}
-                title="Play the match through and save it as a video file"
-              >
-                ↓ Video
-              </button>
-              <button className="ds-btn ghost" onClick={downloadData} title="Save the replay data (re-playable in DSIM)">
-                ↓ Data
-              </button>
-            </>
-          )}
+          <span className="ds-replay-time">{pct}%</span>
         </div>
       )}
     </div>

@@ -405,6 +405,27 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
   The consequence is that an archive has a shelf life, so the viewer offers TWO exports, both on
   `status === 'ready'` — which IS `replayPlayable`, so neither is offered for a container this
   build could not reproduce anyway. That is the last moment a replay is provably the real match.
+  - **THE REFUSAL HAS TO SAY WHICH REFUSAL IT IS.** `replayRefusal` is the real function and
+    `replayPlayable` is `=== null` over it; it names one of five situations, because they are
+    five different things to be told: `future` (THEY are behind — refresh), `balance`,
+    `behaviour`, `unstamped` (recorded before SIM_VERSION was stamped, so genuinely unknown)
+    and `tank` (a format-1 container that never stored tank drive). The viewer printed one
+    sentence for all of them — "recorded on an older version of the sim (Season N)" — off
+    `balanceVersion`, which is **not the season**: in `replays` the SEASON is the
+    `balance_version` COLUMN and that number lives in `sim_version`. `unstamped` is a MESSAGE
+    split only; the policy stays exactly `(r.sim ?? 0) !== simVersion`, so a build running
+    SIM_VERSION 0 still accepts an unstamped log (which is what keeps format-1 replays
+    playable). Smoke pins both halves.
+  - **THE EXPORTS ARE A MENU IN THE HEADER, not buttons in the transport row** (`.ds-dl`).
+    They are actions on the REPLAY, not on playback, and the two have very different COSTS —
+    a video takes the length of the match, the JSON is instant — so each option states its
+    cost and its file size next to its name. Two bare ghost buttons wedged between the seek bar
+    and the clock read as two more transport controls and said neither thing.
+  - **RECORDING REPLACES THE TRANSPORT ROW** (`.ds-replay-rec`), it does not grey it out: a
+    progress bar, the real time remaining, why the tab has to stay in front, and Cancel. Every
+    playback control is locked while a capture runs (it is a capture of THIS canvas, so
+    scrubbing mid-record scrubs the FILE) and a row of four dead controls beside a "● REC 12%"
+    label does not explain that.
   - **↓ Video** (`src/ui/replayVideo.ts`) is the one that LASTS: `MediaRecorder` over
     `canvas.captureStream(60)`, no dependency. It stops being a re-simulation and becomes a
     recording, so it outlives every patch, needs no sim, and can be sent to someone without
@@ -427,7 +448,11 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
   build's BALANCE_VERSION, so before that column there was nowhere to put SIM_VERSION,
   `getReplay` could not set `Replay.sim`, an absent `sim` read as 0 and EVERY stored replay was
   refused on EVERY build. It stayed invisible because the replay tests all use in-memory
-  containers, which carry the field — `npm run dbtest` now covers the round-trip.
+  containers, which carry the field — `npm run dbtest` now covers the round-trip, INCLUDING
+  that a pre-0031 row reads back `unstamped` rather than 0. It bit twice: the column landed but
+  the Fly server was not redeployed, so the deployed `getReplay` still could not populate
+  `Replay.sim` and the live viewer refused everything. **A replay change is a SERVER change —
+  deploy it.**
   **Rapier is pinned EXACTLY** (not a caret) for the same reason: a fresh `npm install` pulling
   a new physics engine would change `step()` output with no version bump, making every stamp a lie.
 - **DEPLOY**: Fly app `dohun-sim-decode`, `Dockerfile` + `fly.toml` + `docs/deploy.md`,

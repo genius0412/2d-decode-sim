@@ -2344,9 +2344,10 @@ tr.lb-detail td {
 .ds-replay-controls {
   display: flex;
   align-items: center;
-  /* WRAPS because this row gained a fifth item (Download). The seek is `flex: 1` and would
-     otherwise be the one thing that shrinks, down to nothing on a phone. Wrapping only
-     engages when the row genuinely cannot fit, so desktop layout is unchanged. */
+  /* WRAPS on a narrow screen: the seek is `flex: 1` and would otherwise be the one thing that
+     shrinks, down to nothing. Wrapping only engages when the row genuinely cannot fit, so the
+     desktop layout is unchanged. (The two export buttons that first made this necessary have
+     moved to the header's `.ds-dl` menu — they are actions on the REPLAY, not transport.) */
   flex-wrap: wrap;
   gap: 12px;
   padding: 12px 18px;
@@ -2364,6 +2365,164 @@ tr.lb-detail td {
   color: var(--ds-mut);
   width: 44px;
   text-align: right;
+}
+
+/* ---- replay export menu (ReplayView's ↓ Download) ---------------------
+   A replay is PERISHABLE — `replayRefusal` retires it the moment SIM_VERSION moves — so the
+   viewer offers to keep it while this build can still prove it is the real match. Two exports
+   with very different costs (a video takes the length of the match; the JSON is instant), which
+   is why this is a menu that explains itself rather than two bare buttons in the transport row.
+   It hangs off the header bar, so `--ds-panel`/`--ds-line`/`--ds-ink` are the right tokens
+   (this is chrome, never the canvas — see the --ds-on-field note in Gotchas). */
+.ds-dl {
+  position: relative;
+  display: inline-flex;
+  justify-content: flex-end;
+  /* matches the ← Leaderboard button opposite it, so the title stays centred */
+  min-width: 90px;
+}
+.ds-dl-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(340px, calc(100vw - 36px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-round);
+  background: var(--ds-panel);
+  box-shadow: var(--ds-block);
+  text-align: left;
+}
+.ds-dl-opt {
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-round);
+  background: var(--ds-panel);
+  color: var(--ds-ink);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--ds-edge-soft);
+  transition: transform 0.06s ease, box-shadow 0.06s ease, border-color 0.15s, background 0.15s;
+}
+.ds-dl-opt:hover {
+  border-color: color-mix(in srgb, var(--ds-accent) 50%, var(--ds-line));
+  transform: translateY(1px);
+  box-shadow: 0 2px 0 var(--ds-line);
+}
+.ds-dl-opt:active {
+  transform: translateY(3px);
+  box-shadow: 0 0 0 var(--ds-line);
+}
+.ds-dl-opt:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+.ds-dl-opt:disabled:hover {
+  border-color: var(--ds-line);
+  box-shadow: var(--ds-edge-soft);
+}
+.ds-dl-opt .dl-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+/* the format/size chip — mono so a KB figure and a file extension line up down the menu */
+.ds-dl-opt .dl-h em {
+  font-family: var(--ds-font-mono);
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ds-mut);
+}
+.ds-dl-opt .dl-d {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ds-mut);
+}
+.ds-dl-note {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--ds-line);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ds-mut);
+}
+
+/* ---- replay recording bar --------------------------------------------
+   REPLACES `.ds-replay-controls` while a capture runs, rather than greying it out. The video
+   is of the canvas itself, so every transport control has to be locked (scrubbing mid-record
+   scrubs the FILE) — and a row of dead controls does not explain itself. Same bar surface,
+   same padding, so the swap does not move the canvas above it. */
+.ds-replay-rec {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--ds-line);
+  background: var(--ds-bar);
+}
+.ds-replay-rec .rec-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ds-red-ink);
+  animation: ds-rec-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ds-rec-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+.ds-replay-rec .rec-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ds-ink);
+}
+.ds-replay-rec .rec-track {
+  flex: 1;
+  min-width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ds-line);
+  overflow: hidden;
+}
+.ds-replay-rec .rec-fill {
+  height: 100%;
+  background: var(--ds-accent);
+  transition: width 0.1s linear;
+}
+.ds-replay-rec .rec-eta {
+  font-family: var(--ds-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--ds-mut);
+}
+/* the note takes its own row — `flex-basis: 100%` rather than a nested wrapper, so the row
+   above keeps the same baseline alignment the transport row has */
+.ds-replay-rec .rec-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ds-mut);
 }
 
 /* ---- auth modal + forms ---------------------------------------------- */

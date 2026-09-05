@@ -947,8 +947,10 @@ export async function getReplay(id: string): Promise<Replay | null> {
     // any legacy row the sim_version backfill somehow missed.
     balanceVersion: r.sim_version ?? r.balance_version,
     // LEFT UNDEFINED when the column is null, which is what a row recorded before 0031 is:
-    // the behaviour it ran is genuinely unknown. `replayExact` treats undefined as "cannot
-    // promise", so the viewer plays it with a warning rather than asserting a mismatch.
+    // the behaviour it ran is genuinely unknown. It is still REFUSED — `replayRefusal` reads
+    // an absent stamp as version 0 like it always has — but it comes back as `unstamped`
+    // rather than `behaviour`, so the viewer says "recorded before we tracked this" instead of
+    // naming a version the recorder never claimed. Undefined, not 0, is what carries that.
     sim: r.behaviour_version ?? undefined,
     game: r.game ?? 'decode', // picks the sim module to re-simulate (CR vs DECODE)
     mode: 'match',

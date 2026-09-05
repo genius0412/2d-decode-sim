@@ -155,7 +155,21 @@ export class ReplayRecorder {
 }
 
 /**
- * Can THIS build re-simulate that container at all?
+ * WHY a container was refused — five genuinely different situations, and the viewer has to
+ * tell them apart because they mean different things to the person who clicked the link.
+ *
+ *  • `future`     — recorded by a build NEWER than this one; the reader cannot parse it.
+ *  • `balance`    — a different BALANCE_VERSION, i.e. robots perform differently now.
+ *  • `behaviour`  — a different SIM_VERSION: same balance, changed physics/rules.
+ *  • `unstamped`  — recorded before DSIM stamped SIM_VERSION at all, so which behaviour
+ *                    produced it is genuinely UNKNOWN rather than known-different.
+ *  • `tank`       — a FORMAT-1 replay of a tank-steered robot, whose drive input the
+ *                    container had nowhere to store.
+ */
+export type ReplayRefusal = 'future' | 'balance' | 'behaviour' | 'unstamped' | 'tank';
+
+/**
+ * Can THIS build re-simulate that container at all — and if not, WHICH of the above is it?
  *
  * Two different questions, kept apart on purpose:
  *  • can we PARSE it — any format up to ours, since the reader still understands the older
@@ -167,16 +181,32 @@ export class ReplayRecorder {
  * input recorded at all (the container had nowhere to put `ld`/`rd`). It parses and it
  * re-simulates, but it re-simulates a robot that sits still — so it is refused as stale
  * rather than played back looking broken, which is indistinguishable from a bug in the sim.
+ *
+ * `unstamped` is a MESSAGE distinction, never a policy one: the version test stays exactly
+ * `(r.sim ?? 0) !== simVersion`, so an absent stamp is refused on any build past SIM_VERSION 0
+ * and accepted by one running 0, which is what it has always done. Splitting it into its own
+ * REFUSAL would change that — what it changes is only whether the viewer can say "recorded
+ * before we tracked this" instead of naming a version the recorder never claimed.
  */
+export function replayRefusal(
+  r: Pick<Replay, 'format' | 'balanceVersion' | 'sim' | 'setups'>,
+  balanceVersion: number,
+  simVersion: number,
+): ReplayRefusal | null {
+  if (r.format > REPLAY_FORMAT) return 'future';
+  if (r.balanceVersion !== balanceVersion) return 'balance';
+  if ((r.sim ?? 0) !== simVersion) return r.sim === undefined ? 'unstamped' : 'behaviour';
+  if (r.format < 2 && r.setups.some((s) => tankSteered(s.spec.drivetrain))) return 'tank';
+  return null;
+}
+
+/** the same decision as a yes/no — the gate everything except the message reads */
 export function replayPlayable(
   r: Pick<Replay, 'format' | 'balanceVersion' | 'sim' | 'setups'>,
   balanceVersion: number,
   simVersion: number,
 ): boolean {
-  if (r.format > REPLAY_FORMAT) return false;
-  if (r.balanceVersion !== balanceVersion || (r.sim ?? 0) !== simVersion) return false;
-  if (r.format < 2 && r.setups.some((s) => tankSteered(s.spec.drivetrain))) return false;
-  return true;
+  return replayRefusal(r, balanceVersion, simVersion) === null;
 }
 
 /** drivetrains commanded through the TANK AXES — the ones a format-1 replay lost. Butterfly
