@@ -3,6 +3,7 @@ import type { GameId } from '../src/types';
 import { BALANCE_VERSION } from '../src/config';
 import { monthsFor, policyFromEnv, whyNoMonths } from './kofi';
 import { CHALLENGE_FORMATS } from '../src/net/protocol';
+import { sanitizeReplay } from '../src/net/sanitize';
 import { moderateName } from './moderation';
 import { dbEnabled } from './db/pool';
 import {
@@ -16,6 +17,8 @@ import {
   declineRoomInvite,
   dismissRoomInvite,
   ensureProfile,
+  listPracticeRuns,
+  savePracticeRun,
   ensureSeason,
   inviteToRoom,
   listAnnouncements,
@@ -291,6 +294,50 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         }),
         true
       );
+    }
+
+    /**
+     * ---- authenticated: SOLO PRACTICE replays (own account only) ------------
+     *
+     * The one write a CLIENT makes to this database, and it is only safe because of where it
+     * can go. Solo practice runs offline on the local sim — that is the mode — so there is no
+     * authoritative loop to record it and nothing to check its score against. It therefore
+     * lands in `practice_runs`, which is unreachable from `record_leaderboard` (a view over
+     * `records`), so nothing written here can move a board, a PB, a rank or an ELO. See
+     * migration 0032 and `sanitizeReplay`, which forces the container into a shape
+     * `createWorld` can safely spawn.
+     *
+     * OWNER-ONLY, both ways: the list is keyed on the token's own subject and there is no
+     * route that reads somebody else's. These are unverified offline runs, and putting them on
+     * a PUBLIC profile beside real, server-witnessed results is exactly the confusion the
+     * separate table exists to prevent.
+     */
+    if (url.pathname === '/api/practice' && (req.method === 'GET' || req.method === 'POST')) {
+      const user = await verifyAuthToken(bearer(req));
+      if (!user) return json(401, { error: 'sign in required' }), true;
+      if (!dbEnabled) return json(503, { error: 'practice replays need the database' }), true;
+      const game: GameId = url.searchParams.get('game') === 'chain' ? 'chain' : 'decode';
+
+      if (req.method === 'GET') {
+        return json(200, { runs: await listPracticeRuns(user.userId, game) }), true;
+      }
+
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      } catch {
+        return json(400, { error: 'bad request' }), true;
+      }
+      const replay = sanitizeReplay(body.replay, game);
+      if (!replay) return json(400, { error: 'not a playable replay' }), true;
+      // clamped, not trusted — a number this server did not compute should not be able to
+      // render as anything but a plausible score
+      const raw = typeof body.score === 'number' && Number.isFinite(body.score) ? body.score : 0;
+      const score = Math.max(0, Math.min(9999, Math.round(raw)));
+      await ensureProfile(user.userId, user.handle);
+      const season = await currentSeasonNumber(BALANCE_VERSION, replay.game as GameId);
+      const run = await savePracticeRun(user.userId, replay, score, season, replay.game as GameId);
+      return json(200, { run }), true;
     }
 
     // Price + tier facts for a SIGNED-OUT visitor. Same numbers, no auth, no DB —

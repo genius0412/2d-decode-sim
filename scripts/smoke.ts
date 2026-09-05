@@ -164,7 +164,7 @@ import {
   REPLAY_FORMAT,
   replayPlayable,
   replayRefusal,
-  runRecordMatch,
+  ReplayRecorder,
   trackStride,
   type CommandSource,
   replayViewpoint,
@@ -9701,6 +9701,83 @@ function pinScene(
       worldHash(back) === worldHash(run.world),
       `live (${live.pos.x.toFixed(2)},${live.pos.y.toFixed(2)}) vs replay (${rb.pos.x.toFixed(2)},${rb.pos.y.toFixed(2)})`,
     );
+  }
+
+  /**
+   * SOLO PRACTICE IS RECORDABLE ONLY BECAUSE THE COUNTDOWN MOVED INTO THE SIM.
+   *
+   * A `mode: 'match'` replay is rebuilt by `ReplayPlayer` as `createWorld(...)` plus
+   * `preCountdown = PRE_COUNTDOWN`, and the sim runs the pre→auto transition from there. Solo
+   * practice used to start its match from the CONTROLLER instead — a `countdownStart` field
+   * compared against `world.time`, with `startMatch(world)` called directly — so the tick auto
+   * began on depended on when a key was pressed, which the container has nowhere to store.
+   *
+   * `GameController.startMatch` now REBUILDS the world and sets `preCountdown`, so a recording
+   * begins at a world the player can reconstruct. The controller itself is DOM-bound and
+   * untestable here; the invariant under it is not, and that is what these pin.
+   *
+   * TWO TRAPS, both hit while writing this and both silent:
+   *   • `DEFAULT_ASSISTS.fieldCentric` is TRUE, so a scene that steers and drives "forward"
+   *     parks in a corner and never moves — after which ANY two runs agree and the whole
+   *     comparison proves nothing. Hence `fieldCentric: false` and the moved/scored asserts.
+   *   • `worldHash` covers robots, balls, scores and counts — NOT `match.phase` or
+   *     `phaseTimeLeft`. Two runs that started the match 200 ticks apart can therefore hash
+   *     identically while sitting at visibly different clocks, so the clock is compared too.
+   */
+  {
+    const setup: RobotSetup = {
+      id: 0, alliance: 'blue',
+      spec: coerceSpec({ ...DEFAULT_SPEC }, DEFAULT_SPEC, 'decode'),
+      // robot-centric: see the trap above
+      assists: { ...DEFAULT_ASSISTS, fieldCentric: false }, startIndex: 0,
+    };
+    const drive: CommandSource = (tick) => {
+      const seg = Math.floor(tick / 37) % 4;
+      return new Map([[0, cmd({
+        driveX: seg === 1 ? 0.5 : 0,
+        driveY: seg === 2 ? -0.4 : 0,
+        rotate: seg === 3 ? 0.3 : 0,
+        intake: true,
+        fire: true,
+      })]]);
+    };
+    // the SOLO shape: fresh world + preCountdown + localized commands, recorded from tick 0
+    const run = runRecordMatch(0x5010, [setup], drive, { stopTick: 800 });
+    const back = simulateReplay(run.replay);
+    check(
+      'solo practice: a sim-driven run re-simulates to the same world',
+      worldHash(back) === worldHash(run.world),
+    );
+    check(
+      'solo practice: ...and to the same match CLOCK, which the hash does not cover',
+      back.match.phase === run.world.match.phase &&
+        Math.abs(back.match.phaseTimeLeft - run.world.match.phaseTimeLeft) < 1e-9,
+      `${back.match.phase} ${back.match.phaseTimeLeft.toFixed(3)} vs ${run.world.match.phase} ${run.world.match.phaseTimeLeft.toFixed(3)}`,
+    );
+    // NOT VACUOUS: the robot has to have actually driven and scored, or two parked
+    // robots would agree no matter what the countdown did
+    const startX = createWorld('match', 0x5010, [setup]).robots[0].pos.x;
+    check(
+      'solo practice: the recorded run actually drove and scored',
+      Math.abs(run.world.robots[0].pos.x - startX) > 5 && run.world.match.scores.blue.total > 0,
+      `moved ${Math.abs(run.world.robots[0].pos.x - startX).toFixed(1)}in, scored ${run.world.match.scores.blue.total}`,
+    );
+    // ...and the OLD controller-driven shape, which is what could not be recorded: no
+    // preCountdown, the match started from outside the sim partway through.
+    {
+      const w = createWorld('match', 0x5010, [setup]);
+      const rec = new ReplayRecorder(0x5010, [setup], 'match', 'decode');
+      for (let t = 1; t <= 800; t++) {
+        if (t === 40) startMatch(w); // the keypress — a tick the container cannot carry
+        const local = new Map([[0, localizeCommand(drive(t, w).get(0)!)]]);
+        step(w, SIM_DT, local);
+        rec.record(t, local);
+      }
+      check(
+        'solo practice: a CONTROLLER-started run does not reproduce (why the countdown moved)',
+        worldHash(simulateReplay(rec.finish())) !== worldHash(w),
+      );
+    }
   }
 
   // the container itself: entries carry the tank axes, and a format-1 track still reads

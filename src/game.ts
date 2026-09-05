@@ -22,7 +22,8 @@ import { accelMultiplier as chainAccelMultiplier, type EndgameState } from './ga
 import { chainCatalystGeom, chainHopperCap } from './games/chain/config';
 import { chainCatalystPrompt } from './games/chain/play';
 import { beamRide } from './games/chain/beams';
-import { startMatch, robotsEnabled } from './sim/match';
+import { robotsEnabled } from './sim/match';
+import { ReplayRecorder, worldResult, type Replay, type ReplayResult } from './sim/replay';
 import { robotInLaunchZone } from './sim/robot';
 import { InputManager } from './input/input';
 import { Renderer } from './render/renderer';
@@ -222,8 +223,32 @@ export class GameController {
   /** performance.now() ms when the match entered phase 'post' (drives the
    * whoosh-synced results reveal); null until the match ends */
   private matchOverAt: number | null = null;
-  /** world.time when the pre-match countdown began (null = not started) */
-  private countdownStart: number | null = null;
+  /**
+   * SOLO PRACTICE IS RECORDED, so it has to be REPRODUCIBLE — which it was not.
+   *
+   * `replay.ts` states the invariant a replay depends on: a run is fully SIM-DRIVEN
+   * (preCountdown → auto → transition → teleop → post) so that no controller state leaks in
+   * and `{seed, setups, commands}` alone reproduce it. Solo practice broke exactly that: the
+   * countdown lived HERE (`countdownStart`, compared against `world.time`) and this controller
+   * called `startMatch()` itself, while `ReplayPlayer` sets `preCountdown` and lets the sim run
+   * it. The pre→auto tick therefore depended on when a key was pressed, which the container has
+   * nowhere to store — so a recording would have diverged from tick 0.
+   *
+   * Solo now takes the multiplayer path: starting REBUILDS the world at tick 0 (invisible —
+   * `robotsEnabled` is false in `pre`, so nothing has moved) with the SAME seed, and sets
+   * `preCountdown` for `stepMatch` to run down. The recorder then begins at a world
+   * `ReplayPlayer` can rebuild exactly.
+   */
+  private soloSeed = 0;
+  /** the setups the current solo world was built from — the recorder needs the same array */
+  private soloSetups: RobotSetup[] = [];
+  /** records the solo practice run in flight; null when not recording (free drive, or
+   *  multiplayer, where the SERVER owns the recording) */
+  private recorder: ReplayRecorder | null = null;
+  /** the finished solo practice run, once the match reaches `post` */
+  private practice: { replay: Replay; result: ReplayResult } | null = null;
+  /** fired once when a solo practice run finishes, so the app can save + upload it */
+  onPracticeRun: ((replay: Replay, result: ReplayResult) => void) | null = null;
   private lastBeepAt = -1;
   private lastTransitionBeep = -1;
   private hudCountdown: number | null = null;
@@ -378,7 +403,7 @@ export class GameController {
     return this.localRobot().alliance;
   }
 
-  private makeWorld(): World {
+  private makeWorld(reseed = true): World {
     // multiplayer: everyone builds the identical world the host authored and
     // runs a SIM-DRIVEN countdown (transition lives in stepMatch, so it fires
     // on the same tick for every peer — no controller-local start/seed)
@@ -388,7 +413,14 @@ export class GameController {
       w.match.preCountdown = C.PRE_COUNTDOWN;
       return w;
     }
-    const seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+    // REUSE the seed on a rebuild (`reseed: false`). Starting a solo practice match rebuilds
+    // the world so the recording begins at tick 0, and a new motif/ball layout appearing the
+    // instant you press START would be a visible change to a mode that just looks like it is
+    // waiting. `restart()` passes reseed: true, which is where a fresh field belongs.
+    const seed = reseed || !this.soloSeed
+      ? (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0
+      : this.soloSeed;
+    this.soloSeed = seed;
     const s = this.settings;
     const setups: RobotSetup[] = [
       {
@@ -423,6 +455,7 @@ export class GameController {
         dummy(3, opp, 1),
       );
     }
+    this.soloSetups = setups;
     return build(s.mode, seed, setups, this.settings);
   }
 
@@ -437,6 +470,14 @@ export class GameController {
       if (phase === 'transition') this.audio.play('end');
       if (phase === 'teleop' && this.prevPhase === 'transition') this.audio.play('resume');
       if (phase === 'post') {
+        // THE MATCH ENDING IS THE END OF THE RECORDING. Solo practice reaches `post` on its
+        // own (a real 2:30 match), so there is no session boundary to invent and the replay is
+        // bounded by the match itself — the same size as a record run's.
+        if (this.recorder) {
+          this.practice = { replay: this.recorder.finish(), result: worldResult(this.world) };
+          this.recorder = null;
+          this.onPracticeRun?.(this.practice.replay, this.practice.result);
+        }
         this.audio.play('end');
         // record the moment the match ended so the results screen can hold its
         // score reveal until the whoosh lands (both use MATCH_RESULT_REVEAL_MS)
@@ -536,28 +577,15 @@ export class GameController {
     }
   }
 
-  /** announcer: "Match begins in 3, 2, 1". Multiplayer mirrors the deterministic
-   * sim countdown (world.match.preCountdown); solo runs off a keypress. */
+  /** announcer: "Match begins in 3, 2, 1". ONE path now — the SIM owns the countdown and the
+   *  pre→auto transition in every mode, and this only voices it (audio is non-authoritative).
+   *  Solo used to run its own off a keypress, which is what made a solo run unrecordable; see
+   *  `soloSeed`. */
   private updateCountdown(): number | null {
     if (this.world.match.phase !== 'pre') return null;
-
-    // multiplayer: the sim owns the countdown + the pre→auto transition; the
-    // controller only voices/announces it (audio is non-authoritative)
-    if (this.session) {
-      const left = this.world.match.preCountdown;
-      if (left == null) return null;
-      return this.voiceCountdown(left);
-    }
-
-    // solo: controller-driven, transitions the match itself
-    if (this.countdownStart === null) return null;
-    const remaining = C.PRE_COUNTDOWN - (this.world.time - this.countdownStart);
-    if (remaining <= 0) {
-      this.countdownStart = null;
-      startMatch(this.world);
-      return null;
-    }
-    return this.voiceCountdown(remaining);
+    const left = this.world.match.preCountdown;
+    if (left == null) return null;
+    return this.voiceCountdown(left);
   }
 
   /** shared: emit the spoken count on each new digit, return the HUD value */
@@ -708,20 +736,28 @@ export class GameController {
 
   /** solo stepping: local keypress start/restart, one local command per tick */
   private stepSolo(cmd: RobotCommand): void {
-    if (
-      this.input.startPressed &&
-      this.world.match.phase === 'pre' &&
-      this.countdownStart === null
-    ) {
-      this.countdownStart = this.world.time;
-      this.lastBeepAt = -1;
-    }
+    if (this.input.startPressed) this.startMatch();
     if (this.input.restartPressed) this.restart();
 
+    /**
+     * STEP ON WHAT THE RECORDER STORES, not on the raw stick.
+     *
+     * A replay stores QUANTIZED commands (the same lattice the wire uses), so a run only
+     * re-simulates exactly if the sim consumed the quantized value in the first place — which
+     * is why `runRecordMatch` localizes before stepping and why the netcode contract makes the
+     * client predict on `localizeCommand`. Solo stepped on the raw command, so recording it
+     * would have drifted from playback by the rounding, every tick.
+     *
+     * It is applied UNCONDITIONALLY rather than only while recording: solo practice must not
+     * feel like two different games depending on whether a replay is being kept, and this is
+     * the same rounding every online match already runs on.
+     */
+    const local = localizeCommand(cmd);
     let steps = 0;
-    const commands = new Map<number, RobotCommand>([[this.localRobotId, cmd]]);
+    const commands = new Map<number, RobotCommand>([[this.localRobotId, local]]);
     while (this.acc >= C.SIM_DT && steps < C.MAX_STEPS_PER_FRAME) {
       this.mod.step(this.world, C.SIM_DT, commands);
+      this.recorder?.record(this.world.tick, commands);
       this.acc -= C.SIM_DT;
       steps++;
     }
@@ -984,7 +1020,6 @@ export class GameController {
     this.prevPhase = this.world.match.phase;
     this.warningPlayed = false;
     this.matchOverAt = null;
-    this.countdownStart = null;
     this.hudCountdown = null;
     this.frontFlipped = false;
     this.parked = false;
@@ -1020,12 +1055,26 @@ export class GameController {
     this.session?.setRematch?.(!(v?.mine ?? false));
   }
 
-  /** trigger the pre-match countdown (e.g. from a UI button) */
+  /**
+   * Trigger the pre-match countdown (the START key, or a UI button).
+   *
+   * Solo only — in multiplayer the HOST starts the room and the sim countdown arrives with the
+   * authoritative world. It REBUILDS the world before starting, which is what lets the run be
+   * recorded: the recording then begins at tick 0 of a world `ReplayPlayer` can reconstruct
+   * from `{seed, setups}` alone. The rebuild is invisible — `robotsEnabled` is false in `pre`
+   * so nothing has moved, and the seed is reused so the motif and the field are unchanged.
+   */
   startMatch(): void {
-    if (this.world.match.phase === 'pre' && this.countdownStart === null) {
-      this.countdownStart = this.world.time;
-      this.lastBeepAt = -1;
-    }
+    if (this.session) return; // the room's host owns the start
+    if (this.world.match.phase !== 'pre') return;
+    if (this.world.match.preCountdown != null) return; // already counting down
+    this.world = this.makeWorld(false);
+    this.world.match.preCountdown = C.PRE_COUNTDOWN;
+    this.prevPhase = this.world.match.phase;
+    this.practice = null;
+    // free drive never reaches `pre`, so this is a solo PRACTICE match by construction
+    this.recorder = new ReplayRecorder(this.soloSeed, this.soloSetups, 'match', this.gameId);
+    this.lastBeepAt = -1;
   }
 
   /** restart with the same settings (new random seed / motif) */
@@ -1038,8 +1087,11 @@ export class GameController {
     this.prevPhase = this.world.match.phase;
     this.warningPlayed = false;
     this.matchOverAt = null;
-    this.countdownStart = null;
     this.hudCountdown = null;
+    // a RESTART abandons the run in flight — an unfinished match is not a replay of anything,
+    // and the next `startMatch` opens a fresh recorder on the rebuilt world
+    this.recorder = null;
+    this.practice = null;
     this.frontFlipped = false;
     this.parked = false;
     this.seedActionAudio();
@@ -1063,6 +1115,19 @@ export class GameController {
    * or null in solo / before phase 'post' */
   getMatchResult(): MatchResultInfo | null {
     return this.session?.getMatchResult() ?? null;
+  }
+
+  /**
+   * The finished SOLO PRACTICE run, or null (mid-match, free drive, or multiplayer).
+   *
+   * Deliberately NOT folded into `getMatchResult`. That is documented as the SERVER's
+   * authoritative end-of-match payload, and a locally produced one would be a claim this
+   * client is in no position to make — a practice run is exactly the thing nothing
+   * authoritative counted. Keeping them apart is what lets the results screen offer the replay
+   * without ever implying the score was witnessed.
+   */
+  getPracticeRun(): { replay: Replay; result: ReplayResult } | null {
+    return this.practice;
   }
 
   /** a record run's leaderboard standing (PB / WR / rank), or null until the

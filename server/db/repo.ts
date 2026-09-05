@@ -961,6 +961,111 @@ export async function getReplay(id: string): Promise<Replay | null> {
   };
 }
 
+// ------------------------------------------------- solo practice runs -------
+/**
+ * How many practice runs an account keeps. Oldest are pruned on insert.
+ *
+ * Solo practice is the primary OFFLINE mode, so these arrive at whatever rate somebody
+ * practises — unbounded, unlike matches, which cost a queue and an opponent. Ten is about a
+ * session's worth to look back through and bounds the cost per account at a few hundred KB.
+ * It is one number on purpose: raising it is a storage decision, not a code change.
+ */
+export const PRACTICE_KEEP = 10;
+
+export interface PracticeRunRow {
+  id: string;
+  game: Game;
+  score: number;
+  ticks: number;
+  replayId: string | null;
+  createdAt: string;
+}
+
+/**
+ * Store one offline practice run for a player and prune their oldest past `PRACTICE_KEEP`.
+ *
+ * THE SCORE HERE IS CLIENT-REPORTED and that is not a bug to fix later — solo practice runs on
+ * the local sim with no server in the loop, so there is nothing authoritative to check it
+ * against. It is safe because of where it can go: `practice_runs` is not reachable from
+ * `record_leaderboard`, which is a view over `records`, so no board, PB, rank or ELO figure
+ * can be moved by anything written here. It is shown only on the owner's own Career list.
+ *
+ * The replay row is the SAME shape every other replay uses, so the viewer, the version gate
+ * and the season purge all work on it unchanged (the purge deletes from `replays` by season,
+ * and `replay_id` is `on delete set null`, so a purged run degrades exactly like a record).
+ */
+export async function savePracticeRun(
+  userId: string,
+  replay: Replay,
+  score: number,
+  season: number,
+  game?: Game,
+): Promise<PracticeRunRow> {
+  const replayId = await saveReplay(replay, season, game);
+  const rows = await q<{ id: string; created_at: string }>(
+    `insert into practice_runs (user_id, game, balance_version, score, ticks, replay_id)
+     values ($1, $2, $3, $4, $5, $6) returning id, created_at`,
+    [userId, g(game), season, Math.max(0, Math.round(score)), replay.ticks, replayId],
+  );
+
+  // PRUNE, and delete the pruned runs' replays with them. A replay has no back-reference to
+  // the run that owns it, so dropping the row alone would leak the log — the same trap the
+  // account-deletion path documents.
+  const stale = await q<{ replay_id: string | null }>(
+    `delete from practice_runs
+      where id in (
+        select id from practice_runs
+         where user_id = $1 and game = $2
+         order by created_at desc
+         offset $3
+      )
+      returning replay_id`,
+    [userId, g(game), PRACTICE_KEEP],
+  );
+  const ids = stale.map((r) => r.replay_id).filter((x): x is string => !!x);
+  if (ids.length) await q(`delete from replays where id = any($1::uuid[])`, [ids]);
+
+  return {
+    id: rows[0].id,
+    game: g(game),
+    score,
+    ticks: replay.ticks,
+    replayId,
+    createdAt: rows[0].created_at,
+  };
+}
+
+/** a player's own practice runs, newest first. Owner-only — see the API route. */
+export async function listPracticeRuns(
+  userId: string,
+  game?: Game,
+  limit = PRACTICE_KEEP,
+): Promise<PracticeRunRow[]> {
+  const rows = await q<{
+    id: string;
+    game: Game;
+    score: number;
+    ticks: number;
+    replay_id: string | null;
+    created_at: string;
+  }>(
+    `select id, game, score, ticks, replay_id, created_at
+       from practice_runs
+      where user_id = $1 and game = $2
+      order by created_at desc
+      limit $3`,
+    [userId, g(game), Math.min(PRACTICE_KEEP, Math.max(1, limit))],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    game: r.game,
+    score: r.score,
+    ticks: r.ticks,
+    replayId: r.replay_id,
+    createdAt: r.created_at,
+  }));
+}
+
 // --------------------------------------------------- record-chasing board ---
 export interface RecordSubmit {
   userId: string;
@@ -1242,10 +1347,15 @@ export async function deleteAccount(userId: string): Promise<boolean> {
     );
     if (!exists[0]) return false;
 
-    // replays first — see the note above about the missing back-reference
+    // replays first — see the note above about the missing back-reference. PRACTICE runs are
+    // in this list for the same reason: `practice_runs` cascades away with the profile, which
+    // would strand the logs it pointed at.
     await query(
       `delete from replays
         where id in (select replay_id from records
+                      where user_id = $1 and replay_id is not null
+                     union all
+                     select replay_id from practice_runs
                       where user_id = $1 and replay_id is not null)`,
       [userId],
     );

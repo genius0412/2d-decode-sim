@@ -17,7 +17,7 @@ import { clearActiveGame } from '../net/activeGame';
 import { ReportDialog } from './ReportDialog';
 import { ScoreReportDialog } from './ScoreReportDialog';
 import type { RecordRankInfo } from '../net/protocol';
-import type { Replay } from '../sim/replay';
+import type { Replay, ReplayResult } from '../sim/replay';
 import { CHAIN_MODE_LABELS } from '../games/chain/labels';
 import type { Alliance, DrivetrainType, ScoreBreakdown } from '../types';
 
@@ -169,8 +169,10 @@ interface Props {
   onExit: () => void;
   /** null in solo; a live lockstep session in multiplayer */
   session?: NetSession | null;
-  /** watch the just-played run's replay (server matches only) */
+  /** watch the just-played run's replay (a server match, or a solo practice run) */
   onWatchReplay?: (replay: Replay) => void;
+  /** a SOLO PRACTICE run just finished — the app keeps it (locally, and on the account) */
+  onPracticeRun?: (replay: Replay, result: ReplayResult) => void;
   /** whether the player is signed in — drives the record results "sign in to
    * save & rank" prompt vs the live PB / WR / rank line */
   signedIn?: boolean;
@@ -193,6 +195,7 @@ export function GameView({
   onExit,
   session = null,
   onWatchReplay,
+  onPracticeRun,
   signedIn = false,
   onSettingsChange,
   editLayout = false,
@@ -222,6 +225,10 @@ export function GameView({
     const canvas = canvasRef.current!;
     const controller = new GameController(canvas, settings, session);
     controllerRef.current = controller;
+    // SOLO PRACTICE finishing is the only end-of-run event this client owns — every other mode
+    // is told by the server. Keeping the run is the app's job, not the controller's, so it just
+    // hands it over; see `onPracticeRun` in App.
+    controller.onPracticeRun = (replay, result) => onPracticeRun?.(replay, result);
     setIntro(controller.getIntro()); // ranked matches only; null otherwise
     const hudTimer = window.setInterval(() => setHud(controller.getHud()), 100);
     const onKey = (e: KeyboardEvent) => {
@@ -502,6 +509,7 @@ export function GameView({
             session?.sendScoreReport ? (detail) => session.sendScoreReport?.(detail) : undefined
           }
           matchResult={controllerRef.current?.getMatchResult() ?? null}
+          practiceRun={controllerRef.current?.getPracticeRun() ?? null}
           recordResult={controllerRef.current?.getRecordResult() ?? null}
           signedIn={signedIn}
           onWatchReplay={onWatchReplay}
@@ -897,6 +905,7 @@ function Results({
   onCoopRematch,
   onExit,
   matchResult,
+  practiceRun,
   recordResult,
   signedIn,
   onWatchReplay,
@@ -919,6 +928,13 @@ function Results({
   onCoopRematch: () => void;
   onExit: () => void;
   matchResult: MatchResultInfo | null;
+  /**
+   * The finished SOLO PRACTICE run, kept apart from `matchResult` on purpose: that one is the
+   * SERVER's authoritative payload, and a locally produced stand-in would quietly claim this
+   * score was witnessed. Nothing witnessed it — that is what offline means — and the replay is
+   * offered on exactly those terms.
+   */
+  practiceRun: { replay: Replay; result: ReplayResult } | null;
   /** record run's leaderboard standing, or null until the server's recordResult
    * lands (or forever if anonymous) */
   recordResult: RecordRankInfo | null;
@@ -971,6 +987,7 @@ function Results({
         netScore={netScore}
         netTotal={netTotal}
         revealed={revealed}
+        practiceRun={practiceRun}
         recordResult={recordResult}
         signedIn={signedIn}
         matchResult={matchResult}
@@ -1109,9 +1126,21 @@ function Results({
               : '✓ Match recorded.'}
           </p>
         )}
+        {/* A practice run says what it IS. It was not on a leaderboard and never will be —
+            offline has no authority to put it there — so the copy promises only what happened:
+            the run is kept, and it is yours to watch. */}
+        {practiceRun && !matchResult && (
+          <p className="ds-hint" style={{ color: 'var(--ds-accent)' }}>
+            {signedIn
+              ? '✓ Saved to your practice replays.'
+              : '✓ Saved on this device — sign in to keep it on your account.'}
+          </p>
+        )}
         <div className="overlay-buttons">
-          {matchResult && onWatchReplay && (
-            <button onClick={() => onWatchReplay(matchResult.replay)}>▶ WATCH REPLAY</button>
+          {(matchResult ?? practiceRun) && onWatchReplay && (
+            <button onClick={() => onWatchReplay((matchResult ?? practiceRun)!.replay)}>
+              ▶ WATCH REPLAY
+            </button>
           )}
           {canRematch && <button onClick={onRematch}>REMATCH</button>}
           {coopRematch && <RematchVote vote={coopRematch} onToggle={onCoopRematch} />}
@@ -1235,6 +1264,7 @@ function RecordResults({
   recordResult,
   signedIn,
   matchResult,
+  practiceRun,
   canRematch,
   onRematch,
   coopRematch,
@@ -1251,6 +1281,8 @@ function RecordResults({
   recordResult: RecordRankInfo | null;
   signedIn: boolean;
   matchResult: MatchResultInfo | null;
+  /** the finished SOLO PRACTICE run — see the note on the other results panel */
+  practiceRun: { replay: Replay; result: ReplayResult } | null;
   canRematch: boolean;
   onRematch: () => void;
   /** duo-record co-op vote (null unless this run has one) */
@@ -1328,8 +1360,10 @@ function RecordResults({
               </tbody>
             </table>
             <div className="overlay-buttons">
-              {matchResult && onWatchReplay && (
-                <button onClick={() => onWatchReplay(matchResult.replay)}>▶ WATCH REPLAY</button>
+              {(matchResult ?? practiceRun) && onWatchReplay && (
+                <button onClick={() => onWatchReplay((matchResult ?? practiceRun)!.replay)}>
+                  ▶ WATCH REPLAY
+                </button>
               )}
               {canRematch && <button onClick={onRematch}>RUN AGAIN</button>}
               {/* CO-OP: the run belongs to both drivers, so restarting is a vote —

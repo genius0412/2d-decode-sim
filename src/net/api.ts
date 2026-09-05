@@ -452,6 +452,67 @@ export function fetchReplay(id: string): Promise<Replay> {
   return getJson(`/api/replay/${id}`);
 }
 
+// ---- solo practice replays (own account only) ------------------------------
+
+/** one uploaded practice run as the server stores it */
+export interface PracticeRun {
+  id: string;
+  game: GameId;
+  score: number;
+  ticks: number;
+  replayId: string | null;
+  createdAt: string;
+}
+
+/**
+ * Send a finished SOLO PRACTICE run to the account.
+ *
+ * The one write this module makes — everything else here is a read, because scores and ELO
+ * are written only by the authoritative match loop. Practice is the exception BECAUSE it is
+ * offline: there is no authoritative loop for the mode, and the run lands in a table no
+ * leaderboard can read (see migration 0032). Returns null on any failure; the run is already
+ * kept on the device by then (`src/net/practiceRuns.ts`), so a failed upload costs nothing but
+ * the copy on the account.
+ */
+export async function uploadPracticeRun(
+  replay: Replay,
+  score: number,
+  game?: GameId,
+): Promise<PracticeRun | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(`${base}/api/practice?game=${game ?? 'decode'}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ replay, score }),
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { run: PracticeRun }).run ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** the signed-in account's own practice runs, newest first. Null when signed out or the
+ *  server is unreachable — the caller falls back to what this device has. */
+export async function fetchPracticeRuns(game?: GameId): Promise<PracticeRun[] | null> {
+  const base = gameServerHttpUrl();
+  const token = await getAuthToken();
+  if (!base || !token) return null;
+  try {
+    const res = await fetch(`${base}/api/practice?game=${game ?? 'decode'}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { runs: PracticeRun[] }).runs ?? [];
+  } catch {
+    return null;
+  }
+}
+
 // ---- announcements (patch notes / new season / new act) --------------------
 
 export type AnnouncementKind = 'patch' | 'season' | 'act';

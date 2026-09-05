@@ -847,6 +847,76 @@ async function main(): Promise<void> {
     );
   }
 
+  /**
+   * ------------------------------------------------- solo practice runs -----
+   *
+   * The one table a CLIENT writes to, because solo practice is the offline mode and has no
+   * authoritative loop to record it. Its whole safety argument is STRUCTURAL — `practice_runs`
+   * is not reachable from `record_leaderboard`, which is a view over `records` — so the check
+   * that matters most here is the boring one: a practice run does not appear on a board.
+   */
+  {
+    await repo.ensureProfile('prac-a', 'Practiser');
+    const container = (seed: number, ticks: number) => ({
+      format: 2,
+      balanceVersion: 4,
+      sim: 2,
+      game: 'decode' as const,
+      mode: 'match' as const,
+      seed,
+      ticks,
+      setups: [] as never[],
+      tracks: { 0: [1, 2, 3, 4, 5, 6, 7] },
+    });
+
+    const first = await repo.savePracticeRun('prac-a', container(1, 9000), 87, SEASON, 'decode');
+    check('practice: a run comes back with its replay', !!first.replayId && first.score === 87);
+    const listed = await repo.listPracticeRuns('prac-a', 'decode');
+    check('practice: ...and is listed for its owner', listed.length === 1 && listed[0].id === first.id);
+    check(
+      'practice: the stored replay is an ordinary one the viewer can already read',
+      (await repo.getReplay(first.replayId!))?.sim === 2,
+    );
+
+    // THE POINT OF THE SEPARATE TABLE: a client-reported score cannot reach a board.
+    const board = await repo.recordLeaderboard({ mode: 'solo', balanceVersion: SEASON, game: 'decode' });
+    check(
+      'practice: a practice run NEVER appears on the record leaderboard',
+      !board.some((r) => r.score === 87 && r.userId === 'prac-a'),
+      `${board.length} board rows`,
+    );
+
+    // PRUNE: the cap holds, and the pruned runs take their replays with them. A replay has no
+    // back-reference to its run, so a prune that only deleted rows would leak the logs.
+    for (let i = 2; i <= repo.PRACTICE_KEEP + 3; i++) {
+      await repo.savePracticeRun('prac-a', container(i, 100 + i), i, SEASON, 'decode');
+    }
+    const capped = await repo.listPracticeRuns('prac-a', 'decode');
+    check(
+      'practice: an account keeps only PRACTICE_KEEP runs, newest first',
+      capped.length === repo.PRACTICE_KEEP,
+      `${capped.length} kept`,
+    );
+    check(
+      'practice: the OLDEST went, not the newest',
+      !capped.some((r) => r.id === first.id),
+    );
+    check(
+      'practice: a pruned run took its replay with it (no orphaned logs)',
+      (await repo.getReplay(first.replayId!)) === null,
+    );
+
+    // ...and deleting the account takes the rest, for the same reason
+    const live = (await repo.listPracticeRuns('prac-a', 'decode'))[0];
+    await repo.deleteAccount('prac-a');
+    check(
+      'practice: deleting an account deletes its practice replays too',
+      (await repo.getReplay(live.replayId!)) === null,
+    );
+    const rows = await db.query(`select count(*)::int as n from practice_runs where user_id = 'prac-a'`);
+    check('practice: ...and its runs', (rows.rows[0] as { n: number }).n === 0);
+  }
+
   await db.close();
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
   process.exit(failures === 0 ? 0 : 1);

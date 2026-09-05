@@ -9,6 +9,7 @@ import {
   type Activity,
   type RoomInvite,
 } from '../net/api';
+import { uploadPracticeRun } from '../net/api';
 import { FriendsProvider } from './friendsContext';
 import { challengeOf, type PendingChallenge } from './challenge';
 import type { RoomConfig, RoomKind } from '../net/protocol';
@@ -50,7 +51,8 @@ import { ServerSession } from '../net/serverSession';
 import { WebSocketTransport } from '../net/transport';
 import { encodeMsg } from '../net/protocol';
 import { loadActiveGame, saveActiveGame, clearActiveGame, type ActiveGameRef } from '../net/activeGame';
-import type { Replay } from '../sim/replay';
+import { recordScore, type Replay, type ReplayResult } from '../sim/replay';
+import { savePracticeRun, markPracticeUploaded } from '../net/practiceRuns';
 import { applyRouteMeta } from '../seo';
 import type { GameId } from '../games/types';
 import { chainDisclaimerSeen, markChainDisclaimerSeen } from '../chainDisclaimer';
@@ -667,6 +669,29 @@ export function App() {
     navigate('game');
   };
 
+  /**
+   * A SOLO PRACTICE run finished — keep it.
+   *
+   * DEVICE FIRST, account second, and the order is the point: solo practice is the primary
+   * OFFLINE mode and works signed out, so a run that only survived when an upload succeeded
+   * would make the offline mode depend on being online. The local copy is what the player
+   * watches; the upload is what follows them to another device.
+   *
+   * The score stored is the NET one — earned minus the fouls this robot itself committed —
+   * because that is what a solo run means everywhere else in the app (`recordScore`), and a
+   * practice figure that flattered you relative to a record run would be worse than useless
+   * for the one thing practice is for.
+   */
+  const keepPracticeRun = (replay: Replay, result: ReplayResult): void => {
+    const alliance = replay.setups[0]?.alliance ?? 'blue';
+    const score = recordScore(result, alliance);
+    const meta = savePracticeRun(replay, { ...result, score: { ...result.score, [alliance]: score } });
+    if (!signedIn) return;
+    void uploadPracticeRun(replay, score, replay.game).then((run) => {
+      if (run && meta) markPracticeUploaded(meta.id, run.id);
+    });
+  };
+
   /** RECORD runs: abandon this run and immediately start a fresh one.
    *
    * Deliberately a full teardown + re-entry, NOT an in-place world rebuild. A
@@ -852,6 +877,7 @@ export function App() {
           setReplayRobot(session?.localRobotId ?? null);
           navigate('replay');
         }}
+        onPracticeRun={keepPracticeRun}
       />
     );
   }
@@ -1154,6 +1180,13 @@ export function App() {
           myUserId={accountUserId}
           game={settings.game}
           onWatch={watchReplay}
+          onWatchLocal={(r) => {
+            // a local practice log has no server id — hand the container straight to the
+            // viewer, the same path the just-played run takes off the results screen
+            setReplayObj(r);
+            setReplayRobot(r.setups[0]?.id ?? null);
+            navigate('replay');
+          }}
           onOpenProfile={openProfile}
         />
       )}

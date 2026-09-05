@@ -1,4 +1,5 @@
 import type { GameId } from '../types';
+import type { Replay } from '../sim/replay';
 import { APP_NAME } from '../seasons';
 import { Leaderboard } from './Leaderboard';
 import { Stats } from './Stats';
@@ -28,6 +29,7 @@ export function Records({
   myUserId,
   game,
   onWatch,
+  onWatchLocal,
   onOpenProfile,
 }: {
   tab: RecordsTab;
@@ -35,6 +37,8 @@ export function Records({
   myUserId: string | null;
   game?: GameId;
   onWatch: (replayId: string) => void;
+  /** watch a replay held only on this DEVICE (a local solo-practice run) */
+  onWatchLocal?: (replay: Replay) => void;
   onOpenProfile: (username: string) => void;
 }) {
   return (
@@ -65,7 +69,7 @@ export function Records({
       {tab === 'leaderboard' ? (
         <Leaderboard myUserId={myUserId} game={game} onWatch={onWatch} onOpenProfile={onOpenProfile} />
       ) : (
-        <Stats game={game} onWatch={onWatch} onOpenProfile={onOpenProfile} />
+        <Stats game={game} onWatch={onWatch} onWatchLocal={onWatchLocal} onOpenProfile={onOpenProfile} />
       )}
     </>
   );
