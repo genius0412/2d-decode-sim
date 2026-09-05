@@ -1,4 +1,73 @@
-# HANDOFF — 2026-09-05 (replay downloads + the cross-region room split)
+# HANDOFF — 2026-09-05b (solo practice runs are kept and rewatchable)
+
+Branch **alpha**, at `1cc016d`, pushed. `npm test` **1264, ALL PASS** · `npm run dbtest` ALL PASS
+(+9 practice checks) · `npm run build` · `npm run server:check` · `npm run contrast` 221 ·
+`npm run test:mm` 58 — all green. `SIM_VERSION` stays **2**, `BALANCE_VERSION` stays 4.
+
+Do not merge to main. Standing rule.
+
+## READ FIRST
+
+**"Solo practice" is the OFFLINE FULL MATCH (`mode: 'match'`, `session: null`), not Free
+Drive.** I spent a whole round assuming Free Drive and asking questions about where an endless
+session begins and ends. It is the `Solo Practice` tile in `ModeSelect`; Free Drive is the tile
+next to it. Solo practice has a real end (`post`), which is why none of that mattered.
+
+**It could not just be recorded.** `replay.ts` states the invariant: a run must be fully
+SIM-DRIVEN (preCountdown → auto → … → post) so `{seed, setups, commands}` alone reproduce it.
+Solo practice started from the CONTROLLER (`countdownStart` vs `world.time`, calling
+`startMatch(world)` directly), so the tick auto began on depended on a keypress the container
+cannot store — a recording would have diverged from tick 0. `startMatch()` now rebuilds the
+world at tick 0 and sets `preCountdown`; the rebuild is invisible (`robotsEnabled` is false in
+`pre`) and reuses the seed. Solo also steps on `localizeCommand(cmd)` now, since a replay
+stores quantized commands.
+
+## What landed (`1cc016d`)
+
+- `src/game.ts` — sim-driven solo countdown, `ReplayRecorder` over `stepSolo`, finalize at
+  `post` → `onPracticeRun`. `getPracticeRun()` is deliberately separate from `getMatchResult()`,
+  which is documented as the SERVER's authoritative payload.
+- `src/net/practiceRuns.ts` — localStorage ring (index + one body per run), cap 10, evicts and
+  retries on quota. Works signed out.
+- migration `0032_practice_runs.sql` + `savePracticeRun`/`listPracticeRuns`/`PRACTICE_KEEP`,
+  `POST|GET /api/practice` (owner-only), `sanitizeReplay` on ingress.
+- `src/ui/PracticeReplays.tsx` in Career (self-only, via `Stats`' `head` slot like
+  `StandingCard`), ▶ WATCH REPLAY on the solo results screen.
+
+## Verified
+
+Headless: 4 new smoke checks pin that the sim-driven shape reproduces (world hash AND match
+clock) and that the old controller-driven shape does NOT. 9 dbtest checks pin the prune, the
+orphaned-replay cleanup, account deletion, and — the load-bearing one — that a practice run
+never appears on the record leaderboard.
+
+In-browser: drove `GameController` directly (the pane starves rAF, so a real 2:30 match will
+not run there) — `startMatch` opens the recorder at tick 0, reaching `post` yields a replay,
+the local save lands in localStorage, Career lists it, and ▶ Watch opens the viewer.
+
+## Gotchas hit
+
+- **Two ways to write a VACUOUS replay check**, both hit here: `DEFAULT_ASSISTS.fieldCentric`
+  is TRUE so a steer-and-drive-forward scene parks in a corner and any two runs then agree; and
+  `worldHash` does NOT cover `match.phase`/`phaseTimeLeft`, so runs that started 200 ticks
+  apart hash the same. Assert movement + score, and compare the clock.
+- The Browser pane starves `requestAnimationFrame` when it is not painting — `world.tick` sat
+  at 0 and it looked exactly like a bug in the countdown change. A screenshot forces one burst
+  of frames; `document.visibilityState` still reads "visible", so that is not the tell.
+- Synthetic `KeyboardEvent`s do not reach `InputManager`; use `computer` `key`.
+
+## Next steps
+
+1. Confirm an upload end-to-end once alpha is redeployed (the route + 0032 shipped with this;
+   deploy was started at the end of this session — verify `/api/practice` returns 401 signed
+   out rather than 404).
+2. Still open: the two `fly secrets set` admin lines from the previous section, the two-account
+   cross-region challenge check, Rapier slice 2, the penalty HITBOX audit, CR `APPROX` values.
+3. The `scripts/zz-probe-*` files and `scratch_penalties_backup.ts` are untracked G408 debris.
+
+---
+
+## HANDOFF — 2026-09-05 (replay downloads + the cross-region room split)
 
 Branch **alpha**, at `b52fca0`, pushed. `npm test` **1260 checks, ALL PASS** · `npm run build`
 green · `npm run server:check` green · `npm run contrast` 221 green · `npm run dbtest` **green

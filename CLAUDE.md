@@ -397,6 +397,42 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
   drives "forward" goes nowhere and parks in a corner; and holding the manual FIRE button on a
   turretless CR archetype hands `rotate` to `chainAimAssist`, which fights any steering trying
   to close on a target.
+- **SOLO PRACTICE IS RECORDED, AND THAT IS WHY ITS COUNTDOWN LIVES IN THE SIM.** Solo Practice
+  (`mode: 'match'` with `session: null` — the offline full match, NOT Free Drive) used to start
+  from the CONTROLLER: a `countdownStart` field compared against `world.time`, with
+  `startMatch(world)` called directly. That breaks the invariant `replay.ts` states — a run must
+  be fully SIM-DRIVEN so `{seed, setups, commands}` alone reproduce it — because the tick auto
+  began on depended on when a key was pressed and the container has nowhere to store it.
+  `GameController.startMatch` now REBUILDS the world at tick 0 and sets `preCountdown` for
+  `stepMatch` to run down, exactly like multiplayer. The rebuild is invisible: `robotsEnabled`
+  is false in `pre`, so nothing has moved, and the seed is REUSED (`makeWorld(reseed=false)`)
+  so the field and motif do not change under the player. Solo also steps on
+  `localizeCommand(cmd)` unconditionally — a replay stores QUANTIZED commands, so a run only
+  re-simulates exactly if the sim consumed the quantized value, and practice must not behave
+  differently depending on whether it is being kept.
+  - **DEVICE FIRST, ACCOUNT SECOND** (`src/net/practiceRuns.ts` → `POST /api/practice`).
+    Practice is the primary OFFLINE mode and works signed out; a run that survived only a
+    successful upload would make the offline mode depend on being online. Career merges both
+    and renders SIGNED OUT too (`Stats`' every branch), or the device would hold runs nobody
+    can open.
+  - **IT CAN NEVER BECOME A LEADERBOARD SCORE, STRUCTURALLY.** `practice_runs` (migration 0032)
+    is its own table and `record_leaderboard` is a view over `records`, so nothing written
+    there is reachable from any board, PB, rank or ELO query — not by accident, not by a later
+    refactor. That is what makes accepting a CLIENT-written row safe at all: solo practice has
+    no authoritative loop to verify a score against, and re-simulating ~9,900 ticks on the game
+    server to authenticate a number nobody competes on would cost real CPU for nothing. It is
+    also self-policing where it is shown — the viewer RE-SIMULATES the log, so a score that
+    disagrees with its own replay contradicts itself on screen. `sanitizeReplay` still forces
+    the container into a shape `createWorld` can safely spawn, because `setups` reaches the sim.
+  - Pruned at `PRACTICE_KEEP` (10) per account, oldest first, and the prune DELETES the pruned
+    runs' replays — a replay has no back-reference to its run, so dropping rows alone leaks
+    logs. Account deletion sweeps them for the same reason. All covered in `npm run dbtest`.
+  - ⚠️ **TWO TRAPS make a replay check VACUOUS, and both were hit writing these tests.**
+    `DEFAULT_ASSISTS.fieldCentric` is TRUE, so a scene that steers and drives "forward" parks in
+    a corner — after which any two runs agree and the comparison proves nothing (use
+    `fieldCentric: false` and assert the robot MOVED and SCORED). And `worldHash` covers robots,
+    balls, scores and counts but **NOT `match.phase` or `phaseTimeLeft`**, so two runs that
+    started the match 200 ticks apart hash identically — compare the clock too.
 - **A SIM BUMP RETIRES OLDER REPLAYS, ON PURPOSE — and that is why you can DOWNLOAD one.**
   `replayPlayable` refuses a version mismatch rather than warning about it: a replay is an
   input log, so a changed sim produces a DIFFERENT game from the same inputs, and playing it
