@@ -1,6 +1,6 @@
-# HANDOFF — 2026-09-05 (replay downloads: the UI, and why the live one said "unavailable")
+# HANDOFF — 2026-09-05 (replay downloads + the cross-region room split)
 
-Branch **alpha**, at `2c692c7`, pushed. `npm test` **1255 checks, ALL PASS** · `npm run build`
+Branch **alpha**, at `b52fca0`, pushed. `npm test` **1260 checks, ALL PASS** · `npm run build`
 green · `npm run server:check` green · `npm run contrast` 221 green · `npm run dbtest` **green
 again** (it had been red — see below). `SIM_VERSION` stays **2**; `BALANCE_VERSION` stays 4.
 
@@ -20,6 +20,31 @@ recorded at `BALANCE_VERSION` **3** (July–August, format 1, no `sim` stamp); a
 since `7ea642b` reworked the shove. Those stay refused because the balance really did change —
 what changed is that the viewer now says so instead of "recorded on an older version of the sim
 (Season 3)". Runs recorded from now on stamp `bv 4 / sim 2` and play and download normally.
+
+## OPEN — the admin change could not be applied
+
+The user asked to drop **baron** as an admin and add **`5baefc21-e1e8-43b0-9278-4af2ea150882`**
+(solver / @featurescript) on both servers. `flyctl secrets set` is REFUSED by the Claude Code
+auto-mode classifier, so this is still to do BY HAND:
+
+```
+fly secrets set -a dohun-sim-decode ADMIN_USER_IDS='e3d73282-ac91-4940-bd5c-4778ca34212c,0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'
+fly secrets set -a dsim-alpha       ADMIN_USER_IDS='0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'
+```
+
+Resolved from the live lists (`fly ssh console -C "printenv ADMIN_USER_IDS"` + `/api/user/<id>`):
+`e3d73282`=Fe/@felix, `0c9c1654`=Dohun Kim/@ace (owner), `a509c53d`=**baron** (dropped).
+Baron was an admin on MAIN ONLY — alpha's list was just the owner, so alpha only gains solver.
+`OWNER_USER_ID` is set explicitly on both, so list ORDER carries no meaning here.
+
+Two things to check afterwards: `syncStaffRoles` runs once per boot and the sweep is SYMMETRIC,
+so a restart is what actually strips baron's badge and perks — confirm with
+`/api/user/a509c53d-dc89-4dae-99de-2c6e30e537d9` returning no `role`. And a secrets set restarts
+machines, which on MAIN can re-apply fly.toml's single `[[vm]]` to every one of them; sizes
+before the change were **iad shared-4x/1024, lhr+sjc+syd+nrt shared-1x/1024**, so re-shrink with
+`scripts/fly-deploy.sh`'s satellite loop if `fly machine list -a dohun-sim-decode` disagrees.
+There were 7 players online (1 queued) when this was attempted; `scripts/announce-deploy.sh`
+needs an `ADMIN_SECRET` this session is not allowed to read.
 
 ## What landed
 
@@ -61,13 +86,43 @@ recording bar wraps to three rows. Cancel discards and restores the transport ro
 - `git status --short --cached` is not a thing (`--cached` is a `diff` flag) and it aborted a
   chained commit — the commit silently did not run.
 
+## Also landed — the cross-region room split (`a71af95`)
+
+**Two friends on different servers who accepted the same challenge got two rooms with one
+code.** A custom room code is BARE (a staged room is `iad-abc123`; a shared code carries
+nothing), so a socket with no `?region=` hint lands on the machine nearest to the JOINER, which
+has no such room and opens an empty one with the same code. Neither side is told.
+
+The invite has carried the host's region since migration `0029` and `App.onJoinInvite` passed
+it on. Two client paths dropped it:
+- `InviteFlyout` — the accept button you use while ALREADY in the lobby — called
+  `onJoinRoom(code)` with no region, so the join used our own server.
+- `Lobby` read the region from a `useState` seeded at mount, and accepting from that flyout
+  does not remount it, so a correct prop would not have been re-read either.
+- ...and inviting a friend from inside a room stamped NO region on the invite (the 7th arg was
+  simply omitted) — the same split from the other side.
+
+Now `Lobby.join(code, hostRegion?)` takes it as an argument, `roomJoinRegion` (`src/net/
+roomRegion.ts`, a leaf so smoke can import it — `env.ts` reads `import.meta.env` at load) is
+the rule, and the auto-join guard keys on the CODE instead of a never-reset `useRef(false)`
+that silently swallowed a second accept. 5 smoke checks. Server side needed nothing.
+
+**Verified**: the URL builder returns `wss://…?region=lhr` for a host on lhr while our own pick
+is iad, and creating a room still opens a real socket on the picker's region (live, dev pane).
+**NOT verified end-to-end** — that needs two signed-in accounts on two regions. Existing invite
+rows have `region` NULL and will still split, but `INVITE_TTL_S` is 10 min, so that clears
+itself.
+
 ## Next steps
 
-1. Watch for the first NEW alpha record run and confirm its replay plays + downloads end to end.
+1. Apply the two `fly secrets set` lines above (see the OPEN section).
+2. Confirm the challenge fix with two accounts on two different regions — the one link the
+   dev-pane check cannot reach.
+3. Watch for the first NEW alpha record run and confirm its replay plays + downloads end to end.
    That is the one link still only verified by `dbtest` and the 200 from `/api/replay`, not live.
-2. The `scripts/zz-probe-*` files and `scratch_penalties_backup.ts` are untracked G408 debris
+4. The `scripts/zz-probe-*` files and `scratch_penalties_backup.ts` are untracked G408 debris
    from the previous session; delete when nothing else needs them.
-3. Still open from before: Rapier slice 2 (balls), the DECODE penalty HITBOX audit (zone geometry
+5. Still open from before: Rapier slice 2 (balls), the DECODE penalty HITBOX audit (zone geometry
    vs the manual figures — G408 and G422 text are done), CR `APPROX` constants.
 
 ---
