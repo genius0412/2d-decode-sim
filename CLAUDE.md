@@ -467,6 +467,26 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
   With that discipline you don't have to sync branches before deploying the server.
   **A new `RobotSpec` field is NOT a protocol change** — but an older server's `coerceSpec`
   will drop it, so mirror it onto an older field when one exists (see CR mounts).
+- **A ROOM JOIN GOES WHERE THE ROOM IS** (`src/net/roomRegion.ts` `roomJoinRegion`). One app,
+  many regions, and a CUSTOM room code is BARE: a matchmaker-staged room is `iad-abc123` and
+  the proxy routes on the code alone, but a code two friends share carries nothing. A socket
+  opened with no hint lands on whichever machine Fly's anycast puts nearest to the JOINER,
+  which has no such room and opens an EMPTY one with the same code — two lobbies, one code,
+  both sides waiting, no error on either screen. So the HOST's region always wins; empty means
+  genuinely unknown (an invite from before `0029`, a single-region deploy, or a code typed by
+  hand) and keeps the joiner's own pick.
+  **The region is an ARGUMENT to `Lobby.join()`, never a component state a caller hopes is
+  right.** It was a `useState` seeded from the prop at mount, and the Lobby is ALREADY MOUNTED
+  when you accept an invite from its own `InviteFlyout` — so the seed was never re-read, and
+  that flyout never had the region to pass anyway (it called `onJoinRoom(code)`). Inviting from
+  inside a room stamped no region either, the same split from the other side. Every path that
+  can know it now hands it to the one function that opens the socket. `roomJoinRegion` lives in
+  its own LEAF module rather than beside `gameServerUrlWith` in `env.ts`, because env.ts reads
+  `import.meta.env` at load and the headless smoke run cannot import it at all — and this rule
+  fails SILENTLY, so it has to be testable.
+  The same discipline covers `spectateRoom` (passes `region` for a bare code) and the auto-join
+  guard, which was a never-reset `useRef(false)`: accepting a SECOND invite without leaving the
+  lobby did nothing at all. It keys on the room CODE.
 
 ## Accounts / ranked / leaderboards / records
 
