@@ -415,6 +415,23 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
     successful upload would make the offline mode depend on being online. Career merges both
     and renders SIGNED OUT too (`Stats`' every branch), or the device would hold runs nobody
     can open.
+    **UPLOADING IS A BACKLOG, NOT A STEP.** "Device first" is only honest if the account
+    eventually catches up, so `pendingPracticeUploads()` is drained after a run AND whenever a
+    session appears — sequentially, stopping on the first failure. Posting once and giving up
+    loses a run for reasons that have nothing to do with it: signed out at the time, offline,
+    or (routinely, since the game server AUTO-STOPS when idle) a machine still cold-booting
+    when the match ended.
+    ⚠️ **`onPracticeRun` must be re-registered when the prop changes**, like
+    `setRestartRequest` beside it. Registered in GameView's MOUNT-ONLY effect it captured the
+    first render's closure — and that closure reads `signedIn`, which starts false and flips
+    when auth resolves ASYNCHRONOUSLY, so the upload was never attempted at all.
+  - **IT COUNTS AS A GAME PLAYED**, crediting `user_activity` from the replay's TICK COUNT
+    exactly as `persist.ts` does for a server match — practice is the mode people spend most
+    of their time in, and a playtime that omitted it read as broken. This is the ONE activity
+    write whose input is client-reported: `sanitizeReplay` bounds each POST to at most one
+    match of ticks so a single run cannot inflate it, but nothing stops a determined client
+    posting runs it never played. Accepted deliberately, because games-played reaches no
+    board, rank or ELO — **do not let anything competitive start reading `user_activity`.**
   - **IT CAN NEVER BECOME A LEADERBOARD SCORE, STRUCTURALLY.** `practice_runs` (migration 0032)
     is its own table and `record_leaderboard` is a view over `records`, so nothing written
     there is reachable from any board, PB, rank or ELO query — not by accident, not by a later
