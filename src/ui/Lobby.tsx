@@ -10,6 +10,7 @@ import { useRoleSwap, useDismissable } from './useRoleSwap';
 import { RoleSwapBar } from './RoleSwapBar';
 import { SupporterBadge } from './SupporterBadge';
 import { gameServerUrl, gameServerUrlWith, gameServers, multiServer, selectedServer } from '../net/env';
+import { roomJoinRegion } from '../net/roomRegion';
 import { WebSocketTransport } from '../net/transport';
 import { LobbyClient, type MatchStart } from '../net/lobbyClient';
 import { ServerSession } from '../net/serverSession';
@@ -88,9 +89,18 @@ export function Lobby({
   const [copied, setCopied] = useState(false);
   // One app, several regions: a shared room code only lands two people on the same machine
   // if they connect to the same one. JOINING an invite, that is not a choice — it is
-  // wherever the host already is (`autoJoinRegion`), and offering a picker there was the
-  // bug. Creating a room, it is our own pick.
+  // wherever the host already is, and offering a picker there was the bug. Creating a room,
+  // it is our own pick.
+  //
+  // THE HOST'S REGION IS AN ARGUMENT TO `join`, NOT JUST THIS SEED. Seeding it here alone
+  // was wrong twice over: this screen is often ALREADY MOUNTED when an invite is accepted
+  // (its own flyout carries an Accept button), so `useState` never re-read the new value and
+  // the join went to whatever server WE had picked; and the flyout's accept path never had
+  // the region to begin with. This state is now only the DEFAULT for a room we create, and
+  // the value a join actually used, so the picker can show it.
   const [region, setRegion] = useState(autoJoinRegion || selectedServer()?.region || '');
+  // the region came from an INVITE, so it is the host's and not ours to change
+  const [regionLocked, setRegionLocked] = useState(!!autoJoinRegion);
   const [name, setName] = useState(settings.spec.teamName || 'Player');
   const [players, setPlayers] = useState<LobbyPlayer[]>([]);
   const [hostId, setHostId] = useState('');
@@ -149,7 +159,22 @@ export function Lobby({
     join(c);
   }
 
-  function join(roomCode: string): void {
+  /**
+   * Join `roomCode`, on `hostRegion` when the caller knows it.
+   *
+   * `hostRegion` is WHERE THE ROOM IS and it always wins over our own pick, because a custom
+   * room code is bare — unlike a matchmaker-staged `iad-abc123` there is nothing in it for
+   * the proxy to route on. Connect without it and Fly's anycast lands us on the machine
+   * NEAREST TO US, which has no such room and cheerfully opens an empty one with the same
+   * code: two lobbies, one code, both sides waiting, and no error anywhere.
+   *
+   * Passing it as an ARGUMENT rather than reading the `region` state is the fix: every path
+   * that knows the host's region now hands it to the one function that opens the socket, so
+   * it cannot be lost by a screen that was already mounted or by a caller that only had the
+   * code. Undefined/empty ⇒ we genuinely do not know (an invite from before the region was
+   * recorded), and falling back to our own pick is the old behaviour.
+   */
+  function join(roomCode: string, hostRegion?: string | null): void {
     if (!roomCode) return;
     setCode(roomCode);
     if (!gameServerUrl()) {
@@ -159,7 +184,12 @@ export function Lobby({
     }
     setPhase('connecting');
     // route both players to the same region so a shared code lands on one machine
-    const url = multiServer() && region ? gameServerUrlWith({ region }) : gameServerUrl();
+    const useRegion = roomJoinRegion(hostRegion, region);
+    if (hostRegion) {
+      setRegion(hostRegion);
+      setRegionLocked(true);
+    }
+    const url = multiServer() && useRegion ? gameServerUrlWith({ region: useRegion }) : gameServerUrl();
     let transport: WebSocketTransport;
     try {
       transport = new WebSocketTransport(url);
@@ -209,13 +239,17 @@ export function Lobby({
     );
   }
 
-  // auto-join once on mount if a friend's invite carried a room code — the same
-  // `join()` a manual code entry calls, just triggered without a button click.
-  const autoJoinedRef = useRef(false);
+  // Auto-join when a friend's invite carried a room code — the same `join()` a manual code
+  // entry calls, just triggered without a button click, and carrying the host's region.
+  //
+  // Keyed on the CODE, not a one-shot boolean. This screen stays mounted while you accept a
+  // second invite from its own flyout, and a `useRef(false)` that was already true swallowed
+  // that accept entirely: the click did nothing at all.
+  const autoJoinedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (autoJoin && !autoJoinedRef.current) {
-      autoJoinedRef.current = true;
-      join(autoJoin);
+    if (autoJoin && autoJoinedRef.current !== autoJoin) {
+      autoJoinedRef.current = autoJoin;
+      join(autoJoin, autoJoinRegion);
       onAutoJoinConsumed?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -356,7 +390,7 @@ export function Lobby({
                 </button>
               )}
             </div>
-            {multiServer() && !autoJoinRegion && (
+            {multiServer() && !regionLocked && (
               <p className="ds-hint">
                 Both players must pick the same region — a friend joining your invite is sent
                 here automatically.
@@ -382,7 +416,14 @@ export function Lobby({
           <span className="ds-head-spacer" />
           <InviteFlyout
             signedIn={signedIn}
-            room={{ code, config: { kind: config.kind, record: config.record, game: config.game ?? settings.game } }}
+            room={{
+              code,
+              config: { kind: config.kind, record: config.record, game: config.game ?? settings.game },
+              // WHERE this room actually is. Inviting from in here used to stamp no region at
+              // all, so the friend who accepted was routed to their own nearest machine — the
+              // same split, arrived at from the other side.
+              region: region || null,
+            }}
             onJoinRoom={join}
             onAcceptChallenge={onAcceptChallenge}
           />

@@ -9,6 +9,7 @@ import { drawWheels } from '../src/games/chain/parts';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
 import { queuedModes, queuedGames, queuesFor, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';
+import { roomJoinRegion } from '../src/net/roomRegion';
 import {
   parkQueue, takeQueue, dropQueue, updateQueue, peekQueue, subscribeQueue, elapsedLabel, elapsedSeconds,
 } from '../src/ui/queueKeeper';
@@ -6103,6 +6104,44 @@ function pushContest(A: Partial<RobotSpec>, B: Partial<RobotSpec>, seconds = 3):
       widenHint(0, 20).includes('worldwide') && ![0, 4, 20].some((s) => widenHint(0, s).includes('your region')));
     check('expand: a manual press outranks the automatic line',
       widenHint(3, 99).includes('3×'));
+  }
+
+  // ---- which machine a room join lands on --------------------------------
+  /**
+   * TWO FRIENDS, ONE ROOM CODE, TWO ROOMS — the bug this rule exists to stop.
+   *
+   * One Fly app runs in several regions and a CUSTOM room code is bare: unlike a
+   * matchmaker-staged `iad-abc123` there is nothing in the code for the proxy to route on.
+   * So a socket opened without a hint lands on whichever machine is nearest to the JOINER,
+   * and when the two players had picked different servers that machine had no such room and
+   * opened an empty one with the same code — both sides waiting, no error on either screen.
+   *
+   * The rule is one line, but it was got wrong on two paths at once (the lobby's own flyout
+   * never had the host's region, and the lobby seeded it into `useState` at mount, which
+   * never re-read it for a second invite accepted from a screen already open). It lives in
+   * `roomJoinRegion` so every path reaches the same answer, and it is pinned here.
+   */
+  {
+    check(
+      'join region: the region of the HOST wins over our own pick',
+      roomJoinRegion('lhr', 'iad') === 'lhr',
+    );
+    check(
+      'join region: no host region (an invite from before it was recorded) keeps ours',
+      roomJoinRegion(null, 'iad') === 'iad' && roomJoinRegion(undefined, 'iad') === 'iad',
+    );
+    check(
+      'join region: an EMPTY host region is unknown, not a region — a typed code keeps ours',
+      roomJoinRegion('', 'iad') === 'iad' && roomJoinRegion('   ', 'iad') === 'iad',
+    );
+    check(
+      'join region: a single-server deploy has no regions at all and asks for no hint',
+      roomJoinRegion(null, '') === '' && roomJoinRegion('', '') === '',
+    );
+    check(
+      'join region: the host wins even when we have no pick of our own',
+      roomJoinRegion('syd', '') === 'syd',
+    );
   }
 
   // ---- background ranked queue: the keeper store -------------------------

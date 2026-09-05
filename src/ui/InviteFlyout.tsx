@@ -24,10 +24,15 @@ export function InviteFlyout({
   onAcceptChallenge,
 }: {
   signedIn: boolean;
-  room?: { code: string; config: RoomConfig };
-  /** Join clicked on an incoming invite — calls the SAME join(roomCode) the
-   * manual code-entry path uses, so this can never diverge from it. */
-  onJoinRoom: (code: string) => void;
+  /** the room we are IN, when we are in one — `region` is which machine it is on, and it
+   *  has to be stamped on every invite sent from here or the friend who accepts is routed
+   *  to their OWN nearest machine and opens an empty room with the same code */
+  room?: { code: string; config: RoomConfig; region?: string | null };
+  /** Join clicked on an incoming invite — calls the SAME join(roomCode, region) the
+   * manual code-entry path uses, so this can never diverge from it. The REGION is the
+   * invite's (the host's): a bare room code carries no routing hint, so joining on our own
+   * region is how two friends on different servers ended up in two rooms with one code. */
+  onJoinRoom: (code: string, region?: string | null) => void;
   /** accept a RATED challenge, which has no room to join: it leaves this lobby and
    * queues under the challenge token instead. */
   onAcceptChallenge?: (inv: RoomInvite) => void;
@@ -62,9 +67,9 @@ export function InviteFlyout({
   const online = list.filter((f) => f.online);
   const badge = invites.length;
 
-  const join = (code: string, inviteId?: string): void => {
+  const join = (code: string, region?: string | null, inviteId?: string): void => {
     setOpen(false);
-    onJoinRoom(code);
+    onJoinRoom(code, region);
     if (inviteId) void friends.dismissInvite(inviteId);
   };
 
@@ -116,7 +121,8 @@ export function InviteFlyout({
                                 // out on the read TTL instead.
                                 onAcceptChallenge?.(inv);
                               } else {
-                                join(inv.room, inv.id);
+                                // GO WHERE THE HOST IS, not where we are
+                                join(inv.room, inv.region, inv.id);
                               }
                             }}
                           >
@@ -158,7 +164,15 @@ export function InviteFlyout({
                               const u = f.username;
                               if (!u) return;
                               void friends
-                                .inviteToRoom(u, room.code, room.config.game ?? 'decode', room.config.kind, room.config.record)
+                                .inviteToRoom(
+                                  u,
+                                  room.code,
+                                  room.config.game ?? 'decode',
+                                  room.config.kind,
+                                  room.config.record,
+                                  null,
+                                  room.region ?? null,
+                                )
                                 .then(() => setInvited((m) => ({ ...m, [u]: true })));
                             }}
                           >
