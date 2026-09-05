@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { GameId } from '../src/types';
-import { BALANCE_VERSION } from '../src/config';
+import { BALANCE_VERSION, SIM_DT } from '../src/config';
 import { monthsFor, policyFromEnv, whyNoMonths } from './kofi';
 import { CHALLENGE_FORMATS } from '../src/net/protocol';
 import { sanitizeReplay } from '../src/net/sanitize';
@@ -16,6 +16,7 @@ import {
   declineFriendRequest,
   declineRoomInvite,
   dismissRoomInvite,
+  addActivity,
   ensureProfile,
   listPracticeRuns,
   savePracticeRun,
@@ -337,6 +338,24 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       await ensureProfile(user.userId, user.handle);
       const season = await currentSeasonNumber(BALANCE_VERSION, replay.game as GameId);
       const run = await savePracticeRun(user.userId, replay, score, season, replay.game as GameId);
+      /**
+       * PLAYTIME + GAMES PLAYED. Practice is playing the game — it is the mode most people
+       * spend most of their time in — and a "games played" that ignored it read as broken
+       * (Career even carried a note saying solo practice could not be counted). Measured the
+       * same way `persist.ts` measures a server match: from the replay's TICK COUNT, not a
+       * wall clock and not a duration the client stated separately.
+       *
+       * ⚠️ This is the one activity write whose input is CLIENT-REPORTED, so the number is no
+       * longer purely server-witnessed. `sanitizeReplay` bounds each POST to at most one
+       * match's worth of ticks, so a single run cannot inflate it — but nothing stops a
+       * determined client from posting runs it never played. That is accepted deliberately:
+       * games-played is a vanity counter that reaches no board, no rank and no ELO, and the
+       * alternative is a playtime that omits the primary mode. Do NOT let anything
+       * competitive start reading `user_activity`.
+       */
+      await addActivity([user.userId], replay.ticks * SIM_DT, replay.game as GameId).catch(
+        (e: unknown) => console.error('[api] practice activity write failed:', e),
+      );
       return json(200, { run }), true;
     }
 

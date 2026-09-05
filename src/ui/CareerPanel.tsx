@@ -86,7 +86,7 @@ export function CareerPanel({
               <div className="ds-stat">
                 <span className="sv">{playtimeText(stats.activity.seconds)}</span>
                 <span className="sl">PLAYTIME</span>
-                <span className="sl" title="Solo practice off the server isn’t counted — there is nothing authoritative to count it from">
+                <span className="sl" title="Every match counts — ranked, custom, record runs, and solo practice (whose length comes from the replay it uploaded, not a clock)">
                   {stats.activity.games > 0
                     ? `~${playtimeText(averageMatch({ games: stats.activity.games, seconds: stats.activity.seconds }))} a match`
                     : 'in matches'}

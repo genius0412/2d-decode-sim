@@ -52,7 +52,12 @@ import { WebSocketTransport } from '../net/transport';
 import { encodeMsg } from '../net/protocol';
 import { loadActiveGame, saveActiveGame, clearActiveGame, type ActiveGameRef } from '../net/activeGame';
 import { recordScore, type Replay, type ReplayResult } from '../sim/replay';
-import { savePracticeRun, markPracticeUploaded } from '../net/practiceRuns';
+import {
+  savePracticeRun,
+  markPracticeUploaded,
+  pendingPracticeUploads,
+  loadPracticeReplay,
+} from '../net/practiceRuns';
 import { applyRouteMeta } from '../seo';
 import type { GameId } from '../games/types';
 import { chainDisclaimerSeen, markChainDisclaimerSeen } from '../chainDisclaimer';
@@ -449,6 +454,10 @@ export function App() {
 
   // when signed in, mirror settings to the account (debounced) as well as local
   const [accountUserId, setAccountUserId] = useState<string | null>(null);
+  /** sign-in state for the practice-upload flush, which is async and outlives a render */
+  const signedInRef = useRef(false);
+  /** one flush at a time — a sign-in and a finished run can land together */
+  const flushingPractice = useRef(false);
   // the account's PUBLIC display name (the mutable `handle` behind leaderboards and
   // /profile), which is NOT `user.name` — that's the immutable Neon Auth sign-up name.
   // Lifted here so the header pill and the Profile page read the same source; before
@@ -685,11 +694,40 @@ export function App() {
   const keepPracticeRun = (replay: Replay, result: ReplayResult): void => {
     const alliance = replay.setups[0]?.alliance ?? 'blue';
     const score = recordScore(result, alliance);
-    const meta = savePracticeRun(replay, { ...result, score: { ...result.score, [alliance]: score } });
-    if (!signedIn) return;
-    void uploadPracticeRun(replay, score, replay.game).then((run) => {
-      if (run && meta) markPracticeUploaded(meta.id, run.id);
-    });
+    savePracticeRun(replay, { ...result, score: { ...result.score, [alliance]: score } });
+    // Do not upload THIS run directly — flush the whole backlog instead, which includes it.
+    // One path to the server means a run that failed on its own attempt is retried by the
+    // next flush rather than being lost, and it is the same code either way.
+    void flushPracticeRuns();
+  };
+
+  /**
+   * Send every practice run the account does not yet have.
+   *
+   * The upload is the half that can fail, and for reasons that have nothing to do with the
+   * run: signed out when it was played, offline, or — routinely, since the game server is a
+   * Fly app that auto-stops when idle — a machine still cold-booting when the match ended.
+   * So uploading is not a step in finishing a run, it is a backlog that gets drained whenever
+   * draining is possible: after a run, and whenever a session appears.
+   *
+   * SEQUENTIAL, and it STOPS on the first failure. Ten parallel POSTs at a server that is not
+   * answering is ten timeouts and no more information than one; the rest keep their place in
+   * the backlog for next time.
+   */
+  const flushPracticeRuns = async (): Promise<void> => {
+    if (!signedInRef.current || flushingPractice.current) return;
+    flushingPractice.current = true;
+    try {
+      for (const meta of pendingPracticeUploads()) {
+        const replay = loadPracticeReplay(meta.id);
+        if (!replay) continue; // body evicted by the local cap — nothing left to send
+        const run = await uploadPracticeRun(replay, meta.score, meta.game);
+        if (!run) break;
+        markPracticeUploaded(meta.id, run.id);
+      }
+    } finally {
+      flushingPractice.current = false;
+    }
   };
 
   /** RECORD runs: abandon this run and immediately start a fresh one.
@@ -823,6 +861,17 @@ export function App() {
   // AccountSync on sign-in and stays null when auth is off, so signed-out and
   // no-auth builds both lock ranked — custom rooms stay open to everyone.
   const signedIn = accountUserId !== null;
+  /**
+   * Sign-in resolves ASYNCHRONOUSLY, and practice runs are kept whether or not anyone was
+   * signed in when they were played. So the moment an account appears is exactly when the
+   * backlog can move — runs from before the session resolved, from a signed-out session, and
+   * from any attempt that hit a cold or unreachable server.
+   */
+  useEffect(() => {
+    signedInRef.current = signedIn;
+    if (signedIn) void flushPracticeRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn]);
 
   // Rich-presence heartbeat for the FULL-SCREEN surfaces (game / solo record /
   // ranked queue) that render outside AppShell's FriendsProvider — so friends see

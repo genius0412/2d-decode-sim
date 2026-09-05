@@ -225,10 +225,6 @@ export function GameView({
     const canvas = canvasRef.current!;
     const controller = new GameController(canvas, settings, session);
     controllerRef.current = controller;
-    // SOLO PRACTICE finishing is the only end-of-run event this client owns — every other mode
-    // is told by the server. Keeping the run is the app's job, not the controller's, so it just
-    // hands it over; see `onPracticeRun` in App.
-    controller.onPracticeRun = (replay, result) => onPracticeRun?.(replay, result);
     setIntro(controller.getIntro()); // ranked matches only; null otherwise
     const hudTimer = window.setInterval(() => setHud(controller.getHud()), 100);
     const onKey = (e: KeyboardEvent) => {
@@ -277,6 +273,22 @@ export function GameView({
     controllerRef.current?.setRestartRequest(onRestartRun ?? null);
     controllerRef.current?.setCoop(coop);
   }, [onRestartRun, coop]);
+
+  /**
+   * SOLO PRACTICE finishing is the only end-of-run event this client owns — every other mode
+   * is told by the server. Keeping the run is the app's job, so the controller just hands it
+   * over (see `keepPracticeRun` in App).
+   *
+   * Registered HERE, not in the mount effect, for the reason the restart binding above spells
+   * out: the mount effect captures the prop from the FIRST render, and this callback closes
+   * over `signedIn`, which starts false and flips when the auth session resolves ASYNCHRONOUSLY.
+   * A run finished after that would have been handed to a closure that still believed nobody
+   * was signed in, and the upload would never have been attempted at all.
+   */
+  useEffect(() => {
+    const c = controllerRef.current;
+    if (c) c.onPracticeRun = onPracticeRun ? (r, res) => onPracticeRun(r, res) : null;
+  }, [onPracticeRun]);
 
   // MOBILE zoom/select guard: iOS Safari ignores `user-scalable=no`, so a two-finger
   // pinch still zooms and a two-finger touch can pop the text-selection callout. Kill

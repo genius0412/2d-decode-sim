@@ -144,6 +144,24 @@ export function savePracticeRun(replay: Replay, result: ReplayResult): PracticeR
   return meta;
 }
 
+/**
+ * Runs this device has that the ACCOUNT does not, oldest first.
+ *
+ * The other half of "device first, account second". An upload can fail for reasons that have
+ * nothing to do with the run — signed out at the time, offline, or (routinely, on a Fly app
+ * that auto-stops when idle) a server still cold-booting when the match ended. Without a list
+ * of what has not landed, every one of those is a run permanently missing from the account,
+ * and nothing would ever notice.
+ *
+ * Oldest first so a flush replays them in the order they were played, which is the order the
+ * server's own prune assumes when it drops the oldest past the cap.
+ */
+export function pendingPracticeUploads(): PracticeRunMeta[] {
+  return readIndex()
+    .filter((m) => !m.remoteId)
+    .sort((a, b) => a.at - b.at);
+}
+
 /** record that the account now holds this run too (so the list can stop offering to retry) */
 export function markPracticeUploaded(id: string, remoteId: string): void {
   const index = readIndex();

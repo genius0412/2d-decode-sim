@@ -906,6 +906,39 @@ async function main(): Promise<void> {
       (await repo.getReplay(first.replayId!)) === null,
     );
 
+    /**
+     * GAMES PLAYED + PLAYTIME. Practice is playing the game, so it credits `user_activity`
+     * exactly like a server-run match does — the route mirrors `persist.ts`, measuring from
+     * the replay's TICK COUNT. Pinned here because the two writes are in different files and
+     * nothing else would notice them drifting apart.
+     */
+    {
+      await repo.ensureProfile('prac-b', 'Counter');
+      const before = (await repo.getActivity('prac-b')).byGame['decode']?.games ?? 0;
+      const rep = container(99, 9000);
+      await repo.savePracticeRun('prac-b', rep, 40, SEASON, 'decode');
+      await repo.addActivity(['prac-b'], rep.ticks / 60, 'decode');
+      const after = await repo.getActivity('prac-b');
+      check(
+        'practice: a run counts toward GAMES PLAYED',
+        (after.byGame['decode']?.games ?? 0) === before + 1,
+        `${before} → ${after.byGame['decode']?.games}`,
+      );
+      check(
+        'practice: ...and adds the match length to PLAYTIME, from the replay ticks',
+        (after.byGame['decode']?.seconds ?? 0) === 150,
+        `${after.byGame['decode']?.seconds}s for ${rep.ticks} ticks`,
+      );
+      // pruning a run must NOT un-count it: you played it either way
+      for (let i = 0; i < repo.PRACTICE_KEEP + 2; i++) {
+        await repo.savePracticeRun('prac-b', container(500 + i, 60), i, SEASON, 'decode');
+      }
+      check(
+        'practice: pruning old runs does not take back the games you played',
+        ((await repo.getActivity('prac-b')).byGame['decode']?.games ?? 0) === before + 1,
+      );
+    }
+
     // ...and deleting the account takes the rest, for the same reason
     const live = (await repo.listPracticeRuns('prac-a', 'decode'))[0];
     await repo.deleteAccount('prac-a');
