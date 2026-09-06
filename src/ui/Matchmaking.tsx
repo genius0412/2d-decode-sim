@@ -575,11 +575,11 @@ export function Matchmaking({
         <div className="ds-title">
           <h1>{title}</h1>
         </div>
-        {sub && (
-          <p className="ds-sub" style={{ marginTop: -10 }}>
-            {sub}
-          </p>
-        )}
+        {/* ALWAYS rendered, with a non-breaking space when there is nothing to say.
+            `sub` is '' on every state except searching, so pressing FIND MATCH used to
+            add a line to the header block and push the panel down with it. Every sub
+            this page passes is a single line, so one reserved line is exactly right. */}
+        <p className="ds-sub ds-sub-tight">{sub || ' '}</p>
         <div className="ds-panelbox">{body}</div>
       </div>
     </div>

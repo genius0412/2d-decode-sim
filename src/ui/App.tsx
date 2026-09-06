@@ -1109,7 +1109,7 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>About this simulation</h2>
-            <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 420 }}>
+            <p className="ds-sub" style={{ maxWidth: 420 }}>
               Chain Reaction is a game for the <b>Unofficial FTC Discord’s CAD Competition</b>.
               This simulator is a rough, for-fun approximation of it. <b>The simulation is
               not realistic</b>, so how robots drive, shoot, and score here shouldn’t drive your
@@ -1134,7 +1134,7 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>You’re already in a game</h2>
-            <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
+            <p className="ds-sub" style={{ maxWidth: 380 }}>
               You can only be in one game at a time.
             </p>
             <div className="overlay-buttons">
@@ -1159,7 +1159,7 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>Start position invalid</h2>
-            <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
+            <p className="ds-sub" style={{ maxWidth: 380 }}>
               Your saved start position isn’t legal for the selected chassis. Fix it (or pick a
               preset) before starting.
             </p>
@@ -1183,7 +1183,7 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>{lockedOut ? 'Down for maintenance' : 'Server restarting soon'}</h2>
-            <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
+            <p className="ds-sub" style={{ maxWidth: 380 }}>
               {lockedOut
                 ? maintenanceLine(maintenance) ??
                   'DSIM is down for maintenance. New games are paused.'
@@ -1199,7 +1199,7 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>Update required</h2>
-            <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
+            <p className="ds-sub" style={{ maxWidth: 380 }}>
               A newer version has shipped. Refresh to update before starting.
             </p>
             <div className="overlay-buttons">

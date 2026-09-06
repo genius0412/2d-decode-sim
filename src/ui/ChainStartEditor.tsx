@@ -347,11 +347,15 @@ export function ChainStartEditor({
         <div className={`ds-startpos-status ${legality.legal ? 'ok' : 'bad'}`}>
           {legality.legal ? reason : `${reason} - won't save`}
         </div>
-        {legality.legal && (
-          <div className={`ds-startpos-where ${legality.onStand ? 'stand' : ''}`}>
-            {legality.onStand ? '⬢' : '▢'} {placement}
-          </div>
-        )}
+        {/* KEPT IN THE LAYOUT when illegal rather than unmounted. Legality flips
+            while you are dragging, and this sits above the inputs, the tabs and the
+            presets — so removing it moved all of them, mid-drag. */}
+        <div
+          className={`ds-startpos-where ${legality.onStand ? 'stand' : ''}${legality.legal ? '' : ' blank'}`}
+          aria-hidden={!legality.legal}
+        >
+          {legality.onStand ? '⬢' : '▢'} {placement}
+        </div>
 
         <div className="ds-startpos-inputs">
           <label>

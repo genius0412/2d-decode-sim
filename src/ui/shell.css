@@ -622,7 +622,6 @@
 .ds-friends {
   flex: none;
   width: 268px;
-  align-self: stretch;
   padding: 18px 14px 40px;
   border-left: 1px solid var(--ds-line);
   background: var(--ds-bar);
@@ -630,6 +629,22 @@
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+  /* ITS OWN SCROLL. `.ds-app` is the app's single scroll container, so with
+     `align-self: stretch` this aside grew to the height of `.ds-main` and a long
+     friends list either scrolled the whole page or ran off the bottom of it. Sticky
+     under the bar with a viewport-bounded height gives it a scrollbar of its own and
+     keeps it in view while the page moves behind it.
+
+     `flex-start` rather than `stretch` is load-bearing: a stretched flex item has no
+     definite height, and `position: sticky` needs one. The +1 is the bar's own
+     border-bottom, which `--ds-bar-h` does not include. */
+  align-self: flex-start;
+  position: sticky;
+  top: calc(var(--ds-bar-h) + 1px);
+  max-height: calc(100dvh - var(--ds-bar-h) - 1px);
+  overflow-y: auto;
+  /* do not hand the scroll back to the page when this list hits its end */
+  overscroll-behavior: contain;
 }
 .ds-friends.collapsed {
   width: 56px;
@@ -1407,6 +1422,20 @@
    goBILDA is not GOBILDA. Only ever wraps a trademark, never label text. */
 .ds-brand {
   text-transform: none;
+}
+/* `.overlay-panel` is a flex column with `gap: 14px`, and a margin on a flex item
+   ADDS to the gap instead of collapsing with it — the five dialogs each carried
+   `margin: 4px auto 16px`, so the designed 14/14 rendered as 18/30. Only the
+   horizontal auto survives, because a max-width box in a flex column is not centred
+   without it. */
+.overlay-panel .ds-sub {
+  margin-inline: auto;
+}
+/* A PAGE WITHOUT A SUB-LINE still needs air under its title. `.ds-h1` is `0 0 8px`,
+   which is right when a `.ds-sub` follows and far too tight when the content does:
+   Contributors, Changelog and Download all put 8px where every other page puts 32. */
+.ds-h1 + *:not(.ds-sub) {
+  margin-top: var(--ds-s-5);
 }
 .ds-h1 {
   font-size: clamp(26px, 4vw, 38px);
@@ -2711,6 +2740,11 @@ tr.lb-detail td {
 .ds-console *::before,
 .ds-console *::after {
   box-sizing: border-box;
+}
+/* the console's sub-line sits under its title, not a gap away from it: this cancels
+   most of `.ds-console-in`'s 22px row gap for this one element. */
+.ds-console-in > .ds-sub-tight {
+  margin-top: -10px;
 }
 .ds-console-in {
   width: min(900px, 94vw);
@@ -4032,6 +4066,10 @@ button.ds-key:active {
    legality line above it: this is information, not a verdict, so it must not compete
    with the thing that says whether the pose will save. Muted text on the plain panel
    rather than a third coloured state. */
+/* holds its space while the pose is illegal — see the note at its call site */
+.ds-startpos-where.blank {
+  visibility: hidden;
+}
 .ds-startpos-where {
   font: 600 11px/1.3 var(--ds-font-mono);
   color: var(--ds-mut);
