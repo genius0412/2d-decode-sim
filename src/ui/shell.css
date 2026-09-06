@@ -1613,6 +1613,18 @@
   overflow: hidden;
   box-shadow: var(--ds-block);
 }
+/* STACKED PANELS OWN THEIR OWN GAP. Without this every page had to hand-type one, and
+   they disagreed: 0 (Donate, so up to four cards met border-on-border), 16 (WatchLive),
+   18 (Account ×3, DesktopUpdate, MatchHistory), 22, 28. `.ds-main` is a plain block with
+   no gap and `styles.css` opens with `* { margin: 0 }`, so nothing supplied it. */
+.ds-panel + .ds-panel {
+  margin-top: var(--ds-s-4);
+}
+/* the panel BODY. Written out as `style={{ padding: 16 }}` twelve times because this
+   class did not exist. */
+.ds-panel-body {
+  padding: var(--ds-s-4);
+}
 /* opt-out of the corner-clipping `overflow: hidden` for panels that host a
    popup (the region-picker listbox) which must extend past the card edge.
    Safe here because nothing inside reaches the rounded corners with a fill. */
@@ -1910,6 +1922,14 @@
   font-family: var(--ds-font-mono);
   color: var(--ds-mut);
   width: 34px;
+}
+/* numeric column: right-aligned tabular mono, so digits line up down the column.
+   `.num` was in the markup with no rule behind it, which is why the practice-replay
+   list did not match the two boards beside it. */
+.ds-table .num {
+  font-family: var(--ds-font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 .ds-table .sc {
   font-family: var(--ds-font-mono);
@@ -2814,6 +2834,11 @@ tr.lb-detail td {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
+}
+/* `.ds-fields` is flex, so a child asking for `grid-column: 1 / -1` is asking for
+   nothing at all. This is the flex spelling of the same intent. */
+.ds-opts.wide {
+  flex-basis: 100%;
 }
 .ds-opts.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4421,7 +4446,7 @@ button.ds-key:active {
   /* it renders into a page HEAD slot, directly above a period picker and a wall of stat
      tiles, with NOTHING between them — a card flush against the next control reads as part
      of that control rather than as its own thing */
-  margin-bottom: 28px;
+  margin-bottom: var(--ds-s-5);
 }
 /* the CLEAN state is one row: a small gauge and a single line of text */
 .ds-standing.good { gap: 0; }

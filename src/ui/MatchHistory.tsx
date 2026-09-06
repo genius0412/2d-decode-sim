@@ -205,7 +205,7 @@ export function MatchHistory({
   const seasonName = seasonLabel;
 
   return (
-    <div className="ds-panel" style={{ marginTop: 18 }}>
+    <div className="ds-panel">
       <div className="ds-panel-h">
         <span className="ds-panel-title">Match history</span>
       </div>

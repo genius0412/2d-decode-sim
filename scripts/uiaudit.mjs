@@ -48,7 +48,7 @@ const BASELINE = {
   'undefined-token': 0,
   'duplicate-selector': 0,
   'var-literal-fallback': 0,
-  'inline-spacing': 105,
+  'inline-spacing': 83,
   'fractional-font-size': 46,
   'banned-font-weight': 9,
   'off-grid-gap': 237,

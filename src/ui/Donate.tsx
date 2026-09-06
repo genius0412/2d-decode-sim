@@ -116,7 +116,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
         <h1 className="ds-h1">Support DSIM</h1>
         <p className="ds-sub">Not open yet.</p>
         <section className="ds-panel">
-          <div style={{ padding: 16 }}>
+          <div className="ds-panel-body">
             <p className="ds-hint">
               DSIM is free and stays free. There is nothing to pay for yet — a way to chip in
               for the servers is coming.
@@ -162,7 +162,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
             </span>
             <span className="ds-count">{role}</span>
           </div>
-          <div style={{ padding: 16 }}>
+          <div className="ds-panel-body">
             <p className="ds-hint">
               Every supporter benefit is included with your {role === 'owner' ? 'ownership' : 'admin role'}.
               Ads are off, and your {role} badge shows on your profile, the leaderboards, and the lobby.
@@ -177,7 +177,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
             <span className="ds-panel-title">You’re a supporter</span>
             <span className="ds-count">thank you</span>
           </div>
-          <div style={{ padding: 16 }}>
+          <div className="ds-panel-body">
             <p className="ds-hint">
               Ads are off across the site and your badge is live
               {until ? `, through ${new Date(until).toLocaleDateString()}` : ''}.
@@ -196,7 +196,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
           <span className="ds-panel-title">Supporter</span>
           <span className="ds-count">{priceLabel}</span>
         </div>
-        <div style={{ padding: 16 }}>
+        <div className="ds-panel-body">
           <ul className="ds-perks">
             <li>No advertising, anywhere on the site</li>
             <li>A supporter badge on your profile, the leaderboards, and the lobby</li>
@@ -228,7 +228,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
           <span className="ds-panel-title">Already paid?</span>
           <span className="ds-count">claim it once</span>
         </div>
-        <div style={{ padding: 16 }}>
+        <div className="ds-panel-body">
           <p className="ds-hint">
             Ko-fi bills through PayPal, so the email on your payment often isn’t the one on your
             DSIM account. Paste the transaction ID from your Ko-fi receipt and we’ll attach it.
@@ -270,7 +270,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
           <span className="ds-panel-title">One-off</span>
           <span className="ds-count">no account needed</span>
         </div>
-        <div style={{ padding: 16 }}>
+        <div className="ds-panel-body">
           {/* Two sentences, because the second one only makes sense with a real
               number in it. When the price hasn't loaded (server asleep, or an
               older server with no /api/pricing), `priceLabel` is the words "see

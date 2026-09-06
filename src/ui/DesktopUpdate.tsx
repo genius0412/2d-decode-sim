@@ -42,7 +42,7 @@ export function DesktopUpdate() {
   };
 
   return (
-    <div className="ds-panel" style={{ marginTop: 18 }}>
+    <div className="ds-panel">
       <div className="ds-panel-h">
         <span className="ds-panel-title">Desktop app</span>
         {version && <span className="ds-chip">v{version}</span>}

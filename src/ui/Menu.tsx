@@ -798,7 +798,7 @@ export function Menu({ settings, onChange }: Props) {
             {!isDecode && (
               <>
                 <h3 className="ds-subh">Catalyst</h3>
-                <div className="ds-opts">
+                <div className="ds-opts card4">
                   {CHAIN_CATALYST_TYPES.map((t) => (
                     <button
                       key={t}
@@ -919,7 +919,7 @@ export function Menu({ settings, onChange }: Props) {
                         answer "out of the back". Eight compass points on the same 3x3 map as
                         every other mount picker; the slider under it stays for the angles
                         between them. */}
-                    <div className="ds-opts three" style={{ gridColumn: '1 / -1' }}>
+                    <div className="ds-opts three wide">
                       {CATAPULT_DIRS.map((d) => (
                         <button
                           key={d.label}

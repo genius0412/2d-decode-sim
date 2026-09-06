@@ -26,7 +26,7 @@ export function Contributors({ onOpenProfile }: { onOpenProfile: (username: stri
           <span className="ds-panel-title">Built by</span>
           <span className="ds-count">{CONTRIBUTORS.length}</span>
         </div>
-        <div style={{ padding: 16 }}>
+        <div className="ds-panel-body">
           <div className="contrib-grid">
             {CONTRIBUTORS.map((c) => (
               <ContributorCard key={c.fallbackName} c={c} onOpenProfile={onOpenProfile} />

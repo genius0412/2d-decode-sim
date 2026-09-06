@@ -46,7 +46,7 @@ export function Changelog() {
             GitHub
           </a>
         </div>
-        <div style={{ padding: 16 }}>
+        <div className="ds-panel-body">
           {!configured ? (
             <div className="ds-empty">
               <div className="big">No changelog yet</div>

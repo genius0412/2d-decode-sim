@@ -89,7 +89,7 @@ export function WatchLive({
           </div>
         </div>
       ) : (
-        <div className="ds-opts" style={{ gap: 12 }}>
+        <div className="ds-opts">
           {rooms.map((r) => (
             <button key={r.room} className="ds-opt" onClick={() => onWatch(r.room, r.region)}>
               <span className="ot">{title(r)}</span>
@@ -136,9 +136,9 @@ function WatchByCode({ onWatch }: { onWatch: (roomCode: string, region?: string)
   };
 
   return (
-    <div className="ds-panel" style={{ marginTop: 16 }}>
+    <div className="ds-panel">
       <h2 className="ds-h2">Watch a custom game</h2>
-      <p className="ds-hint" style={{ marginTop: 0 }}>
+      <p className="ds-hint">
         Custom rooms aren’t listed publicly. Enter the room code to watch one.
       </p>
       <div className="ds-watchcode">
@@ -161,7 +161,7 @@ function WatchByCode({ onWatch }: { onWatch: (roomCode: string, region?: string)
         </button>
       </div>
       {status === 'missing' && (
-        <p className="ds-hint" style={{ marginBottom: 0 }}>
+        <p className="ds-hint">
           No live match under that code. It may have finished, or the match hasn’t started yet —
           a room is only watchable once the drivers are playing.
         </p>

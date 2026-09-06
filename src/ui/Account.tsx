@@ -52,11 +52,11 @@ export function Account({
       {multiServer() && (
         // `ds-panel-open` drops the panel's `overflow: hidden` so the region
         // dropdown can escape below the card instead of being clipped by it.
-        <div className="ds-panel ds-panel-open" style={{ marginTop: 18 }}>
+        <div className="ds-panel ds-panel-open">
           <div className="ds-panel-h">
             <span className="ds-panel-title">Server</span>
           </div>
-          <div style={{ padding: 16 }}>
+          <div className="ds-panel-body">
             <ServerMenu
               value={settings.preferredServerId ?? selectedServerId()}
               onChange={(id) => onChange({ ...settings, preferredServerId: id })}
@@ -69,7 +69,7 @@ export function Account({
 
       {authEnabled && SUPPORT_ENABLED && <Membership onDonate={onDonate} />}
 
-      <div className="ds-panel" style={{ marginTop: 18 }}>
+      <div className="ds-panel">
         <div className="ds-panel-h">
           <span className="ds-panel-title">Reset</span>
         </div>
@@ -130,12 +130,12 @@ function Membership({ onDonate }: { onDonate?: () => void }) {
   const endingSoon = !!until && until.getTime() - Date.now() < 10 * 864e5;
 
   return (
-    <div className="ds-panel" style={{ marginTop: 18 }}>
+    <div className="ds-panel">
       <div className="ds-panel-h">
         <span className="ds-panel-title">Membership</span>
         {ent?.supporter && <span className="ds-count">supporter</span>}
       </div>
-      <div style={{ padding: 16 }}>
+      <div className="ds-panel-body">
         {!ent ? (
           <p className="ds-hint">Checking…</p>
         ) : ent.supporter ? (
@@ -219,11 +219,11 @@ function DeleteAccount() {
   };
 
   return (
-    <div className="ds-panel" style={{ marginTop: 18 }}>
+    <div className="ds-panel">
       <div className="ds-panel-h">
         <span className="ds-panel-title">Delete account</span>
       </div>
-      <div style={{ padding: 16 }}>
+      <div className="ds-panel-body">
         <p className="ds-hint">
           Permanently deletes your profile, username, saved settings and robot presets, records
           and practice runs with their replays, ranked rating and history, your playtime and

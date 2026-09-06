@@ -41,7 +41,7 @@ export function Download() {
           <div className="ds-panel-h">
             <span className="ds-panel-title">Runs in your browser</span>
           </div>
-          <div style={{ padding: 16 }}>
+          <div className="ds-panel-body">
             <p className="ds-hint" style={{ margin: 0 }}>
               No download needed. DSIM runs in your mobile browser. To run it full-screen, open
               your browser’s <b>Share</b> menu and tap <b>Add to Home Screen</b>. The desktop builds
