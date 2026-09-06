@@ -126,7 +126,7 @@ button {
   letter-spacing: 0.3px;
   color: var(--ds-on-field);
   background: rgba(0, 0, 0, 0.45);
-  padding: 3px 7px;
+  padding: 4px 8px;
   border-radius: 6px;
   pointer-events: none;
 }
@@ -141,7 +141,7 @@ button {
 }
 .ad-slot-label {
   display: block;
-  font-size: 9.5px;
+  font-size: 10px;
   letter-spacing: 1.2px;
   text-transform: uppercase;
   color: var(--ds-mut);
@@ -312,7 +312,7 @@ button {
   background: var(--ds-hud-soft);
   border: 1px solid var(--ds-hud-line);
   border-radius: var(--ds-round-full);
-  padding: 3px 11px;
+  padding: 4px 12px;
   font-family: var(--ds-font-mono);
   font-size: 11px;
   font-weight: 700;
@@ -323,13 +323,13 @@ button {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   background: var(--ds-hud);
   border: 1px solid var(--ds-hud-line);
   border-radius: var(--ds-round-full);
-  padding: 4px 11px;
+  padding: 4px 12px;
   font-family: var(--ds-font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 1px;
   color: var(--text);
@@ -504,7 +504,7 @@ button {
   vector-effect: non-scaling-stroke;
 }
 .ping-graph-foot {
-  font-size: 9.5px;
+  font-size: 10px;
   color: var(--muted);
   margin-top: 4px;
   text-align: right;
@@ -522,7 +522,7 @@ button {
 
 .hopper {
   display: flex;
-  gap: 5px;
+  gap: 4px;
 }
 
 /* An EMPTY slot is a --ds-tile well, only ~1.03:1 against the card it sits on in EITHER
@@ -550,7 +550,7 @@ button {
 .power-gauge {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   font-family: var(--ds-font-mono);
   font-size: 11px;
   font-weight: 700;
@@ -620,9 +620,9 @@ button {
   border: 1px solid var(--ds-hud-line);
   border-radius: var(--ds-round);
   color: var(--ds-ink-dim);
-  padding: 6px 13px;
+  padding: 6px 12px;
   font-family: var(--ds-font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 1.5px;
   box-shadow: var(--ds-edge-soft);
@@ -734,7 +734,7 @@ button {
   border: 1px solid var(--ds-hud-line);
   border-left: 2px solid var(--ds-accent);
   border-radius: var(--ds-round-sm);
-  padding: 2px 9px;
+  padding: 2px 8px;
   font-family: var(--ds-font-mono);
   font-size: 11px;
   font-weight: 700;
@@ -858,7 +858,7 @@ button {
 }
 
 .score-table td {
-  padding: 3px 14px;
+  padding: 4px 14px;
   text-align: left;
 }
 
@@ -870,7 +870,7 @@ button {
 
 .score-table .section-row td {
   padding-top: 10px;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 2px;
   color: var(--muted);
@@ -1256,7 +1256,7 @@ button {
   letter-spacing: 1.5px;
   color: var(--ds-accent-ink);
   background: var(--amber);
-  border-radius: 4px;
+  border-radius: var(--ds-round-sm);
   padding: 1px 6px;
 }
 .intro-name {
@@ -1283,13 +1283,13 @@ button {
   gap: 8px;
 }
 .intro-dt {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 1px;
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 5px;
-  padding: 2px 7px;
+  padding: 2px 8px;
 }
 .intro-elo {
   font-size: 20px;
@@ -1338,7 +1338,7 @@ button {
   gap: 6px;
 }
 .elo-head {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 2px;
   color: var(--amber);
@@ -1396,7 +1396,7 @@ button {
   letter-spacing: 1.5px;
   color: var(--ds-accent-ink);
   background: var(--amber);
-  border-radius: 4px;
+  border-radius: var(--ds-round-sm);
   padding: 1px 6px;
 }
 .elo-prov {
@@ -1463,14 +1463,14 @@ button {
 .elo-delta {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   min-width: 56px;
   justify-content: flex-end;
   text-align: right;
   font-weight: 800;
   font-size: 15px;
   border-radius: 6px;
-  padding: 1px 7px;
+  padding: 1px 8px;
 }
 .elo-delta-caret {
   font-size: 10px;
@@ -1667,7 +1667,7 @@ button {
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.4px;
-  padding: 7px 14px;
+  padding: 8px 14px;
   border-radius: var(--ds-round-full);
   border: 1px solid var(--ds-hud-line);
   background: transparent;
@@ -1690,7 +1690,7 @@ button {
   .score-panel {
     min-width: 74px;
     padding: 4px 12px;
-    gap: 5px;
+    gap: 4px;
   }
   .score-panel .panel-score {
     font-size: 22px;
@@ -1700,21 +1700,21 @@ button {
   }
   .timer-panel {
     min-width: 108px;
-    padding: 3px 14px;
+    padding: 4px 14px;
   }
   .timer-panel .timer-time {
     font-size: 20px;
   }
   .timer-panel .timer-phase,
   .timer-panel .timer-motif {
-    font-size: 8.5px;
+    font-size: 8px;
   }
   .breakdown-row {
     bottom: 50px;
   }
   .breakdown-row span {
     font-size: 10px;
-    padding: 2px 7px;
+    padding: 2px 8px;
   }
   /* THE ROBOT STATUS CHIPS. `.status-wrap` is anchored `right: 12px` and grows
      LEFTWARD, and `.robot-status` is a nowrap row — so on a phone the chip row
@@ -1743,7 +1743,7 @@ button {
     gap: 6px;
   }
   .game-btn {
-    padding: 6px 11px;
+    padding: 6px 12px;
     font-size: 12px;
   }
 }
@@ -1902,7 +1902,7 @@ button {
   border-radius: 10px;
   padding: 10px 12px;
   background: var(--ds-tile);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--ds-mut);
   text-align: left;
@@ -1951,7 +1951,7 @@ button {
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--ds-round-full);
-  padding: 7px 16px;
+  padding: 8px 16px;
   font: inherit;
   font-size: 13px;
   font-weight: 700;
@@ -1980,7 +1980,7 @@ button {
   flex: 1 1 120px;
   background: var(--ds-panel);
   border: 1px solid var(--ds-line);
-  border-radius: 12px;
+  border-radius: var(--ds-round-md);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -1988,7 +1988,7 @@ button {
 }
 .adm-stat b { font-size: 24px; line-height: 1.1; color: var(--ds-ink); }
 .adm-stat span {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2005,7 +2005,7 @@ button {
   border: 1px solid var(--ds-line);
   border-radius: 10px;
   padding: 8px 12px;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 .adm-region b { text-transform: uppercase; letter-spacing: 0.06em; color: var(--ds-ink); }
 
@@ -2013,8 +2013,8 @@ button {
   width: 100%;
   background: var(--ds-tile);
   border: 1px solid var(--ds-line-strong);
-  border-radius: 8px;
-  padding: 9px 12px;
+  border-radius: var(--ds-round);
+  padding: 8px 12px;
   font: inherit;
   font-size: 13px;
   color: var(--ds-ink);
@@ -2040,9 +2040,9 @@ button {
 
 .adm-pill {
   display: inline-block;
-  padding: 3px 9px;
+  padding: 4px 8px;
   border-radius: var(--ds-round-full);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   background: var(--ds-tile);
   border: 1px solid var(--ds-line-strong);
@@ -2080,7 +2080,7 @@ button {
 .admin-card {
   background: var(--ds-panel);
   border: 1px solid var(--ds-line);
-  border-radius: 12px;
+  border-radius: var(--ds-round-md);
   padding: 18px;
   display: flex;
   flex-direction: column;
@@ -2091,9 +2091,9 @@ button {
 .admin-field input {
   background: var(--ds-tile);
   border: 1px solid var(--ds-line-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-round);
   color: var(--ds-ink);
-  padding: 7px 10px;
+  padding: 8px 10px;
   font: inherit;
 }
 .admin-field input[type="number"] { width: 72px; }
@@ -2102,15 +2102,15 @@ button {
 .admin-field select {
   background: var(--ds-tile);
   border: 1px solid var(--ds-line-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-round);
   color: var(--ds-ink);
-  padding: 7px 10px;
+  padding: 8px 10px;
   font: inherit;
 }
 .admin-textarea {
   background: var(--ds-tile);
   border: 1px solid var(--ds-line-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-round);
   color: var(--ds-ink);
   padding: 8px 10px;
   font: inherit;
@@ -2125,8 +2125,8 @@ button {
   gap: 8px;
   background: var(--ds-tile);
   border: 1px solid var(--ds-line);
-  border-radius: 8px;
-  padding: 7px 10px;
+  border-radius: var(--ds-round);
+  padding: 8px 10px;
   font-size: 13px;
 }
 /* the rank NUMBER is content, not chrome — `opacity:.5` put it at 3.19:1 */
@@ -2137,7 +2137,7 @@ button {
   border: 1px solid var(--ds-line-strong);
   border-radius: 6px;
   color: var(--ds-ink);
-  padding: 5px 8px;
+  padding: 4px 8px;
   font: inherit;
 }
 /* ---- supporter cosmetic: chassis colour swatches ----------------------- */
@@ -2196,7 +2196,7 @@ button {
   justify-content: center;
   background: var(--ds-gold);
   color: var(--ds-gold-ink);
-  border-radius: 999px;
+  border-radius: var(--ds-round-full);
   vertical-align: middle;
   flex: 0 0 auto;
   /* A badge is DECORATION BESIDE a name, never part of it. Two consequences:
@@ -2246,8 +2246,8 @@ button {
   position: fixed;
   z-index: 400;
   transform: translate(-50%, calc(-100% - 8px));
-  padding: 5px 9px;
-  border-radius: 8px;
+  padding: 4px 8px;
+  border-radius: var(--ds-round);
   background: var(--ds-panel);
   color: var(--ds-ink);
   border: 1px solid var(--ds-line-strong);
@@ -2312,7 +2312,7 @@ input.admin-months {
   border-left: 2px solid var(--ds-line);
   margin-left: 10px;
 }
-.admin-history .ds-hint { font-size: 11.5px; margin: 0 0 2px; }
+.admin-history .ds-hint { font-size: 12px; margin: 0 0 2px; }
 /* was a hardcoded #ff6b6b — a DARK-mode red, stranded here since before the light
    retheme, and only ~2.6:1 on a light panel. --ds-danger is 6.17 light / 6.14 dark. */
 .ds-btn.danger {
@@ -2340,8 +2340,8 @@ input.admin-months {
   border-radius: var(--ds-round-full);
   border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
   background: color-mix(in srgb, currentColor 13%, transparent);
-  padding: 2px 9px;
-  font-size: 10.5px;
+  padding: 2px 8px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -2386,7 +2386,7 @@ input.admin-months {
   border-left: 2px solid var(--ds-accent);
   border-radius: var(--ds-round-md);
   background: var(--ds-tile);
-  padding: 13px 15px;
+  padding: 12px 16px;
 }
 .ann-item.season { border-left-color: var(--ds-warn); }
 .ann-item.act { border-left-color: var(--ds-accent); }
@@ -2406,7 +2406,7 @@ input.admin-months {
   margin: 0;
 }
 .ann-item-tag {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -2415,7 +2415,7 @@ input.admin-months {
 }
 /* ---- rendered Markdown (announcement bodies, admin preview) ------------- */
 .md {
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.55;
   color: var(--ds-ink-dim);
   /* a rendered page (Privacy, Terms, a changelog) can contain a bare URL, and a URL
@@ -2436,7 +2436,7 @@ input.admin-months {
   line-height: 1.3;
   margin: 14px 0 6px;
 }
-.md-h1 { font-size: 15.5px; }
+.md-h1 { font-size: 16px; }
 .md-h2 { font-size: 14px; }
 .md-h3, .md-h4 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ds-mut); }
 .md-list {
@@ -2444,7 +2444,7 @@ input.admin-months {
   padding-left: 18px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 .md-ol { list-style: decimal; }
 .md-ul { list-style: disc; }
@@ -2458,7 +2458,7 @@ input.admin-months {
   background: var(--ds-tile);
   border: 1px solid var(--ds-line);
   border-radius: 5px;
-  padding: 1px 5px;
+  padding: 1px 4px;
 }
 .md-link { color: var(--ds-accent); text-decoration: underline; text-underline-offset: 2px; }
 .md-link:hover { opacity: 0.85; }
@@ -2470,7 +2470,7 @@ input.admin-months {
    pairs `npm run contrast` already audits. */
 .ds-legal { padding: 16px; }
 .legal-md {
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.65;
   max-width: 68ch;
 }
@@ -2478,7 +2478,7 @@ input.admin-months {
 /* `##` renders as .md-h2 (the renderer downshifts a level so these sit under the
    page's own .ds-h1) — give it real section weight and space above. */
 .legal-md .md-h2 {
-  font-size: 16.5px;
+  font-size: 16px;
   margin: 26px 0 8px;
 }
 .legal-md > :first-child { margin-top: 0; }

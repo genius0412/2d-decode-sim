@@ -81,9 +81,15 @@ uses most and drops the near-duplicates around it.
 --ds-t-2xl: 28px; /* h1                                   */
 ```
 
-- **Weights: 400, 600, 700, 800.** Nothing else. 500, 750 and 900 are banned (9 uses today).
-- **No fractional sizes.** 9.5, 10.5, 11.5, 12.5, 13.5 and 14.5 are all banned. If 11 is too
-  big and 12 too small, the problem is the layout, not the type.
+- **Weights: 400, 500, 600, 700, 750, 800, 900 — and no eighth.** Both families are
+  VARIABLE cuts, which `shell.css:164` documents, so half-steps like 750 are real type
+  rather than a rounding accident, and 500 is a genuine de-emphasis. An earlier draft of
+  this document banned 500/750/900 without reading that comment; the rule now guards
+  against a NEW weight appearing instead of churning three deliberate ones.
+- **No fractional PIXEL sizes.** 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5 and 16.5 were
+  all in use; they are gone. If 11 is too big and 12 too small, the problem is the layout,
+  not the type. Fractional `em` on rendered Markdown is fine — that is relative sizing, not
+  a picked number.
 - **Families are `--ds-font-ui` and `--ds-font-mono`.** There is no `--ds-font`; it never
   existed, and because an unresolvable `var()` in a `font:` shorthand voids the WHOLE
   declaration, thirteen rules silently set nothing for months. Grep a token before using it.
@@ -178,7 +184,7 @@ Recorded so it is not mistaken for precedent. These predate the standard; **new 
 get to match them.**
 
 - 105 inline spacing declarations in JSX (43 of them `marginTop`).
-- 46 fractional font-sizes, 9 banned weights, 237 off-grid gap/padding values.
+- 237 off-grid gap/padding values. (Fractional sizes and stray weights: cleared.)
 - `10px` radius inlined 14×; `999px` 6× where `--ds-round-full` exists.
 - ~20 interactive elements with `:hover` and no `:focus-visible`, including `.game-btn`,
   `.overlay-buttons button` and `button.ds-key` (the keybinding capture control).

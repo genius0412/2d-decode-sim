@@ -504,7 +504,7 @@
 }
 .ds-profile-label {
   font-family: var(--ds-font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -558,7 +558,7 @@
   font-size: 13px;
   font-weight: 600;
   text-align: left;
-  padding: 7px 10px;
+  padding: 8px 10px;
   border-radius: var(--ds-round);
   border: 1px solid transparent;
   background: none;
@@ -594,7 +594,7 @@
   font-weight: 700;
 }
 .ds-rail-btn .rh {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ds-mut);
 }
 .ds-rail-btn:hover {
@@ -622,7 +622,9 @@
 .ds-friends {
   flex: none;
   width: 268px;
-  padding: 18px 14px 40px;
+  /* 24 to match `.ds-rail` opposite it: at 18 the FRIENDS header sat 6px above the
+     rail's first item, across the width of the page */
+  padding: 24px 14px 40px;
   border-left: 1px solid var(--ds-line);
   background: var(--ds-bar);
   display: flex;
@@ -681,7 +683,7 @@
   border-radius: var(--ds-round-full);
   background: var(--ds-accent);
   color: var(--ds-accent-ink);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 800;
   line-height: 16px;
   text-align: center;
@@ -789,7 +791,7 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 5px 6px;
+  padding: 4px 6px;
   border: 1px solid transparent;
   border-radius: var(--ds-round-sm);
   background: none;
@@ -1082,7 +1084,7 @@
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 15px 18px;
+  padding: 16px 18px;
   border-radius: var(--ds-round-full);
   border: 1px solid var(--ds-line);
   background: var(--ds-panel);
@@ -1098,7 +1100,7 @@
 }
 .ds-menu-btn .mh {
   font-family: var(--ds-font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   letter-spacing: 0.06em;
   color: var(--ds-mut);
 }
@@ -1129,7 +1131,7 @@
 }
 .ds-home-loadout {
   margin-top: 22px;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--ds-mut);
 }
 .ds-home-loadout b {
@@ -1167,7 +1169,7 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 9px 11px;
+  padding: 8px 12px;
   border-radius: var(--ds-round);
   border: 1px solid transparent;
   background: none;
@@ -1216,7 +1218,7 @@
   font: inherit;
   font-size: 14px;
   font-weight: 700;
-  padding: 9px 14px;
+  padding: 8px 14px;
   border: 0;
   background: none;
   color: var(--ds-mut);
@@ -1297,9 +1299,9 @@
   font-size: 12px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 11px;
-  border-radius: 999px;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: var(--ds-round-full);
   border: 1px solid var(--ds-line);
   color: var(--ds-ink);
   background: var(--ds-panel);
@@ -1317,10 +1319,10 @@
 .ds-status {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   font-size: 12px;
   font-weight: 700;
-  padding: 5px 12px;
+  padding: 4px 12px;
   border-radius: var(--ds-round-sm);
   border: 1px solid color-mix(in srgb, var(--ds-ok) 55%, var(--ds-line));
   color: var(--ds-ok-ink);
@@ -1341,7 +1343,7 @@
   text-decoration: none;
   font-size: 14px;
   font-weight: 600;
-  padding: 9px 16px;
+  padding: 8px 16px;
   border-radius: var(--ds-round);
   border: 1px solid var(--ds-line);
   background: var(--ds-panel);
@@ -1390,7 +1392,7 @@
 /* compact keycap — used by the role-swap bar + start-position tools */
 .ds-btn.small {
   font-size: 12px;
-  padding: 5px 12px;
+  padding: 4px 12px;
   border-radius: var(--ds-round-sm);
 }
 .ds-btn:focus-visible,
@@ -1525,7 +1527,7 @@
   margin: 2px 0 24px;
   padding: 14px 18px;
   border: 1px solid var(--ds-accent);
-  border-radius: 12px;
+  border-radius: var(--ds-round-md);
   background: color-mix(in srgb, var(--ds-accent) 12%, transparent);
 }
 .ds-rejoin-txt {
@@ -1674,7 +1676,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 13px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--ds-line);
   flex-wrap: wrap;
 }
@@ -1738,7 +1740,7 @@
   font: inherit;
   font-size: 13px;
   height: 32px;
-  padding: 0 30px 0 11px;
+  padding: 0 30px 0 12px;
   border-radius: var(--ds-round);
   color: var(--ds-ink);
   background-color: var(--ds-tile);
@@ -1791,7 +1793,7 @@
   font-size: 13px;
   height: 32px;
   width: 100%;
-  padding: 0 11px;
+  padding: 0 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1833,7 +1835,7 @@
   overflow-y: auto;
 }
 .ds-listbox-opt {
-  padding: 7px 9px;
+  padding: 8px 8px;
   border-radius: var(--ds-round-sm);
   font-size: 13px;
   color: var(--ds-ink);
@@ -1945,7 +1947,7 @@
 }
 .ds-table th {
   font-family: var(--ds-font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ds-mut);
@@ -1996,10 +1998,10 @@
 }
 .ds-dt {
   font-family: var(--ds-font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   letter-spacing: 0.04em;
-  padding: 2px 7px;
-  border-radius: 4px;
+  padding: 2px 8px;
+  border-radius: var(--ds-round-sm);
   border: 1px solid var(--ds-line);
   color: var(--ds-mut);
   text-transform: uppercase;
@@ -2040,7 +2042,7 @@
 }
 .mh-when {
   color: var(--ds-mut);
-  font-size: 12.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .mh-type {
@@ -2097,7 +2099,7 @@
 .mh-vscore {
   display: inline-flex;
   align-items: baseline;
-  gap: 3px;
+  gap: 4px;
   font-variant-numeric: tabular-nums;
 }
 .mh-vscore .al-red {
@@ -2114,7 +2116,7 @@
 }
 .mh-watch {
   font-size: 12px;
-  padding: 3px 10px;
+  padding: 4px 10px;
 }
 .mh-pager {
   display: flex;
@@ -2224,7 +2226,7 @@
 .lb-standing-col {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
   flex: 1;
 }
@@ -2269,14 +2271,14 @@ tr.lb-you > td {
 /* leaderboard record config (expandable robot column) */
 .lb-robot {
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   background: none;
   border: 1px solid var(--ds-line);
-  border-radius: 999px;
-  padding: 3px 10px;
+  border-radius: var(--ds-round-full);
+  padding: 4px 10px;
   color: var(--ds-ink);
   cursor: pointer;
 }
@@ -2460,7 +2462,7 @@ tr.lb-detail td {
   font: inherit;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--ds-line);
@@ -2520,7 +2522,7 @@ tr.lb-detail td {
   margin: 0;
   padding-top: 8px;
   border-top: 1px solid var(--ds-line);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--ds-mut);
 }
@@ -2601,7 +2603,7 @@ tr.lb-detail td {
 .ds-replay-rec .rec-note {
   flex-basis: 100%;
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--ds-mut);
 }
@@ -2643,7 +2645,7 @@ tr.lb-detail td {
 .ds-form label {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   font-size: 12px;
   color: var(--ds-mut);
 }
@@ -2655,7 +2657,7 @@ tr.lb-detail td {
   background: var(--ds-tile);
   border: 1px solid var(--ds-line-strong); /* 1.4.11: the border IS the control (tile-on-panel is 1.16:1) */
   border-radius: var(--ds-round);
-  padding: 9px 11px;
+  padding: 8px 12px;
   box-shadow: inset 0 2px 0 var(--ds-inset);
 }
 .ds-input:focus-visible {
@@ -2668,7 +2670,7 @@ tr.lb-detail td {
   color: var(--ds-danger);
 }
 .ds-form-hint {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ds-mut);
   min-height: 1em;
 }
@@ -2689,7 +2691,7 @@ tr.lb-detail td {
 .ds-username-input .at {
   display: flex;
   align-items: center;
-  padding: 0 4px 0 11px;
+  padding: 0 4px 0 12px;
   color: var(--ds-mut);
   font-size: 14px;
 }
@@ -2771,7 +2773,7 @@ tr.lb-detail td {
   font: inherit;
   font-size: 13px;
   font-weight: 700;
-  padding: 7px 13px;
+  padding: 8px 12px;
   margin-bottom: 24px;
   border-radius: var(--ds-round);
   border: 1px solid var(--ds-line);
@@ -2804,9 +2806,9 @@ tr.lb-detail td {
 .ds-season {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   padding: 6px 12px;
-  border-radius: 999px;
+  border-radius: var(--ds-round-full);
   border: 1px solid var(--ds-line);
   background: var(--ds-panel);
   font-family: var(--ds-font-mono);
@@ -2851,11 +2853,11 @@ tr.lb-detail td {
 .ds-sec {
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 12px;
 }
 .ds-sec > h2 {
   font-family: var(--ds-font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ds-mut);
@@ -2866,7 +2868,7 @@ tr.lb-detail td {
 /* a lighter in-section subheading (e.g. the CR "Scoring archetype" groups) */
 .ds-subh {
   font-family: var(--ds-font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ds-mut);
@@ -2927,7 +2929,7 @@ tr.lb-detail td {
   border-radius: var(--ds-round);
   background: var(--ds-panel);
   color: var(--ds-ink);
-  padding: 13px 15px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -3040,12 +3042,12 @@ tr.lb-detail td {
 .contrib-card {
   display: flex;
   align-items: flex-start;
-  gap: 13px;
+  gap: 12px;
   border: 1px solid var(--ds-line-strong);
   border-radius: var(--ds-round);
   background: var(--ds-panel);
   color: var(--ds-ink);
-  padding: 13px 15px;
+  padding: 12px 16px;
   box-shadow: var(--ds-block-sm);
 }
 .contrib-avatar {
@@ -3085,11 +3087,11 @@ tr.lb-detail td {
   white-space: nowrap;
   cursor: pointer;
   font-family: var(--ds-font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ds-mut);
 }
 .contrib-name {
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--ds-ink);
 }
@@ -3128,11 +3130,11 @@ tr.lb-detail td {
 }
 
 .ds-opt .ot {
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 700;
 }
 .ds-opt .od {
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.35;
   color: var(--ds-mut);
 }
@@ -3150,15 +3152,15 @@ tr.lb-detail td {
 .ds-opt .oz {
   margin-top: 3px;
   align-self: flex-start;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ds-accent);
   background: color-mix(in srgb, var(--ds-accent) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--ds-accent) 40%, var(--ds-line));
-  border-radius: 999px;
-  padding: 2px 9px;
+  border-radius: var(--ds-round-full);
+  padding: 2px 8px;
 }
 /* "Play a friend" format picker — a column of .ds-opt tiles in a modal. */
 .ds-chal {
@@ -3183,7 +3185,7 @@ tr.lb-detail td {
   box-shadow: var(--ds-block-sm);
 }
 .ds-opt.mini {
-  padding: 10px 13px;
+  padding: 10px 12px;
 }
 .ds-opt.mini .ot {
   font-size: 13px;
@@ -3230,7 +3232,7 @@ tr.lb-detail td {
   border: 1px solid var(--ds-line);
   border-radius: var(--ds-round);
   background: var(--ds-panel);
-  padding: 15px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -3244,7 +3246,7 @@ tr.lb-detail td {
 .ds-field {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
 }
 /* the 150px basis is a COLUMN WIDTH in the `.ds-fields` row. A `.ds-field` placed
    straight into a `.ds-panelbox` (Lobby, Account) is a child of a COLUMN flexbox,
@@ -3258,7 +3260,7 @@ tr.lb-detail td {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ds-mut);
 }
 .ds-field > .cap .val {
@@ -3363,13 +3365,13 @@ input[type='range']:focus-visible {
 }
 .ds-hero.stuck .ds-hero-view {
   min-height: 0;
-  padding: 5px;
+  padding: 4px;
 }
 .ds-hero.stuck .ds-hero-view svg {
   max-height: 92px;
 }
 .ds-hero.stuck .ds-hero-info {
-  gap: 7px;
+  gap: 8px;
   justify-content: center;
 }
 .ds-hero.stuck .ds-hero-name {
@@ -3384,7 +3386,7 @@ input[type='range']:focus-visible {
   gap: 6px;
 }
 .ds-hero.stuck .ds-stat {
-  padding: 4px 7px;
+  padding: 4px 8px;
 }
 .ds-hero-view {
   display: grid;
@@ -3424,7 +3426,7 @@ input[type='range']:focus-visible {
   letter-spacing: 0.12em;
   color: var(--ds-accent-ink);
   background: var(--ds-accent);
-  border-radius: 999px;
+  border-radius: var(--ds-round-full);
   padding: 2px 8px;
   margin-left: 10px;
   vertical-align: middle;
@@ -3441,7 +3443,7 @@ input[type='range']:focus-visible {
 .ds-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 9px;
+  gap: 8px;
 }
 .ds-stat {
   border: 1px solid var(--ds-line-soft);
@@ -3460,7 +3462,7 @@ input[type='range']:focus-visible {
 .ds-stat .sl {
   display: block;
   font-family: var(--ds-font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ds-mut);
@@ -3495,7 +3497,7 @@ input[type='range']:focus-visible {
   }
   .ds-rail-btn {
     flex: none;
-    padding: 7px 12px;
+    padding: 8px 12px;
   }
   /* the hint line is the first thing to go when the rail turns horizontal */
   .ds-rail-btn .rh,
@@ -3695,7 +3697,7 @@ a.ds-cta {
 }
 .ds-hint {
   color: var(--ds-mut);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.45;
   margin: 0;
 }
@@ -3710,7 +3712,7 @@ a.ds-cta {
   border: 1px solid var(--ds-line);
   border-radius: var(--ds-round);
   background: var(--ds-panel);
-  padding: 13px 15px;
+  padding: 12px 16px;
   box-shadow: var(--ds-block);
 }
 .ds-bind-block h3 {
@@ -3724,7 +3726,7 @@ a.ds-cta {
 .ds-bind-grid {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
 }
 .ds-bind-row {
   display: flex;
@@ -3753,7 +3755,7 @@ a.ds-cta {
   background: var(--ds-panel);
   border: 1px solid var(--ds-line);
   border-radius: var(--ds-round-sm);
-  padding: 3px 10px;
+  padding: 4px 10px;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.03em;
@@ -3814,7 +3816,7 @@ button.ds-key:active {
 .ds-players {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
 }
 .ds-player {
   display: flex;
@@ -3824,7 +3826,7 @@ button.ds-key:active {
   border: 1px solid var(--ds-line);
   border-left: 3px solid var(--ds-line);
   border-radius: var(--ds-round);
-  padding: 9px 12px;
+  padding: 8px 12px;
 }
 .ds-player.red {
   border-left-color: var(--ds-red);
@@ -4046,8 +4048,8 @@ button.ds-key:active {
 }
 .ds-startpos-status {
   font: 600 12px/1.3 var(--ds-font-mono);
-  padding: 7px 10px;
-  border-radius: 8px;
+  padding: 8px 10px;
+  border-radius: var(--ds-round);
   border: 1px solid var(--ds-line);
 }
 /* status TEXT takes the `-ink` siblings; --ds-ok/--ds-red are fills (4.04:1 / 4.2:1
@@ -4073,9 +4075,9 @@ button.ds-key:active {
 .ds-startpos-where {
   font: 600 11px/1.3 var(--ds-font-mono);
   color: var(--ds-mut);
-  padding: 5px 10px;
+  padding: 4px 10px;
   margin-top: 4px;
-  border-radius: 8px;
+  border-radius: var(--ds-round);
   border: 1px dashed var(--ds-line);
 }
 .ds-startpos-where.stand {
@@ -4091,7 +4093,7 @@ button.ds-key:active {
   flex: 1 1 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   font: 600 10px/1.2 var(--ds-font-ui, inherit);
   color: var(--ds-ink-dim);
   text-transform: uppercase;
@@ -4104,7 +4106,7 @@ button.ds-key:active {
 }
 .ds-startpos-inputs input {
   width: 100%;
-  padding: 6px 7px;
+  padding: 6px 8px;
   border-radius: 7px;
   border: 1px solid var(--ds-line);
   background: var(--ds-bg);
@@ -4141,7 +4143,7 @@ button.ds-key:active {
   align-self: flex-start;
 }
 .ds-startpos-tab {
-  padding: 5px 16px;
+  padding: 4px 16px;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -4187,7 +4189,7 @@ button.ds-key:active {
   line-height: 1;
   color: var(--ds-mut);
   padding: 1px 2px;
-  border-radius: 4px;
+  border-radius: var(--ds-round-sm);
 }
 .ds-startpos-del:hover {
   color: var(--ds-red);
@@ -4203,9 +4205,9 @@ button.ds-key:active {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 7px 10px;
+  padding: 8px 10px;
   margin-bottom: 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-round);
   background: var(--ds-panel);
   border: 1px solid var(--ds-line);
 }
@@ -4242,7 +4244,7 @@ button.ds-key:active {
 .ds-perks li {
   display: flex;
   align-items: baseline;
-  gap: 9px;
+  gap: 8px;
 }
 .ds-perks li::before {
   content: '✓';
@@ -4268,7 +4270,7 @@ button.ds-key:active {
    the text-safe siblings, and this is status text on a panel. */
 .ds-claim-msg {
   margin-top: 10px;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.5;
 }
 .ds-claim-msg.ok { color: var(--ds-ok-ink); }
@@ -4409,8 +4411,8 @@ button.ds-key:active {
   z-index: 60;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 11px;
+  gap: 8px;
+  padding: 4px 12px;
   border: 1px solid var(--ds-hud-line);
   border-radius: var(--ds-round-full);
   background: var(--ds-panel);
@@ -4588,7 +4590,7 @@ button.ds-key:active {
 }
 .ds-standing-lock {
   margin: 0;
-  padding: 9px 11px;
+  padding: 8px 12px;
   border-radius: var(--ds-round);
   font: 600 12px/1.4 var(--ds-font-ui);
   color: var(--ds-red-ink);
@@ -4609,7 +4611,7 @@ button.ds-key:active {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
 }
 .ds-standing-log li {
   display: flex;
@@ -4795,7 +4797,7 @@ button.ds-key:active {
 .adm-report-list { display: flex; flex-direction: column; gap: 6px; }
 .adm-report-item {
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-round);
   background: var(--ds-tile);
   border: 1px solid var(--ds-line);
   font-size: 12px;
@@ -4811,7 +4813,7 @@ button.ds-key:active {
 .adm-report-detail {
   margin: 6px 0 0;
   color: var(--ds-ink);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.45;
   /* a reporter's free text is UNTRUSTED input rendered in a moderator's browser. React
      escapes it, and this stops a wall of characters from breaking the row's layout. */

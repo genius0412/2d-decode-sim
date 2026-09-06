@@ -49,9 +49,9 @@ const BASELINE = {
   'duplicate-selector': 0,
   'var-literal-fallback': 0,
   'inline-spacing': 78,
-  'fractional-font-size': 46,
-  'banned-font-weight': 9,
-  'off-grid-gap': 237,
+  'fractional-font-size': 0,
+  'banned-font-weight': 0,
+  'off-grid-gap': 178,
 };
 
 // ── 1. undefined custom properties ───────────────────────────────────────────
@@ -116,10 +116,12 @@ for (const f of tsx) {
 // ── 5. type scale ────────────────────────────────────────────────────────────
 for (const f of css) {
   read(f).forEach((l, i) => {
-    if (/font-size:\s*[0-9]+\.[0-9]/.test(l)) hit('fractional-font-size', f, i + 1, l);
-    if (/font:\s*[0-9]+\s+[0-9]+\.[0-9]/.test(l)) hit('fractional-font-size', f, i + 1, l);
-    if (/font-weight:\s*(500|750|900)\b/.test(l)) hit('banned-font-weight', f, i + 1, l);
-    if (/font:\s*(500|750|900)\s/.test(l)) hit('banned-font-weight', f, i + 1, l);
+    if (/font-size:\s*[0-9]+\.[0-9]+px/.test(l)) hit('fractional-font-size', f, i + 1, l);
+    if (/font:\s*[0-9]+\s+[0-9]+\.[0-9]+px/.test(l)) hit('fractional-font-size', f, i + 1, l);
+    // both families are VARIABLE cuts (shell.css:164), so 750 and 500 are real type,
+    // not drift. Guard against an EIGHTH weight appearing rather than banning three.
+    const wm = l.match(/font-weight:\s*([0-9]{3})/) ?? l.match(/font:\s*([0-9]{3})\s/);
+    if (wm && !/^(400|500|600|700|750|800|900)$/.test(wm[1])) hit('banned-font-weight', f, i + 1, l);
   });
 }
 
@@ -146,7 +148,7 @@ const DESC = {
   'var-literal-fallback': 'var(--x, #literal) — the fallback hides a missing token',
   'inline-spacing': 'spacing literal in JSX; it belongs to a class',
   'fractional-font-size': 'fractional font-size; the scale has six whole steps',
-  'banned-font-weight': 'weight outside 400/600/700/800',
+  'banned-font-weight': 'weight outside the seven the variable cuts actually use',
   'off-grid-gap': 'gap/padding off the 4px grid',
 };
 
