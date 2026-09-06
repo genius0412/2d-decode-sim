@@ -950,17 +950,30 @@ function isPinning(
   // a robot only turning on the spot is still asking to move, and a contact can stop that too
   if (!want) return !!cmd && Math.abs(cmd.rotate) > 0.1;
   /**
-   * "...PREVENTING the movement..." — so the pinner has to be IN THE WAY of where the victim is
-   * trying to go. Without this the sim fouled a robot for sitting behind an opponent who was
-   * driving itself into a wall under its own power: every other clause was satisfied and the
-   * opponent was preventing nothing. Measured, the WEAKEST legal build "pinned" a default
-   * chassis that way.
+   * "...PREVENTING the movement..." — so a robot that is not trying to LEAVE is not being
+   * prevented from anything. The one scene that has to stay clean is a robot driving ITSELF
+   * into a wall: it satisfies contact, attempting to move, and going nowhere, while the
+   * opponent behind it prevents nothing. Measured before this existed, the WEAKEST legal build
+   * "pinned" a default chassis that way.
+   *
+   * THE TEST IS THE VICTIM'S INTENT, NOT THE PINNER'S BEARING. It used to require the PINNER to
+   * lie along `want` — which is true of a straight reverse and false of every SIDEWAYS exit, so
+   * a robot held flat against a wall and strafing to get out was ruled un-pinned no matter how
+   * stuck it was. That is the common real pin and it drew nothing: measured on an equal pair,
+   * a victim welded to the wall (1.1in in six seconds) billed ZERO, where the pre-rewrite code
+   * billed one. It also contradicts the rule's own words, which name exactly this case —
+   * prevention "either direct or transitive (such as against a FIELD element)": pressed into a
+   * wall, the wall does the holding and the pinner supplies the press.
+   *
+   * So the only thing excluded is driving INTO the trap. `escapeDir` points from the pinner to
+   * the victim, i.e. the way the victim is being shoved, so `want` agreeing with it is a robot
+   * pressing itself further in — not escaping. Anything else (sideways, reverse, diagonal) is
+   * an attempt to leave, and whether it SUCCEEDS is measured later by `PIN_STUCK_SPEED` and by
+   * criteria A/B, which is where it belongs: prevention is an outcome, not a stick direction.
    */
-  const dx = pinner.pos.x - pinned.pos.x;
-  const dy = pinner.pos.y - pinned.pos.y;
-  const d = hyp(dx, dy);
-  if (d < 1e-6) return false;
-  return (dx / d) * want.x + (dy / d) * want.y >= C.PIN_OBSTRUCT_COS;
+  const e = escapeDir(pinner, pinned);
+  if (!e) return false;
+  return e.x * want.x + e.y * want.y < C.PIN_INTO_TRAP_COS;
 }
 
 function updatePins(world: World, dt: number, commands: Map<number, RobotCommand>): void {

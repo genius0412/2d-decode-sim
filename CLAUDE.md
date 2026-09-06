@@ -229,6 +229,15 @@ if it names a game element (artifact, gate, particle, catalyst, beam) it belongs
   a sign()-only kick once caused a numerical-noise spin-up on dead-center contacts). Flat-face
   alignment is capped at the REMAINING TILT (`flushErr` in `pushRobotAt`) so the heading never
   steps past flush and buzzes.
+- **`PHYS_FRICTION` IS NOT THE WALLS.** It is set on the ROBOT and BALL colliders; `statics()`
+  never called `setFriction`, so every wall, goal face, classifier and gate arm ran on Rapier's
+  DEFAULT (0.5) — and since the default combine rule is AVERAGE, robot-on-wall was silently 0.6
+  against robot-on-robot's 0.7, while the constant's own comment claimed it covered walls. Now
+  stated as `PHYS_WALL_FRICTION` at the same value, so nothing moved. Relevant when someone
+  reports "I cannot escape a push": a robot pressed into a wall sticks by COULOMB stick/slip
+  (friction ∝ the normal force, which the victim's own into-wall command adds to), so escape
+  collapses sharply once it presses in — 37in of sideways escape at zero forward, 1.9in at 0.2
+  forward. Lowering wall friction only MOVES that threshold, it does not remove it.
 - `robotIntersectsRect` (SAT) exists because thin zones can be fully covered by a robot body
   with no corner inside.
 
@@ -1073,9 +1082,21 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
   ATTEMPTING TO MOVE." So `isPinning` needs all of: contact · the victim attempting to move ·
   **the pinner IN THE WAY of where the victim is trying to go** (`PIN_OBSTRUCT_COS`) ·
   `pinnedAgainstWall`.
-  - **The obstruction test is what "preventing" means.** Without it a robot driving ITSELF into a
-    wall fouled whoever was behind it — every other clause was satisfied and the opponent was
-    preventing nothing, so the WEAKEST legal build "pinned" a default chassis.
+  - **"Preventing" is tested on the VICTIM'S INTENT, not the pinner's bearing**
+    (`PIN_INTO_TRAP_COS`). Some test is needed, or a robot driving ITSELF into a wall fouls
+    whoever is behind it — every other clause is satisfied and the opponent prevents nothing,
+    and measured, the WEAKEST legal build "pinned" a default chassis that way. But the first
+    version asked whether the PINNER lay along where the victim was trying to go, which is true
+    of a straight reverse and FALSE OF EVERY SIDEWAYS EXIT — so a robot held flat against a
+    wall and strafing to get out was ruled un-pinned however stuck it was. That is the ordinary
+    pin, and it billed NOTHING: measured on an equal pair, a victim welded to the wall (1.1in
+    in six seconds) drew 0 where the pre-rewrite code drew 1. It also contradicts the rule,
+    which names the case — prevention "either direct or transitive (such as against a FIELD
+    element)": pressed into a wall, the wall holds and the pinner supplies the press.
+    So the ONLY thing excluded is driving further INTO the trap. Whether an escape attempt
+    SUCCEEDS is then measured by `PIN_STUCK_SPEED` and criteria A/B, which is where it belongs
+    — prevention is an outcome, not a stick direction. Measured after: a heavy tank holding a
+    victim on the wall bills 6 MINORs over 20 s while a weak x-drive it strafes clear of bills 2.
   - **"Attempting to move" must read SIDE-DRIVE too** (`attemptDir`). It read only
     `driveX/driveY/rotate`, which a Traditional-tank driver on separate sticks never fills — a
     tank robot was never attempting to move and so could not be pinned AT ALL.

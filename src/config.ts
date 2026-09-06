@@ -105,7 +105,13 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *      transitive chain without being counted, and the per-artifact clocks are swept and
  *      cleared outside auto/teleop;
  *    · PENALTIES ARE ASSESSED IN FREE DRIVE — `freeplay` is a live phase everywhere else in
- *      the sim, and `updatePenalties` was the one place that excluded it.
+ *      the sim, and `updatePenalties` was the one place that excluded it;
+ *    · G422 recognises the ORDINARY WALL PIN. The obstruction test asked whether the PINNER
+ *      lay along where the victim was trying to go — true of a straight reverse, false of every
+ *      SIDEWAYS exit — so a robot held flat against a wall and strafing to get out was ruled
+ *      un-pinned however stuck it was, and billed NOTHING where the pre-rewrite code billed a
+ *      MINOR. It now tests the VICTIM's intent instead (is it driving into the trap, or trying
+ *      to leave), which is what the rule's "transitive ... against a FIELD element" describes.
  */
 export const SIM_VERSION = 2;
 
@@ -206,7 +212,17 @@ export const PIN_WALL_SLOP = 3; // in
  * pair rocks or as the victim saws at the stick, tight enough that somebody behind you while you
  * drive forwards is not pinning you.
  */
-export const PIN_OBSTRUCT_COS = 0.34;
+/**
+ * How much a pinned robot may be driving INTO the thing it is trapped against before it stops
+ * counting as trying to escape. `cos` of the angle between its commanded direction and the way
+ * it is being shoved: +1 is straight into the trap, 0 is sideways along it, -1 is back through
+ * the pinner. At 0.34 (~70°) a sideways or diagonal exit is an escape attempt and only a robot
+ * pressing itself in is excluded.
+ *
+ * This REPLACED `PIN_OBSTRUCT_COS`, which asked the mirrored question — whether the PINNER lay
+ * along the escape — and so ruled out every sideways exit, i.e. the ordinary wall pin.
+ */
+export const PIN_INTO_TRAP_COS = 0.34;
 /**
  * "for more than 3 seconds" — how long criterion A or B must hold before the PIN is over.
  *
@@ -746,9 +762,25 @@ export const PHYS_CONTAIN_SLOP = 0.75; // in
  * a contact that can slip, which is a bigger piece of work than this dial.
  */
 export const CONTACT_PAIR_SPIN = 0.6;
-/** friction between chassis and walls / other chassis — resists a pinned robot
- * sliding out of a squeeze (the old model squared-and-held; 0 let it squirt) */
+/**
+ * Friction on the ROBOT and BALL colliders — resists a pinned robot sliding out of a squeeze
+ * (the old model squared-and-held; 0 let it squirt).
+ *
+ * ⚠️ NOT the field walls, despite what this comment used to say. `statics()` never called
+ * `setFriction`, so every wall, goal face and classifier ran on Rapier's DEFAULT instead — and
+ * since the default combine rule is AVERAGE, robot-on-wall was silently (0.7 + 0.5) / 2 = 0.6
+ * while robot-on-robot was 0.7. That is not unreasonable (a bumper on a smooth field wall
+ * should slip more easily than on another bumper) but nothing chose it, so it is stated below
+ * rather than inherited. Found while measuring why a robot held against a wall could not
+ * strafe out; it is not the cause — that is Coulomb stick/slip, and lowering this only moves
+ * where the slip threshold falls — but a physics constant should not arrive by accident.
+ */
 export const PHYS_FRICTION = 0.7;
+/** friction on the STATIC field colliders (walls, goal faces, classifier, gate arms). Set to
+ *  Rapier's own default so making it explicit changes nothing; see `PHYS_FRICTION` above for
+ *  why it is written down at all, and note the effective robot↔wall value is the AVERAGE of
+ *  the two (0.6), not this number. */
+export const PHYS_WALL_FRICTION = 0.5;
 /** BALL contact stiffness (Hz) for the ball solve — stiffer than the robot world
  * (12 Hz), which let two grounded balls sit visibly overlapping for many ticks.
  * Tuned to 25: separates a resting overlapping clump within ~0.5s (as clean as a

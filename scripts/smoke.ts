@@ -7339,6 +7339,86 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
   );
 }
 
+// ---- G422: the ORDINARY wall pin — a victim strafing to get out ------------
+{
+  /**
+   * THE COMMON PIN, and it used to draw NOTHING.
+   *
+   * Held flat against a wall, a driver does not reverse into the robot leaning on them — they
+   * strafe along the wall. The obstruction test asked whether the PINNER lay along where the
+   * victim was trying to go, which is true of a straight reverse and false of every sideways
+   * exit, so the whole scene was ruled un-pinned however stuck the victim was.
+   *
+   * Measured on an equal pair with the victim welded to the wall (1.1in in six seconds): ZERO
+   * MINORs, where the PRE-REWRITE code billed one. The rule names this case itself — prevention
+   * "either direct or transitive (such as against a FIELD element)".
+   */
+  const w = pinWorld();
+  // victim (heading π/2, so +y is its forward) strafes sideways along the wall; the pinner
+  // holds it there. Its own forward is left at 0 — it is trying to leave, not to press in.
+  const cmds = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveX: 1, driveY: 0.3 })]]);
+  runCmds(w, cmds, 2.7);
+  check(
+    'a wall pin the victim is STRAFING out of does not foul before 3 s either',
+    w.match.fouls.blue.minor === 0,
+    `blueMinor=${w.match.fouls.blue.minor}`,
+  );
+  runCmds(w, cmds, 0.6);
+  check(
+    'a victim held against a wall while strafing to escape DOES pin its holder',
+    w.match.fouls.blue.minor >= 1,
+    `blueMinor=${w.match.fouls.blue.minor}`,
+  );
+  // ...and it is not vacuous: the victim really did fail to get away
+  const v = w.robots[1];
+  check(
+    '...and that victim genuinely went nowhere (the pin is real, not an idle robot)',
+    Math.hypot(v.pos.x - 0, v.pos.y - 63) < 6,
+    `moved ${Math.hypot(v.pos.x, v.pos.y - 63).toFixed(1)}in in 3.3 s`,
+  );
+}
+
+// ---- G422: ...and getting away is what LIMITS the bill ----------------------
+{
+  /**
+   * The other half of the same rule. Prevention is an OUTCOME, not a stick direction, so the
+   * relaxed test above must not foul a robot the victim simply drove away from. Criterion B
+   * and `PIN_STUCK_SPEED` are what decide that, and this is the comparison that shows they do:
+   * the SAME victim, the same sideways escape, against a holder it can beat and one it cannot.
+   *
+   * Note it is not "escaping ends the count" — a pin held for 3 s is still a pin, and a victim
+   * that gets clear and is then RE-CAUGHT starts a new one. What escaping buys is that the bill
+   * stops growing.
+   */
+  const held = (pusher: Partial<RobotSpec>): { moved: number; minors: number } => {
+    const w = createWorld('match', 55, [setup(0, 'blue', pusher, 0), setup(1, 'red', {}, 0)]);
+    w.match.phase = 'teleop';
+    w.match.phaseTimeLeft = 200;
+    for (const r of w.robots) { r.heading = Math.PI / 2; r.vel = { x: 0, y: 0 }; r.fieldCentric = false; }
+    w.robots[1].pos = { x: 0, y: 63 };
+    w.robots[0].pos = { x: 0, y: 44 };
+    // a TANK pusher is commanded on its SIDE STICKS — given only driveY it does not move at
+    // all, which silently turns "held against a wall" into "standing next to a wall"
+    const pc = w.robots[0].spec.drivetrain === 'tank'
+      ? cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })
+      : cmd({ driveY: 1 });
+    runCmds(w, new Map([[0, pc], [1, cmd({ driveX: 1 })]]), 20);
+    return { moved: Math.abs(w.robots[1].pos.x), minors: w.match.fouls.blue.minor };
+  };
+  const weak = held({ drivetrain: 'xdrive', massLb: 18, driveRpm: 600 });
+  const heavy = held({ drivetrain: 'tank', massLb: 42 });
+  check(
+    'a victim that strafes clear of a weak holder gets away and stops the bill',
+    weak.moved > 24 && weak.minors <= 2,
+    `moved ${weak.moved.toFixed(0)}in, ${weak.minors} MINORs over 20 s`,
+  );
+  check(
+    '...while one a heavy tank holds against the wall goes nowhere and keeps being billed',
+    heavy.moved < 6 && heavy.minors >= 5,
+    `moved ${heavy.moved.toFixed(1)}in, ${heavy.minors} MINORs over 20 s`,
+  );
+}
+
 // ---- G422 pinning: the 3-count SURVIVES the flicker in its own inputs -------
 // Every input to the pin test drops out for the odd tick in a real match — the SAT
 // contact list unloads as bumpers rock, the victim's stick crosses the dead zone.

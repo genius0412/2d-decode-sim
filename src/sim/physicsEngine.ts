@@ -56,6 +56,9 @@ export function physicsReady(): boolean {
  * 0) still resolves fully inelastically against it — slice-1 robot feel intact. */
 function statics(desc: RAPIER.ColliderDesc): RAPIER.ColliderDesc {
   return desc
+    // stated, not inherited — this used to fall through to Rapier's own default and so was
+    // never a number anyone had chosen. Same value, so nothing moves. See PHYS_WALL_FRICTION.
+    .setFriction(C.PHYS_WALL_FRICTION)
     .setRestitution(C.BALL_WALL_RESTITUTION)
     .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min);
 }
