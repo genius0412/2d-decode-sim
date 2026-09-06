@@ -137,13 +137,22 @@ export function FriendsPanel({
   if (!expanded) {
     return (
       <aside className="ds-friends collapsed" aria-label="Friends">
-        <button className="fr-toggle" onClick={toggle} title="Friends" aria-expanded={false}>
-          <PeopleGlyph />
-          {waiting > 0 && (
-            <span className="fr-badge" aria-label={`${waiting} friend requests and invites`}>
-              {waiting}
-            </span>
-          )}
+        {/* LABELLED. Collapsed, this was a bare 38px glyph floating in a 56px column
+            with nothing to say what it opened — and the only thing naming it was a
+            `title`, which a touch device never shows. The label is sentence case to
+            match `.ds-rail`'s own nav items directly opposite it, not the expanded
+            panel's uppercase title. It is also the button's accessible name now, so
+            the tooltip that duplicated it is gone. */}
+        <button className="fr-toggle" onClick={toggle} aria-expanded={false}>
+          <span className="fr-toggle-icon">
+            <PeopleGlyph />
+            {waiting > 0 && (
+              <span className="fr-badge" aria-label={`${waiting} friend requests and invites`}>
+                {waiting}
+              </span>
+            )}
+          </span>
+          <span className="fr-toggle-label">Friends</span>
         </button>
       </aside>
     );

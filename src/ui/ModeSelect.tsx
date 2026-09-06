@@ -77,22 +77,20 @@ export function ModeSelect({
                 Find Match
                 <QueueCounts className="tile" />
               </span>
-              {/* ALWAYS rendered, even with nothing to say. `signedIn` resolves
-                  ASYNCHRONOUSLY (AccountSync), so a line that appears and then
-                  vanishes grows and re-collapses this tile — and `.ds-tiles` is a
-                  grid, so the whole "Compete · online" row moves with it a second
-                  after the page paints. The other two tiles in this row key only
-                  off `multiplayer`, which is synchronous, and the grid stretches
-                  them to match this one's height. */}
-              {/* the placeholder is a NBSP, not a space: a plain space collapses to
-                  zero height, and holding the line is the entire point. */}
-              <span className="d" aria-hidden={multiplayer && signedIn}>
-                {multiplayer && signedIn
-                  ? ' '
-                  : !multiplayer
-                    ? 'Needs the game server'
-                    : 'Sign in to play ranked'}
-              </span>
+              {/* ⚠️ CONDITIONAL, and it must stay that way. A previous pass rendered
+                  this line ALWAYS, with a non-breaking space when there was nothing to
+                  say, to stop the tile growing when `signedIn` resolves asynchronously.
+                  That trade is backwards: `.ds-tiles` is a grid, so the reserved line
+                  made Find Match, Solo Record AND Duo Record permanently a line taller
+                  for everyone, to spare signed-in users one shrink at first paint —
+                  and most visitors are signed out, where the line is there from the
+                  start and never moves at all. If the shift is worth fixing, thread an
+                  `authReady` flag down from AccountSync; do not reserve the line. */}
+              {(!multiplayer || !signedIn) && (
+                <span className="d">
+                  {!multiplayer ? 'Needs the game server' : 'Sign in to play ranked'}
+                </span>
+              )}
             </span>
           </button>
 
