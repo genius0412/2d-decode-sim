@@ -204,18 +204,18 @@ export function updatePenalties(
       const oppInGate = robotIntersectsRect(oppBot, gateZone(O));
       if (oInGate || oppInGate) {
         const exception = oInGate && robotInRect(oBot, tunnelStrip(O));
-        if (!exception) fire(`G424:${pairKey}`, opp, 'minor', 'G424 gate zone');
+        if (!exception) fire(`G424:${pairKey}`, opp, 'minor', 'G424 contact in the gate zone');
       }
 
       // G426 LOADING ZONE protection — owner's own loading zone.
       if (robotInRect(ra, loadZone(O)) || robotInRect(rb, loadZone(O))) {
-        fire(`G426:${pairKey}`, opp, 'minor', 'G426 loading zone');
+        fire(`G426:${pairKey}`, opp, 'minor', 'G426 contact in the loading zone');
       }
 
       // G427 BASE ZONE protection (endgame) — + credit the owner a full return.
       if (endgame && (robotInRect(ra, baseZone(O)) || robotInRect(rb, baseZone(O)))) {
         oBot.baseAwarded = true;
-        fire(`G427:${pairKey}`, opp, 'major', 'G427 base zone');
+        fire(`G427:${pairKey}`, opp, 'major', 'G427 contact in the base zone');
       }
 
       // G425 SECRET TUNNEL — tunnelStrip(O) sits under O's goal but is OWNED by
@@ -223,7 +223,7 @@ export function updatePenalties(
       // intruder itself is in the strip (an owner defending its own tunnel is not
       // a foul), which is also what makes G424/G425 mutually exclusive above.
       if (robotInRect(oBot, tunnelStrip(O))) {
-        fire(`G425:${pairKey}`, O, 'minor', 'G425 secret tunnel');
+        fire(`G425:${pairKey}`, O, 'minor', 'G425 contact in the secret tunnel');
       }
     }
   }

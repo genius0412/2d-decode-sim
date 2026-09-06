@@ -61,7 +61,7 @@ export function stepMatch(world: World, dt: number): void {
       }
       m.phase = 'teleop';
       m.phaseTimeLeft = C.TELEOP_DURATION;
-      world.events.push('TELEOP');
+      world.events.push('DRIVER-CONTROLLED');
       break;
     case 'teleop':
       m.phase = 'post';

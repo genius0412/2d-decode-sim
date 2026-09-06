@@ -10146,10 +10146,24 @@ function pinScene(
         };
         check(
           'replay HUD: END GAME is split out of teleop, on the same 20s the live HUD uses',
-          at('teleop', ENDGAME_START + 1).phase === 'TELEOP' &&
+          at('teleop', ENDGAME_START + 1).phase === 'DRIVER-CONTROLLED' &&
             at('teleop', ENDGAME_START).phase === 'END GAME' &&
             at('auto', 30).phase === 'AUTONOMOUS' &&
             at('pre', 30).phase === 'PRE-MATCH',
+        );
+        /**
+         * THE BURNED-IN BAR MUST SAY WHAT THE SCREEN SAYS. The overlay is the only
+         * place these words survive once the replay is a file, and it used to disagree
+         * with the live HUD on the two phases that fill most of a video: it said TELEOP
+         * where the HUD says DRIVER-CONTROLLED, and PRACTICE where the HUD says FREE
+         * DRIVE. The literals here are GameView's `PHASE_LABELS` (GameView.tsx:555) —
+         * they are repeated rather than imported because that module needs a DOM.
+         */
+        check(
+          'replay HUD: the phase words are the live HUD’s words, not its own',
+          at('teleop', ENDGAME_START + 1).phase === 'DRIVER-CONTROLLED' &&
+            at('freeplay', 30).phase === 'FREE DRIVE',
+          `${at('teleop', ENDGAME_START + 1).phase} / ${at('freeplay', 30).phase}`,
         );
         /** the clock CEILS, so it reads 0:00 only when the phase is genuinely over — a
          *  flooring clock shows 0:00 for the whole last second of every phase */

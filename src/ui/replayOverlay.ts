@@ -108,8 +108,8 @@ export function hudLabels(world: World, solo: Alliance | null): HudLabels {
           : m.phase === 'teleop'
             ? m.phaseTimeLeft <= ENDGAME_START
               ? 'END GAME'
-              : 'TELEOP'
-            : 'PRACTICE';
+              : 'DRIVER-CONTROLLED'
+            : 'FREE DRIVE';
   return { phase, clock: mmss(m.phaseTimeLeft), result: null };
 }
 

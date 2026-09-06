@@ -44,12 +44,12 @@ export function updateChainPenalties(world: World): void {
       if (!robotsContact(A, B)) continue;
       if (isAuto) {
         // G06: whoever contacts a protected (fully-in-own-section) opponent is the offender
-        if (protectedInAuto(B)) fire(`g06-${A.id}-${B.id}`, A.alliance, 'G06');
-        if (protectedInAuto(A)) fire(`g06-${B.id}-${A.id}`, B.alliance, 'G06');
+        if (protectedInAuto(B)) fire(`g06-${A.id}-${B.id}`, A.alliance, 'G06 contact in the opponent’s section');
+        if (protectedInAuto(A)) fire(`g06-${B.id}-${A.id}`, B.alliance, 'G06 contact in the opponent’s section');
       }
       if (isEndgame) {
-        if (chain.endgame[B.id] === 'ascended') fire(`g05-${A.id}-${B.id}`, A.alliance, 'G05');
-        if (chain.endgame[A.id] === 'ascended') fire(`g05-${B.id}-${A.id}`, B.alliance, 'G05');
+        if (chain.endgame[B.id] === 'ascended') fire(`g05-${A.id}-${B.id}`, A.alliance, 'G05 contact with an ascending robot');
+        if (chain.endgame[A.id] === 'ascended') fire(`g05-${B.id}-${A.id}`, B.alliance, 'G05 contact with an ascending robot');
       }
     }
   }
