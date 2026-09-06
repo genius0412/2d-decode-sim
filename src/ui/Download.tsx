@@ -43,10 +43,9 @@ export function Download() {
           </div>
           <div style={{ padding: 16 }}>
             <p className="ds-hint" style={{ margin: 0 }}>
-              No download needed - DSIM plays right here in your mobile browser. For a full-screen,
-              app-like experience, add it to your home screen: open your browser’s <b>Share</b> menu
-              and tap <b>Add to Home Screen</b>. The desktop builds below are for Windows, macOS, and
-              Linux.
+              No download needed. DSIM runs in your mobile browser. To run it full-screen, open
+              your browser’s <b>Share</b> menu and tap <b>Add to Home Screen</b>. The desktop builds
+              below are for Windows, macOS, and Linux.
             </p>
           </div>
         </div>
@@ -56,7 +55,7 @@ export function Download() {
 
       {/* `.ds-dl` owns the gaps: these cards cast hard offset shadows, and headings are
           the only elements in the design system that carry their own bottom margin. */}
-      <div className="ds-dl">
+      <div className="ds-dlpage">
         <div className="ds-dl-hero">
           <div className="ds-dl-plat">
             <span className="glyph">🖥️</span>

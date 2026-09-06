@@ -2413,6 +2413,10 @@ tr.lb-detail td {
   box-shadow: var(--ds-edge-soft);
   transition: transform 0.06s ease, box-shadow 0.06s ease, border-color 0.15s, background 0.15s;
 }
+.ds-dl-opt:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: -2px;
+}
 .ds-dl-opt:hover {
   border-color: color-mix(in srgb, var(--ds-accent) 50%, var(--ds-line));
   transform: translateY(1px);
@@ -3880,13 +3884,15 @@ button.ds-key:active {
 }
 
 /* ---- download page --------------------------------------------------- */
-.ds-dl {
+/* NOT `.ds-dl` — that is the replay viewer's export menu, and this rule used to
+   overwrite it into a column because it is later in the file. */
+.ds-dlpage {
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 /* a stretched flex item would run the ghost button the full column width */
-.ds-dl > .ds-btn {
+.ds-dlpage > .ds-btn {
   align-self: flex-start;
 }
 .ds-dl-hero {
@@ -4382,7 +4388,7 @@ button.ds-key:active {
   gap: 4px;
   padding: 10px 12px;
   border-radius: var(--ds-round);
-  font: 600 12px/1.4 var(--ds-font);
+  font: 600 12px/1.4 var(--ds-font-ui);
 }
 .ds-dodge.charged {
   color: var(--ds-red-ink);
@@ -4498,7 +4504,7 @@ button.ds-key:active {
 .ds-standing[data-tier='warning'] .ds-gauge-fill { stroke: var(--ds-warn); }
 .ds-gauge-num {
   fill: var(--ds-ink);
-  font: 750 26px/1 var(--ds-font);
+  font: 750 26px/1 var(--ds-font-ui);
 }
 .ds-gauge-max {
   fill: var(--ds-mut);
@@ -4506,20 +4512,20 @@ button.ds-key:active {
 }
 
 .ds-standing-name {
-  font: 750 17px/1.15 var(--ds-font);
+  font: 750 17px/1.15 var(--ds-font-ui);
   color: var(--ds-ink);
 }
-.ds-standing-line { font: 600 13px/1.45 var(--ds-font); color: var(--ds-ink); }
+.ds-standing-line { font: 600 13px/1.45 var(--ds-font-ui); color: var(--ds-ink); }
 .ds-standing-blurb {
   margin: 0;
-  font: 600 12px/1.45 var(--ds-font);
+  font: 600 12px/1.45 var(--ds-font-ui);
   color: var(--ds-mut);
 }
 .ds-standing-lock {
   margin: 0;
   padding: 9px 11px;
   border-radius: var(--ds-round);
-  font: 600 12px/1.4 var(--ds-font);
+  font: 600 12px/1.4 var(--ds-font-ui);
   color: var(--ds-red-ink);
   background: color-mix(in srgb, var(--ds-red) 12%, var(--ds-panel));
   border: 1px solid color-mix(in srgb, var(--ds-red) 40%, var(--ds-line));
@@ -4546,7 +4552,7 @@ button.ds-key:active {
   gap: 2px 10px;
   align-items: baseline;
 }
-.ds-standing-what { font: 600 12px/1.4 var(--ds-font); color: var(--ds-ink); }
+.ds-standing-what { font: 600 12px/1.4 var(--ds-font-ui); color: var(--ds-ink); }
 .ds-standing-cost { font: 600 11px/1.4 var(--ds-font-mono); }
 
 /* the standing pill in the moderation queue — the server's own read on a reported player,
@@ -4607,11 +4613,11 @@ button.ds-key:active {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  font: 600 12px/1.3 var(--ds-font);
+  font: 600 12px/1.3 var(--ds-font-ui);
 }
 .sr-detail {
   margin: 8px 0 10px;
-  font: 400 13px/1.45 var(--ds-font);
+  font: 400 13px/1.45 var(--ds-font-ui);
   color: var(--ds-ink);
   /* a claim is written by a player, so it can be one long unbroken string */
   overflow-wrap: anywhere;
@@ -4628,13 +4634,13 @@ button.ds-key:active {
 .results-report-done {
   align-self: center;
   margin: 0;
-  font: 600 12px/1.2 var(--ds-font);
+  font: 600 12px/1.2 var(--ds-font-ui);
   color: var(--ds-mut);
 }
 
 .results-report {
   align-self: center;
-  font: 600 12px/1.2 var(--ds-font);
+  font: 600 12px/1.2 var(--ds-font-ui);
   letter-spacing: 0.2px;
 }
 .ds-report {
@@ -4649,7 +4655,7 @@ button.ds-key:active {
   background: var(--ds-tile);
 }
 .ds-report-h {
-  font: 800 15px/1.2 var(--ds-font);
+  font: 800 15px/1.2 var(--ds-font-ui);
   margin: 0;
   color: var(--ds-ink);
 }
@@ -4661,7 +4667,7 @@ button.ds-key:active {
 .ds-report .ds-input {
   width: 100%;
   resize: vertical;
-  font: 500 13px/1.4 var(--ds-font);
+  font: 500 13px/1.4 var(--ds-font-ui);
 }
 .ds-report-actions {
   display: flex;

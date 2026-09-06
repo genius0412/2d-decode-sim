@@ -447,10 +447,10 @@ button {
   user-select: none;
 }
 .chip.net-quality.clickable:hover {
-  border-color: var(--accent, #6ea8ff);
+  border-color: var(--ds-accent);
 }
 .chip.net-quality.active {
-  border-color: var(--accent, #6ea8ff);
+  border-color: var(--ds-accent);
 }
 .net-caret {
   font-size: 10px;
@@ -460,8 +460,8 @@ button {
 /* expandable ping graph: a raw-RTT sparkline that exposes sub-second spikes the
    smoothed number hides */
 .ping-graph {
-  background: rgba(20, 24, 30, 0.94);
-  border: 1px solid var(--border);
+  background: var(--ds-hud);
+  border: 1px solid var(--ds-hud-line);
   border-radius: 10px;
   padding: 8px 10px;
   width: 260px;
@@ -647,6 +647,16 @@ button {
   .overlay-buttons button:hover,
   .overlay-buttons button:active {
     transform: none;
+  }
+  /* capping the DURATION of an infinite animation just makes it loop faster — the
+     count has to be capped too. Same omission the .ann-* block at the end of this
+     file was amended for. */
+  .timer-panel.urgent .timer-time,
+  .overlay-panel.results.tallying .res-verdict,
+  .net-spinner,
+  .rec-dot,
+  .ds-key.capturing {
+    animation-iteration-count: 1 !important;
   }
 }
 
@@ -2305,7 +2315,6 @@ input.admin-months {
   margin-left: 10px;
 }
 .admin-history .ds-hint { font-size: 11.5px; margin: 0 0 2px; }
-.ds-btn.sm { padding: 5px 10px; font-size: 12px; }
 /* was a hardcoded #ff6b6b — a DARK-mode red, stranded here since before the light
    retheme, and only ~2.6:1 on a light panel. --ds-danger is 6.17 light / 6.14 dark. */
 .ds-btn.danger {
