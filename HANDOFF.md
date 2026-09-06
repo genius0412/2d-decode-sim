@@ -1,9 +1,98 @@
+# HANDOFF — 2026-09-06d (the capture stops fighting the viewer for the canvas; the video gets a scoreboard)
+
+Branch **alpha**. `npm test` **ALL PASS** · `npm run build` · `npm run server:check` green.
+Client-only. `SIM_VERSION` untouched at **2**.
+
+## READ FIRST
+
+**I broke this in 2026-09-06c and the report was exact: "the field became smaller when I
+started recording, and the final recording file also has a small field. Additionally, the
+quality is still horrible."** One cause for all three.
+
+The capture resized the VISIBLE canvas to the encode size. That put it in a tug-of-war it can
+only lose:
+
+1. the click sets `recording`;
+2. React swaps the transport row for the taller recording bar, so the canvas's BOX shrinks;
+3. the re-fit effect I had just added fires and resets the backing store to that box —
+   **mid-capture**;
+4. the encoder was configured ONCE, at 1920×818, so every frame after that is a ~1280×430
+   canvas scaled up into the same file.
+
+Hence a field that visibly shrinks the moment recording starts, a file with a small field, and
+quality no better than before. **The capture now owns a detached canvas nobody else can
+touch**, which removes the class rather than the instance. The viewer's own canvas is still
+re-fitted when `recording` flips (the recording bar really is a different height), and that
+effect now skips while a real-time capture is filming it.
+
+Verified by measuring the FILE's pixels, which is what I should have done the first time —
+last session I checked the output's dimensions and duration and both were right while the
+content was wrong. Decoding frame 600 and scoring it against the scene re-rendered at 1920:
+**41.2 dB**, against 35.5 dB for the old path. The visible canvas now reads 1280×516 in a
+1280×516 box throughout the recording and 1280×545 after it.
+
+### The video has a scoreboard now
+
+Asked for mid-session: a live score, a final score, and the match-start lead-in. The viewer's
+scoreboard is React DOM sitting ABOVE the canvas, so a canvas capture never had any of it —
+which is invisible on screen, where the page supplies the other half, and leaves a file nobody
+can read. `src/ui/replayOverlay.ts` draws:
+
+- the live bar, red | phase + clock | blue, in the bands `camera.ts` already reserves so it
+  cannot cover the field;
+- **MATCH BEGINS IN** and the counting digit, off the sim's own `match.preCountdown`, so a
+  replay reproduces the real lead-in rather than approximating it;
+- END GAME split out of teleop on the same 20s the live HUD uses;
+- a FINAL frame naming the winner, with a tie saying so.
+
+⚠️ **It sets its own transform.** `Renderer.render` leaves the context in FIELD INCHES, so the
+first version drew its scoreboard off in the field's coordinate space and produced a video with
+nothing on it at all — the encode was fine, the overlay was simply somewhere else. It works in
+CSS units, which is also what keeps the bar the same size relative to the field at every encode
+resolution.
+
+The words are `hudLabels`, deliberately split out of the drawing so they can be checked without
+a canvas: four new checks cover the endgame split, the ceiling clock (a flooring one reads 0:00
+for the whole last second of every phase), the tie, and a solo run having no winner.
+
+### Measured end state
+
+Through the real `ReplayView`, 15s of match, 1920×818, correct duration, scoreboard burned in:
+
+| format | encode | size |
+|---|---|---|
+| WebM · VP9 | 3.0s (5×) | 2.56 MB |
+| MP4 · H.264 | 3.0s (5×) | 1.49 MB |
+
+### Note to self
+
+The browser pane reports a **zero-height viewport when it is not displayed**, which collapses
+every element to 0×0 — the capture then hits `recordFast`'s size guard and quietly downloads
+the JSON instead. `resize_window` with an explicit size restores layout without needing the
+pane in front. Two verification rounds went sideways on this before I noticed.
+
+## Next steps
+
+- Client-only, so Vercel picks it up. **Still pending from before:** alpha has not been
+  redeployed since `0baeaa7` ("a pin no longer needs a wall"), which IS sim code the server
+  runs.
+- The two `fly secrets set` admin lines are **still outstanding** — `flyctl secrets set` is
+  blocked for me, so they have to be run by hand:
+  - `fly secrets set -a dohun-sim-decode ADMIN_USER_IDS='e3d73282-ac91-4940-bd5c-4778ca34212c,0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+  - `fly secrets set -a dsim-alpha ADMIN_USER_IDS='0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+- Untracked debris: `scripts/zz-probe-*`, `scripts/zzprobe_*`, `scratch_penalties_backup.ts`.
+- Still open: two-account cross-region challenge check, an end-to-end practice upload from a
+  signed-in account, Rapier slice 2 (balls), the DECODE penalty HITBOX audit, CR `APPROX`
+  constants.
+
+---
+
 # HANDOFF — 2026-09-06c (replay video: MP4 stops being slow, and the quality problem was resolution)
 
 Branch **alpha**. `npm test` **ALL PASS** · `npm run build` · `npm run server:check` green.
 Client-only — no sim, no server, no migration. `SIM_VERSION` untouched at **2**.
 
-## READ FIRST
+## Previously
 
 Two complaints, and they turned out to have one cause between them and one cause apart.
 

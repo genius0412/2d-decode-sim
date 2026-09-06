@@ -10,6 +10,7 @@ import {
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
+import { drawReplayHud } from './replayOverlay';
 import {
   availableVideoFormats,
   videoFormat,
@@ -241,20 +242,24 @@ export function ReplayView({
   }, [status, viewerRobotId]);
 
   /**
-   * RE-FIT THE CANVAS WHENEVER RECORDING STARTS OR STOPS.
+   * RE-FIT THE CANVAS WHENEVER THE ROW BELOW IT CHANGES.
    *
-   * Two things move it and neither fires a window resize. A fast capture renders at the
-   * VIDEO's resolution and leaves the backing store there; and the recording bar REPLACES the
-   * transport row at a different height, so the canvas's box changes size around it. Together
-   * they left the viewer drawing a 1280×516 field into a 1280×545 element after a save —
-   * stretched 5% until something else happened to resize the window.
+   * The recording bar REPLACES the transport row at a different height, so the canvas's box
+   * resizes around it without a window resize ever firing — and the backing store, set once at
+   * mount, then no longer matches: the field drew into a 1280×545 element at 1280×516 and came
+   * out squashed for the length of the recording.
    *
-   * It belongs in an effect rather than in the render loop: React has committed the row by the
-   * time this runs, so the element is at its final size, and reading `clientWidth` on every
-   * one of 60 frames a second to check would force a layout flush for a thing that changes
-   * twice a match.
+   * It belongs in an effect rather than in the render loop, because React has committed the
+   * row by the time this runs — so the element is at its final size — while reading
+   * `clientWidth` on each of 60 frames a second would force a layout flush for something that
+   * changes twice a match.
+   *
+   * ⚠️ NOT while a REAL-TIME capture is running: that one is literally filming this canvas
+   * through `captureStream`, and resizing it mid-recording is a resolution change partway
+   * through the file. The fast path is unaffected either way — it owns a canvas of its own.
    */
   useEffect(() => {
+    if (recorder.current) return;
     refit.current?.();
   }, [recording, status]);
 
@@ -410,22 +415,38 @@ export function ReplayView({
     const rend = new Renderer();
     const { robotId: localId, alliance } = replayViewpoint(r.setups, viewerRobotId);
     const bounds = moduleFor(r.game).bounds;
-    rend.camera.configure(canvas, alliance, bounds);
     /**
      * RENDER AT THE VIDEO'S RESOLUTION, rather than at the screen's and shrinking each frame.
      *
-     * `configure` sizes the backing store to the viewer's layout × devicePixelRatio, and the
-     * camera works in CSS units with `dpr` as the only thing tying those to pixels — so
-     * retargeting `dpr` and resizing the canvas to match makes every frame a real render at
-     * the encode size. It used to draw 2496×1074 and `drawImage` it down to 1280, which was
-     * both slower and worse looking: a canvas downscale past 2× is a cheap bilinear filter,
-     * and what it ruins is exactly the thin tape lines and the small scoreboard type.
+     * `configure` reads the viewer's LAYOUT (CSS pixels) and the camera works in those, with
+     * `dpr` as the only thing tying them to pixels — so retargeting `dpr` makes every frame a
+     * real render at the encode size. It used to draw 2496×1074 and `drawImage` it down to
+     * 1280, which was both slower and worse looking: a canvas downscale past 2× is a cheap
+     * bilinear filter, and what it ruins is exactly the thin tape lines and the small
+     * scoreboard type.
+     *
+     * ⚠️ IT DRAWS INTO ITS OWN CANVAS, NOT THE VISIBLE ONE, and that is not tidiness.
+     * Resizing the viewer's canvas here put it in a tug-of-war it could only lose: the click
+     * sets `recording`, React then swaps the transport row for the taller recording bar, the
+     * canvas's BOX shrinks, and anything re-fitting the backing store to that box (the effect
+     * above, a window resize, a rotation) resets it out from under a capture already running.
+     * The encoder is configured once, so every frame after that is a smaller canvas scaled up
+     * into the same file — the field visibly shrank mid-recording and the video came out of it
+     * blurred. Owning a canvas nobody else can touch removes the whole class.
      */
+    rend.camera.configure(canvas, alliance, bounds);
     const { width, height } = encodeSize(rend.camera.w, rend.camera.h);
     rend.camera.dpr = width / rend.camera.w;
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d')!;
+    const view = {
+      width: rend.camera.w,
+      height: rend.camera.h,
+      dpr: rend.camera.dpr,
+      solo: soloSide,
+    };
+    const frame = document.createElement('canvas');
+    frame.width = width;
+    frame.height = height;
+    const ctx = frame.getContext('2d')!;
 
     let blob: Blob | null = null;
     try {
@@ -435,10 +456,14 @@ export function ReplayView({
         height,
         fps: Math.round(1 / SIM_DT),
         frames: Math.max(1, r.ticks),
-        source: canvas,
+        source: frame,
         draw: () => {
           shot.stepOnce();
           rend.render(ctx, shot.world, null, localId);
+          // the scoreboard is DOM in the viewer, so the canvas alone carries no score, no
+          // clock and no match start — see `drawReplayHud`. It draws in CSS units, which is
+          // why the transform is left where the camera put it.
+          drawReplayHud(ctx, shot.world, view);
         },
         onProgress: setCapturePct,
         cancelled: () => abortCapture.current,
@@ -446,9 +471,6 @@ export function ReplayView({
     } catch {
       blob = null;
     }
-
-    // the canvas is left at the VIDEO's resolution; the render loop's own size watch fits it
-    // back to the viewer's, which it has to do anyway for the recording bar's layout change
 
     capturingRef.current = false;
     setCapturing(null);

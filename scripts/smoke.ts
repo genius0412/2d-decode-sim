@@ -23,6 +23,7 @@ import { updateHumanPlayers } from '../src/sim/humanPlayer';
 import { startMatch } from '../src/sim/match';
 import { availableVideoFormats, videoFormat, videoBitrate } from '../src/ui/replayVideo';
 import { muxMp4 } from '../src/ui/mp4';
+import { hudLabels } from '../src/ui/replayOverlay';
 import { gateColliderPos, gateRestOn, pushingGate } from '../src/sim/goal';
 import { chassisCorners } from '../src/sim/physics';
 import { pointDepthInChassis } from '../src/sim/physics';
@@ -58,7 +59,7 @@ import {
   footprintCorners,
 } from '../src/sim/field';
 import { addClassified, addOverflow, assessMatchEnd, awardCard, awardFoul } from '../src/sim/scoring';
-import type { Alliance, ArtifactColor, AssistConfig, AutoPathData, DrivetrainType, GameId, GameMode, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
+import type { Alliance, ArtifactColor, AssistConfig, AutoPathData, DrivetrainType, GameId, GameMode, MatchPhase, RobotCommand, RobotSpec, RobotState, World } from '../src/types';
 import {
   SIM_DT,
   PRE_COUNTDOWN as C_PRE_COUNTDOWN,
@@ -139,6 +140,7 @@ import {
   CHASSIS_COLORS,
   chassisFill,
   PLACEMENT_GAMES,
+  ENDGAME_START,
 } from '../src/config';
 import {
   pointDepthInRobot,
@@ -10123,6 +10125,56 @@ function pinScene(
         !!mdat && chunkOffset === mdat.at + 8 && mp4Bytes[chunkOffset] === 0,
         `stco=${chunkOffset} mdat=${mdat?.at}`,
       );
+      /**
+       * THE SCOREBOARD BURNED INTO THE VIDEO says things that can be wrong, and the drawing
+       * needs a canvas while the DECISIONS do not — so they live in `hudLabels` and are
+       * checked here. The viewer's own scoreboard is DOM sitting above the canvas, so the
+       * export carried no score at all until this existed; getting the words wrong now is the
+       * remaining way to ship a match nobody can read.
+       */
+      {
+        const hw = createWorld('match', 7, [
+          { id: 0, alliance: 'red', spec: DEFAULT_SPEC, assists: DEFAULT_ASSISTS, startIndex: 0 },
+          { id: 1, alliance: 'blue', spec: DEFAULT_SPEC, assists: DEFAULT_ASSISTS, startIndex: 1 },
+        ]);
+        const at = (phase: MatchPhase, left: number, red = 0, blue = 0) => {
+          hw.match.phase = phase;
+          hw.match.phaseTimeLeft = left;
+          hw.match.scores.red.total = red;
+          hw.match.scores.blue.total = blue;
+          return hudLabels(hw, null);
+        };
+        check(
+          'replay HUD: END GAME is split out of teleop, on the same 20s the live HUD uses',
+          at('teleop', ENDGAME_START + 1).phase === 'TELEOP' &&
+            at('teleop', ENDGAME_START).phase === 'END GAME' &&
+            at('auto', 30).phase === 'AUTONOMOUS' &&
+            at('pre', 30).phase === 'PRE-MATCH',
+        );
+        /** the clock CEILS, so it reads 0:00 only when the phase is genuinely over — a
+         *  flooring clock shows 0:00 for the whole last second of every phase */
+        check(
+          'replay HUD: the clock counts down in m:ss and only reaches 0:00 at zero',
+          at('teleop', 95.4).clock === '1:36' &&
+            at('teleop', 0.2).clock === '0:01' &&
+            at('teleop', 0).clock === '0:00',
+          `${at('teleop', 95.4).clock} ${at('teleop', 0.2).clock}`,
+        );
+        check(
+          'replay HUD: the final frame states the RESULT, and a tie says so',
+          at('post', 0, 142, 118).result === 'RED WINS' &&
+            at('post', 0, 118, 142).result === 'BLUE WINS' &&
+            at('post', 0, 90, 90).result === 'TIE' &&
+            at('post', 0, 142, 118).clock === null &&
+            at('post', 0, 142, 118).phase === 'FINAL',
+        );
+        // a record run has no opponent, so there is nobody to have beaten
+        hw.match.phase = 'post';
+        check(
+          'replay HUD: a solo run reports no winner',
+          hudLabels(hw, 'red').result === null && hudLabels(hw, 'red').phase === 'FINAL',
+        );
+      }
       check(
         'replay video: MP4 samples are contiguous and sized as the table says',
         !!mdat &&

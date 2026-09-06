@@ -552,13 +552,32 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
     - A canvas that has not been LAID OUT is 0×0, and the encoder accepts a 2×2 config happily,
       produces empty frames, and the viewer quietly downloads the JSON instead — hence the
       explicit size guard in `recordFast`.
-    - **THE CANVAS IS RE-FITTED WHEN `recording` FLIPS**, in its own effect. Two things move it
-      and neither fires a window resize: the capture leaves the backing store at the VIDEO's
-      resolution, and the recording bar REPLACES the transport row at a different height. The
-      viewer came back from a save drawing a 1280×516 field into a 1280×545 box. It is an
-      effect and not a per-frame check because React has committed the row by then, and reading
-      `clientWidth` 60 times a second to notice would force a layout flush for something that
-      changes twice a match.
+    - ⚠️ **THE CAPTURE OWNS ITS OWN CANVAS — it must never draw into the VISIBLE one.** It did
+      at first, resizing it to the encode size, and that put it in a tug-of-war it can only
+      lose: the click sets `recording`, React swaps the transport row for the taller recording
+      bar, the canvas's BOX shrinks, and anything re-fitting the backing store to that box
+      resets it out from under a capture already running. The encoder is configured ONCE, so
+      every frame after that is a smaller canvas scaled up into the same file — reported as
+      "the field became smaller when I started recording, and the final recording file also has
+      a small field", with the quality loss to match. A detached canvas removes the whole class.
+    - **THE VIEWER's canvas is re-fitted when `recording` flips**, in its own effect, because
+      the recording bar replaces the transport row at a different height and no window resize
+      ever fires — the field drew into a 1280×545 element at 1280×516 and came out squashed. An
+      effect, not a per-frame check: React has committed the row by then, and reading
+      `clientWidth` 60 times a second would force a layout flush for something that changes
+      twice a match. It skips while a REAL-TIME capture runs, which is filming that canvas.
+    - **THE VIDEO CARRIES ITS OWN SCOREBOARD** (`src/ui/replayOverlay.ts`). The viewer's score
+      strip is React DOM sitting ABOVE the canvas, so a canvas capture had no score, no clock,
+      no phase and no match start in it at all — invisible on screen, where the page supplies
+      the other half, and a match nobody can read once it is a file. It draws the live
+      red | phase+clock | blue bar, the "MATCH BEGINS IN" lead-in off `match.preCountdown`, and
+      a FINAL frame that names the winner (a tie says so). ⚠️ It SETS ITS OWN TRANSFORM:
+      `Renderer.render` leaves the context in FIELD INCHES, so the first version drew its
+      scoreboard off in the field's coordinate space and produced a video with nothing on it.
+      It works in CSS units so the bar is the same size relative to the field at every encode
+      resolution, and lives in the bands `camera.ts` already reserves so it cannot cover the
+      field. The words are `hudLabels`, split out of the drawing and checked in `npm test` —
+      the ENDGAME split, the ceiling clock, the tie, and a solo run having no winner.
     - **`availableVideoFormats` is ASYNC**, because the real question is not "is there a
       `VideoEncoder`" but "will it take this codec at this size", which only `isConfigSupported`
       answers — and that is also what decides whether MP4 saves in seconds or has to be filmed,
