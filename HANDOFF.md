@@ -1,3 +1,122 @@
+# HANDOFF — 2026-09-06h (a UI standard, an audit that enforces it, and the alpha UI swept)
+
+Branch **alpha**. `npm test` ALL PASS · `npm run contrast` 221 · `npm run uiaudit` at
+baseline · `npm run build` · `npm run server:check` green. `SIM_VERSION` untouched at **2**.
+⚠️ An earlier commit in this run changed user-visible strings in `src/sim/` and
+`src/games/chain/`, so the Fly server still needs a redeploy for the foul lines and the
+event log to match the client.
+
+## READ FIRST — `docs/ui-standard.md` and `npm run uiaudit`
+
+The owner's verdict on the alpha UI was "a ton of spacing issues and overall consistency
+and weird ai text description unnecessary things", followed by "create a very strict UI
+design standard" and "consider other ways to make UI consistent and choose your path".
+
+**The path chosen: tokens + a zero-dependency ratchet, not a document alone.** A standard
+nobody greps is not a standard. `scripts/uiaudit.mjs` is the same shape as `contrast.mjs`
+and `shiftaudit.cjs` — one command, no deps, deliberately OUT of `npm test` so a red test
+still means physics broke. Every rule carries the count measured when it was written and
+fails only when a count goes UP, so the standard bound new code immediately without a
+big-bang refactor of the debt. Rejected: Stylelint (deps, and blind to both bugs below),
+and shared `<Panel>`/`<Row>` primitives (right destination, but a 60-file refactor of a
+shipping UI is not a spacing fix).
+
+Every number in the standard is MEASURED. The codebase had **no spacing tokens at all**,
+ten distinct `gap` values, eighteen font sizes (six fractional), seven weights, and 105
+spacing literals inlined in JSX.
+
+### The two rules that are hard errors, because both bugs shipped silently
+
+- **UNDEFINED CUSTOM PROPERTY.** `--ds-font` was used 13 times and defined nowhere. In a
+  `font:` shorthand an unresolvable `var()` is invalid at computed-value time and drops the
+  WHOLE declaration, so `.ds-gauge-num`, `.ds-standing-name`, `.ds-report-h` and ten others
+  set no weight, size or line-height for months, with nothing in the console. `--accent` was
+  the same bug wearing a `#literal` fallback, which is why those are banned too.
+- **DUPLICATE SELECTOR.** `.ds-dl` was declared twice for two unrelated components — the
+  replay export menu and the download page — and the later block won, laying the export menu
+  out as an 18px-gap column. Both stylesheets are one cascade; source order is the only
+  tiebreak and nothing warns you.
+
+### ⚠️ A LINTER WITH FALSE POSITIVES CAUSES BUGS
+
+The duplicate-selector rule originally matched `^sel {` on a single line. A selector LIST
+spans lines, so it read the last line of
+
+```
+.fr-empty,
+.fr-note,
+.fr-error {
+```
+
+as a standalone rule and reported `.fr-error` as a duplicate of itself. I believed it and
+merged the two blocks — which folded `.fr-error`'s red into the SHARED base and **turned
+`.fr-empty` red**. It shipped in `525092f` and was caught only when a later agent asked
+about that block.
+
+Two lessons, both now in the code: the parser accumulates the prelude across lines, and
+**only a single-selector rule owns a name** — `.a, .b { }` followed by `.a { }` is a base
+plus a per-variant override, which is the normal shape, not the bug. And when verifying a
+CSS merge by computed style, probe every selector in the group, not the one you changed.
+
+## What the sweep actually changed
+
+Four report-only auditors, then four edit agents partitioned by FILE (CSS stayed with me,
+since all four slices share `shell.css`). Highlights:
+
+- **`.ds-panel` had no margin and `.ds-main` no gap**, so every page hand-typed panel
+  spacing — 0, 16, 18, 22, 28. Donate typed nothing, so a signed-in supporter saw four cards
+  meeting border-on-border. One rule owns it now, plus the `.ds-panel-body` class that had
+  been written out as `style={{ padding: 16 }}` twelve times.
+- **`.ds-panel + .ds-panel` only fires between two panels.** In Career the practice-replay
+  panel is followed by the period picker, which is not one, so it had no gap below it at
+  all. Panels in the page column carry the trailing half too; `.ds-main` is a block, so it
+  COLLAPSES rather than doubling.
+- **Layout shifts fixed**: Matchmaking jumped ~54px on FIND MATCH; the Chain start editor
+  moved its inputs ~27px MID-DRAG; the top bar re-flowed a second after every page load;
+  the Ranked tile grew then collapsed as `signedIn` resolved; the report dialogs' six option
+  cards made a dialog into a page (537px → 366px at the same width).
+- **Two inert properties**: `grid-column` on a flex child (the 3×3 catapult map never got
+  its full-width row) and `.ds-opts` without `card4` (the four-card Catalyst picker wrapped
+  3+1).
+- **`.num` was in the practice-replay table five times and defined NOWHERE.**
+- **HomeMenu used two NEGATIVE margins whose only job was to cancel its own flex gap.**
+- Type debt cleared: 46 fractional px sizes → 0. The weight rule was AMENDED rather than
+  enforced — `shell.css:164` documents both families as VARIABLE cuts, so 750 is real type
+  and I had written that rule without reading the comment.
+
+## Deliberately NOT done
+
+- **Spacing CLUSTERS.** 6px (22 uses), 10px (24) and 14px (16) are 2px moves across many
+  surfaces at once — a design decision, not a lint fix. Same for the 14 `10px` radii, which
+  sit between `--ds-round` and `--ds-round-md`. Recorded as debt with counts.
+- **ModeSelect's `.k` tile kickers** — the owner explicitly overruled deleting them.
+- **`Select.tsx` migration.** 2 consumers against 5 raw `<select className="ds-select">`,
+  1 `ds-input` and 3 unstyled in Admin. Product call.
+- **"Rated 1v1" vs "Ranked 2v2"** for one concept (both are ELO). They ARE different
+  formats — a closed party vs a premade in the open pool — so collapsing the words is a
+  product decision.
+- **The misscore queue's WATCH button still cannot work** — it passes a match id to a
+  replay lookup, and those are different id spaces. Server-side fix, needs a deploy.
+- The builder's nested gap ladder is still EIGHT values (`.ds-robot` 22 → `.ds-sec` 11 →
+  `.ds-subh` ±4 → `.ds-opts` 12 → `.ds-panelbox` 15/14 → `.ds-fields` 18 → `.ds-field` 7 →
+  `.ds-opt` 4). Collapsing it to five is the natural next pass, and the five sub-pickers
+  that were just un-margined now depend on `.ds-panelbox`'s gap being the only separator.
+
+## Next steps
+
+- **Deploy** — `./scripts/fly-deploy.sh --alpha`, still outstanding for the sim strings.
+- `fly secrets set` for `ADMIN_USER_IDS` is DONE on both apps; @ace (Dohun) is `owner` on
+  each, verified through the public board. ⚠️ `OWNER_USER_ID` is NOT set explicitly on
+  either app, so ownership still depends on list ORDER — `server/index.ts:249` falls back to
+  `ADMIN_LIST[0]`, and `ADMIN_IDS` is built ONLY from `ADMIN_USER_IDS`, so naming an owner
+  who is not in that list gives them the badge and no access.
+- Untracked debris: `scripts/zz-probe-*`, `scripts/zzprobe_*`, `scratch_penalties_backup.ts`.
+- Still open: two-account cross-region challenge check, an end-to-end practice upload from a
+  signed-in account, Rapier slice 2 (balls), the DECODE penalty HITBOX audit, CR `APPROX`
+  constants.
+
+---
+
 # HANDOFF — 2026-09-06g (a seven-slice UI audit: consistency + anti-AI-slop)
 
 Branch **alpha**. `npm test` **ALL PASS (1286)** · `npm run contrast` 221 · `npm run build` ·
@@ -6,7 +125,7 @@ Branch **alpha**. `npm test` **ALL PASS (1286)** · `npm run contrast` 221 · `n
 `src/games/chain/penalties.ts` carry user-visible strings that changed, so the Fly server
 needs a redeploy for the foul lines and the event log to match the client.**
 
-## READ FIRST
+## Previously
 
 Seven subagents audited every user-visible string and both stylesheets, one slice each,
 report-only; the rulings and the application were done centrally so the seven could not
