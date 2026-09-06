@@ -799,7 +799,8 @@ export function App() {
     screenRef.current = screen;
   }, [screen]);
 
-  const exitGame = (): void => {
+  /** tear the session down without deciding where to go next */
+  const leaveSession = (): void => {
     setEditMobileLayout(false);
     session?.dispose();
     setSession(null);
@@ -808,8 +809,30 @@ export function App() {
     // a match that FINISHED (or whose slot is gone) clears its rejoin record in
     // GameView; a mid-match exit keeps it so Home can offer "rejoin your match".
     setActiveGame(loadActiveGame());
+  };
+
+  const exitGame = (): void => {
+    leaveSession();
     navigate('home');
   };
+
+  /**
+   * Straight from the results screen back into the ranked queue.
+   *
+   * The alternative was MENU → Play → Ranked, three screens to do the thing most
+   * people want after a ranked match. It is the counterpart to REMATCH beside it:
+   * that one plays the SAME people again, this one finds new ones.
+   *
+   * GUARDED FIRST, torn down second. `guardStart` is what stops a new run when a
+   * newer build has shipped or maintenance is biting, and if it blocks, the player
+   * has to still be on the results screen — leaving the session first would drop
+   * them onto a dead one.
+   */
+  const queueAgain = (): void =>
+    guardStart(() => {
+      leaveSession();
+      navigate('matchmaking');
+    });
 
   // a newer client build shipped while this tab stayed open: prompt to refresh when
   // the player STARTS a run (never mid-run), so they aren't stuck on a stale version
@@ -926,6 +949,7 @@ export function App() {
           navigate('replay');
         }}
         onPracticeRun={keepPracticeRun}
+        onQueueAgain={queueAgain}
       />
     );
   }

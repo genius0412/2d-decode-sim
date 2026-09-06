@@ -186,6 +186,10 @@ interface Props {
    * in place — an in-place reset desyncs against a server that is still running
    * the old match (that is what made the drivetrain stick/jitter before). */
   onRestartRun?: () => void;
+  /** RANKED only: leave this room and go straight back into the queue. The
+   *  counterpart to the rematch vote — that plays the same people again, this
+   *  finds new ones. */
+  onQueueAgain?: () => void;
 }
 
 export function GameView({
@@ -198,6 +202,7 @@ export function GameView({
   onSettingsChange,
   editLayout = false,
   onRestartRun,
+  onQueueAgain,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const controllerRef = useRef<GameController | null>(null);
@@ -498,6 +503,7 @@ export function GameView({
           canRematch={!session}
           onRematch={() => controllerRef.current?.rematch()}
           rematchVote={hud.rematch}
+          onQueueAgain={session?.ranked ? onQueueAgain : undefined}
           onRematchVote={() => controllerRef.current?.toggleRematch()}
           onExit={onExit}
           /* every OTHER driver in this match, by robot id + the name they played under.
@@ -918,6 +924,7 @@ function Results({
   onRematch,
   rematchVote,
   onRematchVote,
+  onQueueAgain,
   onExit,
   matchResult,
   practiceRun,
@@ -941,6 +948,7 @@ function Results({
   /** duo-record co-op vote (null unless this run has one) */
   rematchVote: { votes: number; need: number; mine: boolean } | null;
   onRematchVote: () => void;
+  onQueueAgain?: () => void;
   onExit: () => void;
   matchResult: MatchResultInfo | null;
   /**
@@ -1159,6 +1167,10 @@ function Results({
           )}
           {canRematch && <button onClick={onRematch}>REMATCH</button>}
           {rematchVote && <RematchVote vote={rematchVote} onToggle={onRematchVote} />}
+          {/* the OTHER thing you want after a ranked match. REMATCH beside it plays
+              the same people again; this finds new ones without going out to the
+              menu and back in through Play ▸ Ranked. */}
+          {onQueueAgain && <button onClick={onQueueAgain}>QUEUE AGAIN</button>}
           {/* the EXIT, not a fourth primary: `.overlay-buttons button` is accent-filled
               unless `.ghost`, so an unmarked MENU sat beside REMATCH and WATCH REPLAY
               with nothing saying which one the screen expects. */}
