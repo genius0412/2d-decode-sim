@@ -1,4 +1,6 @@
 import { COLORS, ENDGAME_START } from '../config';
+import type { Camera } from '../render/camera';
+import type { FieldBounds } from '../games/types';
 import type { Alliance, World } from '../types';
 
 /**
@@ -11,10 +13,13 @@ import type { Alliance, World } from '../types';
  * A video is also the one export that outlives the sim (`replayRefusal` retires the container,
  * never the recording), so it is exactly the artifact that has to stand on its own.
  *
- * It draws into the bands the CAMERA ALREADY RESERVES (`HUD_TOP`/`HUD_BOTTOM` in camera.ts),
- * so this cannot cover the field however the viewer is laid out — that reservation is why the
- * chips never cover it in the live HUD either. Bottom, not top, because that is where the
- * product rule puts it: the HUD mimics the FTC live scoring display, red | timer | blue.
+ * IT NEVER COVERS THE FIELD, and the camera's reserved bands are not enough to promise that.
+ * `HUD_BOTTOM` shrinks to 4px on a compact or short layout, and the field is centred in what
+ * is left, so how much clear space sits under it depends on the viewer's aspect ratio — on
+ * some it is generous and on others the field runs straight into the bar. So the caller asks
+ * `fieldScreenBottom` where the field actually ENDS and gives the frame `HUD_RESERVE` more
+ * height when there is not already room. Extra letterbox costs nothing; a scoreboard sitting
+ * on top of the match costs the match.
  *
  * ⚠️ IT SETS ITS OWN TRANSFORM, and must. `Renderer.render` leaves the context in FIELD
  * INCHES — translated, scaled and rotated by the driver's view angle — so an overlay that
@@ -24,9 +29,29 @@ import type { Alliance, World } from '../types';
  * encode resolution, instead of shrinking as the pixels go up.
  */
 
-/** the bands camera.ts keeps clear of the field; the bar lives inside the bottom one */
 const BAR_H = 64;
 const PAD = 18;
+/** CSS pixels the bar needs BELOW the field: its own height plus breathing room */
+export const HUD_RESERVE = BAR_H + 20;
+
+/**
+ * How far down the screen the field reaches, in CSS pixels.
+ *
+ * The camera maps world inches to the screen through the driver's view angle, so this is the
+ * only honest way to ask: the answer depends on the alliance, the game's bounds (CR's goals
+ * protrude), and how the fit landed. Taking the max over the four corners covers every
+ * rotation without caring which one is which.
+ */
+export function fieldScreenBottom(camera: Camera, bounds: FieldBounds): number {
+  const { halfX: hx, halfY: hy } = bounds;
+  const corners = [
+    { x: -hx, y: -hy },
+    { x: hx, y: -hy },
+    { x: hx, y: hy },
+    { x: -hx, y: hy },
+  ];
+  return Math.max(...corners.map((c) => camera.worldToScreen(c).y));
+}
 /**
  * The bar is CENTRED and capped, not stretched edge to edge.
  *
@@ -107,11 +132,14 @@ function chip(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h:
  * counting down on its own does not say what it is counting down to. `preCountdown` is the
  * sim's own field, so a replay reproduces the lead-in exactly rather than approximating it.
  */
-function drawCountdown(ctx: CanvasRenderingContext2D, world: World, w: number, h: number): void {
+function drawCountdown(ctx: CanvasRenderingContext2D, world: World, w: number, fieldH: number): void {
   const left = world.match.preCountdown;
   if (left == null || left <= 0) return;
   const cx = w / 2;
-  const cy = h / 2;
+  // centred on the FIELD, not on the frame: the frame can be taller than the field to make
+  // room for the bar, and a countdown drifting toward the scoreboard reads as misaligned
+  const cy = fieldH / 2;
+  const h = fieldH;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = COLORS.white;
@@ -133,7 +161,14 @@ function drawCountdown(ctx: CanvasRenderingContext2D, world: World, w: number, h
 export function drawReplayHud(
   ctx: CanvasRenderingContext2D,
   world: World,
-  view: { width: number; height: number; dpr: number; solo: Alliance | null },
+  view: {
+    width: number;
+    height: number;
+    dpr: number;
+    /** where the field ends, so the countdown stays centred on it */
+    fieldHeight: number;
+    solo: Alliance | null;
+  },
 ): void {
   const { width: w, height: h, solo } = view;
   const m = world.match;
@@ -192,6 +227,6 @@ export function drawReplayHud(
     ctx.fillText(labels.result, w / 2, midY + BAR_H * 0.16);
   }
 
-  drawCountdown(ctx, world, w, h);
+  drawCountdown(ctx, world, w, view.fieldHeight);
   ctx.restore();
 }

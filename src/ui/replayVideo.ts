@@ -59,38 +59,43 @@ export interface VideoFormat {
 }
 
 /**
- * WHY THESE THREE. VP9 is the default because it is the best size/quality per encode second
- * and every current browser plays it. VP8 is there because it is faster still and the widest
- * WebM any old player will open. MP4 is there because it is the one everybody's phone, editor
- * and messaging app takes without thinking.
+ * MP4 IS FIRST, AND THAT IS THE POINT: it is the format every platform can both produce and
+ * play, so a replay saved on one machine is the same file as a replay saved on another. The
+ * menu is ordered, and `availableVideoFormats` preserves that order, so the top entry is what
+ * people take unless they have a reason not to — and if that entry varied by browser, so would
+ * everybody's archive.
+ *
+ * The WebM pair stay for the people who want them: VP9 is a smaller file at the same quality,
+ * VP8 opens in older players. Both are browser formats, which is exactly why neither is the
+ * default — a phone or a video editor is where these end up.
  */
 const FORMATS: VideoFormat[] = [
   {
+    id: 'mp4',
+    label: 'MP4 · H.264',
+    note: 'Plays on any device. Use this one unless you need something else.',
+    ext: 'mp4',
+    fast: true,
+  },
+  {
     id: 'webm-vp9',
     label: 'WebM · VP9',
-    note: 'Sharpest for the file size. Saves in seconds.',
+    note: 'Smaller file, same picture. Plays in browsers.',
     ext: 'webm',
     fast: true,
   },
   {
     id: 'webm-vp8',
     label: 'WebM · VP8',
-    note: 'Fastest to save, and the most widely playable WebM.',
+    note: 'Older WebM, for players that will not open VP9.',
     ext: 'webm',
-    fast: true,
-  },
-  {
-    id: 'mp4',
-    label: 'MP4 · H.264',
-    note: 'Plays anywhere — phones, editors, messaging apps.',
-    ext: 'mp4',
     fast: true,
   },
 ];
 
 /** what the MP4 option has to say for itself where WebCodecs has no H.264 encoder */
 const MP4_SLOW_NOTE =
-  'Plays anywhere, but this browser can only film it in real time, so it takes the whole match.';
+  'Plays on any device, but this browser can only film it in real time, so it takes the full match.';
 
 const VP9 = 'vp09.00.10.08';
 /**

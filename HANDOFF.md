@@ -1,9 +1,77 @@
+# HANDOFF — 2026-09-06e (the save runs in the background; MP4 is the default everywhere)
+
+Branch **alpha**. `npm test` **ALL PASS** · `npm run contrast` 221 · `npm run build` ·
+`npm run server:check` green. Client-only. `SIM_VERSION` untouched at **2**.
+
+## READ FIRST
+
+Four asks, all in the replay export.
+
+### The scoreboard no longer covers the field
+
+The camera reserves a bottom band, but that is not a promise: `HUD_BOTTOM` collapses to 4px on
+a short or touch layout, and the field is centred in whatever is left, so how much clear space
+sits under it depends entirely on the viewer's aspect ratio. On a tall window there was room;
+on a short one the bar sat on the match.
+
+The capture now asks `fieldScreenBottom` where the field actually ENDS and gives the FRAME
+`HUD_RESERVE` more height when there is not already room. Measured: a 1000×295 viewer exports
+1920×676 where the unreserved frame would have been 1920×566, and the field is fully clear in
+both. Growing the frame is the right move and sliding the bar onto the field is not — extra
+letterbox costs nothing. The countdown centres on `fieldHeight` rather than the frame, or it
+drifts toward the bar whenever the frame is extended.
+
+### MP4 is the default, on every platform
+
+`availableVideoFormats` preserves the table's order and the top entry is what people take, so
+if that entry varies by browser then so does everybody's archive. MP4/H.264 is the one format
+every platform can both produce and play, so it leads. VP9 and VP8 stay for the people who
+want them, but a phone or a video editor is where these end up, and neither WebM belongs at the
+top for that.
+
+### The save runs in the background
+
+Owning its own player, renderer and canvas means the fast path has nothing on screen to
+disturb — so there was never a reason to lock playback, and now it does not. The match keeps
+playing, seeking and pausing while the file encodes, with a slim progress strip above a
+transport row that stays live. Verified mid-save: transport row present, seek enabled, Pause
+showing, playback advanced to tick 203, strip reading "SAVING MP4 · H.264 | 98% | Cancel".
+
+Only the REAL-TIME fallback still takes the screen, and it has to: it films the visible canvas
+through `captureStream`, so scrubbing mid-record would scrub the file. Two consequences worth
+keeping straight — the re-fit effect skips while `recorder.current` is live, and a finished
+fast save does NOT `rebuild()`, because restarting the match under someone who is watching it
+is the one thing a background job must not do.
+
+### Plainer copy
+
+The download menu, the recording notes and the five refusal messages were rewritten short. They
+had drifted into explaining themselves at length, in a register that reads as machine-written:
+"Sharpest for the file size", "re-playable in DSIM at full fidelity", "which is why it can be
+saved now". The information survives; the essay does not. Code comments were left alone — that
+voice is the house style the rest of this file is written in.
+
+## Next steps
+
+- Client-only, so Vercel picks it up. **Still pending:** alpha has not been redeployed since
+  `0baeaa7` ("a pin no longer needs a wall"), which IS sim code the server runs.
+- The two `fly secrets set` admin lines are **still outstanding** — `flyctl secrets set` is
+  blocked for me:
+  - `fly secrets set -a dohun-sim-decode ADMIN_USER_IDS='e3d73282-ac91-4940-bd5c-4778ca34212c,0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+  - `fly secrets set -a dsim-alpha ADMIN_USER_IDS='0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+- Untracked debris: `scripts/zz-probe-*`, `scripts/zzprobe_*`, `scratch_penalties_backup.ts`.
+- Still open: two-account cross-region challenge check, an end-to-end practice upload from a
+  signed-in account, Rapier slice 2 (balls), the DECODE penalty HITBOX audit, CR `APPROX`
+  constants.
+
+---
+
 # HANDOFF — 2026-09-06d (the capture stops fighting the viewer for the canvas; the video gets a scoreboard)
 
 Branch **alpha**. `npm test` **ALL PASS** · `npm run build` · `npm run server:check` green.
 Client-only. `SIM_VERSION` untouched at **2**.
 
-## READ FIRST
+## Previously
 
 **I broke this in 2026-09-06c and the report was exact: "the field became smaller when I
 started recording, and the final recording file also has a small field. Additionally, the

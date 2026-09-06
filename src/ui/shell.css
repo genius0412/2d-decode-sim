@@ -2515,6 +2515,15 @@ tr.lb-detail td {
   font-size: 13px;
   color: var(--ds-mut);
 }
+/* A FAST SAVE DOES NOT TAKE THE SCREEN, so its strip sits ABOVE the transport row instead of
+   replacing it: tighter, no top rule (the row below carries one), and no note — there is
+   nothing to explain when nothing is being taken away. Same element and same tokens as the
+   real-time bar, so the contrast audit has no new pair to check. */
+.ds-replay-rec.slim {
+  padding: 8px 18px 6px;
+  border-top: 0;
+}
+
 /* the note takes its own row — `flex-basis: 100%` rather than a nested wrapper, so the row
    above keeps the same baseline alignment the transport row has */
 .ds-replay-rec .rec-note {

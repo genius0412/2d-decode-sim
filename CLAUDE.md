@@ -502,9 +502,16 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
     label does not explain that.
   - **↓ Video** (`src/ui/replayVideo.ts`) is the one that LASTS: it stops being a
     re-simulation and becomes a recording, so it outlives every patch, needs no sim, and can be
-    sent to someone without DSIM. THREE FORMATS — WebM/VP9 (default), WebM/VP8, MP4/H.264 — and
-    **all three go through WebCodecs**, so they all cost the same and the menu quotes it from
-    the match's own length (`FAST_ENCODE_SPEED`, the measured 5×; a 2:42 match saves in ~32s).
+    sent to someone without DSIM. THREE FORMATS — **MP4/H.264 first and default**, then
+    WebM/VP9 and WebM/VP8 — and **all three go through WebCodecs**, so they all cost the same
+    and the menu quotes it from the match's own length (`FAST_ENCODE_SPEED`, the measured 5×; a
+    2:42 match saves in ~32s).
+    **MP4 LEADS BECAUSE THE FORMAT HAS TO BE THE SAME EVERYWHERE.** It is the one every
+    platform can both produce and play, so a replay saved on one machine is the same file as
+    one saved on another; `availableVideoFormats` preserves the table's order, and the top
+    entry is what people take. If that entry varied by browser, so would everybody's archive.
+    The WebM pair stay for the people who want them (VP9 smaller, VP8 for older players), but
+    neither is the default — a phone or a video editor is where these end up.
     **THE FAST PATH IS WEBCODECS, AND IT EXISTS BECAUSE `MediaRecorder` CANNOT BEAT REAL TIME.**
     It stamps frames by when they ARRIVE, not by the timestamp the frame carries — measured, 300
     frames explicitly stamped for 5.00s of video came out as 1.39s and 0.05s depending only on
@@ -560,6 +567,15 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
       every frame after that is a smaller canvas scaled up into the same file — reported as
       "the field became smaller when I started recording, and the final recording file also has
       a small field", with the quality loss to match. A detached canvas removes the whole class.
+    - **A FAST SAVE RUNS IN THE BACKGROUND AND LOCKS NOTHING.** Owning its own player, renderer
+      and canvas means there is nothing on screen for it to disturb, so playback, seeking and
+      pausing all stay live while the file encodes, and the transport row stays where it is
+      with a slim `.ds-replay-rec.slim` progress strip above it. Only the REAL-TIME fallback
+      still replaces the transport row, and it has to: it is filming the visible canvas through
+      `captureStream`, so scrubbing mid-record would scrub the file. That split is also why the
+      re-fit effect skips while `recorder.current` is live, and why a finished fast save does
+      NOT `rebuild()` — the viewer is watching, and restarting the match under them is the one
+      thing a background job must not do.
     - **THE VIEWER's canvas is re-fitted when `recording` flips**, in its own effect, because
       the recording bar replaces the transport row at a different height and no window resize
       ever fires — the field drew into a 1280×545 element at 1280×516 and came out squashed. An
@@ -575,9 +591,18 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
       `Renderer.render` leaves the context in FIELD INCHES, so the first version drew its
       scoreboard off in the field's coordinate space and produced a video with nothing on it.
       It works in CSS units so the bar is the same size relative to the field at every encode
-      resolution, and lives in the bands `camera.ts` already reserves so it cannot cover the
-      field. The words are `hudLabels`, split out of the drawing and checked in `npm test` —
-      the ENDGAME split, the ceiling clock, the tie, and a solo run having no winner.
+      resolution. The words are `hudLabels`, split out of the drawing and checked in
+      `npm test` — the ENDGAME split, the ceiling clock, the tie, and a solo run having no
+      winner.
+    - ⚠️ **THE BAR NEVER COVERS THE FIELD, and the camera's reserved bands do NOT promise
+      that.** `HUD_BOTTOM` collapses to 4px on a short or touch layout and the field is centred
+      in whatever is left, so the clear space under it depends on the viewer's aspect ratio.
+      The capture asks `fieldScreenBottom` where the field actually ends and gives the FRAME
+      `HUD_RESERVE` more height when there is not already room — measured, a 1000×295 viewer
+      exports 1920×676 where the unreserved frame would have been 1920×566. Growing the frame
+      is right and moving the bar onto the field is not: extra letterbox costs nothing and a
+      scoreboard over the match costs the match. The countdown centres on `fieldHeight`, not on
+      the frame, or it drifts toward the bar whenever the frame is extended.
     - **`availableVideoFormats` is ASYNC**, because the real question is not "is there a
       `VideoEncoder`" but "will it take this codec at this size", which only `isConfigSupported`
       answers — and that is also what decides whether MP4 saves in seconds or has to be filmed,

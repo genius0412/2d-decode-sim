@@ -10,7 +10,7 @@ import {
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
-import { drawReplayHud } from './replayOverlay';
+import { drawReplayHud, fieldScreenBottom, HUD_RESERVE } from './replayOverlay';
 import {
   availableVideoFormats,
   videoFormat,
@@ -46,24 +46,20 @@ const mmss = (sec: number): string => {
  * it while `sim_version` holds this (see repo.ts + migration 0031).
  */
 const REFUSAL_TEXT: Record<ReplayRefusal, (r: Replay) => string> = {
-  future: () =>
-    'This match was recorded by a NEWER version of DSIM than the one you are running. ' +
-    'Refresh the page to update, then open it again.',
+  future: () => 'Recorded by a newer version of DSIM. Refresh the page, then open it again.',
   balance: (r) =>
-    `This match was played under balance v${r.balanceVersion}; this build runs v${BALANCE_VERSION}. ` +
-    'Robots accelerate, push and shoot differently now, so replaying the same inputs would ' +
-    'produce a different match than the one that happened.',
+    `Played on balance v${r.balanceVersion}; this build runs v${BALANCE_VERSION}. ` +
+    'Robots drive and score differently now, so the same inputs would play back as a ' +
+    'different match.',
   behaviour: (r) =>
-    `This match was played on sim behaviour v${r.sim}; this build runs v${SIM_VERSION}. ` +
-    'The physics or the rules have changed since, so replaying the same inputs would produce ' +
-    'a different match than the one that happened.',
+    `Played on sim v${r.sim}; this build runs v${SIM_VERSION}. The physics or the rules have ` +
+    'changed, so the same inputs would play back as a different match.',
   unstamped: () =>
-    'This match was recorded before DSIM stamped which sim behaviour produced a replay, so ' +
-    'there is no way to tell whether it would play back accurately. Rather than guess, it is ' +
-    'not played.',
+    'Recorded before DSIM tracked which sim version produced a replay, so there is no way to ' +
+    'tell whether it would play back correctly.',
   tank: () =>
-    'This match was recorded in an early replay format that had nowhere to store tank drive ' +
-    'input, so the robot would sit still for the whole match.',
+    'Recorded in an early format that had nowhere to store tank drive input, so the robot ' +
+    'would not move.',
 };
 
 /**
@@ -129,8 +125,6 @@ export function ReplayView({
   const [capturing, setCapturing] = useState<VideoFormatId | null>(null);
   /** set to stop a fast capture between frames */
   const abortCapture = useRef(false);
-  /** read by the render loop, which cannot see `capturing` through its mount-time closure */
-  const capturingRef = useRef(false);
   /** re-fits the canvas backing store to its box; owned by the render loop, called by the
    *  recording effect (see it for why the canvas stops matching) */
   const refit = useRef<(() => void) | null>(null);
@@ -225,9 +219,7 @@ export function ReplayView({
           if (recorder.current?.state === 'recording') recorder.current.stop();
         }
       }
-      // a FAST capture draws its OWN world to this same canvas; letting the playback loop
-      // repaint between its frames just makes the screen flicker between two matches
-      if (!abortCapture.current && !capturingRef.current) rend.render(ctx, p.world, null, localId);
+      rend.render(ctx, p.world, null, localId);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -271,6 +263,7 @@ export function ReplayView({
    */
   useEffect(
     () => () => {
+      abortCapture.current = true;
       discard.current = true;
       const cur = recorder.current;
       if (cur && cur.state !== 'inactive') cur.stop();
@@ -401,13 +394,16 @@ export function ReplayView({
       return;
     }
 
+    /**
+     * PLAYBACK IS NOT TOUCHED, and that is the point of the fast path having its own
+     * everything. It runs its own `ReplayPlayer`, its own `Renderer` and its own canvas, so
+     * there is nothing on screen for it to disturb — the viewer keeps playing, seeking and
+     * pausing while the file encodes behind it. Only the real-time fallback has to lock the
+     * screen, because that one is literally filming it.
+     */
     abortCapture.current = false;
-    capturingRef.current = true;
     setCapturing(id);
     setCapturePct(0);
-    setRecording(true);
-    playingRef.current = false;
-    setPlaying(false);
 
     // its OWN player and renderer, so the capture is the whole match from tick 0 regardless of
     // where the viewer had scrubbed to, and the one on screen is left alone
@@ -435,18 +431,29 @@ export function ReplayView({
      * blurred. Owning a canvas nobody else can touch removes the whole class.
      */
     rend.camera.configure(canvas, alliance, bounds);
-    const { width, height } = encodeSize(rend.camera.w, rend.camera.h);
-    rend.camera.dpr = width / rend.camera.w;
-    const view = {
-      width: rend.camera.w,
-      height: rend.camera.h,
-      dpr: rend.camera.dpr,
-      solo: soloSide,
-    };
+    const cssW = rend.camera.w;
+    /**
+     * ROOM FOR THE SCOREBOARD, when the layout does not already leave it. The camera reserves
+     * a bottom band, but it collapses on a short or touch layout and the field is centred in
+     * whatever is left, so how much clear space sits under the field depends on the viewer's
+     * aspect. Where there is not enough, the FRAME grows rather than the bar moving onto the
+     * field: extra letterbox costs nothing and a scoreboard over the match costs the match.
+     */
+    const cssH = Math.max(rend.camera.h, fieldScreenBottom(rend.camera, bounds) + HUD_RESERVE);
+    const { width, height } = encodeSize(cssW, cssH);
+    rend.camera.dpr = width / cssW;
     const frame = document.createElement('canvas');
     frame.width = width;
     frame.height = height;
     const ctx = frame.getContext('2d')!;
+
+    const view = {
+      width: cssW,
+      height: cssH,
+      dpr: rend.camera.dpr,
+      fieldHeight: rend.camera.h,
+      solo: soloSide,
+    };
 
     let blob: Blob | null = null;
     try {
@@ -472,12 +479,10 @@ export function ReplayView({
       blob = null;
     }
 
-    capturingRef.current = false;
     setCapturing(null);
-    setRecording(false);
     setCapturePct(0);
     // an MP4 the encoder would not produce is still an MP4 the browser can FILM, and that is a
-    // better answer than silently handing back the JSON. It restarts playback itself.
+    // better answer than silently handing back the JSON
     if (!blob && !abortCapture.current && id === 'mp4' && realtimeMime()) {
       startRealtime(id);
       return;
@@ -485,7 +490,7 @@ export function ReplayView({
     // a cancelled capture is not a failure and must not claim to be one
     if (blob) saveBlob(blob, filename(fmt.ext));
     else if (!abortCapture.current) downloadData();
-    rebuild();
+    // playback is left exactly where the viewer had it — it was never taken away
   };
 
   /** the REAL-TIME path, for MP4 — `MediaRecorder` over the live canvas. It cannot go faster:
@@ -548,8 +553,9 @@ export function ReplayView({
     abortCapture.current = true;
     discard.current = true;
     const cur = recorder.current;
+    if (!cur) return; // a fast capture stops between frames and never held playback
     // a PAUSED recorder still has to be stopped to fire `onstop` and release the stream
-    if (cur && cur.state !== 'inactive') cur.stop();
+    if (cur.state !== 'inactive') cur.stop();
     playingRef.current = false;
     setPlaying(false);
   };
@@ -576,6 +582,9 @@ export function ReplayView({
   const clock = `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, '0')}`;
   // the REAL-TIME capture runs at 1×, so what is left of the replay is what is left of it
   const runtime = total * SIM_DT;
+  /** a fast save is running in the background; the viewer stays fully usable */
+  const saving = capturing !== null && !recording;
+  const savePct = Math.round(capturePct * 100);
   /**
    * What a FAST save costs, in the menu, from the match's own length.
    *
@@ -587,9 +596,7 @@ export function ReplayView({
    */
   const fastEta = `~${Math.max(5, Math.round(runtime / FAST_ENCODE_SPEED))}s`;
   const remaining = Math.max(0, total - tick) * SIM_DT;
-  // ...while a FAST capture has its own progress, since it is not tied to playback at all
-  const fastCapture = capturing !== null && videoFormat(capturing).fast;
-  const recPct = fastCapture ? Math.round(capturePct * 100) : pct;
+
 
   return (
     <div className="ds-replay">
@@ -605,7 +612,7 @@ export function ReplayView({
             <button
               className={`ds-btn${menuOpen ? ' primary' : ''}`}
               onClick={openMenu}
-              disabled={recording}
+              disabled={recording || saving}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
             >
@@ -618,8 +625,7 @@ export function ReplayView({
                     exactly the difference that decides which you want. */}
                 {formats.length === 0 && (
                   <p className="ds-dl-note">
-                    This browser cannot encode video. Chrome, Edge and Firefox can — the replay
-                    data below works anywhere.
+                    This browser can’t save video. The replay data below works anywhere.
                   </p>
                 )}
                 {formats.map((f) => (
@@ -642,13 +648,12 @@ export function ReplayView({
                     <em>{dataBytes ? `${Math.max(1, Math.round(dataBytes / 1024))} KB` : '.json'}</em>
                   </span>
                   <span className="dl-d">
-                    Instant. The input log itself — re-playable in DSIM at full fidelity, but
-                    only by a build running balance v{BALANCE_VERSION} and sim v{SIM_VERSION}.
+                    The input log. Plays in DSIM on balance v{BALANCE_VERSION}, sim v
+                    {SIM_VERSION}.
                   </span>
                 </button>
                 <p className="ds-dl-note">
-                  A replay is an input log, so it only plays on the sim that recorded it. This
-                  one still matches this build — which is why it can be saved now.
+                  Replays only play on the version that recorded them. Videos always play.
                 </p>
               </div>
             )}
@@ -695,33 +700,51 @@ export function ReplayView({
       )}
       <canvas ref={canvasRef} className="ds-replay-canvas" style={{ display: status === 'ready' ? 'block' : 'none' }} />
 
-      {/* RECORDING REPLACES THE TRANSPORT ROW rather than greying it out — a row of dead
-          controls beside a "● REC 12%" label does not explain itself. What it says depends on
-          which path is running: the FAST one is encoding off its own copy of the replay and is
-          done in seconds, the real-time one is filming this canvas and needs the tab in front. */}
+      {/* THE REAL-TIME FALLBACK REPLACES THE TRANSPORT ROW rather than greying it out: it is
+          filming this canvas, so scrubbing mid-record would scrub the file, and a row of dead
+          controls beside a "● REC 12%" label does not explain that. */}
       {status === 'ready' && recording && (
         <div className="ds-replay-rec">
           <span className="rec-dot" aria-hidden="true" />
-          <span className="rec-label">
-            {fastCapture ? `Encoding ${videoFormat(capturing!).label}` : 'Recording video'}
-          </span>
+          <span className="rec-label">Recording video</span>
           <div
             className="rec-track"
             role="progressbar"
             aria-label="Recording progress"
-            aria-valuenow={recPct}
+            aria-valuenow={pct}
             aria-valuemin={0}
             aria-valuemax={100}
           >
-            <div className="rec-fill" style={{ width: `${recPct}%` }} />
+            <div className="rec-fill" style={{ width: `${pct}%` }} />
           </div>
-          <span className="rec-eta">{fastCapture ? `${recPct}%` : `${mmss(remaining)} left`}</span>
+          <span className="rec-eta">{mmss(remaining)} left</span>
           <button className="ds-btn ghost" onClick={cancelRecording}>Cancel</button>
           <p className="rec-note">
-            {fastCapture
-              ? 'Encoding the whole match as fast as this machine manages — far quicker than watching it. The file saves itself when it finishes, and you can leave this tab.'
-              : 'The match is being filmed off the screen in real time, so playback is locked until it finishes. Keep this tab in front — a hidden tab stops drawing, and the recording pauses with it. The file saves itself when the match ends.'}
+            This browser can only film the match in real time, so playback is locked until it
+            finishes. Keep this tab in front: a hidden tab stops drawing and the recording
+            pauses with it.
           </p>
+        </div>
+      )}
+
+      {/* A FAST SAVE DOES NOT TAKE THE SCREEN. It encodes off its own copy of the replay, so
+          the transport row stays live below this and the match keeps playing while it works. */}
+      {status === 'ready' && saving && (
+        <div className="ds-replay-rec slim">
+          <span className="rec-dot" aria-hidden="true" />
+          <span className="rec-label">Saving {videoFormat(capturing!).label}</span>
+          <div
+            className="rec-track"
+            role="progressbar"
+            aria-label="Save progress"
+            aria-valuenow={savePct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="rec-fill" style={{ width: `${savePct}%` }} />
+          </div>
+          <span className="rec-eta">{savePct}%</span>
+          <button className="ds-btn ghost" onClick={cancelRecording}>Cancel</button>
         </div>
       )}
 
