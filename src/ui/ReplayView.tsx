@@ -18,6 +18,7 @@ import {
   realtimeMime,
   encodeSize,
   saveBlob,
+  ENCODE_SHARE,
   type VideoFormat,
   type VideoFormatId,
 } from './replayVideo';
@@ -211,6 +212,17 @@ export function ReplayView({
           acc -= SIM_DT;
           n++;
         }
+        /**
+         * NEVER CARRY MORE THAN A FEW TICKS OF DEBT.
+         *
+         * `n < 8` caps the work in one frame but the arrears keep accruing, so a frame that
+         * arrives late makes the next one step harder, which makes IT late — the classic
+         * spiral, and it is visible as judder rather than as slowness. It shows up whenever
+         * the main thread is busy, which now includes saving a video while watching. Dropping
+         * the debt means the replay runs a hair slow under load instead of lurching, and a
+         * replay is a thing you watch, not a clock you set your watch by.
+         */
+        if (acc > SIM_DT * 4) acc = SIM_DT * 4;
         if (p.done && playingRef.current) {
           playingRef.current = false;
           setPlaying(false);
@@ -584,7 +596,14 @@ export function ReplayView({
   const runtime = total * SIM_DT;
   /** a fast save is running in the background; the viewer stays fully usable */
   const saving = capturing !== null && !recording;
-  const savePct = Math.round(capturePct * 100);
+  /**
+   * FLOORED, and never 100 while there is still work. The frame loop only owns `ENCODE_SHARE`
+   * of the bar — the flush, the muxer and handing a blob of tens of megabytes to the browser
+   * all come after it — and rounding UP put the readout at 100% with all of that still to
+   * come, which reads as a hang.
+   */
+  const savePct = Math.min(99, Math.floor(capturePct * 100));
+  const finishing = capturePct >= ENCODE_SHARE;
   /**
    * What a FAST save costs, in the menu, from the match's own length.
    *
@@ -602,7 +621,33 @@ export function ReplayView({
     <div className="ds-replay">
       <div className="ds-replay-top">
         <button className="ds-btn ghost" onClick={onClose}>← Leaderboard</button>
-        <span className="ds-panel-title">Replay</span>
+        {/* THE SAVE STATUS LIVES IN THE HEADER, and that is not a cosmetic choice: a strip of
+            its own above the transport row steals height from the canvas, which then re-fits
+            to a shorter box and SQUASHES the field halfway through a recording. A background
+            job must not reflow the thing it is running behind. This row is already here and
+            its height is set by the buttons in it, so nothing below it moves. */}
+        {saving ? (
+          <div className="ds-replay-saving">
+            <span className="rec-dot" aria-hidden="true" />
+            <span className="rec-label">
+              {finishing ? 'Finishing' : `Saving ${videoFormat(capturing!).label}`}
+            </span>
+            <div
+              className="rec-track"
+              role="progressbar"
+              aria-label="Save progress"
+              aria-valuenow={savePct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div className="rec-fill" style={{ width: `${Math.max(savePct, 2)}%` }} />
+            </div>
+            <span className="rec-eta">{savePct}%</span>
+            <button className="ds-btn ghost" onClick={cancelRecording}>Cancel</button>
+          </div>
+        ) : (
+          <span className="ds-panel-title">Replay</span>
+        )}
         {/* DOWNLOAD BELONGS HERE, not in the transport row below: it is an action on the
             replay, not on playback, and two ghost buttons wedged between the seek bar and the
             clock read as two more transport controls. The spacer keeps the title centred on
@@ -724,27 +769,6 @@ export function ReplayView({
             finishes. Keep this tab in front: a hidden tab stops drawing and the recording
             pauses with it.
           </p>
-        </div>
-      )}
-
-      {/* A FAST SAVE DOES NOT TAKE THE SCREEN. It encodes off its own copy of the replay, so
-          the transport row stays live below this and the match keeps playing while it works. */}
-      {status === 'ready' && saving && (
-        <div className="ds-replay-rec slim">
-          <span className="rec-dot" aria-hidden="true" />
-          <span className="rec-label">Saving {videoFormat(capturing!).label}</span>
-          <div
-            className="rec-track"
-            role="progressbar"
-            aria-label="Save progress"
-            aria-valuenow={savePct}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <div className="rec-fill" style={{ width: `${savePct}%` }} />
-          </div>
-          <span className="rec-eta">{savePct}%</span>
-          <button className="ds-btn ghost" onClick={cancelRecording}>Cancel</button>
         </div>
       )}
 

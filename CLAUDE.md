@@ -569,13 +569,38 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
       a small field", with the quality loss to match. A detached canvas removes the whole class.
     - **A FAST SAVE RUNS IN THE BACKGROUND AND LOCKS NOTHING.** Owning its own player, renderer
       and canvas means there is nothing on screen for it to disturb, so playback, seeking and
-      pausing all stay live while the file encodes, and the transport row stays where it is
-      with a slim `.ds-replay-rec.slim` progress strip above it. Only the REAL-TIME fallback
-      still replaces the transport row, and it has to: it is filming the visible canvas through
-      `captureStream`, so scrubbing mid-record would scrub the file. That split is also why the
-      re-fit effect skips while `recorder.current` is live, and why a finished fast save does
-      NOT `rebuild()` — the viewer is watching, and restarting the match under them is the one
-      thing a background job must not do.
+      pausing all stay live while the file encodes. Only the REAL-TIME fallback replaces the
+      transport row, and it has to: it is filming the visible canvas through `captureStream`,
+      so scrubbing mid-record would scrub the file. That split is also why the re-fit effect
+      skips while `recorder.current` is live, and why a finished fast save does NOT `rebuild()`
+      — the viewer is watching, and restarting the match under them is the one thing a
+      background job must not do.
+      ⚠️ **ITS PROGRESS GOES IN THE HEADER** (`.ds-replay-saving`, replacing the title), NOT in
+      a strip of its own. A row inserted above the transport row steals height from the canvas,
+      which re-fits to a shorter box and SQUASHES the field halfway through the recording it is
+      reporting on. The header is already there and its height comes from the buttons in it, so
+      nothing below it moves — measured, the canvas holds 1280×545 in a 545px box and the
+      header holds 64px for the whole save. A background job must not reflow the thing it is
+      running behind.
+    - ⚠️ **THE PROGRESS BAR MUST NOT REACH 100% BEFORE THE FILE EXISTS.** The frame loop owns
+      only `ENCODE_SHARE` (0.94) of it; the flush, the muxer and handing the browser a blob of
+      tens of megabytes all come after, and the readout used to round UP to 100% and then sit
+      there — reported as "at 100% it doesn't show the save popup right away". The viewer
+      floors the percentage, caps it at 99, and switches the label to "Finishing" past
+      `ENCODE_SHARE`.
+    - ⚠️ **BOUND THE ENCODER QUEUE** (`MAX_QUEUE`), by WAITING rather than yielding once. Work
+      still queued when the loop ends is paid for in `flush()` — after the bar has stopped
+      moving — and a single yield per frame let it run deep enough that flushing took **3.6s of
+      a 5.8s save**, all of it in that dead stretch. Waiting until the queue drains puts the
+      cost back inside the loop where it is reported: the tail fell to ~0.8s. It also bounds
+      memory, which an unbounded queue of encoded frames does not.
+    - **THE CAPTURE YIELDS ON A TIME BUDGET** (`SLICE_MS` 8), not on a frame count, because the
+      viewer keeps PLAYING while it runs and its render loop is `requestAnimationFrame` — which
+      cannot run inside a long synchronous stretch. The playback loop also clamps its own
+      accumulator to a few ticks: `n < 8` caps the work per frame but the arrears keep
+      accruing, so a late frame makes the next one later, which is the classic spiral and reads
+      as judder rather than as slowness. Dropping the debt makes the replay run a hair slow
+      under load instead of lurching.
     - **THE VIEWER's canvas is re-fitted when `recording` flips**, in its own effect, because
       the recording bar replaces the transport row at a different height and no window resize
       ever fires — the field drew into a 1280×545 element at 1280×516 and came out squashed. An

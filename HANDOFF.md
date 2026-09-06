@@ -1,9 +1,82 @@
-# HANDOFF — 2026-09-06e (the save runs in the background; MP4 is the default everywhere)
+# HANDOFF — 2026-09-06f (the save reports itself honestly and stops reflowing the viewer)
 
 Branch **alpha**. `npm test` **ALL PASS** · `npm run contrast` 221 · `npm run build` ·
 `npm run server:check` green. Client-only. `SIM_VERSION` untouched at **2**.
 
 ## READ FIRST
+
+Three follow-ups on the background save, all reported together and all separate causes.
+
+### "at 100% it doesn't show the save popup right away"
+
+Two things, and the second was much bigger than I expected.
+
+The readout ROUNDED UP: `Math.round` hits 100% while the last ~0.5% of frames are still going,
+so the bar claimed to be done before it was. It floors now, caps at 99, and the frame loop only
+owns `ENCODE_SHARE` (0.94) of the bar because the flush, the muxer and handing the browser a
+multi-megabyte blob all come after it. Past that point the label reads **Finishing**.
+
+Then the real one: the encoder queue was UNBOUNDED. The loop yielded once per frame when the
+queue got deep, which never actually drains it, so the submit loop raced ahead and everything
+left over was paid for in `flush()` — **measured, 3.6s of a 5.8s save**, all of it after the
+bar had stopped moving. Waiting until the queue is under `MAX_QUEUE` puts that cost back inside
+the loop where it is reported. The tail is now ~0.8s and the total is 7.0s for the same clip:
+slightly longer overall, and the dead stretch at the end is gone. It also bounds memory, which
+an unbounded queue of encoded frames does not.
+
+### The field got squished while saving
+
+The progress strip was its own row above the transport row, so it stole height from the canvas,
+which re-fitted to a shorter box mid-recording. The strip now lives in the HEADER, replacing
+the title: that row is already there and its height comes from the buttons in it, so nothing
+below it moves. Measured across a whole save: header 64px, canvas box 545px, canvas backing
+1280×545, all constant. **A background job must not reflow the thing it is running behind.**
+
+### The replay jittered
+
+Two sources, both addressed:
+
+- the capture yielded only when its own queue was deep, so it could hold the main thread for
+  long synchronous stretches and `requestAnimationFrame` cannot run inside one. It now yields
+  on a TIME budget (`SLICE_MS` 8), leaving roughly half of each frame to the page.
+- the playback loop accumulated unpayable debt: `n < 8` caps the steps per frame but the
+  arrears keep growing, so a late frame makes the next one later. That is the classic spiral
+  and it looks like judder, not like slowness. The accumulator is clamped to a few ticks, so a
+  loaded machine runs the replay a hair slow instead of lurching.
+
+⚠️ **I could not measure the smoothness itself.** The browser pane reports `document.hidden`,
+which throttles `requestAnimationFrame` to 1 Hz, so frame gaps are meaningless there — and a
+MessageChannel ticker fast enough to sample main-thread stalls starves the encoder it is
+measuring (the same 7s save took 35.6s with the probe running). Both fixes are sound by
+construction and the stall is bounded by `SLICE_MS`, but the "does it still stutter" question
+needs a real visible tab.
+
+### Copy
+
+The menu, recording notes and refusal messages were rewritten short in the previous commit;
+nothing further here.
+
+## Next steps
+
+- Client-only, so Vercel picks it up. **Still pending:** alpha has not been redeployed since
+  `0baeaa7` ("a pin no longer needs a wall"), which IS sim code the server runs.
+- The two `fly secrets set` admin lines are **still outstanding** — `flyctl secrets set` is
+  blocked for me:
+  - `fly secrets set -a dohun-sim-decode ADMIN_USER_IDS='e3d73282-ac91-4940-bd5c-4778ca34212c,0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+  - `fly secrets set -a dsim-alpha ADMIN_USER_IDS='0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+- Untracked debris: `scripts/zz-probe-*`, `scripts/zzprobe_*`, `scratch_penalties_backup.ts`.
+- Still open: two-account cross-region challenge check, an end-to-end practice upload from a
+  signed-in account, Rapier slice 2 (balls), the DECODE penalty HITBOX audit, CR `APPROX`
+  constants.
+
+---
+
+# HANDOFF — 2026-09-06e (the save runs in the background; MP4 is the default everywhere)
+
+Branch **alpha**. `npm test` **ALL PASS** · `npm run contrast` 221 · `npm run build` ·
+`npm run server:check` green. Client-only. `SIM_VERSION` untouched at **2**.
+
+## Previously
 
 Four asks, all in the replay export.
 

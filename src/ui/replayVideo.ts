@@ -309,6 +309,33 @@ export function encodeSize(w: number, h: number): { width: number; height: numbe
   return { width: even(w), height: even(h) };
 }
 
+/**
+ * How much of the progress bar the FRAME LOOP owns.
+ *
+ * Encoding is not the last thing that happens: the encoder still has to be flushed, the muxer
+ * has to build the container, and the browser has to take a blob that can run to tens of
+ * megabytes. Reported straight, the bar rounded up to 100% while all of that was still to come
+ * and then sat there — "at 100% it doesn't show the save popup right away". The tail is
+ * reserved for it, and the caller labels that stretch rather than pretending it is done.
+ */
+export const ENCODE_SHARE = 0.94;
+/** ...and where the bar sits once the encoder is drained and only the container is left */
+const FLUSHED = 0.98;
+
+/**
+ * How long the capture may hold the main thread before handing it back.
+ *
+ * The viewer keeps PLAYING while a save runs, and its render loop is `requestAnimationFrame`,
+ * which cannot run while this one is inside a synchronous stretch. Yielding only when the
+ * encoder's own queue got deep meant stretches of tens of milliseconds with no frame drawn,
+ * which is what made the replay jitter. A time budget bounds the stall directly, and leaves
+ * roughly half of each 16ms frame for the page.
+ */
+const SLICE_MS = 8;
+
+/** how many frames may sit in the encoder at once — bounds both memory and the flush */
+const MAX_QUEUE = 24;
+
 export interface FastRecordOpts {
   format: VideoFormatId;
   /** the size to encode — the caller must have sized its canvas to exactly this */
@@ -321,7 +348,8 @@ export interface FastRecordOpts {
   draw: (i: number) => void;
   /** the canvas `draw` renders into */
   source: HTMLCanvasElement;
-  /** called with 0..1 so the UI can show progress; also the abort point */
+  /** called with 0..1 so the UI can show progress. It reaches `ENCODE_SHARE` when the last
+   *  frame is submitted and 1 only when the file exists. */
   onProgress?: (done: number) => void;
   /** return true to stop early and throw away the partial file */
   cancelled?: () => boolean;
@@ -383,6 +411,7 @@ export async function recordFast(opts: FastRecordOpts): Promise<Blob | null> {
   });
   encoder.configure(encoding.config);
 
+  let slice = performance.now();
   try {
     for (let i = 0; i < opts.frames; i++) {
       if (opts.cancelled?.()) {
@@ -398,12 +427,25 @@ export async function recordFast(opts: FastRecordOpts): Promise<Blob | null> {
       // a new cluster on one
       encoder.encode(frame, { keyFrame: i % (opts.fps * 2) === 0, ...qopt });
       frame.close();
-      // never let the queue run away — an unbounded encode queue is unbounded memory, and
-      // yielding here is also what lets the progress bar repaint
-      if (encoder.encodeQueueSize > 8) await yieldToBrowser();
-      if (i % 15 === 0) opts.onProgress?.(i / opts.frames);
+      /**
+       * KEEP THE QUEUE SHORT, by waiting rather than by yielding once and moving on.
+       * Whatever is still queued when the loop ends is paid for in `flush()`, which happens
+       * AFTER the progress bar has stopped moving — measured, a single yield per frame let it
+       * run deep enough that flushing took 3.6s of a 5.8s save, all of it after the readout
+       * said the encode was done.
+       */
+      while (encoder.encodeQueueSize > MAX_QUEUE) await yieldToBrowser();
+      // ...and hand the main thread back on a TIME budget even when the queue is empty, so the
+      // viewer's render loop still gets its slice
+      if (performance.now() - slice > SLICE_MS) {
+        await yieldToBrowser();
+        slice = performance.now();
+      }
+      if (i % 15 === 0) opts.onProgress?.((i / opts.frames) * ENCODE_SHARE);
     }
+    opts.onProgress?.(ENCODE_SHARE);
     await encoder.flush();
+    opts.onProgress?.(FLUSHED);
   } catch {
     if (encoder.state !== 'closed') encoder.close();
     return null;
@@ -411,19 +453,22 @@ export async function recordFast(opts: FastRecordOpts): Promise<Blob | null> {
     if (encoder.state !== 'closed') encoder.close();
   }
   if (failed || frames.length === 0) return null;
-  opts.onProgress?.(1);
 
   if (mp4) {
     // no decoder record ⇒ no playable MP4. Better to hand back null and let the caller film it
     // in real time than to save a file that opens as a black rectangle.
     if (!description) return null;
-    return muxMp4(frames, { width, height, fps: opts.fps, description });
+    const file = muxMp4(frames, { width, height, fps: opts.fps, description });
+    opts.onProgress?.(1);
+    return file;
   }
-  return muxWebm(frames as WebmFrame[], {
+  const file = muxWebm(frames as WebmFrame[], {
     width,
     height,
     codec: opts.format === 'webm-vp9' ? 'V_VP9' : 'V_VP8',
   });
+  opts.onProgress?.(1);
+  return file;
 }
 
 /** the MediaRecorder mime for the real-time fallback (MP4 only, and only where WebCodecs has

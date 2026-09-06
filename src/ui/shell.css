@@ -2476,7 +2476,7 @@ tr.lb-detail td {
   border-top: 1px solid var(--ds-line);
   background: var(--ds-bar);
 }
-.ds-replay-rec .rec-dot {
+.rec-dot {
   width: 10px;
   height: 10px;
   flex: none;
@@ -2489,14 +2489,14 @@ tr.lb-detail td {
     opacity: 0.25;
   }
 }
-.ds-replay-rec .rec-label {
+.rec-label {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ds-ink);
 }
-.ds-replay-rec .rec-track {
+.rec-track {
   flex: 1;
   min-width: 120px;
   height: 6px;
@@ -2504,24 +2504,33 @@ tr.lb-detail td {
   background: var(--ds-line);
   overflow: hidden;
 }
-.ds-replay-rec .rec-fill {
+.rec-fill {
   height: 100%;
   background: var(--ds-accent);
   transition: width 0.1s linear;
 }
-.ds-replay-rec .rec-eta {
+.rec-eta {
   font-family: var(--ds-font-mono);
   font-variant-numeric: tabular-nums;
   font-size: 13px;
   color: var(--ds-mut);
 }
-/* A FAST SAVE DOES NOT TAKE THE SCREEN, so its strip sits ABOVE the transport row instead of
-   replacing it: tighter, no top rule (the row below carries one), and no note — there is
-   nothing to explain when nothing is being taken away. Same element and same tokens as the
-   real-time bar, so the contrast audit has no new pair to check. */
-.ds-replay-rec.slim {
-  padding: 8px 18px 6px;
-  border-top: 0;
+/* THE BACKGROUND SAVE reports itself in the header rather than in a row of its own, because
+   a row of its own resizes the canvas under a recording that is already running. It reuses the
+   recording bar's own parts, so there is no second set of colours for the contrast audit to
+   check — only the track stops stretching, since this row is not the full width. */
+.ds-replay-saving {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.ds-replay-saving .rec-track {
+  flex: none;
+  width: 110px;
+}
+.ds-replay-saving .rec-label {
+  white-space: nowrap;
 }
 
 /* the note takes its own row — `flex-basis: 100%` rather than a nested wrapper, so the row
