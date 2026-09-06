@@ -19,13 +19,8 @@ export type ShellNav = 'home' | 'play' | 'configure' | 'records' | 'profile' | '
  * signed-in tally, with the ranked-queue depth in the tooltip. Renders nothing
  * until presence lands (server unconfigured / asleep / first poll pending). */
 function PresenceChip({ p }: { p: Presence }) {
-  const queued = p.queues['1v1'] + p.queues['2v2'];
-  const title =
-    `${p.online} connected to multiplayer · ${p.signedIn} signed in` +
-    (queued ? ` · ${queued} in ranked queue (1v1 ${p.queues['1v1']}, 2v2 ${p.queues['2v2']})` : '');
   return (
     <span
-      title={title}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

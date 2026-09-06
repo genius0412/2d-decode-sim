@@ -19,13 +19,11 @@ function LegalPage({ title, sub, body }: { title: string; sub: string; body: str
     <>
       <p className="ds-eyebrow">{APP_NAME} · Legal</p>
       <h1 className="ds-h1">{title}</h1>
-      <p className="ds-sub">{sub}</p>
+      <p className="ds-sub">
+        {sub} Updated {LEGAL_UPDATED}.
+      </p>
 
       <section className="ds-panel">
-        <div className="ds-panel-h">
-          <span className="ds-panel-title">{title}</span>
-          <span className="ds-count">updated {LEGAL_UPDATED}</span>
-        </div>
         <div className="ds-legal">
           <Markdown text={body} className="md legal-md" />
         </div>

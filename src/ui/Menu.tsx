@@ -731,7 +731,6 @@ export function Menu({ settings, onChange }: Props) {
                         key={m}
                         className={`ds-opt mini ${shooterMountOf(spec) === m ? 'on' : ''}`}
                         onClick={() => setSpec({ shooterMount: m })}
-                        title={`Turret bolted at the ${CHAIN_SHOOTER_MOUNT_LABELS[m]} of the chassis`}
                       >
                         <span className="ot">{CHAIN_SHOOTER_MOUNT_LABELS[m]}</span>
                       </button>
@@ -888,7 +887,7 @@ export function Menu({ settings, onChange }: Props) {
                                   ? 'Nothing reaches from the middle of a chassis — turn on the swing arm to work from here'
                                   : swung
                                     ? `Pivot on the ${CHAIN_CATALYST_MOUNT_LABELS[m]}, swinging ${swung === 'fb' ? 'front to back' : 'left to right'}`
-                                    : `Claw mounted at the ${CHAIN_CATALYST_MOUNT_LABELS[m]} of the chassis`
+                                    : undefined
                         }
                       >
                         <span className="ot">{CHAIN_CATALYST_MOUNT_LABELS[m]}</span>

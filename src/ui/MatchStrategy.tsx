@@ -306,7 +306,7 @@ export function MatchStrategy({
         {/* start position — drag to place, constrained to a legal G304 setup */}
         {me && (
           <section className="ds-sec">
-            <h2>Start position {mates.length > 0 && <span className="ds-note">- agree who goes where</span>}</h2>
+            <h2>Start position</h2>
             {rs.canSwap && (
               <RoleSwapBar
                 role={startRole}

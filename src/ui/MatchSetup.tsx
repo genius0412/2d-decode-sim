@@ -254,7 +254,7 @@ export function MatchSetup({
                   </button>
                   <span className="ot">{a.fileName}</span>
                   <span className="od">
-                    {a.lines?.length ?? 0} segments{active ? ' · selected' : ''}
+                    {a.lines?.length ?? 0} segments
                   </span>
                 </div>
               );

@@ -435,7 +435,7 @@ export function GameView({
         {/* a SOLO record run is server-hosted, so RESET's local rebuild is unsafe
             here; this starts a whole fresh run instead (new room, new seed). */}
         {session && onRestartRun && !hud?.rematch?.need && (
-          <button className="game-btn" onClick={onRestartRun} title="Start a new run">
+          <button className="game-btn" onClick={onRestartRun}>
             ⟲ NEW RUN
           </button>
         )}

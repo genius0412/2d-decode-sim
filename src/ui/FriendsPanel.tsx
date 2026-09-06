@@ -315,36 +315,32 @@ export function FriendsPanel({
             </Section>
           )}
 
-          {/* ALWAYS rendered, unlike Requests/Sent above. Those are transient — an
-              absent one means nothing is pending. This is a standing setting: hiding
-              it when empty leaves no way to answer "have I blocked anyone?", and a
-              blocked player is invisible everywhere else by definition, so the fold
-              is the only place they exist in the UI. It's collapsed, so an empty one
-              costs a single header line. */}
-          <FoldSection title="Blocked" count={blocked.length}>
-            {blocked.map((p) => (
-              <Row key={p.userId} p={p} onOpenProfile={onOpenProfile}>
-                <button
-                  className="ds-btn small ghost"
-                  // A blocked row can only exist if you named that account by
-                  // username to block it, so this is unreachable — but sending
-                  // '' would ask the server to look up the empty string, which
-                  // is how `accept` used to fail with an opaque error.
-                  disabled={!p.username}
-                  onClick={() => {
-                    if (p.username) void friends.unblock(p.username);
-                  }}
-                >
-                  Unblock
-                </button>
-              </Row>
-            ))}
-            <p className="fr-empty">
-              {blocked.length === 0
-                ? 'You haven’t blocked anyone. Blocked players can’t send you friend requests, and you won’t appear in their friends list.'
-                : 'Blocked players can’t send you friend requests, and you won’t appear in their friends list.'}
-            </p>
-          </FoldSection>
+          {/* Only when there IS one. This used to render unconditionally, on the
+              reasoning that a standing setting should stay answerable — but an empty
+              fold is a control that opens onto nothing, and it carried a paragraph
+              defining what blocking does just to give the empty state something to
+              say. Nobody comes to this panel to read that. */}
+          {blocked.length > 0 && (
+            <FoldSection title="Blocked" count={blocked.length}>
+              {blocked.map((p) => (
+                <Row key={p.userId} p={p} onOpenProfile={onOpenProfile}>
+                  <button
+                    className="ds-btn small ghost"
+                    // A blocked row can only exist if you named that account by
+                    // username to block it, so this is unreachable — but sending
+                    // '' would ask the server to look up the empty string, which
+                    // is how `accept` used to fail with an opaque error.
+                    disabled={!p.username}
+                    onClick={() => {
+                      if (p.username) void friends.unblock(p.username);
+                    }}
+                  >
+                    Unblock
+                  </button>
+                </Row>
+              ))}
+            </FoldSection>
+          )}
 
           <RecentlyPlayed
             myUserId={myUserId}
