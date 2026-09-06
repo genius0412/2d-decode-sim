@@ -175,6 +175,11 @@ export function FriendsPanel({
 
           {friends.error && <p className="fr-error">{friends.error}</p>}
 
+          {/* ABOVE the lists. Adding somebody is the one thing you come to an empty
+              friends panel to do, and it was the last element in a scrolling column
+              under everything else. */}
+          <AddFriend onAdd={friends.add} known={friends.data} />
+
           {invites.length > 0 && (
             <Section title="Challenges" count={invites.length}>
               {invites.map((inv) => (
@@ -246,11 +251,9 @@ export function FriendsPanel({
             </Section>
           )}
 
-          <Section title="Online" count={online.length}>
-            {online.length === 0 ? (
-              <p className="fr-empty">Nobody’s online right now.</p>
-            ) : (
-              online.map((f) => (
+          {online.length > 0 && (
+            <Section title="Online" count={online.length}>
+              {online.map((f) => (
                 // the status is spelled out in the sub-line, not carried by the
                 // dot's hue alone: a red DND dot and a green online dot are the
                 // same dot to a red-green colourblind player. The @username stays
@@ -280,18 +283,21 @@ export function FriendsPanel({
                   )}
                   <RowMenu username={f.username} friends={friends} />
                 </Row>
-              ))
-            )}
-          </Section>
+              ))}
+            </Section>
+          )}
 
+          {/* FOLDED. An offline friend is not someone you are about to do anything
+              with, and on a long list they pushed everything actionable off screen.
+              Same reasoning as the Blocked fold below. */}
           {offline.length > 0 && (
-            <Section title="Offline" count={offline.length}>
+            <FoldSection title="Offline" count={offline.length}>
               {offline.map((f) => (
                 <Row key={f.userId} p={f} onOpenProfile={onOpenProfile} sub={offlineFor(f.offlineSeconds)}>
                   <RowMenu username={f.username} friends={friends} />
                 </Row>
               ))}
-            </Section>
+            </FoldSection>
           )}
 
           {outgoing.length > 0 && (
@@ -346,8 +352,6 @@ export function FriendsPanel({
             onAdd={friends.add}
             onOpenProfile={onOpenProfile}
           />
-
-          <AddFriend onAdd={friends.add} known={friends.data} />
         </>
       )}
     </aside>
