@@ -1,4 +1,57 @@
-# HANDOFF — 2026-09-06 (G422 wall pin + what the push measurements actually say)
+# HANDOFF — 2026-09-06b (the pusher stops steering itself; pins stop needing a struggle)
+
+Branch **alpha**, pushed + deployed. `npm test` **1272, ALL PASS** · build · `server:check` green.
+`SIM_VERSION` stays **2** (alpha is ONE unreleased batch past main; both changes are inside it).
+
+## READ FIRST
+
+**"I turn with them and follow them" was literally true, and it was the SETTLING term.**
+`squareUpPair` turns BOTH chassis flush to the SHARED contact normal. The normal belongs to the
+PAIR, so a turning victim rotated it and the pusher was turned to keep up. Measured: a pusher
+commanding nothing but straight forward copied its victim's heading at **102-110%** and rode it
+72in across the field still touching.
+
+Fix is the one `CONTACT_PAIR_SPIN`'s own note already named — "a contact that can slip". The
+settling `align` is scaled by `1 / (1 + slip / CONTACT_SLIP_RELIEF)`, slip measured at the
+contact point WITH ω×r (a pivoting chassis slips without either centre moving). The two cases
+are nowhere near each other, which is why this works cleanly:
+
+| pair state | slip | settling |
+|---|---|---|
+| held / idle (settling SHOULD work) | **0.0 in/s** | untouched |
+| victim strafing off | 5.7 avg | faded |
+| victim turning + strafing | 9.6 avg (peak 36.6) | faded |
+
+Tracking **105% → 21%**. ω×r is safe HERE and not in `press` because it enters as a MAGNITUDE
+that only attenuates — no sign to flip, so it cannot cause the documented limit cycle.
+
+**G422 no longer needs the victim to be struggling.** Reading "attempting to move" as "the
+stick is deflected this tick" is what kept the foul rare — people held against a wall stop
+working the stick long before they stop being held, and a ref cannot see a stick. The guard
+that REPLACES it is on the pinner (`PIN_PRESS_COS`): it must be driving INTO the victim, since
+`rrContacts` is overlap-only and says nothing about who holds whom. Idle victim **0 → 3 MINORs
+/ 12 s**; an idle opponent, one strafing past, and a self-trapping victim all still draw 0.
+⚠️ This is a deliberate DEVIATION from the rule text, like `POSSESSION_REBILL_S`.
+
+## Gotchas
+
+- One existing check asserted the OPPOSITE ("a victim commanding nothing at all is not being
+  pinned"). Rewritten, with the pinner-side guards added beside it — do not "restore" it.
+- Still true from 06a: **a tank pusher given only `driveY` does not move** (it reads the side
+  sticks), which silently turns "held against a wall" into "standing near a wall".
+
+## Next steps
+
+1. Drive it and see whether the pusher still feels sticky — `CONTACT_SLIP_RELIEF` (4) is the
+   dial; LOWER lets go sooner. A pure pivot still drags the pusher ~88%, which is arguably real
+   but is the next thing to look at if it feels wrong.
+2. The into-wall escape cliff from 06a is untouched and is Coulomb stick/slip, not a bug.
+3. Still open: the two `fly secrets set` admin lines, the two-account cross-region challenge
+   check, an end-to-end practice upload, Rapier slice 2, penalty HITBOX audit, CR `APPROX`.
+
+---
+
+## HANDOFF — 2026-09-06a (G422 wall pin + what the push measurements actually say)
 
 Branch **alpha**, pushed. `npm test` **1269, ALL PASS** · build · `server:check` green.
 `SIM_VERSION` stays **2** on purpose (see its note: alpha is ONE unreleased batch past main).
