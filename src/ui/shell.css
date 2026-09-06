@@ -3773,11 +3773,37 @@ input[type='range']:focus-visible {
     padding: 12px;
     border-left: 0;
     border-bottom: 1px solid var(--ds-line);
+    /* UNDO the desktop treatment. Beside the content it is a column that sticks under
+       the bar and scrolls itself; ABOVE the content it is a strip, and a pinned strip
+       is just a second header — it held the top 74px of every page and pushed the
+       content down to 211px on a 375px phone. Here it flows with the page. */
+    position: static;
+    max-height: none;
+    overflow-y: visible;
   }
   .ds-friends.collapsed {
     width: 100%;
     align-items: flex-start;
-    padding: 8px 12px;
+    padding: var(--ds-s-2) var(--ds-s-3);
+  }
+  /* the collapsed control is a CHIP, not a full-width slab. `width: 100%` and the
+     stacked glyph-over-label belong to the 64px desktop rail, where the strip IS the
+     button; across a phone that rendered a 351x57 block holding one small word. */
+  .ds-friends.collapsed .fr-toggle {
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--ds-s-2);
+    padding: var(--ds-s-1) var(--ds-s-3);
+    border: 1px solid var(--ds-line);
+    background: var(--ds-panel);
+    /* a thumb target, not just a label: the chip is 29px on its content alone, and
+       this strip is the only way back into friends on a phone */
+    min-height: 36px;
+  }
+  .ds-friends.collapsed .fr-toggle-icon {
+    width: 20px;
+    height: 20px;
   }
   .ds-body > .ds-main {
     order: 3;
