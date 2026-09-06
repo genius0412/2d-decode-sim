@@ -67,17 +67,12 @@ export function DesktopUpdate() {
 
         {error && (
           <p className="ds-hint" style={{ margin: 0, color: 'var(--ds-danger)' }}>
-            Couldn’t reach the update server. Try again later.
+            Couldn’t reach the update server. Try again.
           </p>
         )}
         {result && !result.updateAvailable && (
           <p className="ds-hint" style={{ margin: 0, color: 'var(--ds-ok)' }}>
             You’re on the latest version.
-          </p>
-        )}
-        {result?.updateAvailable && (
-          <p className="ds-hint" style={{ margin: 0 }}>
-            Version {result.latest} is available - auto-checked on launch when the toggle is on.
           </p>
         )}
       </div>

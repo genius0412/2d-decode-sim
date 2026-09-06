@@ -51,7 +51,7 @@ export function RecordRun({
     try {
       transport = new WebSocketTransport(url);
     } catch {
-      setError('Could not reach the game server.');
+      setError('Couldn’t reach the game server.');
       return;
     }
     const lobby = new LobbyClient(transport);

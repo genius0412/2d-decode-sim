@@ -1018,7 +1018,7 @@ export function App() {
         onChange={(id) => update({ ...settings, preferredServerId: id })}
       />
       <button className="ds-btn" onClick={() => navigate('account')}>
-        Settings
+        Profile
       </button>
     </>
   );
@@ -1111,7 +1111,7 @@ export function App() {
             <h2>About this simulation</h2>
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 420 }}>
               Chain Reaction is a game for the <b>Unofficial FTC Discord’s CAD Competition</b>.
-              This simulator is just a rough, for-fun approximation of it - <b>the simulation is
+              This simulator is a rough, for-fun approximation of it. <b>The simulation is
               not realistic</b>, so how robots drive, shoot, and score here shouldn’t drive your
               CAD-competition design decisions. Build for the real game, not for this sim.
             </p>
@@ -1186,8 +1186,8 @@ export function App() {
             <p className="ds-sub" style={{ margin: '4px auto 16px', maxWidth: 380 }}>
               {lockedOut
                 ? maintenanceLine(maintenance) ??
-                  'DSIM is down for maintenance — new games are paused. Please try again shortly.'
-                : 'A scheduled server update is about to happen, so new games are paused for a moment.'}
+                  'DSIM is down for maintenance. New games are paused.'
+                : 'Server is restarting shortly. New games are paused for a moment.'}
             </p>
             <div className="overlay-buttons">
               <button onClick={() => setStartBlocked(false)}>OK</button>

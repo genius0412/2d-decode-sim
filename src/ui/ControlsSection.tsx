@@ -21,7 +21,7 @@ const KEY_LABELS: Record<KeyAction, string> = {
   rotateCW: 'Turn right',
   intake: 'Intake (hold)',
   fire: 'Shoot (hold)',
-  catalyst: 'Ring pick up / place (Chain Reaction)',
+  catalyst: 'Catalyst pick up / place (Chain Reaction)',
   fling: 'Catapult throw (Chain Reaction)',
   driveMode: 'Swap wheel set (Butterfly)',
   flipFront: 'Flip front',
@@ -31,10 +31,10 @@ const KEY_LABELS: Record<KeyAction, string> = {
 };
 
 const PAD_LABELS: Record<PadAction, string> = {
-  fire: 'Shoot',
-  intake: 'Intake',
-  catalyst: 'Ring pick up / place',
-  fling: 'Catapult throw',
+  fire: 'Shoot (hold)',
+  intake: 'Intake (hold)',
+  catalyst: 'Catalyst pick up / place (Chain Reaction)',
+  fling: 'Catapult throw (Chain Reaction)',
   driveMode: 'Swap wheel set (Butterfly)',
   flipFront: 'Flip front',
   park: 'Toggle park mode',
@@ -295,7 +295,7 @@ export function ControlsSection({ bindings, onChange, onEditTouchControls }: Pro
       </div>
       <div className="ds-bind-foot">
         <button className="ds-btn" onClick={() => onChange(cloneBindings(DEFAULT_BINDINGS))}>
-          RESET TO DEFAULTS
+          Reset to defaults
         </button>
       </div>
     </section>

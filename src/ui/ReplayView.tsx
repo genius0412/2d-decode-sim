@@ -620,7 +620,7 @@ export function ReplayView({
   return (
     <div className="ds-replay">
       <div className="ds-replay-top">
-        <button className="ds-btn ghost" onClick={onClose}>← Leaderboard</button>
+        <button className="ds-btn ghost" onClick={onClose}>← Back</button>
         {/* THE SAVE STATUS LIVES IN THE HEADER, and that is not a cosmetic choice: a strip of
             its own above the transport row steals height from the canvas, which then re-fits
             to a shorter box and SQUASHES the field halfway through a recording. A background
@@ -670,7 +670,7 @@ export function ReplayView({
                     exactly the difference that decides which you want. */}
                 {formats.length === 0 && (
                   <p className="ds-dl-note">
-                    This browser can’t save video. The replay data below works anywhere.
+                    This browser can’t save video. You can still download the replay data below.
                   </p>
                 )}
                 {formats.map((f) => (
@@ -775,7 +775,7 @@ export function ReplayView({
       {status === 'ready' && !recording && (
         <div className="ds-replay-controls">
           <button className="ds-btn primary" onClick={() => setPlay(!playing)}>
-            {playing ? '❚❚ Pause' : player.current?.done ? '⟲ Replay' : '▶ Play'}
+            {playing ? '❚❚ Pause' : player.current?.done ? '▶ Play again' : '▶ Play'}
           </button>
           <button className="ds-btn" onClick={rebuild}>⟲ Restart</button>
           <input

@@ -204,6 +204,8 @@ function phaseLabel(phase: string): string {
     case 'transition': return 'Transition';
     case 'teleop': return 'Driver-Controlled';
     case 'post': return 'Final';
+    case 'pre': return 'Pre-match';
+    case 'freeplay': return 'Free Drive';
     default: return phase;
   }
 }

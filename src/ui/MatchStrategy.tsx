@@ -12,6 +12,8 @@ import type { LobbyPlayer, PlayerIntro, QueueMode } from '../net/protocol';
 import { RobotPreview } from './RobotPreview';
 import { ChainRobotPreview } from '../games/chain/RobotPreview';
 import { DRIVETRAIN_LABELS, INTAKE_SHORT } from './robotLabels';
+import { CHAIN_MODE_LABELS } from '../games/chain/labels';
+import { CHAIN_DEFAULT_SCORE_MODE } from '../games/chain/config';
 import { Menu } from './Menu';
 import { MatchAudio } from '../audio';
 import { APP_NAME } from '../seasons';
@@ -183,12 +185,19 @@ export function MatchStrategy({
     );
   }
 
-  const buildRow = (spec: RobotSpec): JSX.Element => (
-    <span className="ptm">
-      {DRIVETRAIN_LABELS[spec.drivetrain]} · {INTAKE_SHORT[spec.intake]} · {spec.driveRpm} rpm ·{' '}
-      {spec.massLb} lb{spec.canSort ? ' · sorts' : ''}
-    </span>
-  );
+  const buildRow = (spec: RobotSpec): JSX.Element =>
+    settings.game === 'chain' ? (
+      <span className="ptm">
+        {DRIVETRAIN_LABELS[spec.drivetrain]} ·{' '}
+        {CHAIN_MODE_LABELS[spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]} · {spec.driveRpm} rpm ·{' '}
+        {spec.massLb} lb
+      </span>
+    ) : (
+      <span className="ptm">
+        {DRIVETRAIN_LABELS[spec.drivetrain]} · {INTAKE_SHORT[spec.intake]} · {spec.driveRpm} rpm ·{' '}
+        {spec.massLb} lb{spec.canSort ? ' · sorter' : ''}
+      </span>
+    );
 
   return (
     <div className="ds-console">

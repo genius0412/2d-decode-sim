@@ -34,7 +34,7 @@ interface FormatTile {
 const TILES: FormatTile[] = [
   { format: 'casual1v1', title: '1v1 · Casual', detail: 'Unrated. Straight into a private lobby.' },
   { format: 'rated1v1', title: '1v1 · Rated', detail: 'Counts for ELO. Just the two of you.', needs: 'party' },
-  { format: 'casual2v2', title: '2v2 · Team up', detail: 'Unrated. Sort alliances in the lobby.' },
+  { format: 'casual2v2', title: '2v2 · Casual', detail: 'Unrated. Sort alliances in the lobby.' },
   { format: 'ranked2v2', title: '2v2 · Ranked', detail: 'Queue together as a team. Counts for ELO.', needs: 'party' },
   { format: 'duorecord', title: '2v0 · Co-op record', detail: 'No opponent. Chase a record together.' },
 ];
@@ -75,7 +75,7 @@ export function ChallengePicker({
     setBusy(format);
     setError(null);
     void onPick(format).catch((e: unknown) => {
-      setError(e instanceof Error ? e.message : 'Could not send the challenge.');
+      setError(e instanceof Error ? e.message : 'Couldn’t send the challenge.');
       setBusy(null);
     });
   };

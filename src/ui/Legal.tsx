@@ -56,8 +56,8 @@ export function Terms() {
       {!LEGAL_IDENTIFIED && (
         <p className="legal-warn" role="alert">
           These terms are incomplete: the operator and governing law have not been
-          filled in yet. Please don't rely on them, and email {LEGAL_CONTACT} with any
-          question about your account or a payment.
+          filled in yet. Don’t rely on them. Email {LEGAL_CONTACT} with any question
+          about your account or a payment.
         </p>
       )}
       <LegalPage

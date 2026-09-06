@@ -34,9 +34,9 @@ export function ScoreReportDialog({
     <div className="ds-report">
       <h3 className="ds-report-h">Report a misscore</h3>
       <p className="ds-hint" style={{ margin: 0 }}>
-        For a score that came out wrong in a way that changed the match — an artifact that
-        scored and was not counted, a pattern or park that was missed, a penalty that should
-        not have applied. A moderator checks it against the replay.
+        For a score that came out wrong in a way that changed the match: something that
+        scored and was not counted, something that was missed, or a penalty that should not
+        have applied. A moderator checks it against the replay.
       </p>
 
       <label className="ds-field col">

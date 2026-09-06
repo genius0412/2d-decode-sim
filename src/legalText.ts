@@ -58,12 +58,11 @@ skimmed past - it is short because the app genuinely collects very little.
 
 You can play the entire single-player simulator **without an account and without
 sending us anything**. Signing in is only required for multiplayer, leaderboards,
-and saved records. If you never sign in, everything below about accounts simply
-does not apply to you.
+and saved records. If you never sign in, nothing below about accounts applies to you.
 
 ## What is stored on your own device
 
-These live in your browser's local storage and are never transmitted unless you
+These live in your browser’s local storage and are never transmitted unless you
 sign in and enable account sync:
 
 - **Settings** (\`decodesim.settings.v1\`) - robot builds, control bindings, assists,
@@ -148,7 +147,7 @@ publicly spectatable by anyone, so this changes who is *visible*, not what is.
 
 ## Cookies and similar technologies
 
-DSIM itself sets **no cookies**. Your settings live in your browser's local
+DSIM itself sets **no cookies**. Your settings live in your browser’s local
 storage (listed above), and signing in uses a token held by our authentication
 provider - neither is used to track you between sites.
 
@@ -171,8 +170,8 @@ advertising choices through a Google-certified consent tool before any ads are
 personalised, and you can reopen that choice at any time from the "Privacy &
 cookie settings" link in the site footer.
 
-You can also review and change Google's ad settings at
-[Google's Ads Settings](https://adssettings.google.com), and read how Google uses
+You can also review and change Google’s ad settings at
+[Google’s Ads Settings](https://adssettings.google.com), and read how Google uses
 data from sites that use its services at
 [policies.google.com/technologies/partner-sites](https://policies.google.com/technologies/partner-sites).
 
@@ -186,7 +185,7 @@ Supporter memberships and donations are processed by **Ko-fi**, which in turn us
 or store a card number.
 
 What we do receive and store for each payment is the email address you paid with,
-the amount and currency, and Ko-fi's own transaction and event identifiers. The
+the amount and currency, and Ko-fi’s own transaction and event identifiers. The
 email address is what links your payment to your DSIM account so the membership
 renews without you having to claim it every month; it is never displayed to anyone
 and never used to contact you. If you delete your account, that email address is
@@ -226,10 +225,10 @@ to export or delete after you disconnect.
   invites, immediately and permanently. If that button is unavailable for any
   reason, email us and we will do exactly the same thing by hand.
 - **Advertising choices** - see the Advertising section above.
-- **Play anonymously** - simply do not sign in.
+- **Play anonymously** - do not sign in.
 
 Two things deliberately survive an account deletion, and it is fairer to say so
-than to promise otherwise: matches you played remain in the other players' match
+than to promise otherwise: matches you played remain in the other players’ match
 history (without your name), because they are a record of their games too; and
 payment records are retained, with your email removed, because they are financial
 records.
@@ -266,7 +265,7 @@ DSIM is operated by **${LEGAL_OPERATOR}**, and you can reach a human at
 ## Who can use DSIM
 
 You must be **13 or older** to create an account. If you are under 18, you should
-have a parent or guardian's permission, and they must be the one to make any
+have a parent or guardian’s permission, and they must be the one to make any
 purchase.
 
 ## Your account
@@ -279,7 +278,7 @@ affiliation with a team or organisation. We may reclaim usernames that break thi
 
 DSIM runs a server-authoritative simulation, and ranked play depends on that being
 respected. Do not modify the client to gain an advantage, automate play, exploit
-bugs for rating, or deliberately disrupt other players' matches. Accounts that do
+bugs for rating, or deliberately disrupt other players’ matches. Accounts that do
 may lose their rating, their records, or their access.
 
 ## Supporter memberships
@@ -297,7 +296,7 @@ full, no reason needed - that is a promise, not a discretion, and it is the same
 14-day cancellation right UK and EU consumers have by law. After 14 days a
 payment for a period already served is not normally refunded, but if something has
 gone wrong - a double charge, a membership that never activated, a payment made by
-a child without a parent's permission - email us and we will fix it rather than
+a child without a parent’s permission - email us and we will fix it rather than
 argue about it.
 
 A one-off tip is a tip, not a purchase. If you tipped at or above the monthly

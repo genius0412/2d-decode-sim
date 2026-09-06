@@ -109,8 +109,8 @@ function WhatsNew({ items, onClose }: { items: Announcement[]; onClose: () => vo
 
   return (
     <div className="overlay ann-overlay" onClick={onClose}>
-      <div className="ann-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="What's new">
-        <p className="ds-eyebrow">What's new</p>
+      <div className="ann-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="What’s new">
+        <p className="ds-eyebrow">What’s new</p>
         <div className="ann-scroll">
           {items.map((a) => (
             <article key={a.id} className={`ann-item ${a.kind}`}>
@@ -126,7 +126,7 @@ function WhatsNew({ items, onClose }: { items: Announcement[]; onClose: () => vo
         </div>
         <div className="ann-actions">
           <button className="ds-btn" onClick={onClose}>
-            GOT IT
+            Got it
           </button>
         </div>
       </div>

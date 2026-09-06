@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { APP_NAME } from '../seasons';
 
 /**
  * Share a player's PUBLIC profile link (`/profile/<username>`). Uses the native
@@ -27,7 +28,7 @@ export function ShareButton({
     // share (AbortError) is a no-op, not an error.
     if (nav && typeof nav.share === 'function') {
       try {
-        await nav.share({ title: `@${username} · DECODE 2D`, url });
+        await nav.share({ title: `@${username} · ${APP_NAME}`, url });
         return;
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return;

@@ -89,8 +89,8 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
       setMsg({
         kind: 'ok',
         text: date
-          ? `Thank you - you're a supporter until ${date}. Ads are off, and future payments renew automatically.`
-          : 'Thank you - your supporter benefits are active.',
+          ? `Thank you. You’re a supporter until ${date}. Ads are off, and future payments renew automatically.`
+          : 'Thank you. Your supporter benefits are active.',
       });
       setTxn('');
       trackEvent('support_claim_ok', { months: r.months });
@@ -100,7 +100,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
       trackEvent('support_claim_fail', {
         reason: e instanceof Error ? e.message.slice(0, 60) : 'unknown',
       });
-      setMsg({ kind: 'err', text: e instanceof Error ? e.message : 'Something went wrong.' });
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : 'Couldn’t complete the claim. Try again.' });
     } finally {
       setBusy(false);
     }
@@ -118,8 +118,8 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
         <section className="ds-panel">
           <div style={{ padding: 16 }}>
             <p className="ds-hint">
-              DSIM is free and stays free. A way to chip in for the servers is on its way -
-              there is nothing to pay for today.
+              DSIM is free and stays free. There is nothing to pay for yet — a way to chip in
+              for the servers is coming.
             </p>
           </div>
         </section>
@@ -144,7 +144,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
           lie (the web build does show ads). */}
       {isElectron() && (
         <p className="ds-hint" style={{ marginBottom: 18 }}>
-          You're on the desktop app, which never shows ads - supporting is the only way it
+          You’re on the desktop app, which never shows ads. Supporting is the only way it
           pays for itself.
         </p>
       )}
@@ -158,14 +158,14 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
         <section className="ds-panel">
           <div className="ds-panel-h">
             <span className="ds-panel-title">
-              {role === 'owner' ? "You run this place" : "You're on the team"}
+              Staff benefits
             </span>
             <span className="ds-count">{role}</span>
           </div>
           <div style={{ padding: 16 }}>
             <p className="ds-hint">
-              Every supporter benefit is included with your {role === 'owner' ? 'ownership' : 'admin role'} -
-              ads are off, and your {role} badge shows on your profile, the leaderboards, and in the lobby.
+              Every supporter benefit is included with your {role === 'owner' ? 'ownership' : 'admin role'}.
+              Ads are off, and your {role} badge shows on your profile, the leaderboards, and the lobby.
             </p>
           </div>
         </section>
@@ -174,7 +174,7 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
       {checked && supporter && !role && (
         <section className="ds-panel">
           <div className="ds-panel-h">
-            <span className="ds-panel-title">You're a supporter</span>
+            <span className="ds-panel-title">You’re a supporter</span>
             <span className="ds-count">thank you</span>
           </div>
           <div style={{ padding: 16 }}>
@@ -184,8 +184,8 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
             </p>
             <p className="ds-hint" style={{ marginTop: 8 }}>
               {autoRenews
-                ? 'Your Ko-fi payments renew this automatically - nothing to claim each month. Cancel any time from your Ko-fi account; you keep the benefits until the paid period ends.'
-                : "This membership isn't linked to a Ko-fi account yet, so it won't renew on its own. Claim a payment below to link it."}
+                ? 'Your Ko-fi payments renew this automatically. There is nothing to claim each month, and you can cancel from your Ko-fi account at any time — you keep the benefits until the paid period ends.'
+                : 'This membership isn’t linked to a Ko-fi account yet, so it won’t renew on its own. Claim a payment below to link it.'}
             </p>
           </div>
         </section>
@@ -230,13 +230,13 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
         </div>
         <div style={{ padding: 16 }}>
           <p className="ds-hint">
-            Ko-fi bills through PayPal, so the email on your payment often isn't the one on your
-            DSIM account. Paste the transaction ID from your Ko-fi receipt and we'll attach it -
-            just once. After that, every renewal is applied automatically.
+            Ko-fi bills through PayPal, so the email on your payment often isn’t the one on your
+            DSIM account. Paste the transaction ID from your Ko-fi receipt and we’ll attach it.
+            After that, every renewal is applied automatically.
           </p>
           {!authEnabled || !signedIn ? (
             <p className="ds-hint" style={{ marginTop: 12 }}>
-              Sign in first - a membership has to attach to an account.
+              Sign in first. A membership has to attach to an account.
             </p>
           ) : (
             <>
@@ -278,9 +278,9 @@ export function Donate({ signedIn }: { signedIn: boolean }) {
               produces a sentence that reads like a bug, so it is omitted rather
               than filled with a placeholder. */}
           <p className="ds-hint">
-            Prefer to just buy the project a coffee? One-off tips go through the same Ko-fi page.
+            Prefer to buy the project a coffee? One-off tips go through the same Ko-fi page.
             {price
-              ? ` A tip of ${price.currency} ${price.amount.toFixed(2)} or more can be claimed above for membership - larger tips buy proportionally more months, and anything below that is gratefully received as a plain tip with nothing to claim.`
+              ? ` A tip of ${price.currency} ${price.amount.toFixed(2)} or more can be claimed above for membership. Larger tips buy proportionally more months, and anything below that is gratefully received as a plain tip with nothing to claim.`
               : ' A tip at or above the monthly price can be claimed above for membership; anything below it is gratefully received as a plain tip, with nothing to claim.'}
           </p>
         </div>

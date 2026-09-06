@@ -200,7 +200,7 @@ function MyStanding({ me }: { me: EloStanding }) {
           <strong>{remaining}</strong> {remaining === 1 ? 'match' : 'matches'} until placement
         </span>
         <span className="lb-standing-sub">
-          {me.games}/{PLACEMENT_GAMES} placement matches played - finish them to join the leaderboard.
+          {me.games}/{PLACEMENT_GAMES} placement matches played. Finish them to join the leaderboard.
         </span>
         <span className="lb-standing-bar" aria-hidden>
           <span style={{ width: `${Math.min(100, (me.games / PLACEMENT_GAMES) * 100)}%` }} />
@@ -366,7 +366,7 @@ export function Leaderboard({
           <div className="ds-empty">
             <div className="big">{isRecords ? 'No entries yet' : 'No placed players yet'}</div>
             {isRecords
-              ? 'Be the first to set a time on this board.'
+              ? 'Be the first to set a score on this board.'
               : `Players appear here after ${PLACEMENT_GAMES} ranked matches. Be the first to place.`}
           </div>
         )}

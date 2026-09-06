@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type {
   GameSettings,
   AutoPathData,
@@ -31,12 +32,14 @@ export function MatchSetup({
   onChange: (s: GameSettings) => void;
 }) {
   const set = (patch: Partial<GameSettings>) => onChange({ ...settings, ...patch });
+  /** the outcome of the last .pp import, shown in the auto-path section */
+  const [notice, setNotice] = useState<{ bad: boolean; text: string } | null>(null);
 
   function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
   }
   function showToast(message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') {
-    alert(`${type.toUpperCase()}: ${message}`);
+    setNotice({ bad: type === 'error' || type === 'warning', text: message });
   }
 
   // --- Pedro Pathing (.pp) → sim coordinate transform ---
@@ -80,12 +83,12 @@ export function MatchSetup({
     const file = event.target.files?.[0];
     if (!file) return;
     if (!file.name.endsWith('.pp')) {
-      showToast('Please select a .pp file.', 'error');
+      showToast('Pick a .pp file.', 'error');
       event.target.value = '';
       return;
     }
     if (settings.savedAutos.length >= MAX_SAVED_AUTOS) {
-      showToast(`You can save up to ${MAX_SAVED_AUTOS} autos - delete one first.`, 'warning');
+      showToast(`You can save up to ${MAX_SAVED_AUTOS} autos. Delete one first.`, 'warning');
       event.target.value = '';
       return;
     }
@@ -120,11 +123,11 @@ export function MatchSetup({
           autoPath: autoPathData,
           autoPathEnabled: true,
         });
-        showToast(`Saved auto: ${file.name}`, 'success');
+        showToast(`Saved ${file.name}.`, 'success');
       } catch (error) {
         const errMsg = getErrorMessage(error);
         const message = errMsg.includes('Invalid file format')
-          ? 'Invalid file format. This may not be a valid Pedro Pathing file.'
+          ? 'That does not look like a Pedro Pathing file.'
           : `Error loading file: ${errMsg}`;
         showToast(message, 'error');
       } finally {
@@ -132,7 +135,7 @@ export function MatchSetup({
       }
     };
     reader.onerror = () => {
-      showToast(`Failed to read file: ${reader.error?.message}`, 'error');
+      showToast('Couldn’t read that file.', 'error');
       event.target.value = '';
     };
     reader.readAsText(file);
@@ -276,6 +279,11 @@ export function MatchSetup({
                   : 'Selected auto is off'}
               </span>
             </button>
+          )}
+          {notice && (
+            <p className={notice.bad ? 'ds-form-err' : 'ds-hint'} role="status" style={{ marginTop: 10 }}>
+              {notice.text}
+            </p>
           )}
           <p className="ds-hint">
             Build a <code>.pp</code> path at{' '}

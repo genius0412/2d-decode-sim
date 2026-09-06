@@ -77,7 +77,10 @@ export function Account({
           <button
             className="ds-btn"
             onClick={() => {
-              if (confirm('Reset all settings to defaults? This cannot be undone.')) {
+              if (confirm(
+                  'Reset every setting? This clears your robot build, saved robots, imported autos, ' +
+                    'saved start positions, key bindings, audio and mobile layout. It cannot be undone.',
+                )) {
                 onChange(defaultSettings());
               }
             }}
@@ -143,7 +146,7 @@ function Membership({ onDonate }: { onDonate?: () => void }) {
             </p>
             {!ent.autoRenews && (
               <p className="ds-hint" style={{ marginTop: 8, color: 'var(--ds-warn)' }}>
-                This membership isn't linked to a Ko-fi account, so it will stop at the end of the
+                This membership isn’t linked to a Ko-fi account, so it will stop at the end of the
                 period. Claim a payment on the Support page to link it.
               </p>
             )}
@@ -155,7 +158,7 @@ function Membership({ onDonate }: { onDonate?: () => void }) {
           </>
         ) : (
           <p className="ds-hint">
-            No membership. DSIM is free either way - supporting turns off ads and adds a few
+            No membership. DSIM is free either way; supporting turns off ads and adds a few
             cosmetic extras.
           </p>
         )}
@@ -208,8 +211,8 @@ function DeleteAccount() {
       const msg = e instanceof Error ? e.message : '';
       setErr(
         /404|not found|unavailable/i.test(msg)
-          ? `Self-service deletion isn't available on this server yet. Email ${LEGAL_CONTACT} and your account will be deleted.`
-          : msg || 'Could not delete the account.',
+          ? `Self-service deletion isn’t available on this server yet. Email ${LEGAL_CONTACT} and your account will be deleted.`
+          : msg || 'Couldn’t delete the account.',
       );
       setBusy(false);
     }
@@ -223,13 +226,13 @@ function DeleteAccount() {
       <div style={{ padding: 16 }}>
         <p className="ds-hint">
           Permanently deletes your profile, username, saved settings and robot presets, records
-          and their replays, ranked rating and history, and every friendship, block, and invite.
-          This cannot be undone.
+          and practice runs with their replays, ranked rating and history, your playtime and
+          account standing, and every friendship, block, and invite. This cannot be undone.
         </p>
         <p className="ds-hint" style={{ marginTop: 8 }}>
           Matches you played stay on other players' history without your name, and payment records
           are kept (without your email) because they are financial records. Your sign-in identity
-          itself lives with our authentication provider - delete it there too if you want it gone.
+          itself lives with our authentication provider. Delete it there too if you want it gone.
         </p>
         <div className="ds-claim-row" style={{ marginTop: 12 }}>
           <input
@@ -457,7 +460,7 @@ function Username({ userId }: { userId: string }) {
         {current ? (
           <>Your profile: <code>/profile/{current}</code>. </>
         ) : (
-          'Unique - lowercase letters and numbers, 4–20 characters. '
+          'Unique. Lowercase letters and numbers, 4–20 characters. '
         )}
         {!configured && 'Editing needs the game server. '}
         {status === 'error' ? (

@@ -35,12 +35,12 @@ export function ModeSelect({
   return (
     <>
       <p className="ds-eyebrow">{APP_NAME} · Play</p>
-      <h1 className="ds-h1">Pick a mode.</h1>
+      <h1 className="ds-h1">Pick a mode</h1>
 
       {activeGame && (
         <div className="ds-rejoin" role="alert">
           <div className="ds-rejoin-txt">
-            <b>You have a game in progress.</b>
+            <b>You’re already in a game.</b>
           </div>
           <button className="ds-btn primary" onClick={onRejoin}>
             Rejoin match →
@@ -108,7 +108,7 @@ export function ModeSelect({
 
         {/* Custom room — last, per its niche use */}
         <section className="ds-tileset">
-          <p className="ds-tileset-label">Custom</p>
+          <p className="ds-tileset-label">Custom · online</p>
           <div className="ds-tiles">
             <button className="ds-tile" onClick={onCustomRoom} disabled={!multiplayer}>
               <span className="k">Custom</span>

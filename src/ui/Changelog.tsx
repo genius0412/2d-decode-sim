@@ -35,12 +35,12 @@ export function Changelog() {
 
   return (
     <>
-      <p className="ds-eyebrow">{APP_NAME} · Changelog</p>
+      <p className="ds-eyebrow">{APP_NAME} · Changes</p>
       <h1 className="ds-h1">Changes</h1>
 
       <section className="ds-panel">
         <div className="ds-panel-h">
-          <span className="ds-panel-title">What's changed</span>
+          <span className="ds-panel-title">What’s changed</span>
           <a className="ds-home-link" href={LINKS.repo} target="_blank" rel="noreferrer">
             <GitHubGlyph />
             GitHub
@@ -53,7 +53,7 @@ export function Changelog() {
               Changelogs need the game server (set <code>VITE_GAME_SERVER_URL</code>).
             </div>
           ) : items === null ? (
-            <p className="ds-hint">Loading…</p>
+            <div className="ds-loading">Loading…</div>
           ) : items.length === 0 ? (
             <div className="ds-empty">
               <div className="big">Nothing published yet</div>

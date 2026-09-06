@@ -178,7 +178,7 @@ export function Lobby({
     if (!roomCode) return;
     setCode(roomCode);
     if (!gameServerUrl()) {
-      setError('multiplayer not configured');
+      setError('Multiplayer needs the game server.');
       setPhase('error');
       return;
     }
@@ -194,7 +194,7 @@ export function Lobby({
     try {
       transport = new WebSocketTransport(url);
     } catch {
-      setError('could not reach the game server');
+      setError('Couldn’t reach the game server.');
       setPhase('error');
       return;
     }
@@ -214,7 +214,7 @@ export function Lobby({
     });
     lobby.on('closed', () => {
       if (!startedRef.current) {
-        setError('lost connection to the game server');
+        setError('Lost connection to the game server.');
         setPhase('error');
       }
     });

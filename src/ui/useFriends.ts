@@ -272,7 +272,7 @@ export function useFriends({
         await call();
       } catch (e) {
         setData(previous);
-        setError(e instanceof Error ? e.message : 'Something went wrong.');
+        setError(e instanceof Error ? e.message : 'Couldn’t reach the game server.');
         throw e;
       } finally {
         // and again on the way out: a poll that STARTED mid-mutation raced the
@@ -381,7 +381,7 @@ export function useFriends({
         const outcome = await sendFriendRequest(username);
         return outcome;
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Something went wrong.');
+        setError(e instanceof Error ? e.message : 'Couldn’t reach the game server.');
         throw e;
       } finally {
         // same staleness rule as `mutate`: this changed server state, so any poll
@@ -411,7 +411,7 @@ export function useFriends({
       try {
         await inviteToRoom(username, room, game, kind, record, format, region);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Something went wrong.');
+        setError(e instanceof Error ? e.message : 'Couldn’t reach the game server.');
         throw e;
       } finally {
         mutSeq.current += 1;

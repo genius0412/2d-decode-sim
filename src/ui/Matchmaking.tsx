@@ -365,7 +365,8 @@ export function Matchmaking({
     const y = dodge.yours;
     if (y?.kind) {
       const st = y.standing;
-      const nth = y.count === 1 ? 'first' : y.count === 2 ? 'second' : `${y.count}th`;
+      const nth =
+        y.count === 1 ? 'first' : y.count === 2 ? 'second' : y.count === 3 ? 'third' : `${y.count}th`;
       return (
         <div className="ds-dodge charged">
           {/* STANDING, not rating — and the number is the headline because it is the thing
@@ -450,7 +451,7 @@ export function Matchmaking({
     try {
       transport = new WebSocketTransport(gameServerUrlWith({ mm: '1' }));
     } catch {
-      setError('Could not reach the game server.');
+      setError('Couldn’t reach the game server.');
       setSearching(false);
       return;
     }
@@ -512,7 +513,7 @@ export function Matchmaking({
     try {
       transport = new WebSocketTransport(gameServerUrlWith({ room }));
     } catch {
-      setError('Could not reach the match server.');
+      setError('Couldn’t reach the match server.');
       return;
     }
     const lobby = new LobbyClient(transport);

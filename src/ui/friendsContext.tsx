@@ -9,6 +9,7 @@ import { selectedServer } from '../net/env';
 import { useFriends, type FriendsApi } from './useFriends';
 import { ChallengePicker, type ChallengeFormat } from './ChallengePicker';
 import { challengeLine, formatLabel, type PendingChallenge } from './challenge';
+import { SupporterBadge } from './SupporterBadge';
 
 /**
  * ONE shared friends store for the whole menu shell.
@@ -337,6 +338,7 @@ export function FriendToasts({
             disabled={!t.from.username}
           >
             <span className="fr-toast-name">{t.from.handle}</span>
+            <SupporterBadge supporter={t.from.supporter} role={t.from.role} />
             <span className="fr-toast-sub">
               {t.kind === 'invite'
                 ? challengeLine(t.invite?.format ?? null)

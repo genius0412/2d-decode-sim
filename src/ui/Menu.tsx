@@ -65,9 +65,9 @@ import { DRIVETRAIN_LABELS, INTAKE_SHORT } from './robotLabels';
 import { rangeFill } from './rangeFill';
 
 const INTAKE_LABELS: Record<IntakeStyle, string> = {
-  sloped: 'Sloped intake',
-  vector: 'Vector wheel intake',
-  triangle: 'Triangle intake',
+  sloped: 'Sloped',
+  vector: 'Vector wheel',
+  triangle: 'Triangle',
 };
 
 /** the shooting range a flywheel inertia is tuned for: a LOW-inertia wheel spins
@@ -83,10 +83,10 @@ function optimizedZone(inertia: number): string {
 // (CHAIN_MODE_LABELS / CHAIN_INTAKE_LABELS) are shared with the leaderboard config
 // summary via ../games/chain/labels so both name the archetype/intake identically.
 const CHAIN_MODE_BLURBS: Record<ChainScoreMode, string> = {
-  turret: 'Aims itself and fires one at a time',
-  twinturret: 'Two shooters on one turret · faster, holds less',
-  drum: 'Face the goal and fire a fast stream',
-  dumper: 'Face the goal and dump the whole load up close',
+  turret: 'Aims itself · one at a time, from anywhere',
+  twinturret: 'Aims itself · two shooters, a little faster, holds less',
+  drum: 'Aim by turning · a fast stream',
+  dumper: 'Aim by turning · the whole load at once, up close',
 };
 
 /**
@@ -419,7 +419,7 @@ export function Menu({ settings, onChange }: Props) {
                 <div className="ds-stat">
                   <span className="sv" style={{ fontSize: 13 }}>
                     {INTAKE_SHORT[spec.intake]}
-                    {spec.canSort ? ' +sort' : ''}
+                    {spec.canSort ? ' · sorter' : ''}
                   </span>
                   <span className="sl">intake</span>
                 </div>
@@ -491,13 +491,13 @@ export function Menu({ settings, onChange }: Props) {
                     not exist. Same split the leaderboard's spec summary makes. */}
                 {isDecode ? (
                   <span className="om">
-                    {DRIVETRAIN_LABELS[r.drivetrain]} · {r.massLb} lb · {r.driveRpm} RPM ·{' '}
+                    {DRIVETRAIN_LABELS[r.drivetrain]} · {r.massLb} lb · {r.driveRpm} rpm ·{' '}
                     {INTAKE_SHORT[r.intake]} · {r.flywheelInertia} inertia
-                    {r.canSort ? ' · sorts' : ''}
+                    {r.canSort ? ' · sorter' : ''}
                   </span>
                 ) : (
                   <span className="om">
-                    {DRIVETRAIN_LABELS[r.drivetrain]} · {r.massLb} lb · {r.driveRpm} RPM ·{' '}
+                    {DRIVETRAIN_LABELS[r.drivetrain]} · {r.massLb} lb · {r.driveRpm} rpm ·{' '}
                     {CHAIN_INTAKE_LABELS[r.chainIntake ?? CHAIN_DEFAULT_INTAKE]} ·{' '}
                     {CHAIN_MODE_LABELS[r.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]}
                   </span>
@@ -514,7 +514,7 @@ export function Menu({ settings, onChange }: Props) {
                 <span className="ot">＋ Save current</span>
                 <span className="od">
                   {alreadySaved
-                    ? 'Already in your garage'
+                    ? 'Already saved'
                     : `${spec.name || 'Unnamed'} → slot ${savedRobots.length + 1}`}
                 </span>
               </button>
@@ -549,16 +549,16 @@ export function Menu({ settings, onChange }: Props) {
                 {isDecode ? (
                   <>
                     <span className="om">
-                      {DRIVETRAIN_LABELS[p.drivetrain]} · {p.massLb} lb · {p.driveRpm} RPM ·{' '}
+                      {DRIVETRAIN_LABELS[p.drivetrain]} · {p.massLb} lb · {p.driveRpm} rpm ·{' '}
                       {INTAKE_SHORT[p.intake]} · {p.flywheelInertia} inertia
-                      {p.canSort ? ' · sorts' : ''}
+                      {p.canSort ? ' · sorter' : ''}
                     </span>
                     <span className="oz">🎯 {optimizedZone(p.flywheelInertia)}</span>
                   </>
                 ) : (
                   <>
                     <span className="om">
-                      {DRIVETRAIN_LABELS[p.drivetrain]} · {p.massLb} lb · {p.driveRpm} RPM ·{' '}
+                      {DRIVETRAIN_LABELS[p.drivetrain]} · {p.massLb} lb · {p.driveRpm} rpm ·{' '}
                       {CHAIN_INTAKE_LABELS[p.chainIntake ?? CHAIN_DEFAULT_INTAKE]}{' '}
                       {CHAIN_INTAKE_MOUNT_LABELS[intakeMountOf(p)]} · {p.ballStorage} store
                     </span>

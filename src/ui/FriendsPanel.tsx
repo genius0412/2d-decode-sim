@@ -16,7 +16,7 @@ import { SupporterBadge } from './SupporterBadge';
 
 /** compact game name for an activity line ("In a match · DECODE") */
 function gameShort(game: 'decode' | 'chain' | null): string {
-  return game === 'chain' ? 'Chain' : game === 'decode' ? 'DECODE' : '';
+  return game === 'chain' ? 'Chain Reaction' : game === 'decode' ? 'DECODE' : '';
 }
 
 /** the chess.com-style activity line for an ONLINE friend: what they're doing,
@@ -203,7 +203,7 @@ export function FriendsPanel({
           )}
 
           {sent.length > 0 && (
-            <Section title="Sent" count={sent.length}>
+            <Section title="Sent challenges" count={sent.length}>
               {sent.map((s) => (
                 <div className="fr-row" key={s.id}>
                   <span className="fr-who static">
@@ -295,7 +295,7 @@ export function FriendsPanel({
           )}
 
           {outgoing.length > 0 && (
-            <Section title="Sent" count={outgoing.length}>
+            <Section title="Sent requests" count={outgoing.length}>
               {outgoing.map((p) => (
                 <Row key={p.userId} p={p} onOpenProfile={onOpenProfile}>
                   <button

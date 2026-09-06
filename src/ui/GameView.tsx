@@ -393,7 +393,7 @@ export function GameView({
               <>
                 <div className="net-spinner" />
                 <h3>Reconnecting…</h3>
-                <p>Restoring your connection - your run keeps going.</p>
+                <p>Your run keeps going.</p>
               </>
             )}
           </div>
@@ -657,12 +657,12 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
                 <span className="chip">{CHAIN_MODE_LABELS[hud.chain.mode].toUpperCase()}</span>
                 <span className="chip">HOPPER {hud.hopper.length}/{hud.chain.storage}</span>
                 <span className={`chip ${hud.chain.mult > 1 ? 'on' : ''}`}>×{hud.chain.mult}</span>
-                {hud.chain.carrying && <span className="chip on">◍ CARRYING RING</span>}
-                {hud.chain.ringAction === 'pickup' && <span className="chip prompt">◎ PICK UP RING ▸</span>}
-                {hud.chain.ringAction === 'place' && <span className="chip prompt">◎ PLACE RING ▸</span>}
+                {hud.chain.carrying && <span className="chip on">◍ CARRYING CATALYST</span>}
+                {hud.chain.ringAction === 'pickup' && <span className="chip prompt">◎ PICK UP CATALYST ▸</span>}
+                {hud.chain.ringAction === 'place' && <span className="chip prompt">◎ PLACE CATALYST ▸</span>}
                 {/* the catapult's throw is on its OWN key, so name it — otherwise the only
                     discoverable action is the claw button, which just puts the ring down */}
-                {hud.chain.ringAction === 'fling' && <span className="chip prompt">◎ THROW RING ▸</span>}
+                {hud.chain.ringAction === 'fling' && <span className="chip prompt">◎ THROW CATALYST ▸</span>}
                 {hud.chain.endgame === 'ascended' && <span className="chip on">▲ ASCENDED</span>}
                 {hud.chain.endgame === 'parked' && <span className="chip on">■ PARKED</span>}
               </>
@@ -670,7 +670,7 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
             {!cr && hud.mode === 'match' &&
               (hud.fouls[hud.alliance].minor > 0 || hud.fouls[hud.alliance].major > 0) && (
                 <span className="chip warn">
-                  FOULS {hud.fouls[hud.alliance].minor}m {hud.fouls[hud.alliance].major}M
+                  FOULS {hud.fouls[hud.alliance].minor} MIN · {hud.fouls[hud.alliance].major} MAJ
                 </span>
               )}
             {/* A CARD is issued to the TEAM, and a RED voids the alliance's match points —
