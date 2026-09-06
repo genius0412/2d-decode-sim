@@ -500,19 +500,36 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
     playback control is locked while a capture runs (it is a capture of THIS canvas, so
     scrubbing mid-record scrubs the FILE) and a row of four dead controls beside a "● REC 12%"
     label does not explain that.
-  - **↓ Video** (`src/ui/replayVideo.ts`) is the one that LASTS: `MediaRecorder` over
-    `canvas.captureStream(60)`, no dependency. It stops being a re-simulation and becomes a
-    recording, so it outlives every patch, needs no sim, and can be sent to someone without
-    DSIM. It captures in REAL TIME off the live canvas — the replay restarts at tick 0 and
-    plays through — so a full match takes a full match, and every playback control is LOCKED
-    while it runs (scrubbing mid-record would be scrubbing in the file).
-    **The render loop is rAF, which a browser STOPS for a hidden tab**, so the recorder is
-    paused and resumed on `visibilitychange`. Without that the sim stalls while the encoder
-    keeps running on the wall clock and bakes the frozen field into the middle of the file —
-    measured: capturing a canvas whose rAF never fired gave a 110-byte, zero-frame video, and a
-    1 s stall mid-capture stretched a 1.96 s recording to 2.97 s. `pickVideoMime` feature-
-    detects and returns NULL where there is no `MediaRecorder`; the viewer then falls back to
-    the data export rather than offering a button that silently produces nothing.
+  - **↓ Video** (`src/ui/replayVideo.ts`) is the one that LASTS: it stops being a
+    re-simulation and becomes a recording, so it outlives every patch, needs no sim, and can be
+    sent to someone without DSIM. THREE FORMATS, and the menu states each one's cost: WebM/VP9
+    (default), WebM/VP8 (fastest), MP4/H.264 (for phones and editors).
+    **THE FAST PATH IS WEBCODECS, AND IT EXISTS BECAUSE `MediaRecorder` CANNOT BEAT REAL TIME.**
+    It stamps frames by when they ARRIVE, not by the timestamp the frame carries — measured, 300
+    frames explicitly stamped for 5.00s of video came out as 1.39s and 0.05s depending only on
+    how fast they were written, and feeding it a `MediaStreamTrackGenerator` does not change
+    that. `VideoEncoder` does honour the stamp, so the replay is re-simulated and drawn as fast
+    as the machine manages and frame `i` is stamped at `i/60`. Measured end to end: a **2:42
+    match encodes in 24s (6.8×)**, and the file reads back at 162.05s against 162.07s intended,
+    seeking and decoding at 5s/80s/150s. MP4 keeps the real-time path because muxing H.264 is a
+    second CONTAINER, not a second encoder.
+    - **`src/ui/webm.ts` is a hand-written muxer** — WebCodecs returns raw chunks, and the client
+      bundle is React + Rapier and nothing else. One video track, no seek index, no audio. Two
+      traps it documents: assembling the file as one `number[]` and `push(...bytes)`ing frames
+      into it overflows the call stack on the first real recording, and every EBML size must be
+      computed over the byte RUNS rather than a flattened array.
+    - **ENCODE SIZE IS CAPPED** (`MAX_EDGE` 1280). The replay canvas is layout × devicePixelRatio
+      — 2496×1074 on an ordinary desktop, i.e. 2.7 megapixels × 9,724 frames. That alone turned a
+      ten-second job into one still unfinished after two and a half minutes. Frames are drawn at
+      full size and downsampled on the way into the encoder.
+    - ⚠️ **NEVER YIELD WITH `setTimeout` IN THE CAPTURE LOOP** (`yieldToBrowser` uses a
+      MessageChannel). A background or unpainted tab clamps `setTimeout(…0)` to ~1s, which is
+      exactly when somebody leaves the tab to encode; it read 0.6× real time throttled and 13×
+      once the yield was an ordinary task. The fast path never touches rAF, so unlike the
+      real-time one it cannot be starved by a hidden tab and needs no `visibilitychange` dance.
+    - A canvas that has not been LAID OUT is 0×0, and the encoder accepts a 2×2 config happily,
+      produces empty frames, and the viewer quietly downloads the JSON instead — hence the
+      explicit size guard in `recordFast`.
   - **↓ Data** is the container verbatim (`{format, versions, seed, setups, tracks}`, the same
     JSON the server stores) — the only form that is still a REPLAY: re-playable in-sim at full
     fidelity by any build whose versions match. A video cannot be stepped, seeked in-sim, or

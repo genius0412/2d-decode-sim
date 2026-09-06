@@ -21,7 +21,7 @@ import { updatePenalties } from '../src/sim/penalties';
 import { aimSolution, robotInLaunchZone } from '../src/sim/robot';
 import { updateHumanPlayers } from '../src/sim/humanPlayer';
 import { startMatch } from '../src/sim/match';
-import { pickVideoMime, videoExt } from '../src/ui/replayVideo';
+import { availableVideoFormats, videoFormat } from '../src/ui/replayVideo';
 import { gateColliderPos, gateRestOn, pushingGate } from '../src/sim/goal';
 import { chassisCorners } from '../src/sim/physics';
 import { pointDepthInChassis } from '../src/sim/physics';
@@ -10023,20 +10023,26 @@ function pinScene(
     /**
      * THE VIDEO EXPORT'S FALLBACK BRANCH, which is the half that can be tested headlessly.
      *
-     * `pickVideoMime` feature-detects `MediaRecorder` and must return NULL where there is none
-     * — Node here, but really any embedded webview without it — because the viewer branches on
-     * that null to fall back to the JSON export rather than offering a button that silently
-     * produces nothing. The recording itself needs a real canvas and is verified in a browser.
+     * `availableVideoFormats` feature-detects `VideoEncoder` and `MediaRecorder` and must come
+     * back EMPTY where there is neither — Node here, but really any embedded webview — because
+     * the menu branches on that to offer the JSON export and say so, rather than listing
+     * buttons that silently produce nothing. The encoding itself needs a real canvas and is
+     * verified in a browser.
      */
     check(
-      'replay video: no MediaRecorder ⇒ no mime, so the viewer falls back to the data export',
-      typeof MediaRecorder === 'undefined' ? pickVideoMime() === null : pickVideoMime() !== null,
+      'replay video: no encoder ⇒ no formats offered, so the menu falls back to the data export',
+      typeof VideoEncoder === 'undefined' && typeof MediaRecorder === 'undefined'
+        ? availableVideoFormats().length === 0
+        : availableVideoFormats().length > 0,
     );
     check(
-      'replay video: the file extension follows the container that was actually recorded',
-      videoExt('video/webm;codecs=vp9') === 'webm' &&
-        videoExt('video/mp4;codecs=avc1') === 'mp4' &&
-        videoExt('video/webm') === 'webm',
+      'replay video: every format states its own extension, and only WebM claims to be fast',
+      videoFormat('webm-vp9').ext === 'webm' &&
+        videoFormat('webm-vp8').ext === 'webm' &&
+        videoFormat('mp4').ext === 'mp4' &&
+        videoFormat('webm-vp9').fast &&
+        videoFormat('webm-vp8').fast &&
+        !videoFormat('mp4').fast,
     );
     // ...and the one that MUST stay playable, or the download button would never be offered
     check(

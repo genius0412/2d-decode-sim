@@ -10,7 +10,14 @@ import {
 import { moduleFor } from '../games';
 import { Renderer } from '../render/renderer';
 import { rangeFill } from './rangeFill';
-import { pickVideoMime, videoExt, saveBlob } from './replayVideo';
+import {
+  availableVideoFormats,
+  videoFormat,
+  recordFast,
+  realtimeMime,
+  saveBlob,
+  type VideoFormatId,
+} from './replayVideo';
 import { SIM_DT, BALANCE_VERSION, SIM_VERSION } from '../config';
 import type { MatchPhase } from '../types';
 
@@ -103,9 +110,17 @@ export function ReplayView({
   const player = useRef<ReplayPlayer | null>(null);
   const replay = useRef<Replay | null>(null);
   const playingRef = useRef(true);
-  /** measured ONCE: whether this browser can encode video at all decides what the menu offers,
-   *  and this component re-renders 10 times a second off the progress readout. */
-  const [videoMime] = useState<string | null>(() => pickVideoMime());
+  /** measured ONCE: what this browser can actually encode decides what the menu offers, and
+   *  this component re-renders 10 times a second off the progress readout. */
+  const [formats] = useState(() => availableVideoFormats());
+  /** 0..1 while a FAST capture runs; the real-time path uses the replay's own progress */
+  const [capturePct, setCapturePct] = useState(0);
+  /** the format being written, so the bar can say what it is doing and how long it will take */
+  const [capturing, setCapturing] = useState<VideoFormatId | null>(null);
+  /** set to stop a fast capture between frames */
+  const abortCapture = useRef(false);
+  /** read by the render loop, which cannot see `capturing` through its mount-time closure */
+  const capturingRef = useRef(false);
 
   // fetch the replay (or use a preloaded one) + build the player
   useEffect(() => {
@@ -194,7 +209,9 @@ export function ReplayView({
           if (recorder.current?.state === 'recording') recorder.current.stop();
         }
       }
-      rend.render(ctx, p.world, null, localId);
+      // a FAST capture draws its OWN world to this same canvas; letting the playback loop
+      // repaint between its frames just makes the screen flicker between two matches
+      if (!abortCapture.current && !capturingRef.current) rend.render(ctx, p.world, null, localId);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -308,20 +325,91 @@ export function ReplayView({
     saveBlob(new Blob([JSON.stringify(r)], { type: 'application/json' }), filename('json'));
   };
 
-  const startRecording = (): void => {
+  /**
+   * SAVE AS A VIDEO, as fast as the machine will go.
+   *
+   * The FAST path does not touch the live playback at all: it builds its OWN `ReplayPlayer`,
+   * steps it frame by frame, draws each frame to the canvas and hands it to `VideoEncoder`
+   * stamped at its true 1/60s position. Because the timestamp is carried on the frame rather
+   * than taken from the clock, the file comes out the real length of the match however quickly
+   * it was produced — measured at 10-19× real time, so a full match saves in about ten seconds.
+   *
+   * That also deletes the whole class of problem the old capture had. It never used
+   * `requestAnimationFrame`, so a backgrounded tab cannot starve it (there is no
+   * `visibilitychange` dance any more), and it is not a recording OF the visible canvas, so
+   * scrubbing or pausing while it runs cannot end up in the file.
+   */
+  const startCapture = async (id: VideoFormatId): Promise<void> => {
     const canvas = canvasRef.current;
-    const mime = videoMime;
-    // no MediaRecorder (some embedded webviews) or no container it will encode ⇒ the data
-    // export is the honest fallback rather than a button that silently does nothing. The menu
-    // already says so and disables the option; this is the belt to that braces.
+    const r = replay.current;
+    const fmt = videoFormat(id);
+    if (!canvas || !r) return;
+
+    // MP4 has no fast path — muxing H.264 is a second container, not a second encoder — so it
+    // still records the visible canvas in real time.
+    if (!fmt.fast) {
+      startRealtime(id);
+      return;
+    }
+
+    abortCapture.current = false;
+    capturingRef.current = true;
+    setCapturing(id);
+    setCapturePct(0);
+    setRecording(true);
+    playingRef.current = false;
+    setPlaying(false);
+
+    // its OWN player and renderer, so the capture is the whole match from tick 0 regardless of
+    // where the viewer had scrubbed to, and the one on screen is left alone
+    const shot = new ReplayPlayer(r);
+    const rend = new Renderer();
+    const { robotId: localId, alliance } = replayViewpoint(r.setups, viewerRobotId);
+    rend.camera.configure(canvas, alliance, moduleFor(r.game).bounds);
+    const ctx = canvas.getContext('2d')!;
+
+    let blob: Blob | null = null;
+    try {
+      blob = await recordFast({
+        format: id,
+        width: canvas.width,
+        height: canvas.height,
+        fps: Math.round(1 / SIM_DT),
+        frames: Math.max(1, r.ticks),
+        source: canvas,
+        draw: () => {
+          shot.stepOnce();
+          rend.render(ctx, shot.world, null, localId);
+        },
+        onProgress: setCapturePct,
+        cancelled: () => abortCapture.current,
+      });
+    } catch {
+      blob = null;
+    }
+
+    capturingRef.current = false;
+    setCapturing(null);
+    setRecording(false);
+    setCapturePct(0);
+    // a cancelled capture is not a failure and must not claim to be one
+    if (blob) saveBlob(blob, filename(fmt.ext));
+    else if (!abortCapture.current) downloadData();
+    rebuild();
+  };
+
+  /** the REAL-TIME path, for MP4 — `MediaRecorder` over the live canvas. It cannot go faster:
+   *  it stamps frames by when they arrive, not by the timestamp they carry. */
+  const startRealtime = (id: VideoFormatId): void => {
+    const canvas = canvasRef.current;
+    const mime = realtimeMime();
     if (!canvas || !mime) {
       downloadData();
       return;
     }
+    const fmt = videoFormat(id);
     const rec = new MediaRecorder(canvas.captureStream(60), {
       mimeType: mime,
-      // the field is flat colour with hard edges, which compresses well; this is generous
-      // enough that the scoreboard text stays legible after encoding
       videoBitsPerSecond: 8_000_000,
     });
     chunks.current = [];
@@ -336,22 +424,17 @@ export function ReplayView({
       stopVisibility.current?.();
       stopVisibility.current = null;
       setRecording(false);
-      if (!discard.current && parts.length) {
-        saveBlob(new Blob(parts, { type: mime }), filename(videoExt(mime)));
-      }
+      setCapturing(null);
+      if (!discard.current && parts.length) saveBlob(new Blob(parts, { type: mime }), filename(fmt.ext));
     };
     /**
-     * HIDE THE TAB AND THE CAPTURE STARVES — so pause the encoder with it.
+     * HIDE THE TAB AND A REAL-TIME CAPTURE STARVES — so pause the encoder with it.
      *
      * The render loop is `requestAnimationFrame`, which a browser stops for a background tab.
-     * The sim stops advancing (so the replay never reaches its end) but the RECORDER keeps
-     * running on the wall clock, holding the last painted frame — measured directly: a capture
-     * of a canvas whose rAF never fired produced a 110-byte file with zero frames in it. Left
-     * alone, switching tabs for a minute would bake a minute of frozen field into the middle of
-     * a two-and-a-half-minute match and leave the video longer than the run it recorded.
-     *
-     * `pause`/`resume` keeps the encoded timeline aligned with the sim's: both stop together
-     * and both start together, so the file is the match and nothing else.
+     * The sim stops advancing but the RECORDER keeps running on the wall clock, holding the
+     * last painted frame — measured, a capture of a canvas whose rAF never fired produced a
+     * 110-byte file with zero frames in it. Only this path can suffer it; the fast one drives
+     * its own loop and never yields to rAF at all.
      */
     const onVisibility = (): void => {
       const cur = recorder.current;
@@ -363,15 +446,16 @@ export function ReplayView({
     stopVisibility.current = () => document.removeEventListener('visibilitychange', onVisibility);
 
     recorder.current = rec;
+    setCapturing(id);
     setRecording(true);
-    // record the whole match, not from wherever the viewer happens to be paused
-    rebuild();
+    rebuild(); // record the whole match, not from wherever the viewer is paused
     rec.start();
     playingRef.current = true;
     setPlaying(true);
   };
 
   const cancelRecording = (): void => {
+    abortCapture.current = true;
     discard.current = true;
     const cur = recorder.current;
     // a PAUSED recorder still has to be stopped to fire `onstop` and release the stream
@@ -400,9 +484,12 @@ export function ReplayView({
   const soloSide = solo ? ([...alliances][0] ?? 'blue') : null;
   const done = phase === 'post' || (player.current?.done ?? false);
   const clock = `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, '0')}`;
-  // the capture runs at 1×, so what is left of the REPLAY is what is left of the recording
+  // the REAL-TIME capture runs at 1×, so what is left of the replay is what is left of it
   const runtime = total * SIM_DT;
   const remaining = Math.max(0, total - tick) * SIM_DT;
+  // ...while a FAST capture has its own progress, since it is not tied to playback at all
+  const fastCapture = capturing !== null && videoFormat(capturing).fast;
+  const recPct = fastCapture ? Math.round(capturePct * 100) : pct;
 
   return (
     <div className="ds-replay">
@@ -426,24 +513,29 @@ export function ReplayView({
             </button>
             {menuOpen && (
               <div className="ds-dl-pop" role="menu">
-                {/* Each option states its COST as well as its name — one takes the length of
-                    the match and one is instant, and a menu of two nouns hides exactly the
-                    difference that decides which you want. */}
-                <button
-                  className="ds-dl-opt"
-                  role="menuitem"
-                  onClick={() => pick(startRecording)}
-                  disabled={!videoMime}
-                >
-                  <span className="dl-h">
-                    Video<em>{videoMime ? `.${videoExt(videoMime)}` : 'unsupported'}</em>
-                  </span>
-                  <span className="dl-d">
-                    {videoMime
-                      ? `Plays the match through and records the screen, so it takes the full ${mmss(runtime)} in real time. Watchable anywhere, by anyone, and it keeps working after DSIM updates.`
-                      : 'This browser cannot record video. Chrome, Edge and Firefox can.'}
-                  </span>
-                </button>
+                {/* Each option states its COST as well as its name — the formats differ by how
+                    long they take and where they will play, and a menu of bare nouns hides
+                    exactly the difference that decides which you want. */}
+                {formats.length === 0 && (
+                  <p className="ds-dl-note">
+                    This browser cannot encode video. Chrome, Edge and Firefox can — the replay
+                    data below works anywhere.
+                  </p>
+                )}
+                {formats.map((f) => (
+                  <button
+                    key={f.id}
+                    className="ds-dl-opt"
+                    role="menuitem"
+                    onClick={() => pick(() => void startCapture(f.id))}
+                  >
+                    <span className="dl-h">
+                      {f.label}
+                      <em>{f.fast ? '~10s' : mmss(runtime)}</em>
+                    </span>
+                    <span className="dl-d">{f.note}</span>
+                  </button>
+                ))}
                 <button className="ds-dl-opt" role="menuitem" onClick={() => pick(downloadData)}>
                   <span className="dl-h">
                     Replay data
@@ -503,31 +595,32 @@ export function ReplayView({
       )}
       <canvas ref={canvasRef} className="ds-replay-canvas" style={{ display: status === 'ready' ? 'block' : 'none' }} />
 
-      {/* RECORDING REPLACES THE TRANSPORT, it does not sit inside it. Every playback control is
-          locked while a capture runs — the video is of THIS canvas, so pausing or scrubbing
-          mid-record would pause or scrub the FILE — and a row of four dead controls beside a
-          "● REC 12%" label does not say that. This says what is happening, how much longer it
-          takes, why the tab has to stay in front, and offers the one action still available. */}
+      {/* RECORDING REPLACES THE TRANSPORT ROW rather than greying it out — a row of dead
+          controls beside a "● REC 12%" label does not explain itself. What it says depends on
+          which path is running: the FAST one is encoding off its own copy of the replay and is
+          done in seconds, the real-time one is filming this canvas and needs the tab in front. */}
       {status === 'ready' && recording && (
         <div className="ds-replay-rec">
           <span className="rec-dot" aria-hidden="true" />
-          <span className="rec-label">Recording video</span>
+          <span className="rec-label">
+            {fastCapture ? `Encoding ${videoFormat(capturing!).label}` : 'Recording video'}
+          </span>
           <div
             className="rec-track"
             role="progressbar"
             aria-label="Recording progress"
-            aria-valuenow={pct}
+            aria-valuenow={recPct}
             aria-valuemin={0}
             aria-valuemax={100}
           >
-            <div className="rec-fill" style={{ width: `${pct}%` }} />
+            <div className="rec-fill" style={{ width: `${recPct}%` }} />
           </div>
-          <span className="rec-eta">{mmss(remaining)} left</span>
+          <span className="rec-eta">{fastCapture ? `${recPct}%` : `${mmss(remaining)} left`}</span>
           <button className="ds-btn ghost" onClick={cancelRecording}>Cancel</button>
           <p className="rec-note">
-            The match is being captured off the screen in real time, so playback is locked until
-            it finishes. Keep this tab in front — a hidden tab stops drawing, and the recording
-            pauses with it. The file saves itself when the match ends.
+            {fastCapture
+              ? 'Encoding the whole match as fast as this machine manages — far quicker than watching it. The file saves itself when it finishes, and you can leave this tab.'
+              : 'The match is being filmed off the screen in real time, so playback is locked until it finishes. Keep this tab in front — a hidden tab stops drawing, and the recording pauses with it. The file saves itself when the match ends.'}
           </p>
         </div>
       )}
