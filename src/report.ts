@@ -39,15 +39,6 @@ export const REPORT_LABELS: Record<ReportReason, string> = {
   other: 'Something else',
 };
 
-export const REPORT_BLURBS: Record<ReportReason, string> = {
-  cheating: 'Impossible robot, impossible movement, or scores that cannot happen',
-  throwing: 'Deliberately losing — scoring for the other alliance, driving into walls',
-  afk: 'Present but not driving, for most of the match',
-  dodging: 'Keeps leaving ranked matches after being paired',
-  name: 'Offensive display name, team name or robot name',
-  other: 'Anything else — please describe it below',
-};
-
 /** free-text cap. Long enough for a sentence of context, short enough that the field is not
  *  a channel for the abuse it exists to report. */
 export const REPORT_DETAIL_MAX = 300;

@@ -2,7 +2,6 @@ import { useState } from 'react';
 import {
   REPORT_REASONS,
   REPORT_LABELS,
-  REPORT_BLURBS,
   REPORT_DETAIL_MAX,
   type ReportReason,
 } from '../report';
@@ -48,8 +47,7 @@ export function ReportDialog({
       <div className="ds-report">
         <h3 className="ds-report-h">Report submitted</h3>
         <p className="ds-hint">
-          Thanks — a moderator will review it. Reports are checked against the match itself, so
-          there is no need to file more than one.
+          A moderator will check it against the match. One report is enough.
         </p>
         <div className="ds-report-actions">
           <button className="ds-btn" onClick={onClose}>CLOSE</button>
@@ -81,16 +79,19 @@ export function ReportDialog({
       )}
 
       <span className="ds-report-cap">Why</span>
-      <div className="ds-opts">
+      {/* MINI, and no blurb. Six full option cards each carrying a sentence turned a
+          dialog into a page — and every one of those sentences restated its own label
+          ("Not playing / AFK" / "Present but not driving, for most of the match"). The
+          "Who" grid above is already mini; these now match it. */}
+      <div className="ds-opts two">
         {REPORT_REASONS.map((r) => (
           <button
             key={r}
             type="button"
-            className={`ds-opt ${reason === r ? 'on' : ''}`}
+            className={`ds-opt mini ${reason === r ? 'on' : ''}`}
             onClick={() => setReason(r)}
           >
             <span className="ot">{REPORT_LABELS[r]}</span>
-            <span className="od">{REPORT_BLURBS[r]}</span>
           </button>
         ))}
       </div>

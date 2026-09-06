@@ -1620,6 +1620,15 @@
 .ds-panel + .ds-panel {
   margin-top: var(--ds-s-4);
 }
+/* ...and the trailing half, because the sibling rule above only fires when a panel is
+   followed by ANOTHER panel. In Career the practice-replay panel is followed by the
+   period picker, which is not one, so it had no gap below it at all and sat flush
+   against the next control. `.ds-main` is a block, so this collapses with the rule
+   above rather than adding to it: consecutive panels stay 16 apart. Scoped to
+   `.ds-main` on purpose — `.ds-console-in` already owns a 22px gap for its children. */
+.ds-main > .ds-panel {
+  margin-bottom: var(--ds-s-4);
+}
 /* the panel BODY. Written out as `style={{ padding: 16 }}` twelve times because this
    class did not exist. */
 .ds-panel-body {
@@ -1658,9 +1667,11 @@
 .ds-period {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-s-2);
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  /* the page column runs on 16; this was the one block at 8, so a panel above it sat
+     16 away and a panel below it 8 */
+  margin-bottom: var(--ds-s-4);
 }
 .ds-period .ds-select {
   flex: 0 1 auto;

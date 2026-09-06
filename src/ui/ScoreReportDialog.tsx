@@ -34,9 +34,7 @@ export function ScoreReportDialog({
     <div className="ds-report">
       <h3 className="ds-report-h">Report a misscore</h3>
       <p className="ds-hint" style={{ margin: 0 }}>
-        For a score that came out wrong in a way that changed the match: something that
-        scored and was not counted, something that was missed, or a penalty that should not
-        have applied. A moderator checks it against the replay.
+        Only for a score that changed the outcome. A moderator checks it against the replay.
       </p>
 
       <label className="ds-field col">
@@ -45,11 +43,11 @@ export function ScoreReportDialog({
         </span>
         <textarea
           className="ds-input"
-          rows={4}
+          rows={3}
           maxLength={REPORT_DETAIL_MAX}
           value={detail}
           onChange={(e) => setDetail(e.target.value)}
-          placeholder="What the score should have been, and what the sim missed — the more specific, the faster it can be checked"
+          placeholder="What the score should have been, and what the sim missed"
         />
         <span className="ds-hint" style={{ margin: 0 }}>
           {detail.length}/{REPORT_DETAIL_MAX}
