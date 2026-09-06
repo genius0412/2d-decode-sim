@@ -4484,7 +4484,13 @@ button.ds-key:active {
 .ds-standing[data-tier='warning'] .ds-gauge-fill { stroke: var(--ds-warn); }
 .ds-gauge-num {
   fill: var(--ds-ink);
-  font: 750 26px/1 var(--ds-font-ui);
+  /* 17, not 26. These are SVG USER UNITS, and the bowl the number sits in is only
+     `GAUGE_R - GAUGE_W/2` = 33.5 across the radius — at 26 the top corners of "100"
+     land 42.9 from the arc centre, i.e. inside the band. 17 is the largest size whose
+     box clears it (32.8). The 26 was never seen before now: this rule used to name
+     `--ds-font`, which does not exist, so the whole shorthand was dropped and the
+     number quietly inherited the card's size. */
+  font: 750 17px/1 var(--ds-font-ui);
 }
 .ds-gauge-max {
   fill: var(--ds-mut);
