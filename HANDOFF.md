@@ -1,4 +1,55 @@
-# HANDOFF — 2026-09-05b (solo practice runs are kept and rewatchable)
+# HANDOFF — 2026-09-06 (G422 wall pin + what the push measurements actually say)
+
+Branch **alpha**, pushed. `npm test` **1269, ALL PASS** · build · `server:check` green.
+`SIM_VERSION` stays **2** on purpose (see its note: alpha is ONE unreleased batch past main).
+
+## READ FIRST
+
+**Two reported claims, both measured on BOTH branches rather than reasoned about.**
+
+1. *"a pushed robot cannot escape, even strafing"* — TRUE on main, largely FIXED on alpha by
+   the shove rework. Equal chassis, victim against a wall, pure strafe for 6 s:
+   **main 6.8in → alpha 37.2in**. What remains on alpha is real Coulomb stick/slip: the
+   victim's OWN into-wall command adds to the normal force, so escape collapses
+   **37in (0 forward) → 23.6in (0.1) → 1.9in (0.2) → 0in (1.0)**. Lowering wall friction only
+   MOVES that threshold (swept 0.5/0.3/0.15/0.05), it does not remove it. Left alone — pressing
+   yourself into the wall making it worse is honest; tell me if it should be softened.
+2. *"pinning penalties almost never fire"* — TRUE, and alpha was WORSE THAN MAIN. Fixed.
+
+**The G422 bug: the obstruction test only understood a straight reverse.** It asked whether the
+PINNER lay along where the victim was trying to go — true of reversing, false of every SIDEWAYS
+exit. Every existing test had the victim reverse, so nothing caught it. A victim held flat on
+the wall and strafing billed **0** where main billed **1**. It now tests the VICTIM'S intent
+(`PIN_INTO_TRAP_COS`): the only excluded case is driving further INTO the trap, which is the
+self-pinning scene the original test existed for (that check still passes). Success is then
+measured by `PIN_STUCK_SPEED` + criteria A/B — prevention is an outcome, not a stick direction.
+After: heavy tank holding a victim on the wall **6 MINORs / 20 s**; weak x-drive it strafes
+clear of **2**.
+
+## Gotchas hit (both cost real time)
+
+- **A TANK PUSHER GIVEN ONLY `driveY` DOES NOT MOVE.** Tank reads `leftDrive`/`rightDrive`
+  only, so half my first probe measured a victim nobody was holding and reported a free
+  escape. Any pin/push scene with a tank must drive the side sticks.
+- **`git worktree remove --force` FOLLOWED A DIRECTORY JUNCTION** I had made inside the
+  worktree to share `node_modules`, and emptied the real one. Recovered with `npm ci` (no
+  lockfile churn). Do not junction node_modules into a worktree you intend to remove.
+- `PHYS_FRICTION` is NOT the walls — `statics()` never called `setFriction`, so walls ran on
+  Rapier's default 0.5 (effective 0.6 by the AVERAGE combine rule) while the constant's comment
+  claimed it covered them. Now stated as `PHYS_WALL_FRICTION` at the same value; verified a
+  no-op by the full suite.
+
+## Next steps
+
+1. Decide whether the into-wall escape cliff should be softened — it is a balance call, and the
+   lever is `PHYS_WALL_FRICTION` (moves the threshold) not a bug fix.
+2. Still open: the two `fly secrets set` admin lines, the two-account cross-region challenge
+   check, an end-to-end practice upload from a signed-in account, Rapier slice 2, the penalty
+   HITBOX audit, CR `APPROX` values.
+
+---
+
+## HANDOFF — 2026-09-05b (solo practice runs are kept and rewatchable)
 
 Branch **alpha**, at `1cc016d`, pushed. `npm test` **1264, ALL PASS** · `npm run dbtest` ALL PASS
 (+9 practice checks) · `npm run build` · `npm run server:check` · `npm run contrast` 221 ·
