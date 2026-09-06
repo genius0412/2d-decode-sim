@@ -7,7 +7,7 @@ import { QueueCounts } from './QueueCounts';
  * game mode" said nothing the word Play did not, in the one slot that renders
  * twice (the home keycap `.mh` and the rail `.rh`). */
 export const RAIL_ITEMS: ReadonlyArray<{ id: ShellNav; label: string; hint: string }> = [
-  { id: 'play', label: 'Play', hint: 'Ranked, records, practice' },
+  { id: 'play', label: 'Play', hint: 'Practice & compete' },
   { id: 'configure', label: 'Configure', hint: 'Robot & match setup' },
   { id: 'records', label: 'Records', hint: 'Leaderboard & career' },
   { id: 'profile', label: 'Profile', hint: 'Account & settings' },
