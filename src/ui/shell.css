@@ -3625,6 +3625,13 @@ input[type='range']:focus-visible {
   box-shadow: var(--ds-block);
 }
 /* the team line is identity, not feedback — first thing to go when space is tight */
+/* the robot preview is a CANVAS of the real sprite, drawn on the field's own mat —
+   see the note in RobotPreview.tsx for why it does not theme with the panel. */
+.ds-robot-sprite {
+  display: block;
+  border-radius: var(--ds-round);
+  border: 1px solid var(--ds-hud-line);
+}
 .ds-hero-view {
   display: grid;
   place-items: center;

@@ -15,10 +15,19 @@ export function drawRobot(
   // dropped rather than changing a single pixel here.
   _screenUp?: { x: number; y: number },
   _world?: unknown,
+  /**
+   * PREVIEW ONLY: paint the outline this colour instead of the alliance's.
+   *
+   * The builder's hero used to be a hand-drawn SVG schematic, which is how it drifted
+   * away from the robot you actually drive. It renders THIS sprite now, and a preview
+   * has no alliance — it is your robot, not a red or blue one. Optional and unset on
+   * the field, so nothing about match rendering changes.
+   */
+  outline?: string,
 ): void {
   const hl = r.spec.length / 2;
   const hw = r.spec.width / 2;
-  const color = r.alliance === 'blue' ? C.COLORS.blue : C.COLORS.red;
+  const color = outline ?? (r.alliance === 'blue' ? C.COLORS.blue : C.COLORS.red);
   // The alliance lives in `color` (the OUTLINE). `fill` is the supporter cosmetic
   // and can never change which alliance a robot reads as.
   const fill = C.chassisFill(r.spec.chassisColor);
