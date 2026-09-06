@@ -1122,10 +1122,25 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
     geometric overlap alone, so contact by itself says nothing about who is holding whom.
     Measured: idle victim 0 → 3 MINORs over 12 s, while an idle or passing-by opponent stays 0.
     Restoring the letter of the rule is returning that branch to `false`.
-  - **`pinnedAgainstWall` is NOT in the rule** (a FIELD element is an example, "such as"). It is
-    kept because it is the only thing breaking the SYMMETRY of a shove, and it costs little:
-    criterion B ends any pin that travels 2 ft, so the only open-field pin the rule sustains is a
-    stationary stalemate — and a stationary stalemate is mutual, which criterion C ends.
+  - **A PIN DOES NOT NEED A WALL.** `pinnedAgainstWall` (which is NOT in the rule — a FIELD
+    element is an example, "such as") used to be a hard requirement, kept as the only thing
+    breaking the SYMMETRY of a shove. That made an open-floor pin draw nothing at all. Two
+    clauses replace it, and between them they do the job better:
+    **(a) the PINNER must be driving INTO its victim** — `rrContacts` is recorded on geometric
+    overlap alone, so contact says nothing about who is holding whom; and
+    **(b) a robot CORNERED against a solid is ESCAPING, NOT PINNING.** (b) is easy to miss and
+    dropping the wall test without it silently cancels every wall pin there is: the victim held
+    against a wall pushes BACK into its pinner, the reverse direction then also reads as a pin,
+    and criterion C throws the pair out as mutual. Sixteen existing checks went to zero on
+    exactly that. Stated directly it is the better rule anyway — a robot with a solid at its
+    back and an opponent at its front is the one being HELD, and pressing toward the opponent
+    is its only way out.
+    Two robots meeting in open floor are both free to leave, so both qualify and criterion C
+    correctly calls it the mutual shove it is. Measured mid-field, 58in from any wall: a light
+    pusher holding a heavy idle victim bills 3 MINORs / 12 s with the victim at 0, while an
+    idle opponent, one driving away, and an equal-chassis mutual shove all bill nothing.
+    ⚠️ A stalemate test needs EQUAL chassis — a light pusher against a heavy victim is not
+    mutual, the heavy one wins and pins the light one against the far wall, which is a real foul.
   - **The count ENDS only on the rule's A/B/C**, never on the hold merely lapsing: (A) 2 ft apart
     for >3 s, (B) either robot 2 ft from where the pin initiated for >3 s, (C) the pinner is
     itself pinned. A and B **PAUSE** the count first and it **RESUMES** — that is stated twice in

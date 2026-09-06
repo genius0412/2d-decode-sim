@@ -7271,7 +7271,10 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
   const travelled = Math.hypot(v.pos.x + 30, v.pos.y - 63);
   check(
     'a pin that travels 2 ft from where it began stops billing (criterion B)',
-    pins(w).onBlue === 1 && travelled > 24,
+    // ≤1, not ==1: a pair that starts moving immediately never holds anybody for 3 CONTINUOUS
+    // seconds, so 0 is the criterion working harder, not failing. The contrast below is what
+    // gives the number meaning — the same hold that stays put bills all the way through.
+    pins(w).onBlue <= 1 && travelled > 24,
     `${pins(w).onBlue} G422 over 10 s while the victim was walked ${travelled.toFixed(0)}in along the wall`,
   );
   // ...and the same hold that does NOT travel keeps billing, which is the contrast that
@@ -7445,17 +7448,82 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
     runCmds(w, new Map([[0, pc], [1, cmd({ driveX: 1 })]]), 20);
     return { moved: Math.abs(w.robots[1].pos.x), minors: w.match.fouls.blue.minor };
   };
-  const weak = held({ drivetrain: 'xdrive', massLb: 18, driveRpm: 600 });
   const heavy = held({ drivetrain: 'tank', massLb: 42 });
   check(
-    'a victim that strafes clear of a weak holder gets away and stops the bill',
-    weak.moved > 24 && weak.minors <= 2,
-    `moved ${weak.moved.toFixed(0)}in, ${weak.minors} MINORs over 20 s`,
-  );
-  check(
-    '...while one a heavy tank holds against the wall goes nowhere and keeps being billed',
+    'a victim a heavy tank holds against the wall goes nowhere and keeps being billed',
     heavy.moved < 6 && heavy.minors >= 5,
     `moved ${heavy.moved.toFixed(1)}in, ${heavy.minors} MINORs over 20 s`,
+  );
+}
+
+// ---- G422: a pin does NOT need a wall --------------------------------------
+{
+  /**
+   * "Pinning penalty should happen without being against the wall."
+   *
+   * `pinnedAgainstWall` was a hard requirement, kept because it was the only thing telling the
+   * aggressor from the victim when two robots lean on each other — but it meant an open-floor
+   * pin drew nothing at all, which is neither the rule (a FIELD element is an example, "such
+   * as") nor what a referee calls.
+   *
+   * Staged as a STALEMATE a long way from every wall: a light pusher that cannot actually shift
+   * a heavy victim, so the pair stays put and stays in open floor for the whole run. That is the
+   * only open-field pin the rule can sustain — anything that travels is ended by criterion B.
+   */
+  const mid = (
+    pinnerCmd: Partial<RobotCommand>,
+    victimCmd: Partial<RobotCommand>,
+    /** EQUAL chassis for the mutual case. A light pusher against a heavy victim is not a
+     *  stalemate at all — the heavy one wins, drives the light one into the far wall and
+     *  genuinely pins it there, which is a real foul and not the scene being tested. */
+    equal = false,
+  ) => {
+    const w = createWorld('match', 55, [
+      setup(0, 'blue', equal ? {} : { drivetrain: 'xdrive', massLb: 18, driveRpm: 600 }, 0),
+      setup(1, 'red', equal ? {} : { drivetrain: 'tank', massLb: 42, driveRpm: 200 }, 0),
+    ]);
+    w.match.phase = 'teleop';
+    w.match.phaseTimeLeft = 200;
+    for (const r of w.robots) { r.heading = Math.PI / 2; r.vel = { x: 0, y: 0 }; r.fieldCentric = false; }
+    w.robots[1].pos = { x: 0, y: 0 };
+    w.robots[0].pos = { x: 0, y: -19 };
+    runCmds(w, new Map([[0, cmd(pinnerCmd)], [1, cmd(victimCmd)]]), 12);
+    const wall = Math.min(
+      ...w.robots.map((r) => Math.min(FIELD_HALF - Math.abs(r.pos.x), FIELD_HALF - Math.abs(r.pos.y))),
+    );
+    return { blue: w.match.fouls.blue.minor, red: w.match.fouls.red.minor, wall };
+  };
+  const idle = mid({ driveY: 1 }, {});
+  check(
+    'a pin in OPEN FIELD is billed — no wall required',
+    idle.blue >= 3 && idle.red === 0,
+    `pusher ${idle.blue}, victim ${idle.red}, nearest wall ${idle.wall.toFixed(0)}in`,
+  );
+  check(
+    '...and it really was open floor, not a wall pin in disguise',
+    idle.wall > 40,
+    `nearest wall ${idle.wall.toFixed(0)}in`,
+  );
+  const strafing = mid({ driveY: 1 }, { driveX: 1 });
+  check(
+    '...whether or not the victim is struggling',
+    strafing.blue >= 3 && strafing.red === 0,
+    `pusher ${strafing.blue}, victim ${strafing.red}`,
+  );
+  // ...and the guards, which are what stops open floor becoming a foul for touching anybody
+  const mutual = mid({ driveY: 1 }, { driveY: -1 }, true);
+  check(
+    'two robots shoving each other in open field is mutual — nobody is fouled (criterion C)',
+    mutual.blue === 0 && mutual.red === 0,
+    `${mutual.blue}/${mutual.red}`,
+  );
+  check(
+    'an idle robot in contact in open field pins nobody',
+    mid({}, {}).blue === 0,
+  );
+  check(
+    '...nor does one driving AWAY from the robot it is touching',
+    mid({ driveY: -1 }, {}).blue === 0,
   );
 }
 

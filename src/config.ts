@@ -108,6 +108,8 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *      the sim, and `updatePenalties` was the one place that excluded it;
  *    · a robot-robot contact that is SLIDING no longer aligns the pair, so a pusher is not
  *      steered by the victim escaping it (`CONTACT_SLIP_RELIEF`);
+ *    · G422 no longer needs a WALL — an open-field pin is billed, with the asymmetry coming
+ *      from the pinner driving in and from a cornered robot counting as escaping, not pinning;
  *    · G422 no longer needs the victim to be struggling — an idle victim held against a wall
  *      is pinned, gated instead on the PINNER driving into it (`PIN_PRESS_COS`);
  *    · G422 recognises the ORDINARY WALL PIN. The obstruction test asked whether the PINNER

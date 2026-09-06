@@ -946,57 +946,84 @@ function isPinning(
   pinnerCmd: RobotCommand | undefined,
 ): boolean {
   if (!contact) return false;
-  if (!pinnedAgainstWall(pinner, pinned)) return false;
   const e = escapeDir(pinner, pinned);
   if (!e) return false;
+
+  /**
+   * THE PINNER HAS TO BE DOING THE HOLDING — and this, not a wall, is what breaks the SYMMETRY
+   * of a shove.
+   *
+   * `pinnedAgainstWall` used to be a hard requirement, kept (it is NOT in the rule — a FIELD
+   * element is an example, "such as") precisely because it was the only thing telling the
+   * aggressor from the victim when two robots are leaning on each other. But it also meant a
+   * pin in OPEN FIELD drew nothing at all, which is not what the rule says and not what a
+   * referee calls: reported as "pinning penalty should happen without being against the wall."
+   *
+   * Requiring the pinner to be DRIVING INTO its victim does the same job directly. Two robots
+   * shoving head-on both satisfy it, which makes the pin mutual, and criterion C already
+   * throws a mutual pin out as nobody's foul — so the stalemate the wall test existed to
+   * exclude is still excluded, by the clause that is actually about it. What it no longer
+   * excludes is the ASYMMETRIC case: one robot driving into another that is trying to get away
+   * across open floor, which is a pin by every word of the rule.
+   *
+   * `rrContacts` is recorded on geometric OVERLAP ALONE (physics.ts), so contact by itself says
+   * nothing about who is holding whom; without this, an incidental lean would bill a MINOR
+   * every 3 s.
+   */
+  const push = attemptDir(pinner, pinnerCmd);
+  if (!push || push.x * e.x + push.y * e.y < C.PIN_PRESS_COS) return false;
+
+  /**
+   * ...AND A ROBOT CORNERED AGAINST A SOLID IS ESCAPING, NOT PINNING.
+   *
+   * Without this, dropping the wall requirement quietly cancelled every wall pin there is. The
+   * victim held against a wall pushes BACK into its pinner, which is pressing toward it — so
+   * the reverse direction also read as a pin, criterion C called the pair mutual, and the whole
+   * thing was thrown out as nobody's foul. Measured: sixteen existing checks went to zero.
+   *
+   * The wall test used to prevent that as a side effect (the pusher is not against anything, so
+   * the reverse never qualified). Stated directly it is a better rule than the one it replaces:
+   * a robot with a solid at its back and an opponent at its front is the one being HELD, and
+   * pressing toward the opponent is the only way out. That is escaping. It cannot also be the
+   * pinning.
+   *
+   * Two robots meeting in open floor are both free to leave, so both still qualify, and
+   * criterion C throws that out as the mutual shove it is.
+   */
+  if (pinnedAgainstWall(pinned, pinner)) return false;
 
   /**
    * A VICTIM DOES NOT HAVE TO BE STRUGGLING TO BE PINNED.
    *
    * The rule's own words are "and the opponent ROBOT is ATTEMPTING TO MOVE", and reading that
    * as "the victim's stick is deflected this tick" is what kept the foul rare: a driver who is
-   * held against the wall stops mashing the stick — they line up a shot, they wait for their
-   * partner, they give up — and the pin stopped counting the moment they did. Reported as
-   * "pinning penalties still don't happen often enough; the victim needs to be trying to
-   * escape for them to get a penalty, and that shouldn't be the case."
+   * held stops mashing the stick — they line up a shot, they wait for their partner, they give
+   * up — and the pin stopped counting the moment they did. A referee cannot see a stick; what
+   * they see is one robot holding another, and they call it either way.
    *
-   * A referee cannot see a stick. What they see is one robot holding another against a wall,
-   * and they call that whether or not the victim is fighting it. So an idle victim is still
-   * pinned — but then something has to keep an incidental lean off the foul sheet, and the
-   * honest test is the PINNER: it has to be driving INTO the victim, not merely touching it.
-   * `rrContacts` is recorded on geometric overlap alone (see physics.ts), so contact by itself
-   * says nothing about whether anyone is holding anyone.
-   *
-   * ⚠️ This is a DEVIATION from the rule as written, in the same class as
-   * `POSSESSION_REBILL_S`. Restoring the letter of it means returning this branch to `false`.
+   * ⚠️ A DEVIATION from the rule as written, in the same class as `POSSESSION_REBILL_S`.
    */
   const want = attemptDir(pinned, cmd);
-  if (!want) {
-    const push = attemptDir(pinner, pinnerCmd);
-    return !!push && push.x * e.x + push.y * e.y >= C.PIN_PRESS_COS;
-  }
+  if (!want) return true;
+
   /**
-   * "...PREVENTING the movement..." — so a robot that is not trying to LEAVE is not being
-   * prevented from anything. The one scene that has to stay clean is a robot driving ITSELF
-   * into a wall: it satisfies contact, attempting to move, and going nowhere, while the
-   * opponent behind it prevents nothing. Measured before this existed, the WEAKEST legal build
-   * "pinned" a default chassis that way.
+   * ...and the ONE case still excluded: a robot driving ITSELF into something it cannot pass.
+   * It satisfies contact, attempting to move and going nowhere, while the opponent behind it
+   * prevents nothing — measured, the WEAKEST legal build "pinned" a default chassis that way.
    *
-   * THE TEST IS THE VICTIM'S INTENT, NOT THE PINNER'S BEARING. It used to require the PINNER to
-   * lie along `want` — which is true of a straight reverse and false of every SIDEWAYS exit, so
-   * a robot held flat against a wall and strafing to get out was ruled un-pinned no matter how
-   * stuck it was. That is the common real pin and it drew nothing: measured on an equal pair,
-   * a victim welded to the wall (1.1in in six seconds) billed ZERO, where the pre-rewrite code
-   * billed one. It also contradicts the rule's own words, which name exactly this case —
-   * prevention "either direct or transitive (such as against a FIELD element)": pressed into a
-   * wall, the wall does the holding and the pinner supplies the press.
+   * THIS TEST ONLY MEANS ANYTHING WHEN THERE IS A TRAP. `escapeDir` points from the pinner to
+   * the victim, so `want` agreeing with it is a robot pressing further into whatever is behind
+   * it — but only if something IS behind it. In open field that same direction is the genuine
+   * escape, straight away from the pinner, and excluding it would throw out the very case this
+   * change exists to catch. So it is asked only when the victim really is against a solid.
    *
-   * So the only thing excluded is driving INTO the trap. `escapeDir` points from the pinner to
-   * the victim, i.e. the way the victim is being shoved, so `want` agreeing with it is a robot
-   * pressing itself further in — not escaping. Anything else (sideways, reverse, diagonal) is
-   * an attempt to leave, and whether it SUCCEEDS is measured later by `PIN_STUCK_SPEED` and by
-   * criteria A/B, which is where it belongs: prevention is an outcome, not a stick direction.
+   * Note it deliberately does NOT ask whether the pinner lies along `want`: that is true of a
+   * straight reverse and false of every SIDEWAYS exit, so it ruled out the ordinary wall pin
+   * (measured: a victim welded to the wall billed ZERO). Whether an escape SUCCEEDS is measured
+   * afterwards by `PIN_STUCK_SPEED` and criteria A/B — prevention is an outcome, not a stick
+   * direction.
    */
+  if (!pinnedAgainstWall(pinner, pinned)) return true;
   return e.x * want.x + e.y * want.y < C.PIN_INTO_TRAP_COS;
 }
 
