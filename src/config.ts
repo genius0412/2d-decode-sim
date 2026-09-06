@@ -106,6 +106,10 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *      cleared outside auto/teleop;
  *    · PENALTIES ARE ASSESSED IN FREE DRIVE — `freeplay` is a live phase everywhere else in
  *      the sim, and `updatePenalties` was the one place that excluded it;
+ *    · a robot-robot contact that is SLIDING no longer aligns the pair, so a pusher is not
+ *      steered by the victim escaping it (`CONTACT_SLIP_RELIEF`);
+ *    · G422 no longer needs the victim to be struggling — an idle victim held against a wall
+ *      is pinned, gated instead on the PINNER driving into it (`PIN_PRESS_COS`);
  *    · G422 recognises the ORDINARY WALL PIN. The obstruction test asked whether the PINNER
  *      lay along where the victim was trying to go — true of a straight reverse, false of every
  *      SIDEWAYS exit — so a robot held flat against a wall and strafing to get out was ruled
@@ -223,6 +227,18 @@ export const PIN_WALL_SLOP = 3; // in
  * along the escape — and so ruled out every sideways exit, i.e. the ordinary wall pin.
  */
 export const PIN_INTO_TRAP_COS = 0.34;
+/**
+ * How squarely the PINNER must be driving into its victim for an IDLE victim to count as
+ * pinned — `cos` of the angle between the pinner's commanded direction and the line to the
+ * victim. 0.34 is the same ~70° cone as `PIN_INTO_TRAP_COS`.
+ *
+ * Only consulted when the victim is asking to go nowhere. A victim held against a wall stops
+ * working the stick long before they stop being held, so requiring a live escape command is
+ * what made this foul rare — but with that requirement gone, something has to keep an
+ * incidental lean off the foul sheet, and `rrContacts` is recorded on overlap alone. This is
+ * that something: touching is not pinning, driving into someone is.
+ */
+export const PIN_PRESS_COS = 0.34;
 /**
  * "for more than 3 seconds" — how long criterion A or B must hold before the PIN is over.
  *
@@ -762,6 +778,22 @@ export const PHYS_CONTAIN_SLOP = 0.75; // in
  * a contact that can slip, which is a bigger piece of work than this dial.
  */
 export const CONTACT_PAIR_SPIN = 0.6;
+/**
+ * How fast a robot-robot contact has to SLIDE before it stops aligning the pair (in/s).
+ *
+ * The settling term turns both chassis flush to the shared contact normal, which is right for
+ * a pair that is held together and wrong the moment one of them leaves: the normal belongs to
+ * the pair, so a turning victim dragged its pusher's heading around with it. Measured, a
+ * pusher commanding only straight forward copied its victim's heading at 102-110% and followed
+ * it 72in across the field — "I turn with them and follow them".
+ *
+ * Grip is `1 / (1 + slip / this)`, so this is the slip at which the alignment is HALVED. It
+ * discriminates cleanly because the two cases are far apart: a genuinely held pair slips 0.0
+ * in/s (both leaning, or the victim idle) and keeps every bit of the settling it always had,
+ * while a victim strafing or pivoting off the contact slips 5-36. Lower = a contact that lets
+ * go sooner. Raise it back toward Infinity to restore the old lock-on.
+ */
+export const CONTACT_SLIP_RELIEF = 4;
 /**
  * Friction on the ROBOT and BALL colliders — resists a pinned robot sliding out of a squeeze
  * (the old model squared-and-held; 0 let it squirt).

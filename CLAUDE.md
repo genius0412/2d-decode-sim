@@ -177,6 +177,18 @@ if it names a game element (artifact, gate, particle, catalyst, beam) it belongs
      stronger. The dial is honest about being a dial; a contact that can slip is the real fix.
      `rotVn` (the ω×r term) belongs ONLY here, clamped to `[0, press]` — it damps a spin, and it
      must not amplify one, and it must never reach the settling term, where it limit-cycles.
+     **A SLIDING CONTACT ALIGNS NOTHING** (`CONTACT_SLIP_RELIEF`) — this is the "contact that
+     can slip" the paragraph above calls the real fix, and it is what stops a pusher being
+     STEERED BY ITS VICTIM. The settling term turns BOTH chassis flush to the SHARED normal, so
+     when the victim turned, the normal turned and the pusher was turned to keep up: measured, a
+     pusher commanding nothing but straight forward copied its victim's heading at **102-110%**
+     and rode it 72in across the field still touching — "I turn with them and follow them". Real
+     bumpers let go, so the settling `align` is scaled by `1 / (1 + slip / CONTACT_SLIP_RELIEF)`,
+     the slip measured at the contact point WITH ω×r. That discriminates perfectly because the
+     cases are far apart: a genuinely held pair slips **0.0 in/s** and keeps every bit of the
+     settling it always had, an escaping one slips 5-36. Tracking fell 105% → **21%**.
+     ω×r is SAFE here and not in `press` because it enters as a MAGNITUDE that only ATTENUATES
+     — it has no sign to flip and cannot drive the heading, so it cannot limit-cycle.
 - **THE PAIR PASS ACCUMULATES; IT DOES NOT WRITE** (`ContactAcc`). It used to rotate both chassis
   before the walls / goal faces / classifier / gate arm were asked anything, so those surfaces
   worked out their geometry against a robot an opponent had already turned — the exact
@@ -1100,6 +1112,16 @@ total. An older note here claimed the manual said 10/30; that was a PREVIOUS sea
   - **"Attempting to move" must read SIDE-DRIVE too** (`attemptDir`). It read only
     `driveX/driveY/rotate`, which a Traditional-tank driver on separate sticks never fills — a
     tank robot was never attempting to move and so could not be pinned AT ALL.
+  - ⚠️ **A VICTIM DOES NOT HAVE TO BE STRUGGLING** (`PIN_PRESS_COS`), which is a DEVIATION from
+    the rule's "and the opponent ROBOT is ATTEMPTING TO MOVE", in the same class as
+    `POSSESSION_REBILL_S`. Reading that as "the stick is deflected this tick" is what kept the
+    foul rare: somebody held against a wall stops working the stick long before they stop being
+    held — they line up a shot, they wait, they give up — and a referee cannot see a stick
+    anyway. So an idle victim is still pinned. The guard that REPLACES the struggle test is on
+    the PINNER: it must be driving INTO the victim, because `rrContacts` is recorded on
+    geometric overlap alone, so contact by itself says nothing about who is holding whom.
+    Measured: idle victim 0 → 3 MINORs over 12 s, while an idle or passing-by opponent stays 0.
+    Restoring the letter of the rule is returning that branch to `false`.
   - **`pinnedAgainstWall` is NOT in the rule** (a FIELD element is an example, "such as"). It is
     kept because it is the only thing breaking the SYMMETRY of a shove, and it costs little:
     criterion B ends any pin that travels 2 ft, so the only open-field pin the rule sustains is a

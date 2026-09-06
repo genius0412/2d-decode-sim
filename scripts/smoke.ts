@@ -7310,10 +7310,50 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
     sideDriveOnly === 1 && sideDriveOnly === arcade,
     `side-drive only ${sideDriveOnly}, arcade ${arcade} — the control style must not matter`,
   );
+  /**
+   * A VICTIM COMMANDING NOTHING IS STILL PINNED — this asserted the opposite until it was
+   * reported that "pinning penalties still don't happen often enough; the victim needs to be
+   * trying to escape for them to get a penalty, and that shouldn't be the case."
+   *
+   * Reading the rule's "attempting to move" as "the stick is deflected this tick" is what kept
+   * the foul rare. Somebody held against a wall stops working the stick long before they stop
+   * being held — they line up a shot, they wait, they give up — and a referee cannot see a
+   * stick anyway. A DEVIATION from the letter of G422, in the same class as
+   * `POSSESSION_REBILL_S`; the guard that replaces it is on the PINNER (below).
+   */
   check(
-    '...but a victim commanding nothing at all is not being pinned',
-    held({}) === 0,
-    `${held({})}`,
+    'a victim commanding nothing at all is STILL being pinned',
+    held({}) >= 1,
+    `${held({})} MINORs`,
+  );
+}
+
+// ---- G422: ...but the PINNER has to be doing the holding ---------------------
+{
+  /**
+   * The guard that took over from "the victim must be struggling". `rrContacts` is recorded on
+   * geometric OVERLAP ALONE (physics.ts), so without this any robot resting near an idle
+   * opponent by a wall would bill a MINOR every 3 s. Touching is not pinning.
+   */
+  const guard = (pinnerCmd: Partial<RobotCommand>): number => {
+    const w = pinWorld();
+    runCmds(w, new Map([[0, cmd(pinnerCmd)], [1, cmd({})]]), 12);
+    return w.match.fouls.blue.minor;
+  };
+  check(
+    'an idle robot merely touching an idle victim is not pinning it',
+    guard({}) === 0,
+    `${guard({})} MINORs over 12 s`,
+  );
+  check(
+    '...nor is one driving PAST it rather than into it',
+    guard({ driveX: 1 }) === 0,
+    `${guard({ driveX: 1 })} MINORs over 12 s`,
+  );
+  check(
+    '...but one driving INTO it against the wall is, struggle or no struggle',
+    guard({ driveY: 1 }) >= 3,
+    `${guard({ driveY: 1 })} MINORs over 12 s`,
   );
 }
 

@@ -1149,9 +1149,44 @@ function squareUpPair(
    * veto is removed. So the pair keeps its own align (already capped internally at its own flush)
    * and reports `Infinity` outward.
    */
-  const noVeto = (d: TurnDelta): TurnDelta => ({ ...d, flushErr: Infinity });
-  accDelta(acc, a.id, noVeto(contactTorqueDelta(a, -nx, -ny, press, contacts, true, 1, 0)));
-  accDelta(acc, b.id, noVeto(contactTorqueDelta(b, nx, ny, press, contacts, true, 1, 0)));
+  /**
+   * ...AND A SLIDING CONTACT CANNOT ALIGN ANYTHING. This is the "contact that can slip" the
+   * note on `CONTACT_PAIR_SPIN` calls the real fix, and it is what stops a pusher being
+   * STEERED BY ITS VICTIM.
+   *
+   * The settling term turns BOTH chassis flush to the shared normal. Held still that is right
+   * — compliant bumpers do flatten. But the normal belongs to the PAIR, so when the victim
+   * turns, the normal turns, and the pusher was turned to keep up: measured, a pusher
+   * commanding nothing but straight forward copied its victim's heading at 102-110% and rode
+   * it 72in across the field still touching. Reported as "when I am driving into another robot
+   * and they are turning and strafing to try to escape, I turn with them and follow them" —
+   * the sim was steering for them.
+   *
+   * Real bumpers let go. A robot spinning or strafing off your corner is SLIDING across it,
+   * and a sliding surface transmits almost no aligning torque. So the settling term is scaled
+   * by how much the contact is slipping, measured at the contact point WITH the ω×r terms,
+   * because a pivoting chassis slips without either robot's centre moving at all.
+   *
+   * ω×r IS SAFE HERE AND NOT IN `press`, and the difference is the whole reason this is a
+   * separate quantity: it enters as a MAGNITUDE that only ever attenuates. It has no sign to
+   * flip and cannot drive the heading, so it cannot produce the limit cycle documented above,
+   * where the aligning term and the impulse fought each other tick by tick. It is a grip
+   * fraction in (0, 1].
+   *
+   * It is also self-limiting in exactly the right place: a pair that is genuinely HELD slips
+   * zero (measured: 0.0 in/s, both leaning or the victim idle) and keeps the full settling it
+   * has always had, while an escaping victim slips 5-36 in/s and the alignment fades.
+   */
+  const vaCx = pva.x - a.angVel * ray;
+  const vaCy = pva.y + a.angVel * rax;
+  const vbCx = pvb.x - b.angVel * rby;
+  const vbCy = pvb.y + b.angVel * rbx;
+  const slip = Math.abs((vaCx - vbCx) * -ny + (vaCy - vbCy) * nx);
+  const grip = 1 / (1 + slip / C.CONTACT_SLIP_RELIEF);
+
+  const settle = (d: TurnDelta): TurnDelta => ({ ...d, align: d.align * grip, flushErr: Infinity });
+  accDelta(acc, a.id, settle(contactTorqueDelta(a, -nx, -ny, press, contacts, true, 1, 0)));
+  accDelta(acc, b.id, settle(contactTorqueDelta(b, nx, ny, press, contacts, true, 1, 0)));
 
   // ...and each chassis carries this push into whatever ELSE it is resting on, which is what
   // squares a robot up against the wall an opponent is holding it against. See `pressOn`.

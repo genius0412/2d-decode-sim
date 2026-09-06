@@ -943,12 +943,38 @@ function isPinning(
   pinned: RobotState,
   contact: boolean,
   cmd: RobotCommand | undefined,
+  pinnerCmd: RobotCommand | undefined,
 ): boolean {
   if (!contact) return false;
   if (!pinnedAgainstWall(pinner, pinned)) return false;
+  const e = escapeDir(pinner, pinned);
+  if (!e) return false;
+
+  /**
+   * A VICTIM DOES NOT HAVE TO BE STRUGGLING TO BE PINNED.
+   *
+   * The rule's own words are "and the opponent ROBOT is ATTEMPTING TO MOVE", and reading that
+   * as "the victim's stick is deflected this tick" is what kept the foul rare: a driver who is
+   * held against the wall stops mashing the stick — they line up a shot, they wait for their
+   * partner, they give up — and the pin stopped counting the moment they did. Reported as
+   * "pinning penalties still don't happen often enough; the victim needs to be trying to
+   * escape for them to get a penalty, and that shouldn't be the case."
+   *
+   * A referee cannot see a stick. What they see is one robot holding another against a wall,
+   * and they call that whether or not the victim is fighting it. So an idle victim is still
+   * pinned — but then something has to keep an incidental lean off the foul sheet, and the
+   * honest test is the PINNER: it has to be driving INTO the victim, not merely touching it.
+   * `rrContacts` is recorded on geometric overlap alone (see physics.ts), so contact by itself
+   * says nothing about whether anyone is holding anyone.
+   *
+   * ⚠️ This is a DEVIATION from the rule as written, in the same class as
+   * `POSSESSION_REBILL_S`. Restoring the letter of it means returning this branch to `false`.
+   */
   const want = attemptDir(pinned, cmd);
-  // a robot only turning on the spot is still asking to move, and a contact can stop that too
-  if (!want) return !!cmd && Math.abs(cmd.rotate) > 0.1;
+  if (!want) {
+    const push = attemptDir(pinner, pinnerCmd);
+    return !!push && push.x * e.x + push.y * e.y >= C.PIN_PRESS_COS;
+  }
   /**
    * "...PREVENTING the movement..." — so a robot that is not trying to LEAVE is not being
    * prevented from anything. The one scene that has to stay clean is a robot driving ITSELF
@@ -971,8 +997,6 @@ function isPinning(
    * an attempt to leave, and whether it SUCCEEDS is measured later by `PIN_STUCK_SPEED` and by
    * criteria A/B, which is where it belongs: prevention is an outcome, not a stick direction.
    */
-  const e = escapeDir(pinner, pinned);
-  if (!e) return false;
   return e.x * want.x + e.y * want.y < C.PIN_INTO_TRAP_COS;
 }
 
@@ -990,7 +1014,13 @@ function updatePins(world: World, dt: number, commands: Map<number, RobotCommand
       if (pinner.id === pinned.id || pinner.alliance === pinned.alliance) continue;
       pinning.set(
         `${pinner.id}-${pinned.id}`,
-        isPinning(pinner, pinned, inContact(pinner.id, pinned.id), commands.get(pinned.id)),
+        isPinning(
+          pinner,
+          pinned,
+          inContact(pinner.id, pinned.id),
+          commands.get(pinned.id),
+          commands.get(pinner.id),
+        ),
       );
     }
   }
