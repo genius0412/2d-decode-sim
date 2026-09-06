@@ -1423,19 +1423,29 @@ export class Room {
   }
 
   /**
-   * DUO RECORD REMATCH: a vote, not a command.
+   * REMATCH: a vote, not a command — in EVERY room.
    *
-   * A co-op run belongs to both drivers equally, so neither may restart it out from
-   * under the other — mid-match OR from the results screen. Everyone toggles their
-   * own vote, the count is broadcast so both sides can see "1/2", and the match
-   * restarts only once every CONNECTED driver has said yes.
+   * A match belongs to everyone in it, so nobody may restart it out from under the
+   * rest — mid-match OR from the results screen. Each driver toggles their own vote,
+   * the count is broadcast so the room can see "2/4", and the match restarts only
+   * once every CONNECTED driver has said yes.
    *
-   * Restricted to record rooms on purpose. A versus match has an opponent whose
-   * interest is opposed to yours, and ranked has ELO riding on it; "both agree" is a
-   * meaningful gate for co-op and a coercion surface everywhere else.
+   * This used to be record-only, on the reasoning that "everyone agrees" is a
+   * meaningful gate for co-op and a coercion surface in a versus match. Unanimity is
+   * what answers that: nobody is restarted against their will, and declining costs a
+   * player nothing — they simply do not press it. Rooms that want a rematch were
+   * otherwise made to leave and re-queue for each other.
+   *
+   * ⚠️ RANKED CONSEQUENCE, deliberately not decided here. `beginMatch` clears
+   * `finalized`, and `this.ranked` is a ROOM flag, so a rematch in a matchmade room
+   * produces a SECOND rated match without going back through the matchmaker. Rated
+   * friend games are already farmable by a colluding pair and deliberately
+   * unmitigated (see CLAUDE.md), but a button makes it cheaper than a re-queue. If
+   * that becomes a problem the one-line fix is to clear `this.ranked` in
+   * `maybeRematch`, which keeps the feature everywhere and makes the rematch
+   * unrated.
    */
   private voteRematch(id: string, on: boolean): void {
-    if (this.config.kind !== 'record') return;
     if (!this.clients.has(id)) return; // spectators do not get a vote
     if (on) this.rematchVotes.add(id);
     else this.rematchVotes.delete(id);
@@ -1473,7 +1483,6 @@ export class Room {
   /** a driver left or came back: the tally is against CONNECTED drivers, so it has
    *  to be recomputed (and may now be unanimous) */
   private refreshRematch(): void {
-    if (this.config.kind !== 'record') return;
     for (const id of [...this.rematchVotes]) {
       if (!this.clients.has(id)) this.rematchVotes.delete(id);
     }

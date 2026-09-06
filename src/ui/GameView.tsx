@@ -186,9 +186,6 @@ interface Props {
    * in place — an in-place reset desyncs against a server that is still running
    * the old match (that is what made the drivetrain stick/jitter before). */
   onRestartRun?: () => void;
-  /** CO-OP (duo record): restarting is a mutual vote rather than one driver's
-   *  decision. Drives the rematch control and the R binding's behaviour. */
-  coop?: boolean;
 }
 
 export function GameView({
@@ -201,7 +198,6 @@ export function GameView({
   onSettingsChange,
   editLayout = false,
   onRestartRun,
-  coop = false,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const controllerRef = useRef<GameController | null>(null);
@@ -272,8 +268,7 @@ export function GameView({
   // the screen isn't a record run, leaving the binding inert in a versus match.
   useEffect(() => {
     controllerRef.current?.setRestartRequest(onRestartRun ?? null);
-    controllerRef.current?.setCoop(coop);
-  }, [onRestartRun, coop]);
+  }, [onRestartRun]);
 
   /**
    * SOLO PRACTICE finishing is the only end-of-run event this client owns — every other mode
@@ -429,7 +424,7 @@ export function GameView({
             title={
               hud.rematch.mine
                 ? 'You want a rematch — press again to take it back'
-                : 'Vote to restart this run (both drivers must agree)'
+                : 'Vote to restart — everyone still connected has to agree'
             }
           >
             ⟲ REMATCH {hud.rematch.votes}/{hud.rematch.need}
@@ -502,8 +497,8 @@ export function GameView({
           eloResults={controllerRef.current?.getEloResults() ?? null}
           canRematch={!session}
           onRematch={() => controllerRef.current?.rematch()}
-          coopRematch={hud.rematch && hud.rematch.need > 1 ? hud.rematch : null}
-          onCoopRematch={() => controllerRef.current?.toggleRematch()}
+          rematchVote={hud.rematch}
+          onRematchVote={() => controllerRef.current?.toggleRematch()}
           onExit={onExit}
           /* every OTHER driver in this match, by robot id + the name they played under.
              Built from the session's own roster, so it is exactly the set the server will
@@ -890,8 +885,15 @@ function EloResults({ rows }: { rows: EloResultRow[] | null }) {
  * Foul rows show the fouls each alliance COMMITTED (its own count) — the POINTS
  * for those go to the OPPONENT's total (see the footnote), so a foul always
  * benefits the fouled alliance. */
-/** the shared duo-record rematch control. Reads its pressed state from the SERVER
- *  tally rather than a local guess, so both drivers always see the same count. */
+/**
+ * The rematch control, in EVERY multiplayer mode — ranked, custom and record alike.
+ *
+ * It reads its pressed state from the SERVER tally rather than a local guess, so
+ * everyone in the room always sees the same count, and it is a VOTE: the match only
+ * restarts once every connected driver has pressed it. Declining costs nothing —
+ * you simply do not press — which is what makes "everyone agrees" a gate rather
+ * than a way to lean on somebody.
+ */
 function RematchVote({
   vote,
   onToggle,
@@ -914,8 +916,8 @@ function Results({
   eloResults,
   canRematch,
   onRematch,
-  coopRematch,
-  onCoopRematch,
+  rematchVote,
+  onRematchVote,
   onExit,
   matchResult,
   practiceRun,
@@ -937,8 +939,8 @@ function Results({
   canRematch: boolean;
   onRematch: () => void;
   /** duo-record co-op vote (null unless this run has one) */
-  coopRematch: { votes: number; need: number; mine: boolean } | null;
-  onCoopRematch: () => void;
+  rematchVote: { votes: number; need: number; mine: boolean } | null;
+  onRematchVote: () => void;
   onExit: () => void;
   matchResult: MatchResultInfo | null;
   /**
@@ -1006,8 +1008,8 @@ function Results({
         matchResult={matchResult}
         canRematch={canRematch}
         onRematch={onRematch}
-        coopRematch={coopRematch}
-        onCoopRematch={onCoopRematch}
+        rematchVote={rematchVote}
+        onRematchVote={onRematchVote}
         onExit={onExit}
         onWatchReplay={onWatchReplay}
       />
@@ -1156,7 +1158,7 @@ function Results({
             </button>
           )}
           {canRematch && <button onClick={onRematch}>REMATCH</button>}
-          {coopRematch && <RematchVote vote={coopRematch} onToggle={onCoopRematch} />}
+          {rematchVote && <RematchVote vote={rematchVote} onToggle={onRematchVote} />}
           {/* the EXIT, not a fourth primary: `.overlay-buttons button` is accent-filled
               unless `.ghost`, so an unmarked MENU sat beside REMATCH and WATCH REPLAY
               with nothing saying which one the screen expects. */}
@@ -1285,8 +1287,8 @@ function RecordResults({
   practiceRun,
   canRematch,
   onRematch,
-  coopRematch,
-  onCoopRematch,
+  rematchVote,
+  onRematchVote,
   onExit,
   onWatchReplay,
 }: {
@@ -1304,8 +1306,8 @@ function RecordResults({
   canRematch: boolean;
   onRematch: () => void;
   /** duo-record co-op vote (null unless this run has one) */
-  coopRematch: { votes: number; need: number; mine: boolean } | null;
-  onCoopRematch: () => void;
+  rematchVote: { votes: number; need: number; mine: boolean } | null;
+  onRematchVote: () => void;
   onExit: () => void;
   onWatchReplay?: (replay: Replay) => void;
 }) {
@@ -1386,7 +1388,7 @@ function RecordResults({
               {canRematch && <button onClick={onRematch}>RUN AGAIN</button>}
               {/* CO-OP: the run belongs to both drivers, so restarting is a vote —
                   the same control (and the same R binding) as mid-match. */}
-              {coopRematch && <RematchVote vote={coopRematch} onToggle={onCoopRematch} />}
+              {rematchVote && <RematchVote vote={rematchVote} onToggle={onRematchVote} />}
               <button onClick={onExit}>MENU</button>
             </div>
           </>

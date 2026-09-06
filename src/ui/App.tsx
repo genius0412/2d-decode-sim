@@ -919,7 +919,6 @@ export function App() {
         onSettingsChange={update}
         editLayout={editMobileLayout}
         onRestartRun={sessionKind === 'record' && !sessionCoop ? restartRun : undefined}
-        coop={sessionCoop}
         onWatchReplay={(r) => {
           setReplayObj(r);
           // capture the seat NOW: `session` is torn down on the way out of the game

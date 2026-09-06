@@ -293,7 +293,6 @@ export class GameController {
    * which is what keeps the binding inert in a versus match. */
   private restartRequestCb: (() => void) | null = null;
   /** duo-record run: restarting is a mutual VOTE, never one driver's decision */
-  private coop = false;
   /** last vote count we played a cue for — a vote landing is the thing worth
    *  hearing, and only when the number actually moved */
   private lastRematchVotes = 0;
@@ -544,7 +543,7 @@ export class GameController {
    * dropping back is exactly the thing you would otherwise miss.
    */
   private handleRematchAudio(): void {
-    const v = this.coop ? this.session?.rematchVote?.() : null;
+    const v = this.rematchTally();
     const n = v?.votes ?? 0;
     if (n === this.lastRematchVotes) return;
     const rose = n > this.lastRematchVotes;
@@ -784,9 +783,8 @@ export class GameController {
     //    run down unilaterally — the run belongs to both people — so it never
     //    returns early here; the match keeps stepping while the vote sits.
     //  - SOLO record: ask the UI for a whole new run (a fresh room).
-    if (this.input.restartPressed && this.coop) {
-      const v = this.session?.rematchVote?.();
-      this.session?.setRematch?.(!(v?.mine ?? false));
+    if (this.input.restartPressed && this.rematchTally()) {
+      this.toggleRematch();
     } else if (this.input.restartPressed && this.restartRequestCb) {
       this.restartRequestCb();
       return; // the session is going away this frame; don't predict into it
@@ -1043,10 +1041,21 @@ export class GameController {
     this.restartRequestCb = cb;
   }
 
-  /** mark this as a CO-OP run, where restarting is a vote rather than a command.
-   *  Set by the UI from the room config; the controller has no other way to know. */
-  setCoop(on: boolean): void {
-    this.coop = on;
+  /**
+   * The rematch tally, or null when no vote is in play here.
+   *
+   * `need <= 1` is the same as no vote: a solo record run is one driver, and asking
+   * one person to agree with themselves is a button, not a ballot — that run keeps
+   * its ⟲ NEW RUN control instead. Everything else (versus, ranked, custom, duo
+   * record) has two or more drivers and votes.
+   *
+   * This used to be a `coop` flag the UI had to SET on the controller. It no longer
+   * needs to: the server already broadcasts `need`, which answers the same question
+   * without anyone having to remember to pass it.
+   */
+  private rematchTally(): { votes: number; need: number; mine: boolean } | null {
+    const v = this.session?.rematchVote?.() ?? null;
+    return v && v.need > 1 ? v : null;
   }
 
   /** toggle our rematch vote (the on-screen button; the R binding does the same) */
@@ -1249,7 +1258,7 @@ export class GameController {
         : null,
       net: this.session ? this.session.status() : null,
       spectators: this.session?.spectatorCount?.() ?? 0,
-      rematch: this.coop ? (this.session?.rematchVote?.() ?? null) : null,
+      rematch: this.rematchTally(),
     };
   }
 

@@ -10647,13 +10647,45 @@ function pinScene(
     Math.hypot(afterFresh.x - afterStale.x, afterFresh.y - afterStale.y) > 2,
     `moved ${Math.hypot(afterFresh.x - afterStale.x, afterFresh.y - afterStale.y).toFixed(2)}`);
 
-  // a versus room must NOT accept the vote at all — "both agree" is a co-op idea,
-  // and in a rated match it would just be a coercion surface
-  const vs: ServerMsg[] = [];
+  /**
+   * A VERSUS room votes too, and that is a deliberate reversal.
+   *
+   * This was record-only, on the reasoning that "everyone agrees" is a co-op idea and
+   * a coercion surface in a rated match. UNANIMITY is what answers that: nobody is
+   * restarted against their will, and declining costs a player nothing. The rooms
+   * that wanted a rematch were otherwise made to leave and re-queue for each other.
+   */
+  const vs: Record<string, ServerMsg[]> = { v1: [], v2: [] };
+  const mkV = (id: string): Client => ({ ...mkD(id), send: (m) => vs[id].push(m) });
   const vroom = new Room('smoke-vs-rematch', () => {}, { kind: 'versus' });
-  vroom.add({ ...mkD('v1'), send: (m) => vs.push(m) });
+  vroom.add(mkV('v1'));
+  vroom.add(mkV('v2'));
+  vroom.onMessage('v1', { t: 'start' });
+  vroom.advanceForTest(30);
+  const vtally = (id: string) =>
+    [...vs[id]].reverse().find((m) => m.t === 'rematch') as Extract<ServerMsg, { t: 'rematch' }> | undefined;
+
   vroom.onMessage('v1', { t: 'rematch', on: true });
-  check('duo rematch: a VERSUS room ignores the vote entirely', !vs.some((m) => m.t === 'rematch'));
+  check('versus rematch: a VERSUS room accepts the vote', vtally('v1')?.votes === 1);
+  check('versus rematch: the OPPONENT is told the count too',
+    vtally('v2')?.votes === 1 && vtally('v2')?.need === 2 && vtally('v2')?.you === false);
+  check('versus rematch: one vote does NOT restart the match', vroom.tick > 0);
+  vroom.onMessage('v2', { t: 'rematch', on: true });
+  check('versus rematch: ...and unanimity does', vroom.tick === 0, String(vroom.tick));
+
+  /**
+   * A ONE-DRIVER room reports `need: 1`, which is how the client knows there is no
+   * vote here: asking one person to agree with themselves is a button, not a ballot.
+   * `GameController.rematchTally` returns null below 2 so a solo record run keeps its
+   * ⟲ NEW RUN control instead of growing a 1/1 vote.
+   */
+  const solo: ServerMsg[] = [];
+  const sroom = new Room('smoke-solo-rematch', () => {}, { kind: 'record', record: 'solo' });
+  sroom.add({ ...mkD('s1'), send: (m) => solo.push(m) });
+  sroom.onMessage('s1', { t: 'rematch', on: true });
+  const stally = [...solo].reverse().find((m) => m.t === 'rematch') as Extract<ServerMsg, { t: 'rematch' }> | undefined;
+  check('versus rematch: a ONE-driver room reports need 1, so the client shows no vote',
+    stally?.need === 1, String(stally?.need));
 }
 
 // ---- MAINTENANCE LOCKDOWN: when the window actually bites -------------------
