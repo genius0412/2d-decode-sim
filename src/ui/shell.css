@@ -3445,6 +3445,14 @@ tr.lb-detail td {
 }
 .ds-opt.mini {
   padding: 10px 12px;
+  /* CENTRED. `.ds-opt` is a column flex defaulting to `flex-start`, so a mini card —
+     which carries a single `.ot` line and no `.od` — pinned its label to the top edge
+     and left the rest of the box empty. In a grid row that stretches every card to the
+     tallest one, that reads as a label floating above its own button.
+     `.ds-opts.four .ds-opt` deliberately overrides this back to `flex-start` (0,3,0
+     beats 0,2,0): those mount pickers DO carry sub-lines on some cards, and there the
+     labels have to share a top baseline. */
+  justify-content: center;
 }
 .ds-opt.mini .ot {
   font-size: 13px;
@@ -3607,10 +3615,6 @@ input[type='range']:focus-visible {
    in Menu.tsx): a 230px card pinned to the top of an 800px viewport costs more than it returns,
    while a ~110px strip keeps the preview and the numbers without eating the page. */
 .ds-hero {
-  position: sticky;
-  /* BELOW the app bar, which is sticky in this same scroller (see `--ds-bar-h`). */
-  top: var(--ds-bar-h);
-  z-index: 3;
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: 18px;
@@ -3619,41 +3623,8 @@ input[type='range']:focus-visible {
   background: linear-gradient(160deg, var(--ds-tile), var(--ds-panel));
   padding: 18px;
   box-shadow: var(--ds-block);
-  transition: padding 0.16s ease, gap 0.16s ease;
-}
-.ds-hero.stuck {
-  grid-template-columns: 116px 1fr;
-  gap: 14px;
-  padding: 10px 14px;
-  /* square off the top edge — it sits against the header now, not floating in the page */
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-}
-.ds-hero.stuck .ds-hero-view {
-  min-height: 0;
-  padding: 4px;
-}
-.ds-hero.stuck .ds-hero-view svg {
-  max-height: 92px;
-}
-.ds-hero.stuck .ds-hero-info {
-  gap: 8px;
-  justify-content: center;
-}
-.ds-hero.stuck .ds-hero-name {
-  font-size: 17px;
 }
 /* the team line is identity, not feedback — first thing to go when space is tight */
-.ds-hero.stuck .ds-hero-team {
-  display: none;
-}
-.ds-hero.stuck .ds-stats {
-  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
-  gap: 6px;
-}
-.ds-hero.stuck .ds-stat {
-  padding: 4px 8px;
-}
 .ds-hero-view {
   display: grid;
   place-items: center;
@@ -3716,12 +3687,6 @@ input[type='range']:focus-visible {
    same shape as `.ds-btn.small`. */
 .ds-stat .sv.sm {
   font-size: var(--ds-t-md);
-}
-/* the measurement sentinel above `.ds-hero`: self-cancelling, so it is layout-neutral
-   either way; this just gives it an owner in the sheet. */
-.ds-hero-sentinel {
-  height: 1px;
-  margin-bottom: -1px;
 }
 .ds-stat {
   border: 1px solid var(--ds-line-soft);

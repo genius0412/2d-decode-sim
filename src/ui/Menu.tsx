@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '../types';
 import type { ChainScoreMode, DrivetrainType, IntakeStyle, RobotSpec } from '../types';
 import { MAX_SAVED_ROBOTS, ROBOT_PRESETS, CHASSIS_COLORS, CHASSIS_COLOR_KEYS } from '../config';
@@ -87,48 +86,6 @@ const CHAIN_MODE_BLURBS: Record<ChainScoreMode, string> = {
   drum: 'Aim by turning · a fast stream',
   dumper: 'Aim by turning · the whole load at once, up close',
 };
-
-/**
- * Is the pinned hero scrolled past? Drives the compact `.stuck` strip (see `.ds-hero`).
- *
- * A passive SCROLL listener rather than an IntersectionObserver: the offset it compares
- * against is measured ONCE at mount, so each scroll event is a single number comparison — no
- * `getBoundingClientRect`, no forced reflow, and `setStuck` with an unchanged value is a React
- * no-op, so a long drag re-renders only on the two transitions. (IntersectionObserver would be
- * the textbook pick, but it does not fire at all in a backgrounded/hidden view, which makes
- * this impossible to verify — and a feature you cannot check is a feature you do not know
- * works.)
- */
-function useStuck(): [React.RefObject<HTMLDivElement>, boolean] {
-  const ref = useRef<HTMLDivElement>(null);
-  const [stuck, setStuck] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    const root = el?.closest('.ds-app');
-    if (!el || !root) return;
-    // How far the hero pins BELOW the sticky app bar is a CSS contract (`--ds-bar-h`), so this
-    // only has to decide WHEN it is pinned: the sentinel's own offset in the scroll content,
-    // less that bar height. Re-measured on resize because the layout reflows.
-    const barH = () =>
-      parseFloat(getComputedStyle(root).getPropertyValue('--ds-bar-h')) || 0;
-    const measure = () =>
-      el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - barH();
-    let base = measure();
-    const onScroll = () => setStuck(root.scrollTop > base);
-    const onResize = () => {
-      base = measure();
-      onScroll();
-    };
-    onScroll();
-    root.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onResize);
-    return () => {
-      root.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onResize);
-    };
-  }, []);
-  return [ref, stuck];
-}
 
 /** does the current spec exactly match a preset? (value compare) */
 /** a preset match is about the BUILD only — name/team/number are the player's
@@ -247,7 +204,6 @@ const CATAPULT_DIRS: { label: string; yaw: number | null; title: string }[] = [
 ];
 
 export function Menu({ settings, onChange }: Props) {
-  const [sentinelRef, stuck] = useStuck();
   const set = (patch: Partial<GameSettings>) => onChange({ ...settings, ...patch });
   // Apply a fully-formed spec. ASSISTS RIDE THE ROBOT, so the ACTIVE assists always
   // re-mirror from the incoming spec — loading a preset or a saved robot (or switching
@@ -354,17 +310,21 @@ export function Menu({ settings, onChange }: Props) {
     <>
       {/* the page heading is owned by the Configure host */}
       <div className="ds-robot">
-        {/* ---------- robot hero (PINNED — see .ds-hero) ---------- */}
-        <div ref={sentinelRef} aria-hidden className="ds-hero-sentinel" />
-        <div className={`ds-hero${stuck ? ' stuck' : ''}`}>
+        {/* ---------- robot hero ----------
+            NOT pinned. It used to be `position: sticky`, which held 32% of a 720px
+            viewport at rest and still 26% once the compact strip engaged — the strip
+            saved only 40px, because the two rows of stat tiles set the height, not the
+            sprite. A live readout while you drag a slider is worth something, but not a
+            third of the screen for the whole time you are in the builder. */}
+        <div className="ds-hero">
           <div className="ds-hero-view">
             {/* TWO components, not one with a `chain` flag: DECODE's schematic is
                 main's, untouched, and Chain Reaction's is its own — so work on one
                 game's mechanisms can never change how the other's robot looks. */}
             {isDecode ? (
-              <RobotPreview spec={spec} size={stuck ? 96 : 160} />
+              <RobotPreview spec={spec} size={160} />
             ) : (
-              <ChainRobotPreview spec={spec} size={stuck ? 96 : 160} />
+              <ChainRobotPreview spec={spec} size={160} />
             )}
           </div>
           <div className="ds-hero-info">

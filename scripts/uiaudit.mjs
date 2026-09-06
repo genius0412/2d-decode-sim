@@ -51,7 +51,7 @@ const BASELINE = {
   'inline-spacing': 29,
   'fractional-font-size': 0,
   'banned-font-weight': 0,
-  'off-grid-gap': 169,
+  'off-grid-gap': 166,
 };
 
 // ── 1. undefined custom properties ───────────────────────────────────────────
