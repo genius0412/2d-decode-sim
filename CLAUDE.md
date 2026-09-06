@@ -502,26 +502,48 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
     label does not explain that.
   - **↓ Video** (`src/ui/replayVideo.ts`) is the one that LASTS: it stops being a
     re-simulation and becomes a recording, so it outlives every patch, needs no sim, and can be
-    sent to someone without DSIM. THREE FORMATS, and the menu states each one's cost: WebM/VP9
-    (default), WebM/VP8 (fastest), MP4/H.264 (for phones and editors).
+    sent to someone without DSIM. THREE FORMATS — WebM/VP9 (default), WebM/VP8, MP4/H.264 — and
+    **all three go through WebCodecs**, so they all cost the same and the menu quotes it from
+    the match's own length (`FAST_ENCODE_SPEED`, the measured 5×; a 2:42 match saves in ~32s).
     **THE FAST PATH IS WEBCODECS, AND IT EXISTS BECAUSE `MediaRecorder` CANNOT BEAT REAL TIME.**
     It stamps frames by when they ARRIVE, not by the timestamp the frame carries — measured, 300
     frames explicitly stamped for 5.00s of video came out as 1.39s and 0.05s depending only on
     how fast they were written, and feeding it a `MediaStreamTrackGenerator` does not change
     that. `VideoEncoder` does honour the stamp, so the replay is re-simulated and drawn as fast
-    as the machine manages and frame `i` is stamped at `i/60`. Measured end to end: a **2:42
-    match encodes in 24s (6.8×)**, and the file reads back at 162.05s against 162.07s intended,
-    seeking and decoding at 5s/80s/150s. MP4 keeps the real-time path because muxing H.264 is a
-    second CONTAINER, not a second encoder.
-    - **`src/ui/webm.ts` is a hand-written muxer** — WebCodecs returns raw chunks, and the client
-      bundle is React + Rapier and nothing else. One video track, no seek index, no audio. Two
-      traps it documents: assembling the file as one `number[]` and `push(...bytes)`ing frames
-      into it overflows the call stack on the first real recording, and every EBML size must be
-      computed over the byte RUNS rather than a flattened array.
-    - **ENCODE SIZE IS CAPPED** (`MAX_EDGE` 1280). The replay canvas is layout × devicePixelRatio
-      — 2496×1074 on an ordinary desktop, i.e. 2.7 megapixels × 9,724 frames. That alone turned a
-      ten-second job into one still unfinished after two and a half minutes. Frames are drawn at
-      full size and downsampled on the way into the encoder.
+    as the machine manages and frame `i` is stamped at `i/60`. `MediaRecorder` survives ONLY as
+    the MP4 fallback for a browser whose WebCodecs has no H.264 encoder.
+    - **TWO HAND-WRITTEN MUXERS** (`src/ui/webm.ts`, `src/ui/mp4.ts`) — WebCodecs returns raw
+      chunks, not a file, and the client bundle is React + Rapier and nothing else. One video
+      track each, no seek index, no audio, no fragments. MP4 was the slow format purely because
+      it had no container of its own, never because H.264 was slow; adding one took it from
+      2:42 to 3s per 15s of match, the same 5× as the others. Traps both files document:
+      assembling the output as one `number[]` and `push(...bytes)`ing frames into it overflows
+      the call stack on the first real recording; every EBML size must be computed over the byte
+      RUNS rather than a flattened array; MP4's `stco` holds ABSOLUTE file offsets so `moov` is
+      built TWICE (measure, then write) and is safe only because the offset field is
+      fixed-width; and chunks arrive in DECODE order, so `ctts` carries any B-frame reordering
+      (today's browser encoders emit none, which is not a reason to write the file as if none
+      could). The MP4 sample table is asserted headlessly in `npm test`.
+    - ⚠️ **QUALITY IS RESOLUTION HERE, NOT BITRATE** (`MAX_EDGE` 1920). Reported as "video
+      quality is horrible", and the obvious suspects — the rate control and a `latencyMode:
+      'realtime'` that used to ship — turned out to be nearly irrelevant. Scored as PSNR against
+      the scene re-rendered at 1920: the old path (render at the viewer's 2496×1074, `drawImage`
+      down to 1280) managed **35.5 dB**, while rendering NATIVELY at 1920 gives **42.2-42.6 dB**
+      — and sweeping the quantizer across its whole useful range moves 0.3 dB and 1.6× the file
+      size. A >2× canvas downscale is a cheap bilinear filter and it lands on exactly the thin
+      tape lines and the small scoreboard type. So `encodeSize` is a RENDER size: the capture
+      retargets `camera.dpr` and draws straight into a canvas of that size. **It scales UP as
+      well as down** — clamped at 1× it produced a 1280-wide video on a 1280-wide window, which
+      is the bug it was meant to fix. 1920 rather than more because the same encoder that took
+      1920 refused 2496 for H.264.
+    - **The rate control is set deliberately but is not the lever.** `latencyMode: 'quality'`
+      (there is no deadline — every frame is in hand and the file is written at the end), and
+      `bitrateMode: 'quantizer'` where the browser takes it, falling back to the bitrate budget
+      where it does not (Chrome refuses quantizer mode for VP8 outright). ⚠️ The quantizer
+      option is CODEC-SCOPED — `{ vp9: { quantizer } }`, not `{ quantizer }` — and passing it
+      flat is accepted silently and ignored, which reads exactly like an encoder that does not
+      honour it. `BITS_PER_PIXEL` is a CEILING, not a target: VP9 handed 20 Mbps at 1920 spent
+      1.7 of them, so the budget's only job is to stay out of the way.
     - ⚠️ **NEVER YIELD WITH `setTimeout` IN THE CAPTURE LOOP** (`yieldToBrowser` uses a
       MessageChannel). A background or unpainted tab clamps `setTimeout(…0)` to ~1s, which is
       exactly when somebody leaves the tab to encode; it read 0.6× real time throttled and 13×
@@ -530,6 +552,18 @@ The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/ne
     - A canvas that has not been LAID OUT is 0×0, and the encoder accepts a 2×2 config happily,
       produces empty frames, and the viewer quietly downloads the JSON instead — hence the
       explicit size guard in `recordFast`.
+    - **THE CANVAS IS RE-FITTED WHEN `recording` FLIPS**, in its own effect. Two things move it
+      and neither fires a window resize: the capture leaves the backing store at the VIDEO's
+      resolution, and the recording bar REPLACES the transport row at a different height. The
+      viewer came back from a save drawing a 1280×516 field into a 1280×545 box. It is an
+      effect and not a per-frame check because React has committed the row by then, and reading
+      `clientWidth` 60 times a second to notice would force a layout flush for something that
+      changes twice a match.
+    - **`availableVideoFormats` is ASYNC**, because the real question is not "is there a
+      `VideoEncoder`" but "will it take this codec at this size", which only `isConfigSupported`
+      answers — and that is also what decides whether MP4 saves in seconds or has to be filmed,
+      which the menu says out loud. `videoFormat(id)` still answers synchronously off the static
+      table before the probe lands, because the download FILENAME is built from `fmt.ext`.
   - **↓ Data** is the container verbatim (`{format, versions, seed, setups, tracks}`, the same
     JSON the server stores) — the only form that is still a REPLAY: re-playable in-sim at full
     fidelity by any build whose versions match. A video cannot be stepped, seeked in-sim, or

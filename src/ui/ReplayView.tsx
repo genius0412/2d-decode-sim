@@ -15,11 +15,17 @@ import {
   videoFormat,
   recordFast,
   realtimeMime,
+  encodeSize,
   saveBlob,
+  type VideoFormat,
   type VideoFormatId,
 } from './replayVideo';
 import { SIM_DT, BALANCE_VERSION, SIM_VERSION } from '../config';
 import type { MatchPhase } from '../types';
+
+/** how many times faster than real time the WebCodecs path encodes, measured across VP9, VP8
+ *  and H.264 at a 1920 long edge (5.2-5.7×; the low end is the honest one to quote) */
+const FAST_ENCODE_SPEED = 5;
 
 /** m:ss from seconds. Rounds ONCE, before splitting — rounding the two halves separately
  *  prints "1:00" for 119.7 s, because the minutes half floors the unrounded value. */
@@ -110,9 +116,12 @@ export function ReplayView({
   const player = useRef<ReplayPlayer | null>(null);
   const replay = useRef<Replay | null>(null);
   const playingRef = useRef(true);
-  /** measured ONCE: what this browser can actually encode decides what the menu offers, and
-   *  this component re-renders 10 times a second off the progress readout. */
-  const [formats] = useState(() => availableVideoFormats());
+  /** probed ONCE: what this browser can actually encode decides what the menu offers, and this
+   *  component re-renders 10 times a second off the progress readout. It is ASYNC because the
+   *  real question is not "is there a VideoEncoder" but "will it take this codec at this size",
+   *  which only `isConfigSupported` can answer — and that also decides whether MP4 saves in
+   *  seconds or has to be filmed in real time, which the menu says out loud. */
+  const [formats, setFormats] = useState<VideoFormat[]>([]);
   /** 0..1 while a FAST capture runs; the real-time path uses the replay's own progress */
   const [capturePct, setCapturePct] = useState(0);
   /** the format being written, so the bar can say what it is doing and how long it will take */
@@ -121,6 +130,9 @@ export function ReplayView({
   const abortCapture = useRef(false);
   /** read by the render loop, which cannot see `capturing` through its mount-time closure */
   const capturingRef = useRef(false);
+  /** re-fits the canvas backing store to its box; owned by the render loop, called by the
+   *  recording effect (see it for why the canvas stops matching) */
+  const refit = useRef<(() => void) | null>(null);
 
   // fetch the replay (or use a preloaded one) + build the player
   useEffect(() => {
@@ -185,6 +197,9 @@ export function ReplayView({
     const resize = (): void => rend.camera.configure(canvas, alliance, bounds);
     resize();
     window.addEventListener('resize', resize);
+    // ...and let the recording effect below re-fit too; it is the same operation, run at the
+    // other moment the canvas can stop matching its box
+    refit.current = resize;
 
     let raf = 0;
     let lastT = performance.now();
@@ -221,8 +236,27 @@ export function ReplayView({
       cancelAnimationFrame(raf);
       window.clearInterval(readout);
       window.removeEventListener('resize', resize);
+      refit.current = null;
     };
   }, [status, viewerRobotId]);
+
+  /**
+   * RE-FIT THE CANVAS WHENEVER RECORDING STARTS OR STOPS.
+   *
+   * Two things move it and neither fires a window resize. A fast capture renders at the
+   * VIDEO's resolution and leaves the backing store there; and the recording bar REPLACES the
+   * transport row at a different height, so the canvas's box changes size around it. Together
+   * they left the viewer drawing a 1280×516 field into a 1280×545 element after a save —
+   * stretched 5% until something else happened to resize the window.
+   *
+   * It belongs in an effect rather than in the render loop: React has committed the row by the
+   * time this runs, so the element is at its final size, and reading `clientWidth` on every
+   * one of 60 frames a second to check would force a layout flush for a thing that changes
+   * twice a match.
+   */
+  useEffect(() => {
+    refit.current?.();
+  }, [recording, status]);
 
   /**
    * A RECORDING MUST NOT OUTLIVE THE SCREEN THAT STARTED IT. Leaving the viewer mid-capture
@@ -240,6 +274,17 @@ export function ReplayView({
     },
     [],
   );
+
+  // ask the browser what it can encode, once
+  useEffect(() => {
+    let dead = false;
+    void availableVideoFormats().then((f) => {
+      if (!dead) setFormats(f);
+    });
+    return () => {
+      dead = true;
+    };
+  }, []);
 
   /** The menu closes on Escape and on a press anywhere outside it. A popover that only closes
    *  by re-clicking its own button is one people leave open by accident — and this one covers
@@ -345,8 +390,7 @@ export function ReplayView({
     const fmt = videoFormat(id);
     if (!canvas || !r) return;
 
-    // MP4 has no fast path — muxing H.264 is a second container, not a second encoder — so it
-    // still records the visible canvas in real time.
+    // only where this browser has no H.264 encoder at all — see `availableVideoFormats`
     if (!fmt.fast) {
       startRealtime(id);
       return;
@@ -365,15 +409,30 @@ export function ReplayView({
     const shot = new ReplayPlayer(r);
     const rend = new Renderer();
     const { robotId: localId, alliance } = replayViewpoint(r.setups, viewerRobotId);
-    rend.camera.configure(canvas, alliance, moduleFor(r.game).bounds);
+    const bounds = moduleFor(r.game).bounds;
+    rend.camera.configure(canvas, alliance, bounds);
+    /**
+     * RENDER AT THE VIDEO'S RESOLUTION, rather than at the screen's and shrinking each frame.
+     *
+     * `configure` sizes the backing store to the viewer's layout × devicePixelRatio, and the
+     * camera works in CSS units with `dpr` as the only thing tying those to pixels — so
+     * retargeting `dpr` and resizing the canvas to match makes every frame a real render at
+     * the encode size. It used to draw 2496×1074 and `drawImage` it down to 1280, which was
+     * both slower and worse looking: a canvas downscale past 2× is a cheap bilinear filter,
+     * and what it ruins is exactly the thin tape lines and the small scoreboard type.
+     */
+    const { width, height } = encodeSize(rend.camera.w, rend.camera.h);
+    rend.camera.dpr = width / rend.camera.w;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d')!;
 
     let blob: Blob | null = null;
     try {
       blob = await recordFast({
         format: id,
-        width: canvas.width,
-        height: canvas.height,
+        width,
+        height,
         fps: Math.round(1 / SIM_DT),
         frames: Math.max(1, r.ticks),
         source: canvas,
@@ -388,10 +447,19 @@ export function ReplayView({
       blob = null;
     }
 
+    // the canvas is left at the VIDEO's resolution; the render loop's own size watch fits it
+    // back to the viewer's, which it has to do anyway for the recording bar's layout change
+
     capturingRef.current = false;
     setCapturing(null);
     setRecording(false);
     setCapturePct(0);
+    // an MP4 the encoder would not produce is still an MP4 the browser can FILM, and that is a
+    // better answer than silently handing back the JSON. It restarts playback itself.
+    if (!blob && !abortCapture.current && id === 'mp4' && realtimeMime()) {
+      startRealtime(id);
+      return;
+    }
     // a cancelled capture is not a failure and must not claim to be one
     if (blob) saveBlob(blob, filename(fmt.ext));
     else if (!abortCapture.current) downloadData();
@@ -486,6 +554,16 @@ export function ReplayView({
   const clock = `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, '0')}`;
   // the REAL-TIME capture runs at 1×, so what is left of the replay is what is left of it
   const runtime = total * SIM_DT;
+  /**
+   * What a FAST save costs, in the menu, from the match's own length.
+   *
+   * It used to read a flat "~10s", which was true of the clip it was written against and a lie
+   * about a full match — the point of the label is that the formats differ in cost, so it has
+   * to track the thing that actually varies. `FAST_ENCODE_SPEED` is the measured multiple of
+   * real time (5.2-5.7× across every codec and quantizer tried at 1920), rounded DOWN to be
+   * the pessimistic end of that range rather than the flattering one.
+   */
+  const fastEta = `~${Math.max(5, Math.round(runtime / FAST_ENCODE_SPEED))}s`;
   const remaining = Math.max(0, total - tick) * SIM_DT;
   // ...while a FAST capture has its own progress, since it is not tied to playback at all
   const fastCapture = capturing !== null && videoFormat(capturing).fast;
@@ -531,7 +609,7 @@ export function ReplayView({
                   >
                     <span className="dl-h">
                       {f.label}
-                      <em>{f.fast ? '~10s' : mmss(runtime)}</em>
+                      <em>{f.fast ? fastEta : mmss(runtime)}</em>
                     </span>
                     <span className="dl-d">{f.note}</span>
                   </button>

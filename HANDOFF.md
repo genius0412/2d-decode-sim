@@ -1,9 +1,115 @@
+# HANDOFF — 2026-09-06c (replay video: MP4 stops being slow, and the quality problem was resolution)
+
+Branch **alpha**. `npm test` **ALL PASS** · `npm run build` · `npm run server:check` green.
+Client-only — no sim, no server, no migration. `SIM_VERSION` untouched at **2**.
+
+## READ FIRST
+
+Two complaints, and they turned out to have one cause between them and one cause apart.
+
+### "MP4 downloads are way too slow" — it had no CONTAINER, not a slow encoder
+
+MP4 was the last format still going through `MediaRecorder`, which cannot beat real time (it
+stamps frames by when they ARRIVE, not by the stamp the frame carries), so a 2:42 match took
+2:42 to save. The reason it was still there was stated as "muxing H.264 is a second CONTAINER,
+not a second encoder" — true, and the answer was simply to write the container.
+
+`src/ui/mp4.ts` is that: a minimal ISO-BMFF muxer, one H.264 track, no fragments, no audio, the
+twin of `webm.ts`. **MP4 now encodes at exactly the same 5× as WebM** — measured through the
+real `ReplayView`, 15s of match in 3.0s, in all three formats, each reading back at the right
+duration and decoding.
+
+Two things in that file are easy to get wrong and silent when you do, so they are asserted
+headlessly in `npm test` (the muxer is pure — it needs no browser even though the encoder
+feeding it does):
+
+- `stco` holds ABSOLUTE FILE OFFSETS, so `moov` cannot be written until its own length is
+  known. It is built TWICE — measure, then write — which is safe only because the offset is a
+  fixed-width field. Off by one byte and you get a file that opens, reports the right duration
+  and decodes garbage.
+- Chunks arrive in DECODE order. Today's browser encoders emit no B-frames, but writing the
+  file as though none could is a different claim, so `ctts` is emitted when (and only when)
+  presentation and decode order actually differ.
+
+### "video quality for the two webms is horrible" — it was RESOLUTION, and I nearly fixed the wrong thing
+
+The obvious suspects were the rate control and the `latencyMode: 'realtime'` that shipped. I
+built a bench that encodes the same 7s of real match and scores each result as PSNR against the
+scene re-rendered at 1920. Both suspects are nearly irrelevant:
+
+| | bitrate | PSNR |
+|---|---|---|
+| **old path** (render 2496×1074 → `drawImage` to 1280, realtime) | 1.84 Mbps | **35.5 dB** |
+| 1920 native, quantizer 34 | 1.52 Mbps | 42.25 dB |
+| 1920 native, quantizer 22 | 1.88 Mbps | 42.40 dB |
+| 1920 native, quantizer 10 | 2.47 Mbps | 42.55 dB |
+
+**Nearly seven dB, all of it from drawing the frame at the size it is encoded at.** Sweeping
+the quantizer across its whole useful range moves 0.3 dB and 1.6× the file size. (The ~42.5 dB
+ceiling is 4:2:0 chroma subsampling; no encoder setting buys it back.) A >2× canvas downscale
+is a cheap bilinear filter and it lands on exactly the thin tape lines and the small scoreboard
+type.
+
+So `encodeSize` is now a RENDER size, not a downsample target: the capture retargets
+`camera.dpr` and draws straight into a canvas of that size. `MAX_EDGE` is 1920 — the same
+encoder that accepted 1920 for H.264 refused 2496.
+
+⚠️ **Three things I got wrong on the way, all worth keeping:**
+
+1. **`encodeSize` clamped the scale at 1×**, so on a 1280-wide window it produced a 1280-wide
+   video — precisely the resolution being blamed. It has to scale UP to the target too. Caught
+   only because I checked the output dimensions of a real download rather than assuming.
+2. **The quantizer option is CODEC-SCOPED** — `{ vp9: { quantizer } }`, not `{ quantizer }`. A
+   flat one is accepted silently and ignored, which reads exactly like an encoder that does not
+   honour the setting. It cost a whole measurement round; the giveaway was three identical file
+   sizes across a q sweep.
+3. **The canvas was left stale after a capture** (drawing a 1280×516 field into a 1280×545 box,
+   stretched 5%). Two causes, neither of which fires a window resize: the capture leaves the
+   backing store at the video's resolution, and the recording bar replaces the transport row at
+   a different height. Re-fitted in an effect on `recording` — NOT a per-frame check, which
+   would force a layout flush 60 times a second for something that changes twice a match.
+
+Also: `availableVideoFormats` is now **async**, because the honest question is not "is there a
+`VideoEncoder`" but "will it take this codec at this size" — and that is what decides whether
+MP4 saves in seconds or has to be filmed, which the menu states. `videoFormat(id)` still
+answers synchronously off the static table, because the download filename is built from
+`fmt.ext` before the probe lands. The menu's cost label is computed from the match length now
+instead of a hardcoded "~10s" that was a lie about anything longer than the clip it was
+written against.
+
+### Measured end state
+
+Through the real `ReplayView`, 15s of match, all at 1920×818 and correct duration:
+
+| format | encode | size |
+|---|---|---|
+| WebM · VP9 | 3.0s (5×) | 2.5 MB |
+| WebM · VP8 | 3.0s (5×) | 4.0 MB |
+| MP4 · H.264 | 3.0s (5×) | 1.45 MB |
+
+## Next steps
+
+- **Nothing here needs a deploy** — it is all client-side, so Vercel picks it up. The pending
+  server work from the previous session still stands: alpha has not been redeployed since
+  `0baeaa7` ("a pin no longer needs a wall"), which IS sim code the server runs.
+- The two `fly secrets set` admin lines are **still outstanding** — `flyctl secrets set` is
+  blocked for me by the permission classifier, so they have to be run by hand:
+  - `fly secrets set -a dohun-sim-decode ADMIN_USER_IDS='e3d73282-ac91-4940-bd5c-4778ca34212c,0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+  - `fly secrets set -a dsim-alpha ADMIN_USER_IDS='0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+- Untracked debris still in the tree: `scripts/zz-probe-*`, `scripts/zzprobe_*`,
+  `scratch_penalties_backup.ts`.
+- Still open from earlier: two-account cross-region challenge check, an end-to-end practice
+  upload from a signed-in account, Rapier slice 2 (balls), the DECODE penalty HITBOX audit,
+  CR `APPROX` constants.
+
+---
+
 # HANDOFF — 2026-09-06b (the pusher stops steering itself; pins stop needing a struggle)
 
 Branch **alpha**, pushed + deployed. `npm test` **1272, ALL PASS** · build · `server:check` green.
 `SIM_VERSION` stays **2** (alpha is ONE unreleased batch past main; both changes are inside it).
 
-## READ FIRST
+## Previously
 
 **"I turn with them and follow them" was literally true, and it was the SETTLING term.**
 `squareUpPair` turns BOTH chassis flush to the SHARED contact normal. The normal belongs to the

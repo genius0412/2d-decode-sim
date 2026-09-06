@@ -21,7 +21,8 @@ import { updatePenalties } from '../src/sim/penalties';
 import { aimSolution, robotInLaunchZone } from '../src/sim/robot';
 import { updateHumanPlayers } from '../src/sim/humanPlayer';
 import { startMatch } from '../src/sim/match';
-import { availableVideoFormats, videoFormat } from '../src/ui/replayVideo';
+import { availableVideoFormats, videoFormat, videoBitrate } from '../src/ui/replayVideo';
+import { muxMp4 } from '../src/ui/mp4';
 import { gateColliderPos, gateRestOn, pushingGate } from '../src/sim/goal';
 import { chassisCorners } from '../src/sim/physics';
 import { pointDepthInChassis } from '../src/sim/physics';
@@ -10029,21 +10030,109 @@ function pinScene(
      * buttons that silently produce nothing. The encoding itself needs a real canvas and is
      * verified in a browser.
      */
+    const offered = await availableVideoFormats();
     check(
       'replay video: no encoder ⇒ no formats offered, so the menu falls back to the data export',
       typeof VideoEncoder === 'undefined' && typeof MediaRecorder === 'undefined'
-        ? availableVideoFormats().length === 0
-        : availableVideoFormats().length > 0,
+        ? offered.length === 0
+        : offered.length > 0,
     );
+    /**
+     * `videoFormat` must answer BEFORE the probe resolves, because the probe is async and the
+     * download filename is built from `fmt.ext`. A format that came back undefined here would
+     * save the file with the wrong extension, or none.
+     */
     check(
-      'replay video: every format states its own extension, and only WebM claims to be fast',
+      'replay video: every format names its own container, probed or not',
       videoFormat('webm-vp9').ext === 'webm' &&
         videoFormat('webm-vp8').ext === 'webm' &&
-        videoFormat('mp4').ext === 'mp4' &&
-        videoFormat('webm-vp9').fast &&
-        videoFormat('webm-vp8').fast &&
-        !videoFormat('mp4').fast,
+        videoFormat('mp4').ext === 'mp4',
     );
+    /**
+     * The budget is BITS PER PIXEL, so it has to track the frame size rather than being a
+     * fixed Mbps that means something different at every layout — and it has to stay inside
+     * its clamps, which is what keeps a small window watchable and a huge one from writing a
+     * gigabyte.
+     */
+    check(
+      'replay video: the bitrate scales with the frame, between a floor and a ceiling',
+      videoBitrate('webm-vp9', 1600, 688, 60) > videoBitrate('webm-vp9', 800, 344, 60) &&
+        videoBitrate('webm-vp9', 64, 64, 60) === 5_000_000 &&
+        videoBitrate('webm-vp9', 7680, 4320, 60) === 24_000_000 &&
+        videoBitrate('webm-vp8', 1600, 688, 60) > videoBitrate('webm-vp9', 1600, 688, 60),
+    );
+    /**
+     * THE MP4 SAMPLE TABLE, checked headlessly — the muxer is pure, so it does not need a
+     * browser even though the encoder feeding it does.
+     *
+     * `stco` holds the one ABSOLUTE FILE OFFSET in the container, and it has to be written
+     * from a MEASUREMENT of the `moov` box in front of it (see mp4.ts). Off by a byte and
+     * every player reads the samples from the wrong place — a file that opens, reports the
+     * right duration, and decodes garbage. Nothing about that is visible from the outside,
+     * which is exactly why it is asserted here rather than trusted.
+     */
+    {
+      const fps = 60;
+      // five samples of different LENGTHS, so a table that ignored `stsz` could not pass
+      const mp4Frames = Array.from({ length: 5 }, (_, i) => ({
+        data: new Uint8Array(100 + i).fill(i),
+        timestamp: Math.round((i * 1e6) / fps),
+        keyframe: i === 0,
+      }));
+      const mp4Bytes = new Uint8Array(
+        await muxMp4(mp4Frames, {
+          width: 640,
+          height: 360,
+          fps,
+          // a plausible AVCDecoderConfigurationRecord; the muxer only ever copies it through
+          description: new Uint8Array([1, 0x64, 0, 0x33, 0xff, 0xe1, 0, 2, 0x67, 0x64, 1, 0]),
+        }).arrayBuffer(),
+      );
+      const dv = new DataView(mp4Bytes.buffer, mp4Bytes.byteOffset, mp4Bytes.byteLength);
+      const typeAt = (at: number): string =>
+        String.fromCharCode(...mp4Bytes.subarray(at + 4, at + 8));
+      const tops: { type: string; at: number; size: number }[] = [];
+      for (let at = 0; at < mp4Bytes.length; ) {
+        const boxSize = dv.getUint32(at);
+        if (boxSize < 8) break;
+        tops.push({ type: typeAt(at), at, size: boxSize });
+        at += boxSize;
+      }
+      const mdat = tops.find((b) => b.type === 'mdat');
+      // the position of the 'stco' TYPE field: version+flags at +4, entry_count at +8, and
+      // the single chunk offset at +12
+      let stcoAt = -1;
+      for (let i = 4; i + 4 <= mp4Bytes.length; i++) {
+        if (typeAt(i - 4) === 'stco') {
+          stcoAt = i;
+          break;
+        }
+      }
+      const chunkOffset = stcoAt >= 0 ? dv.getUint32(stcoAt + 12) : -1;
+      const payload = mp4Frames.reduce((n, f) => n + f.data.length, 0);
+      check(
+        'replay video: the MP4 is ftyp, then moov, then mdat — the tables come BEFORE the bytes',
+        tops.length === 3 &&
+          tops[0].type === 'ftyp' &&
+          tops[1].type === 'moov' &&
+          tops[2].type === 'mdat',
+        tops.map((b) => b.type).join(),
+      );
+      check(
+        'replay video: the MP4 chunk offset lands exactly on the first sample byte',
+        !!mdat && chunkOffset === mdat.at + 8 && mp4Bytes[chunkOffset] === 0,
+        `stco=${chunkOffset} mdat=${mdat?.at}`,
+      );
+      check(
+        'replay video: MP4 samples are contiguous and sized as the table says',
+        !!mdat &&
+          mdat.size === payload + 8 &&
+          mp4Bytes[chunkOffset + 100] === 1 &&
+          mp4Bytes[chunkOffset + 100 + 101] === 2 &&
+          mp4Bytes.length === tops[0].size + tops[1].size + tops[2].size,
+        `mdat=${mdat?.size} payload=${payload}`,
+      );
+    }
     // ...and the one that MUST stay playable, or the download button would never be offered
     check(
       'replay: a replay recorded by THIS build is playable (and so downloadable)',
