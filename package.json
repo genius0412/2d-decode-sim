@@ -22,7 +22,8 @@
     "server:check": "tsc -p tsconfig.server.json",
     "electron": "electron .",
     "dist": "set ELECTRON=1&& npm run build && electron-builder --win",
-    "dbtest": "tsx scripts/dbtest.ts"
+    "dbtest": "tsx scripts/dbtest.ts",
+    "uiaudit": "node scripts/uiaudit.mjs"
   },
   "build": {
     "appId": "com.decodesim.app",

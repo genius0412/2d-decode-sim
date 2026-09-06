@@ -1048,6 +1048,9 @@ button {
 .results-table th.blue,
 .results-table td.bv {
   text-align: left;
+  width: 64px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
 }
 /* the `-ink` siblings, not --ds-red/--ds-blue: these are 12px TYPE on the results card
    (~3.1:1 for the raw hues). The fills stay reserved for the alliance gradients. */
@@ -1058,11 +1061,6 @@ button {
   color: var(--ds-blue-ink);
 }
 .results-table td.rv,
-.results-table td.bv {
-  width: 64px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
 .results-table td.cat,
 .results-table th.cat {
   text-align: center;

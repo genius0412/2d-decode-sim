@@ -67,6 +67,25 @@
   --ds-you: rgba(54, 103, 88, 0.1);
 
   /* ---- shape: "soft-blocky" molded plastic ---- */
+  /* SPACING — a 4px grid. See docs/ui-standard.md §2. Before these existed every
+     component picked its own number, which is how `gap` ended up with ten distinct
+     values and `padding` with pairs like `13px 15px`. --ds-s-0 is for chip internals
+     only, where 4 is visibly loose. */
+  --ds-s-0: 2px;
+  --ds-s-1: 4px;
+  --ds-s-2: 8px;
+  --ds-s-3: 12px;
+  --ds-s-4: 16px;
+  --ds-s-5: 24px;
+  --ds-s-6: 32px;
+  --ds-s-7: 48px;
+  /* TYPE — six steps, §3. The codebase had eighteen, including six fractional ones. */
+  --ds-t-xs: 11px;
+  --ds-t-sm: 12px;
+  --ds-t-md: 13px;
+  --ds-t-lg: 15px;
+  --ds-t-xl: 20px;
+  --ds-t-2xl: 28px;
   --ds-round-sm: 4px;
   --ds-round: 8px;
   --ds-round-md: 12px;
@@ -859,11 +878,8 @@
 .fr-error {
   margin: 2px 0;
   font-size: 12px;
-  color: var(--ds-mut);
-  line-height: 1.45;
-}
-.fr-error {
   color: var(--ds-red-ink);
+  line-height: 1.45;
 }
 .fr-note {
   color: var(--ds-ok-ink);
@@ -1479,9 +1495,9 @@
   flex-wrap: wrap;
   margin: 2px 0 24px;
   padding: 14px 18px;
-  border: 1px solid var(--ds-accent, #3ad17a);
+  border: 1px solid var(--ds-accent);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--ds-accent, #3ad17a) 12%, transparent);
+  background: color-mix(in srgb, var(--ds-accent) 12%, transparent);
 }
 .ds-rejoin-txt {
   display: flex;
@@ -1533,6 +1549,7 @@
 .ds-tile:disabled {
   transform: none;
   box-shadow: var(--ds-block-sm);
+  cursor: not-allowed;
 }
 .ds-tile .k {
   font-family: var(--ds-font-mono);
@@ -1568,9 +1585,6 @@
 .ds-tile.primary .k,
 .ds-tile.primary .d {
   color: color-mix(in srgb, var(--ds-accent-ink) 72%, transparent);
-}
-.ds-tile:disabled {
-  cursor: not-allowed;
 }
 .ds-tile:disabled .t {
   color: var(--ds-mut);
@@ -2337,6 +2351,11 @@ tr.lb-detail td {
 .ds-replay-seek {
   flex: 1;
   cursor: pointer;
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  height: 22px;
 }
 .ds-replay-time {
   font-family: var(--ds-font-mono);
@@ -2932,7 +2951,7 @@ tr.lb-detail td {
   box-shadow: 0 0 0 var(--ds-accent-edge);
 }
 .ds-opt:disabled {
-  opacity: 0.45;
+  opacity: 0.55;
   cursor: not-allowed;
   transform: none;
 }
@@ -2995,16 +3014,14 @@ tr.lb-detail td {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  font-family: var(--ds-font-mono);
+  font-size: 11.5px;
+  color: var(--ds-mut);
 }
 .contrib-name {
   font-size: 14.5px;
   font-weight: 700;
   color: var(--ds-ink);
-}
-.contrib-user {
-  font-family: var(--ds-font-mono);
-  font-size: 11.5px;
-  color: var(--ds-mut);
 }
 .contrib-name.static,
 .contrib-user.static {
@@ -3089,10 +3106,6 @@ tr.lb-detail td {
 }
 /* a format tile the server can't run: flat, non-interactive — neutralise the
    .ds-opt hover/active lift so it never looks pressable. */
-.ds-opt:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
 .ds-opt:disabled:hover {
   transform: none;
   background: var(--ds-panel);
@@ -3191,14 +3204,6 @@ tr.lb-detail td {
    range in the app (builder, controls, replay seek) via the shared selector. */
 input[type='range'].ds-range,
 .ds-bind-row input[type='range'],
-.ds-replay-seek {
-  width: 100%;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  background: transparent;
-  height: 22px;
-}
 /* The mint FILL comes from `--fill`, set per-input by rangeFill() — `accent-color`
    stops painting it the moment we take over the track. Custom properties inherit
    into pseudo-elements, so the gradient can read it here. */

@@ -40,6 +40,17 @@ reverse-chronological log; prepend a new dated section and demote the old "READ 
   meaning "physics broke".
 - `npm run build` — tsc (strict) + vite build. Run before claiming work done.
 - `npm run server:check` — typecheck the server against the shared sim (`tsconfig.server.json`).
+- `npm run uiaudit` — **UI STANDARD audit** (`scripts/uiaudit.mjs`, zero deps). Enforces
+  `docs/ui-standard.md`: undefined custom properties, duplicate selector blocks, `var(--x,
+  #literal)` fallbacks, inline spacing in JSX, the type scale and the 4px grid. It is a
+  **RATCHET** — every rule carries the count measured when it was written, and the audit
+  fails if a count goes UP (and tells you to lower the baseline when it goes down), so the
+  standard binds new code immediately without a big-bang refactor of the existing debt. The
+  first three rules sit at 0 and are hard errors, because both bugs they describe shipped
+  silently: `--ds-font` was used 13 times and defined nowhere (an unresolvable `var()` in a
+  `font:` shorthand voids the WHOLE declaration), and `.ds-dl` was declared twice for two
+  unrelated components so the later block quietly re-laid-out the replay export menu. Same
+  rule as `contrast`: deliberately NOT in `npm test`.
 - `npm run contrast` — WCAG audit of the palette (`scripts/contrast.mjs`, 175 pairs, light +
   dark, no deps). Run after ANY colour/token edit. Not wired into `npm test` on purpose: a red
   `npm test` must keep meaning "physics broke".
@@ -84,7 +95,8 @@ src/
   net/             protocol / transport / lobbyClient / serverSession / sanitize
 server/            Node + ws authoritative rooms, Neon Postgres repo, Glicko-2 ranked
 scripts/           smoke.ts (the real test suite), contrast.mjs, shiftaudit.cjs, fly-deploy.sh
-docs/              decode-reference.md (field sources), netcodeplan.md (roadmap), deploy.md
+docs/              decode-reference.md (field sources), netcodeplan.md (roadmap), deploy.md,
+                   ui-standard.md (THE UI RULES — read before touching any component)
 ```
 
 ---
