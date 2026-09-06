@@ -369,6 +369,52 @@ modeled motor is the **MATRIX / goBILDA 5000-series 12VDC** brushed motor (5800 
 - END GAME at 20 s left (`ENDGAME_START` / `CHAIN_ENDGAME_S`): warning cue + HUD label/tint.
 - Games opt into chrome via `GameModule.ui` (`showScoreHud`, `startEditor`, `intakes`).
 
+### UI COPY — the house rules, settled by measurement
+
+A seven-slice audit of every user-visible string (2026-09-06) found the voice already
+strong — almost no marketing vocabulary, no "Oops!", no exclamation marks — and the real
+yield in CONSISTENCY. These are the rulings, with the counts that decided them, so the
+same arguments are not had again:
+
+- **Typographic punctuation: `’` `“` `”` and `…`**, never the ASCII ones (measured 60:18
+  for the apostrophe; the ellipsis was already 50:0). A file full of `’` with an ASCII
+  hyphen doing an em dash's job is the actual inconsistency.
+- ⚠️ **PREFER A FULL STOP OR A COLON TO A DASH.** The hyphen-vs-em-dash split was 50/50
+  across the app — genuine drift, not a convention — so it had to be ruled on, and
+  "normalise every ` - ` to ` — `" is the WRONG answer to a request that is explicitly
+  anti-AI-slop: a dash-joined appositive is the single most-cited tell of machine-written
+  prose. Almost every one of them was two sentences. Where a dash is genuinely the right
+  mark, it is `—`.
+- **Failures are `Couldn’t <verb the thing>.` plus a concrete next step** (`Couldn’t` beat
+  `Could not` 12:5). No "Something went wrong.", ever — it tells a person nothing, and it
+  was on the claim form and the sign-in form, which are the two worst places for it.
+  The admin console composes its own through **`adminFail()` (`src/ui/adminCopy.ts`)**,
+  which existed because five spellings of `Failed - check admin sign-in` had accumulated
+  across two files, none of which said WHICH action failed.
+- **Sentence case** for `ds-btn` and every heading. ALL CAPS is correct in exactly four
+  places and they are all deliberate: `.overlay-buttons button` (13/13), the HUD chips (the
+  FTC scoring display is uppercase), `ds-cta` (14/14), and the admin console (29/34).
+- **`.ds-empty` for an empty list** (`.big` headline, no period, then one sentence with
+  one), **`.ds-loading` for a loading state** (9/10 already did).
+- **A name always gets `SupporterBadge`, as a SIBLING** — see the badge rules above.
+- **Terminology.** DSIM is the app; DECODE and Chain Reaction are seasons. DECODE has
+  ARTIFACTS, CR has PARTICLES, and a leak either way is a bug. CR's ring is a **CATALYST**
+  — the **RING STAND** is a different object in the same game, so the HUD chips that said
+  RING now say CATALYST. Teleop is **DRIVER-CONTROLLED** on all THREE surfaces that name it
+  (the live HUD, `world.events`, and the burned-in video overlay); it used to be
+  DRIVER-CONTROLLED on one and TELEOP on the other two, and free drive was FREE DRIVE and
+  PRACTICE. `npm test` now pins the overlay to the HUD's words.
+- **No padding**: simply / just / please note / be sure to / feel free to. **No helper text
+  that restates its own label** — a hint under a button that already says what it does is
+  the most common form of it here.
+- **Foul lines name the ACT, not the place** (`G424 contact in the gate zone`, not
+  `G424 gate zone`), because a driver reads them mid-match; CR's `G05`/`G06` used to be
+  bare rule ids. ⚠️ Those strings live in `src/sim/` and `src/games/chain/`, so **changing
+  them is a SERVER change and needs a deploy.**
+- Code comments and JSDoc are OUT of this ruleset. The verbose in-code voice this file is
+  written in is deliberate house style.
+
+
 ## Netcode (server-authoritative + client prediction)
 
 The old P2P lockstep/mesh/TURN/Supabase-lobby is DELETED. Full roadmap: `docs/netcodeplan.md`.
@@ -1594,6 +1640,23 @@ owns all of that.
 - The manual PDFs re-download from ftc-resources.firstinspires.org/ftc/game/manual-NN via
   WebFetch; figures are embedded images — extract and Read them as images when geometry
   questions come up.
+- ⚠️ **AN UNDEFINED CUSTOM PROPERTY IN A `font:` SHORTHAND DROPS THE WHOLE DECLARATION,
+  SILENTLY.** `--ds-font` was used at 13 sites in `shell.css` and **defined nowhere** (the
+  real tokens are `--ds-font-ui` / `--ds-font-mono`), so `font: 750 26px/1 var(--ds-font)`
+  set no weight, no size and no line-height — it is invalid at computed-value time, and
+  every longhand falls back to inherited. Nothing errors and the text still renders, just
+  in the wrong face. Same bug class as `--accent` (undefined, so `var(--accent, #6ea8ff)`
+  always resolved to a pre-redesign literal on a themed HUD chip). **Grep a token before
+  using it.**
+- ⚠️ **TWO COMPONENTS MUST NOT SHARE A CONTAINER CLASS.** `.ds-dl` was declared twice in
+  `shell.css` — the replay export menu at 2377 and the download page at 3883 — so the
+  later one won and the export menu was laid out as an 18px-gap COLUMN instead of the
+  `inline-flex` row it was written as. The download page is `.ds-dlpage` now. The two files
+  are one cascade; position in the file is the only tiebreak.
+- **`.ds-btn.small` is the size modifier.** `.ds-btn.sm` was a second rule for the same
+  intent with different padding, used only by `Admin.tsx`; it is gone.
+- **`prefers-reduced-motion` must cap `animation-iteration-count`, not just duration** —
+  capping the duration of an INFINITE animation only makes it loop faster.
 - Windows PowerShell 5.1: no `&&` in npm-adjacent commands; use `;` or `if ($?)`.
 
 ---

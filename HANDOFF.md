@@ -1,9 +1,116 @@
+# HANDOFF — 2026-09-06g (a seven-slice UI audit: consistency + anti-AI-slop)
+
+Branch **alpha**. `npm test` **ALL PASS (1286)** · `npm run contrast` 221 · `npm run build` ·
+`npm run server:check` green. `SIM_VERSION` untouched at **2**.
+⚠️ **NOT client-only: `src/sim/penalties.ts`, `src/sim/match.ts` and
+`src/games/chain/penalties.ts` carry user-visible strings that changed, so the Fly server
+needs a redeploy for the foul lines and the event log to match the client.**
+
+## READ FIRST
+
+Seven subagents audited every user-visible string and both stylesheets, one slice each,
+report-only; the rulings and the application were done centrally so the seven could not
+contradict each other. The house rules they settled are now written down in CLAUDE.md
+under **UI COPY** — read those before touching copy, because the two arguments that keep
+recurring (dash style, failure-message shape) are decided there with the counts.
+
+### The one ruling worth arguing with
+
+The hyphen-vs-em-dash split was **50/50** app-wide, so it was drift, not a convention. The
+tempting fix — normalise everything to `—` — is wrong for a brief that is explicitly
+anti-slop, because a dash-joined appositive is the most-cited tell of machine-written
+prose. Almost every one of them was two sentences. So: **full stop or colon by default,
+`—` only where a dash is genuinely the right mark.** That reduces the count of BOTH glyphs.
+
+An `Admin.tsx` comment claimed "Hyphen, not an em dash, per main's site-wide copy pass."
+There is no such pass: `7a1c112` ("Polish controls and legal/footer UI copy") touched
+control cards, the footer and legal casing and changed no dashes at all. The comment is
+corrected.
+
+### Real bugs the audit turned up (not copy)
+
+- **`--ds-font` is used 13 times in `shell.css` and defined nowhere.** In a `font:`
+  shorthand that is invalid at computed-value time, so the whole declaration is dropped:
+  `.ds-gauge-num`, `.ds-standing-name`, `.ds-report-h` and ten others were setting no
+  weight, size or line-height at all. Fixed to `--ds-font-ui`; verified in the browser that
+  they now compute to 750/26px, 750/17px and 800/15px in Plus Jakarta Sans. **This is a
+  visible change** — those rules start applying.
+- **`.ds-dl` was declared twice** for the replay export menu and the download page, so the
+  later rule turned the export menu into an 18px-gap column. Download page is `.ds-dlpage`;
+  verified `.ds-dl` now computes `inline-flex / flex-end / 90px`.
+- **`--accent` is defined nowhere**, so `var(--accent, #6ea8ff)` always used the literal —
+  a pre-redesign blue on a themed HUD chip.
+- **`.ping-graph` was the one HUD surface still hardcoded dark** (`rgba(20,24,30,.94)` +
+  `--ds-line`) while its thirteen siblings use `--ds-hud`/`--ds-hud-line`.
+- **`prefers-reduced-motion` capped duration but not iteration count**, so five infinite
+  animations kept looping at 0.01ms each.
+- **`AdminReports`' "Mark reviewed" is the punishment button.** It posts `status=reviewed`,
+  which `server/index.ts:727` turns into `chargeStanding(target,'reportUpheld')`: 25
+  standing, a ranked lock of 2 hours to 7 days, and 20-80 rating — while "Dismiss" beside
+  it deliberately does nothing. It said "Mark reviewed", with no confirm. Now **Uphold (n)**
+  with a confirm naming the charge. The three-rung SMITE got a confirm too; −100 is a
+  player's entire standing.
+- **`Matchmaking` rendered "That is your 3th in 24 hours."**
+- **`InviteFlyout` passes `format: null`**, so an invite from a Duo Record room reaches the
+  friend as "wants to play · Casual 1v1". **NOT FIXED** — needs a decision about what a
+  room's format actually resolves to; it is a behaviour change, not a copy fix.
+
+### ⚠️ STILL BROKEN, deliberately left alone
+
+**The misscore queue's WATCH button can never work.** `AdminReports:288` calls
+`onWatchReplay(r.matchId)`, but `matchId` comes from `score_reports.match_id references
+matches(id)`, and the viewer looks up `replays where id = $1`. They are different id
+spaces — `matches.replay_id` is its own column, which `MatchHistory` uses correctly. The
+fix is server-side (project `replay_id` in `listScoreReports`) and needs a deploy, so it is
+a separate change rather than something to bury in a copy pass. The button is relabelled
+but still misfires.
+
+### Also reported and NOT applied
+
+Each is a judgement call rather than a defect, and they are listed with line numbers in
+`audit-*.md` (scratchpad):
+
+- **"Rated 1v1" vs "Ranked 2v2"** sit adjacent in the challenge picker for one concept
+  (both are ELO). They ARE different formats — a closed party vs a premade in the open
+  pool — so collapsing the words is a product decision, not a copy fix. ("Team up" →
+  "Casual" WAS applied: that one was a second name for a format `formatLabel` already
+  names.)
+- Deleting the dead `.server-picker/.server-list/.server-row/.ping-dot*` families (~77
+  lines) also orphans four pairs in `contrast.mjs`, so the audit count moves. Coupled
+  change, left for a deliberate one. NOTE `.server-notice*` IS live — do not sweep the
+  whole prefix.
+- The six palette tokens with no call sites are still audited by `contrast.mjs`.
+- 20 interactive elements have `:hover` and no `:focus-visible` (`.game-btn`,
+  `.overlay-buttons button`, `button.ds-key` — the keybinding capture control, which is a
+  keyboard-only flow). Only `.ds-dl-opt` was fixed here.
+- `RobotPreview`'s `aria-label` reads raw enums to screen readers ("twinturret scorer").
+- `RobotPreview`'s entire `chain` branch is dead, and is where the only read of the
+  deprecated `spec.shooterRear` lives, against CLAUDE.md's "never read them".
+- The snap tooltip is byte-identical in both start editors and is factually WRONG in CR,
+  where snapping is live during the drag rather than on release.
+- `PracticeReplays` uses a `num` class defined nowhere in the CSS (5 sites), so its score
+  and length columns render in body type while every other score column is mono/tabular.
+
+## Next steps
+
+- **Deploy** — `./scripts/fly-deploy.sh --alpha`. Still outstanding from before this
+  session too: alpha has not been redeployed since `0baeaa7`.
+- The two `fly secrets set` admin lines are **still outstanding** (blocked for me):
+  - `fly secrets set -a dohun-sim-decode ADMIN_USER_IDS='e3d73282-ac91-4940-bd5c-4778ca34212c,0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+  - `fly secrets set -a dsim-alpha ADMIN_USER_IDS='0c9c1654-c720-40f5-9352-1b0cde1c465a,5baefc21-e1e8-43b0-9278-4af2ea150882'`
+- Untracked debris: `scripts/zz-probe-*`, `scripts/zzprobe_*`, `scratch_penalties_backup.ts`.
+- Still open: two-account cross-region challenge check, an end-to-end practice upload from a
+  signed-in account, Rapier slice 2 (balls), the DECODE penalty HITBOX audit, CR `APPROX`
+  constants.
+
+---
+
 # HANDOFF — 2026-09-06f (the save reports itself honestly and stops reflowing the viewer)
 
 Branch **alpha**. `npm test` **ALL PASS** · `npm run contrast` 221 · `npm run build` ·
 `npm run server:check` green. Client-only. `SIM_VERSION` untouched at **2**.
 
-## READ FIRST
+## Previously
 
 Three follow-ups on the background save, all reported together and all separate causes.
 
