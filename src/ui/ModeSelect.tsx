@@ -48,85 +48,83 @@ export function ModeSelect({
         </div>
       )}
 
-      <div className="ds-grid-bg">
-        {/* Offline, always available — the safe default (Solo Practice is primary) */}
-        <section className="ds-tileset">
-          <p className="ds-tileset-label">Practice · offline</p>
-          <div className="ds-tiles">
-            <button className="ds-tile primary" onClick={onSoloMatch}>
-              <span className="k">Solo</span>
-              <span>
-                <span className="t">Solo Practice</span>
-              </span>
-            </button>
+      {/* Offline, always available — the safe default (Solo Practice is primary) */}
+      <section className="ds-tileset">
+        <p className="ds-tileset-label">Practice · offline</p>
+        <div className="ds-tiles">
+          <button className="ds-tile primary" onClick={onSoloMatch}>
+            <span className="k">Solo</span>
+            <span>
+              <span className="t">Solo Practice</span>
+            </span>
+          </button>
 
-            <button className="ds-tile" onClick={onFreeDrive}>
-              <span className="k">Practice</span>
-              <span>
-                <span className="t">Free Drive</span>
-              </span>
-            </button>
-          </div>
-        </section>
+          <button className="ds-tile" onClick={onFreeDrive}>
+            <span className="k">Practice</span>
+            <span>
+              <span className="t">Free Drive</span>
+            </span>
+          </button>
+        </div>
+      </section>
 
-        {/* Online — ranked + score-attack records (need the game server / sign-in) */}
-        <section className="ds-tileset">
-          <p className="ds-tileset-label">Compete · online</p>
-          <div className="ds-tiles">
-            <button className="ds-tile" onClick={onRanked} disabled={!multiplayer || !signedIn}>
-              <span className="k">Ranked</span>
-              <span>
-                <span className="t">
-                  Find Match
-                  <QueueCounts className="tile" />
+      {/* Online — ranked + score-attack records (need the game server / sign-in) */}
+      <section className="ds-tileset">
+        <p className="ds-tileset-label">Compete · online</p>
+        <div className="ds-tiles">
+          <button className="ds-tile" onClick={onRanked} disabled={!multiplayer || !signedIn}>
+            <span className="k">Ranked</span>
+            <span>
+              <span className="t">
+                Find Match
+                <QueueCounts className="tile" />
+              </span>
+              {(!multiplayer || !signedIn) && (
+                <span className="d">
+                  {!multiplayer ? 'Needs the game server' : 'Sign in to play ranked'}
                 </span>
-                {(!multiplayer || !signedIn) && (
-                  <span className="d">
-                    {!multiplayer ? 'Needs the game server' : 'Sign in to play ranked'}
-                  </span>
-                )}
-              </span>
-            </button>
+              )}
+            </span>
+          </button>
 
-            <button className="ds-tile" onClick={onRecordRun} disabled={!multiplayer}>
-              <span className="k">Records</span>
-              <span>
-                <span className="t">Solo Record</span>
-                {!multiplayer && <span className="d">Needs the game server</span>}
-              </span>
-            </button>
+          <button className="ds-tile" onClick={onRecordRun} disabled={!multiplayer}>
+            <span className="k">Records</span>
+            <span>
+              <span className="t">Solo Record</span>
+              {!multiplayer && <span className="d">Needs the game server</span>}
+            </span>
+          </button>
 
-            <button className="ds-tile" onClick={onDuoRecord} disabled={!multiplayer}>
-              <span className="k">Records</span>
-              <span>
-                <span className="t">Duo Record</span>
-                {!multiplayer && <span className="d">Needs the game server</span>}
-              </span>
-            </button>
-          </div>
-        </section>
+          <button className="ds-tile" onClick={onDuoRecord} disabled={!multiplayer}>
+            <span className="k">Records</span>
+            <span>
+              <span className="t">Duo Record</span>
+              {!multiplayer && <span className="d">Needs the game server</span>}
+            </span>
+          </button>
+        </div>
+      </section>
 
-        {/* Custom room — last, per its niche use */}
-        <section className="ds-tileset">
-          <p className="ds-tileset-label">Custom · online</p>
-          <div className="ds-tiles">
-            <button className="ds-tile" onClick={onCustomRoom} disabled={!multiplayer}>
-              <span className="k">Custom</span>
-              <span>
-                <span className="t">Custom Room</span>
-                {!multiplayer && <span className="d">Needs the game server</span>}
-              </span>
-            </button>
-            <button className="ds-tile" onClick={onWatch} disabled={!multiplayer}>
-              <span className="k">Live</span>
-              <span>
-                <span className="t">Watch Live</span>
-                {!multiplayer && <span className="d">Needs the game server</span>}
-              </span>
-            </button>
-          </div>
-        </section>
-      </div>
+      {/* Custom room — last, per its niche use */}
+      <section className="ds-tileset">
+        <p className="ds-tileset-label">Custom · online</p>
+        <div className="ds-tiles">
+          <button className="ds-tile" onClick={onCustomRoom} disabled={!multiplayer}>
+            <span className="k">Custom</span>
+            <span>
+              <span className="t">Custom Room</span>
+              {!multiplayer && <span className="d">Needs the game server</span>}
+            </span>
+          </button>
+          <button className="ds-tile" onClick={onWatch} disabled={!multiplayer}>
+            <span className="k">Live</span>
+            <span>
+              <span className="t">Watch Live</span>
+              {!multiplayer && <span className="d">Needs the game server</span>}
+            </span>
+          </button>
+        </div>
+      </section>
     </>
   );
 }

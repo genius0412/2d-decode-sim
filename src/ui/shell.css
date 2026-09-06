@@ -1576,26 +1576,6 @@
   color: var(--ds-mut);
 }
 /* faint 24" tile grid behind the play area */
-.ds-grid-bg {
-  position: relative;
-}
-.ds-grid-bg::before {
-  content: '';
-  position: absolute;
-  inset: -28px -22px 0;
-  pointer-events: none;
-  opacity: 0.45;
-  z-index: 0;
-  background-image: linear-gradient(var(--ds-line-soft) 1px, transparent 1px),
-    linear-gradient(90deg, var(--ds-line-soft) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(120% 80% at 85% 0%, #000 15%, transparent 72%);
-}
-.ds-grid-bg > * {
-  position: relative;
-  z-index: 1;
-}
-
 /* home play sections (Practice / Compete / Custom) */
 .ds-tileset + .ds-tileset {
   margin-top: 20px;
