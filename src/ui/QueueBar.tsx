@@ -45,10 +45,14 @@ export function QueueBar({ onOpen, overlay = false }: { onOpen: () => void; over
   // a moving thumb is a trap. Tapping it opens the queue screen, which has Cancel.
   if (overlay && !found) {
     return (
+      // the chip prints only "1V1 · 2:14", so "ranked queue" is real information —
+      // but it belongs on the ACCESSIBLE NAME, not on a hover the touch users this
+      // overlay exists for will never see. "tap to view" only narrates what a
+      // button is.
       <button
         className="ds-queuechip"
         onClick={onOpen}
-        title={`In the ${q.mode.toUpperCase()} ranked queue - tap to view`}
+        aria-label={`In the ${q.mode.toUpperCase()} ranked queue`}
       >
         <span className="qb-dot" aria-hidden />
         <span className="qb-txt">

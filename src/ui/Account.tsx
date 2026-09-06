@@ -13,6 +13,7 @@ import {
 } from '../net/api';
 import { AuthPanel } from './AuthPanel';
 import { DesktopUpdate } from './DesktopUpdate';
+import { fmtDay } from './fmtDate';
 import { ServerMenu } from './ServerMenu';
 import { UsernameInput, useUsernameCheck, usernameHintColor } from './UsernameField';
 import { APP_NAME } from '../seasons';
@@ -73,7 +74,7 @@ export function Account({
         <div className="ds-panel-h">
           <span className="ds-panel-title">Reset</span>
         </div>
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
+        <div className="ds-panel-body stack start">
           <button
             className="ds-btn"
             onClick={() => {
@@ -126,8 +127,6 @@ function Membership({ onDonate }: { onDonate?: () => void }) {
 
   if (!userId) return null;
   const until = ent?.supporterUntil ? new Date(ent.supporterUntil) : null;
-  // ~10 days: long enough to renew before it lapses, short enough not to nag.
-  const endingSoon = !!until && until.getTime() - Date.now() < 10 * 864e5;
 
   return (
     <div className="ds-panel">
@@ -135,36 +134,28 @@ function Membership({ onDonate }: { onDonate?: () => void }) {
         <span className="ds-panel-title">Membership</span>
         {ent?.supporter && <span className="ds-count">supporter</span>}
       </div>
-      <div className="ds-panel-body">
+      <div className="ds-panel-body stack start">
         {!ent ? (
           <p className="ds-hint">Checking…</p>
         ) : ent.supporter ? (
           <>
             <p className="ds-hint">
-              Supporter{until ? ` until ${until.toLocaleDateString()}` : ''} ·{' '}
+              Supporter{until ? ` until ${fmtDay(until)}` : ''} ·{' '}
               {ent.autoRenews ? 'renews automatically' : 'will not renew'}
             </p>
             {!ent.autoRenews && (
-              <p className="ds-hint" style={{ marginTop: 8, color: 'var(--ds-warn)' }}>
+              <p className="ds-hint warn">
                 This membership isn’t linked to a Ko-fi account, so it will stop at the end of the
                 period. Claim a payment on the Support page to link it.
               </p>
             )}
-            {ent.autoRenews && endingSoon && (
-              <p className="ds-hint" style={{ marginTop: 8 }}>
-                Your next Ko-fi payment will extend this automatically. Nothing to do.
-              </p>
-            )}
           </>
         ) : (
-          <p className="ds-hint">
-            No membership. DSIM is free either way; supporting turns off ads and adds a few
-            cosmetic extras.
-          </p>
+          <p className="ds-hint">No membership.</p>
         )}
         {onDonate && (
-          <button className="ds-btn ghost" style={{ marginTop: 12 }} onClick={onDonate}>
-            {ent?.supporter ? 'Manage on the Support page' : 'See what supporting gets you'}
+          <button className="ds-btn ghost" onClick={onDonate}>
+            {ent?.supporter ? 'Manage membership' : 'Support DSIM'}
           </button>
         )}
       </div>
@@ -223,18 +214,18 @@ function DeleteAccount() {
       <div className="ds-panel-h">
         <span className="ds-panel-title">Delete account</span>
       </div>
-      <div className="ds-panel-body">
+      <div className="ds-panel-body stack">
         <p className="ds-hint">
           Permanently deletes your profile, username, saved settings and robot presets, records
           and practice runs with their replays, ranked rating and history, your playtime and
           account standing, and every friendship, block, and invite. This cannot be undone.
         </p>
-        <p className="ds-hint" style={{ marginTop: 8 }}>
+        <p className="ds-hint">
           Matches you played stay on other players' history without your name, and payment records
           are kept (without your email) because they are financial records. Your sign-in identity
           itself lives with our authentication provider. Delete it there too if you want it gone.
         </p>
-        <div className="ds-claim-row" style={{ marginTop: 12 }}>
+        <div className="ds-claim-row">
           <input
             className="ds-input"
             value={confirm}
@@ -273,9 +264,9 @@ function Identity({ onHandleSaved }: { onHandleSaved?: (handle: string) => void 
         {session.isPending && <span className="ds-chip">…</span>}
       </div>
       {user ? (
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, color: 'var(--ds-ink)' }}>{user.email ?? 'signed in'}</span>
+        <div className="ds-panel-body stack">
+          <div className="ds-field-row">
+            <span className="ds-acct-email">{user.email ?? 'signed in'}</span>
             <span className="ds-head-spacer" />
             <button className="ds-btn ghost" onClick={() => client.signOut()}>
               Sign out
@@ -283,23 +274,21 @@ function Identity({ onHandleSaved }: { onHandleSaved?: (handle: string) => void 
           </div>
           <DisplayName userId={user.id} fallback={user.name ?? 'Player'} onSaved={onHandleSaved} />
           <Username userId={user.id} />
-          <div>
-            <p className="ds-hint" style={{ margin: '0 0 4px' }}>Account ID</p>
+          <div className="ds-acct-id">
+            <p className="ds-hint">Account ID</p>
             {/* --ds-mut, not the --muted bridge: that one belongs to the in-match HUD */}
             <code
+              className="ds-acct-uuid"
               title="Click to copy"
               onClick={() => void navigator.clipboard?.writeText(user.id)}
-              style={{ cursor: 'pointer', fontSize: 12, wordBreak: 'break-all', color: 'var(--ds-mut)' }}
             >
               {user.id}
             </code>
           </div>
         </div>
       ) : (
-        <div style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          <p className="ds-hint" style={{ margin: 0 }}>
-            Sign in to save records and rank up.
-          </p>
+        <div className="ds-panel-body row">
+          <p className="ds-hint">Sign in to save records and rank up.</p>
           <span className="ds-head-spacer" />
           <button className="ds-btn primary" onClick={() => setOpen(true)}>
             Sign in
@@ -368,14 +357,11 @@ function DisplayName({
     <div className="ds-panelbox">
       <label className="ds-field">
         <span className="cap">
-          Display name <span className="val" style={{ color: valid ? undefined : 'var(--ds-danger)' }}>
-            {trimmed.length}/24
-          </span>
+          Display name <span className={`val${valid ? '' : ' over'}`}>{trimmed.length}/24</span>
         </span>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="ds-field-row">
           <input
-            className="ds-input"
-            style={{ flex: '1 1 240px' }}
+            className="ds-input grow"
             type="text"
             maxLength={24}
             value={name}
@@ -390,11 +376,10 @@ function DisplayName({
           </button>
         </div>
       </label>
-      <p className="ds-hint" style={{ margin: 0 }}>
-        Shown on leaderboards and to other drivers. 2–24 characters.
-        {!configured && ' Editing needs the game server.'}
-        {status === 'ok' && !dirty && <span style={{ color: 'var(--ds-ok)' }}> · Saved.</span>}
-        {status === 'error' && <span style={{ color: 'var(--ds-danger)' }}> · {error}</span>}
+      <p className="ds-hint">
+        {!configured && 'Editing needs the game server.'}
+        {status === 'ok' && !dirty && <span className="ok">Saved.</span>}
+        {status === 'error' && <span className="err">{error}</span>}
       </p>
     </div>
   );
@@ -447,8 +432,8 @@ function Username({ userId }: { userId: string }) {
     <div className="ds-panelbox">
       <label className="ds-field">
         <span className="cap">Username</span>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 240px' }}>
+        <div className="ds-field-row">
+          <div className="grow">
             <UsernameInput value={value} onChange={setValue} />
           </div>
           <button className="ds-btn primary" disabled={!canSave} onClick={save}>
@@ -456,19 +441,24 @@ function Username({ userId }: { userId: string }) {
           </button>
         </div>
       </label>
-      <p className="ds-hint" style={{ margin: 0 }}>
-        {current ? (
-          <>Your profile: <code>/profile/{current}</code>. </>
-        ) : (
-          'Unique. Lowercase letters and numbers, 4–20 characters. '
+      <p className="ds-hint">
+        {current && (
+          <>
+            Your profile: <code>/profile/{current}</code>.{' '}
+          </>
         )}
         {!configured && 'Editing needs the game server. '}
         {status === 'error' ? (
-          <span style={{ color: 'var(--ds-danger)' }}>{error}</span>
+          <span className="err">{error}</span>
         ) : status === 'ok' && !dirty ? (
-          <span style={{ color: 'var(--ds-ok)' }}>Saved.</span>
+          <span className="ok">Saved.</span>
         ) : (
-          dirty && <span style={{ color: usernameHintColor(check.status) }}>{check.message}</span>
+          // the format rule comes from `useUsernameCheck` and ONLY from there —
+          // it used to be spelled out a second time here, one edit away from
+          // disagreeing with the rule the checker actually enforces
+          (dirty || !current) && (
+            <span style={{ color: usernameHintColor(check.status) }}>{check.message}</span>
+          )
         )}
       </p>
     </div>

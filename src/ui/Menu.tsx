@@ -29,7 +29,6 @@ import {
   CHAIN_INTAKE_MOUNT_LABELS,
   CHAIN_INTAKE_MOUNT_BLURBS,
   CHAIN_SHOOTER_MOUNT_LABELS,
-  CHAIN_SHOOTER_MOUNT_BLURBS,
   CHAIN_CATALYST_LABELS,
   CHAIN_CATALYST_BLURBS,
   CHAIN_CATALYST_MOUNT_LABELS,
@@ -192,7 +191,7 @@ function ChassisColorRow({
   const { supporter } = useAds();
   const current = spec.chassisColor ?? 'default';
   return (
-    <div className="ds-field" style={{ flex: '1 1 100%' }}>
+    <div className="ds-field wide">
       <span className="cap">
         Chassis colour{' '}
         <span className="val">
@@ -212,7 +211,7 @@ function ChassisColorRow({
             disabled={!supporter && key !== 'default'}
             aria-label={`Chassis colour ${key}${!supporter && key !== 'default' ? ' (supporter only)' : ''}`}
             aria-pressed={current === key}
-            title={!supporter && key !== 'default' ? 'Supporter perk' : key}
+            title={!supporter && key !== 'default' ? 'Supporter perk' : undefined}
             onClick={() => onPick(key)}
           />
         ))}
@@ -356,7 +355,7 @@ export function Menu({ settings, onChange }: Props) {
       {/* the page heading is owned by the Configure host */}
       <div className="ds-robot">
         {/* ---------- robot hero (PINNED — see .ds-hero) ---------- */}
-        <div ref={sentinelRef} aria-hidden style={{ height: 1, marginBottom: -1 }} />
+        <div ref={sentinelRef} aria-hidden className="ds-hero-sentinel" />
         <div className={`ds-hero${stuck ? ' stuck' : ''}`}>
           <div className="ds-hero-view">
             {/* TWO components, not one with a `chain` flag: DECODE's schematic is
@@ -405,7 +404,7 @@ export function Menu({ settings, onChange }: Props) {
                 <span className="sl">drive rpm</span>
               </div>
               <div className="ds-stat">
-                <span className="sv" style={{ fontSize: 13 }}>
+                <span className="sv sm">
                   {DRIVETRAIN_LABELS[spec.drivetrain]}
                 </span>
                 <span className="sl">drivetrain</span>
@@ -417,7 +416,7 @@ export function Menu({ settings, onChange }: Props) {
                   is otherwise absent from this summary. */}
               {isDecode ? (
                 <div className="ds-stat">
-                  <span className="sv" style={{ fontSize: 13 }}>
+                  <span className="sv sm">
                     {INTAKE_SHORT[spec.intake]}
                     {spec.canSort ? ' · sorter' : ''}
                   </span>
@@ -426,7 +425,7 @@ export function Menu({ settings, onChange }: Props) {
               ) : (
                 <>
                   <div className="ds-stat">
-                    <span className="sv" style={{ fontSize: 13 }}>
+                    <span className="sv sm">
                       {CHAIN_MODE_LABELS[spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE]}
                     </span>
                     <span className="sl">scoring</span>
@@ -436,7 +435,7 @@ export function Menu({ settings, onChange }: Props) {
                       a direction it swings — and changing any of that left every tile on the
                       card reading exactly the same, which looks like the picker did nothing. */}
                   <div className="ds-stat">
-                    <span className="sv" style={{ fontSize: 13 }}>
+                    <span className="sv sm">
                       {CHAIN_CATALYST_LABELS[spec.catalystType ?? CHAIN_DEFAULT_CATALYST]}
                     </span>
                     <span className="sl">catalyst</span>
@@ -509,7 +508,6 @@ export function Menu({ settings, onChange }: Props) {
                 className="ds-opt ds-opt-add"
                 onClick={saveCurrentRobot}
                 disabled={alreadySaved}
-                title={alreadySaved ? 'This robot is already saved' : 'Save the current robot'}
               >
                 <span className="ot">＋ Save current</span>
                 <span className="od">
@@ -601,7 +599,7 @@ export function Menu({ settings, onChange }: Props) {
                   onChange={(e) => setSpec({ teamName: e.target.value })}
                 />
               </label>
-              <label className="ds-field" style={{ flex: '0 1 110px' }}>
+              <label className="ds-field narrow">
                 <span className="cap">Team #</span>
                 <input
                   className="ds-input"
@@ -677,32 +675,39 @@ export function Menu({ settings, onChange }: Props) {
             {/* ---- SCORING ---- */}
             <h3 className="ds-subh">Scoring</h3>
             {isDecode ? (
-              <div className="ds-fields">
-                <label className="ds-field">
-                  <span className="cap">
-                    Flywheel inertia <span className="val">{spec.flywheelInertia.toFixed(2)}</span>
-                  </span>
-                  <input
-                    className="ds-range"
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={spec.flywheelInertia}
-                    style={rangeFill(spec.flywheelInertia, 0, 1)}
-                    // a bigger flywheel weighs more: setSpec raises the mass floor
-                    // and pulls mass up with it so the loadout stays legal
-                    onChange={(e) => setSpec({ flywheelInertia: Number(e.target.value) })}
-                  />
-                </label>
-                <button
-                  className={`ds-opt mini ${spec.canSort ? 'on' : ''}`}
-                  style={{ flex: '1 1 150px' }}
-                  onClick={() => setSpec({ canSort: !spec.canSort })}
-                >
-                  <span className="ot">Sorter {spec.canSort ? 'ON' : 'OFF'}</span>
-                </button>
-              </div>
+              <>
+                <div className="ds-fields">
+                  <label className="ds-field">
+                    <span className="cap">
+                      Flywheel inertia <span className="val">{spec.flywheelInertia.toFixed(2)}</span>
+                    </span>
+                    <input
+                      className="ds-range"
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={spec.flywheelInertia}
+                      style={rangeFill(spec.flywheelInertia, 0, 1)}
+                      // a bigger flywheel weighs more: setSpec raises the mass floor
+                      // and pulls mass up with it so the loadout stays legal
+                      onChange={(e) => setSpec({ flywheelInertia: Number(e.target.value) })}
+                    />
+                  </label>
+                </div>
+                {/* its OWN row, not a column of `.ds-fields`. As the one non-`.ds-field`
+                    child of that row it was stretched to the slider's height with its
+                    label pinned to the top edge, landing on the slider's caption line.
+                    `.fill` is auto-FILL, so a single toggle stays one card wide. */}
+                <div className="ds-opts fill">
+                  <button
+                    className={`ds-opt mini ${spec.canSort ? 'on' : ''}`}
+                    onClick={() => setSpec({ canSort: !spec.canSort })}
+                  >
+                    <span className="ot">Sorter {spec.canSort ? 'ON' : 'OFF'}</span>
+                  </button>
+                </div>
+              </>
             ) : (
               <>
                 <div className="ds-opts card4">
@@ -725,7 +730,7 @@ export function Menu({ settings, onChange }: Props) {
                     laid out as a 3x3 map of the chassis (front row on top), so the picker reads
                     as a top-down diagram rather than a list of words. */}
                 {isTurreted(spec.scoreMode ?? CHAIN_DEFAULT_SCORE_MODE) ? (
-                  <div className="ds-opts three" style={{ marginTop: 8 }}>
+                  <div className="ds-opts three">
                     {CHAIN_TURRET_POSITIONS.map((m) => (
                       <button
                         key={m}
@@ -737,7 +742,7 @@ export function Menu({ settings, onChange }: Props) {
                     ))}
                   </div>
                 ) : (
-                  <div className="ds-opts four" style={{ marginTop: 8 }}>
+                  <div className="ds-opts four">
                     {CHAIN_SHOOTER_MOUNTS.map((m) => (
                       <button
                         key={m}
@@ -745,9 +750,6 @@ export function Menu({ settings, onChange }: Props) {
                         onClick={() => setSpec({ shooterMount: m })}
                       >
                         <span className="ot">{CHAIN_SHOOTER_MOUNT_LABELS[m]}</span>
-                        {CHAIN_SHOOTER_MOUNT_BLURBS[m] ? (
-                          <span className="od">{CHAIN_SHOOTER_MOUNT_BLURBS[m]}</span>
-                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -771,12 +773,16 @@ export function Menu({ settings, onChange }: Props) {
               </div>
             ) : (
               <>
+                {/* CR has ONE intake design, so this is a statement, not a picker.
+                    `.static` keeps the card look and drops the pointer affordances —
+                    NOT `disabled`, which would grey it out and say "unavailable" about
+                    the only intake the robot has. */}
                 <div className="ds-opts fill">
-                  <div className="ds-opt on" aria-disabled>
+                  <div className="ds-opt on static">
                     <span className="ot">{CHAIN_INTAKE_LABELS.sweeper}</span>
                   </div>
                 </div>
-                <div className="ds-opts four" style={{ marginTop: 8 }}>
+                <div className="ds-opts four">
                   {CHAIN_INTAKE_MOUNTS.map((m) => (
                     <button
                       key={m}
@@ -821,7 +827,7 @@ export function Menu({ settings, onChange }: Props) {
                     swinging is a real build decision. `coerceSpec` drops a swing on anything
                     else, so this is a gate on an offer, not on a capability the sim keeps. */}
                 {(spec.catalystType ?? CHAIN_DEFAULT_CATALYST) === 'arm' && (
-                  <div className="ds-opts three" style={{ marginTop: 8 }}>
+                  <div className="ds-opts three">
                     {([null, 'fb', 'lr'] as const).map((axis) => (
                       <button
                         key={axis ?? 'fixed'}
@@ -835,12 +841,14 @@ export function Menu({ settings, onChange }: Props) {
                             catalystMount: axis ? swingHomeFor(m, axis) : m === 'center' ? 'front' : m,
                           });
                         }}
+                        // FIXED needs no tooltip — the label is the whole story. The two
+                        // swings each keep the one fact the arrow glyph cannot show.
                         title={
                           axis === null
-                            ? 'Bolted in one place, reaching from that one spot'
+                            ? undefined
                             : axis === 'fb'
-                              ? 'One arm on a pivot that swings FRONT to BACK — it works whichever end is nearer'
-                              : 'One arm on a pivot that swings LEFT to RIGHT — it works whichever flank is nearer'
+                              ? 'Reaches from either end'
+                              : 'Reaches from either flank'
                         }
                       >
                         <span className="ot">{axis === null ? 'FIXED' : axis === 'fb' ? 'SWING ↕' : 'SWING ↔'}</span>
@@ -849,7 +857,7 @@ export function Menu({ settings, onChange }: Props) {
                   </div>
                 )}
                 {/* Same 3x3 chassis map as the turret picker: where the mechanism is BOLTED. */}
-                <div className="ds-opts three" style={{ marginTop: 8 }}>
+                <div className="ds-opts three">
                   {CHAIN_CATALYST_MOUNTS.map((m) => {
                     // A cell is unavailable for three physical reasons, and the picker says
                     // WHICH — coerceSpec would quietly relocate the mount otherwise, and a
@@ -885,9 +893,9 @@ export function Menu({ settings, onChange }: Props) {
                                   : 'A front–back swing pivots between the ends — bolt it to the centre line or a flank'
                                 : noReach
                                   ? 'Nothing reaches from the middle of a chassis — turn on the swing arm to work from here'
-                                  : swung
-                                    ? `Pivot on the ${CHAIN_CATALYST_MOUNT_LABELS[m]}, swinging ${swung === 'fb' ? 'front to back' : 'left to right'}`
-                                    : undefined
+                                  : // an ENABLED cell gets none: its label already names
+                                    // the mount, and the swing picker above names the swing
+                                    undefined
                         }
                       >
                         <span className="ot">{CHAIN_CATALYST_MOUNT_LABELS[m]}</span>
@@ -925,7 +933,10 @@ export function Menu({ settings, onChange }: Props) {
                           className={`ds-opt mini ${(spec.catapultYaw ?? 0) === d.yaw ? 'on' : ''}${d.yaw === null ? ' off' : ''}`}
                           disabled={d.yaw === null}
                           onClick={() => d.yaw !== null && setSpec({ catapultYaw: d.yaw })}
-                          title={d.yaw === null ? 'A catapult throws outward, not into itself' : `Throws ${d.title} (${d.yaw}°)`}
+                          // the DEGREES are the only thing the label doesn't already say,
+                          // and the sign convention is not guessable (see CATAPULT_DIRS).
+                          // The dead centre cell is `disabled`, which says enough.
+                          title={d.yaw === null ? undefined : `${d.yaw}°`}
                         >
                           <span className="ot">{d.label}</span>
                         </button>
@@ -1030,7 +1041,7 @@ export function Menu({ settings, onChange }: Props) {
                 const storeMax = chainStorageMax(spec);
                 const store = Math.min(spec.ballStorage ?? CHAIN_STORAGE_DEFAULT, storeMax);
                 return (
-                  <label className="ds-field" style={{ flex: '1 1 100%' }}>
+                  <label className="ds-field wide">
                     <span className="cap">
                       Ball storage <span className="val">{store} / {storeMax} particles</span>
                     </span>
@@ -1072,7 +1083,7 @@ export function Menu({ settings, onChange }: Props) {
             </button>
           </div>
           {spec.drivetrain === 'tank' && (
-            <div className="ds-opts two" style={{ marginTop: 12 }}>
+            <div className="ds-opts two">
               <button
                 className={`ds-opt ${settings.tankControlMode === 'normal' ? 'on' : ''}`}
                 onClick={() => set({ tankControlMode: 'normal' })}
@@ -1093,7 +1104,10 @@ export function Menu({ settings, onChange }: Props) {
 
         <section className="ds-sec">
           <h2>Driver assists</h2>
-          <div className="ds-opts">
+          {/* `.two` to match Drive style directly above: the base `.ds-opts` auto-fit
+              collapses to one column at a width where that row is still two, and the
+              two sections stop lining up mid-breakpoint. */}
+          <div className="ds-opts two">
             {/* AIM ASSIST IS NOT OFFERED — it is always on, in both games. The flag and
                 the sim's manual-aim path both still exist (`coerceSettings` forces the
                 stored value true), so putting the toggle back is this block returning. */}

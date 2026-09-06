@@ -25,18 +25,24 @@ export type { ChallengeFormat };
 interface FormatTile {
   format: ChallengeFormat;
   title: string;
-  /** what actually happens, in the one line a player needs before committing */
-  detail: string;
   /** server capability this format needs, if any */
   needs?: string;
 }
 
+/**
+ * NO sub-labels. Every one of these five carried a `.od` line that opened by
+ * restating its own title — "Unrated." under "· Casual", "Counts for ELO." under
+ * "· Rated", "No opponent." under "2v0" — and this was the last place in the app
+ * still doing it: the same 1v1/2v2 tiles one click away in `Matchmaking` describe
+ * themselves. The `.od` slot survives ONLY for the two transient states below,
+ * which say something the title cannot.
+ */
 const TILES: FormatTile[] = [
-  { format: 'casual1v1', title: '1v1 · Casual', detail: 'Unrated. Straight into a private lobby.' },
-  { format: 'rated1v1', title: '1v1 · Rated', detail: 'Counts for ELO. Just the two of you.', needs: 'party' },
-  { format: 'casual2v2', title: '2v2 · Casual', detail: 'Unrated. Sort alliances in the lobby.' },
-  { format: 'ranked2v2', title: '2v2 · Ranked', detail: 'Queue together as a team. Counts for ELO.', needs: 'party' },
-  { format: 'duorecord', title: '2v0 · Co-op record', detail: 'No opponent. Chase a record together.' },
+  { format: 'casual1v1', title: '1v1 · Casual' },
+  { format: 'rated1v1', title: '1v1 · Rated', needs: 'party' },
+  { format: 'casual2v2', title: '2v2 · Casual' },
+  { format: 'ranked2v2', title: '2v2 · Ranked', needs: 'party' },
+  { format: 'duorecord', title: '2v0 · Co-op record' },
 ];
 
 /**
@@ -105,17 +111,17 @@ export function ChallengePicker({
                 key={t.format}
                 className="ds-opt"
                 disabled={!!busy || pendingCaps || unsupported}
-                title={unsupported ? 'This server build cannot run rated challenges yet.' : undefined}
                 onClick={() => pick(t.format)}
               >
                 <span className="ot">{t.title}</span>
-                <span className="od">
-                  {busy === t.format
-                    ? 'Sending challenge…'
-                    : unsupported
-                      ? 'Not available on this server'
-                      : t.detail}
-                </span>
+                {/* rendered only when it has something to say, so an idle tile keeps
+                    `.ds-opt:not(:has(.od))`'s 62px floor and the row does not reflow
+                    when one appears (title + gap + one line fits inside it) */}
+                {(busy === t.format || unsupported) && (
+                  <span className="od">
+                    {busy === t.format ? 'Sending challenge…' : 'Not available on this server'}
+                  </span>
+                )}
               </button>
             );
           })}

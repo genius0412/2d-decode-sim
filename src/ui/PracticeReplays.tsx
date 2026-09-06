@@ -10,6 +10,7 @@ import {
   type PracticeRunMeta,
 } from '../net/practiceRuns';
 import { SIM_DT } from '../config';
+import { fmtDay } from './fmtDate';
 
 /**
  * SOLO PRACTICE REPLAYS — your own offline matches, on your own Career page.
@@ -31,8 +32,6 @@ const runLength = (ticks: number): string => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-const runDate = (at: number): string =>
-  new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 /** one row, from whichever side has it */
 interface Row {
@@ -122,8 +121,11 @@ export function PracticeReplays({
     <div className="ds-panel">
       <div className="ds-panel-h">
         <span className="ds-panel-title">Practice replays</span>
-        <span className="ds-head-spacer" />
-        <span className="ds-dt">{rows.length ? `${rows.length} kept` : ''}</span>
+        {/* `.ds-count`, not `.ds-dt`: a bordered type chip rendered an EMPTY outlined
+            box in the header whenever the list was empty or still loading, and this
+            is the count-beside-a-title job `.ds-count` is for. `.ds-panel-h` is
+            `space-between`, so it needs no spacer to sit right. */}
+        {rows.length > 0 && <span className="ds-count">{rows.length} kept</span>}
       </div>
 
       {loading && rows.length === 0 ? (
@@ -131,58 +133,73 @@ export function PracticeReplays({
       ) : rows.length === 0 ? (
         <div className="ds-empty">
           <div className="big">No practice runs yet</div>
-          Finish a Solo Practice match and it is kept here so you can watch it back. Practice is
-          offline, so these are never scored on a leaderboard — they are just your own matches.
+          Finish a Solo Practice match and it is kept here. Practice runs are never scored on a
+          leaderboard.
         </div>
       ) : (
         <>
-          <table className="ds-table">
-            <thead>
-              <tr>
-                <th>Played</th>
-                <th className="num">Score</th>
-                <th className="num">Length</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.key}>
-                  <td>{runDate(r.at)}</td>
-                  <td className="num">{r.score}</td>
-                  <td className="num">{runLength(r.ticks)}</td>
-                  <td className="num">
-                    <button
-                      className="ds-btn small"
-                      onClick={() => {
-                        // prefer the LOCAL log: it needs no round trip, and it is the copy
-                        // that exists whether or not the upload ever landed
-                        const body = r.localId ? loadPracticeReplay(r.localId) : null;
-                        if (body && onWatchLocal) onWatchLocal(body);
-                        else if (r.replayId && onWatchId) onWatchId(r.replayId);
-                      }}
-                      disabled={!(r.localId && loadPracticeReplay(r.localId)) && !r.replayId}
-                    >
-                      ▶ Watch
-                    </button>
-                    {r.localId && (
-                      <button
-                        className="ds-btn small ghost"
-                        onClick={() => {
-                          deletePracticeRun(r.localId!);
-                          reload();
-                        }}
-                        title="Remove from this device"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </td>
+          {/* the same scroller the two sibling tables use. `.ds-panel` is
+              `overflow: hidden` for its rounded corners, so a table wider than the
+              panel is CUT rather than scrolled — this was the one list in the slice
+              without it. */}
+          <div className="mh-scroll">
+            <table className="ds-table">
+              <thead>
+                <tr>
+                  <th>Played</th>
+                  <th className="num">Score</th>
+                  <th className="num">Length</th>
+                  <th className="r" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="ds-hint">
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.key}>
+                    <td>{fmtDay(r.at)}</td>
+                    <td className="num">{r.score}</td>
+                    <td className="num">{runLength(r.ticks)}</td>
+                    {/* NOT `.num` — this cell holds buttons, and `.ds-btn` is
+                        inline-block, so JSX stripping the whitespace between the two
+                        of them left them touching at 0px. The flex wrapper owns the
+                        gap. */}
+                    <td className="r">
+                      <span className="pr-actions">
+                        <button
+                          className="ds-btn small"
+                          onClick={() => {
+                            // prefer the LOCAL log: it needs no round trip, and it is the copy
+                            // that exists whether or not the upload ever landed
+                            const body = r.localId ? loadPracticeReplay(r.localId) : null;
+                            if (body && onWatchLocal) onWatchLocal(body);
+                            else if (r.replayId && onWatchId) onWatchId(r.replayId);
+                          }}
+                          disabled={!(r.localId && loadPracticeReplay(r.localId)) && !r.replayId}
+                        >
+                          ▶ Watch
+                        </button>
+                        {r.localId && (
+                          <button
+                            className="ds-btn small ghost"
+                            onClick={() => {
+                              deletePracticeRun(r.localId!);
+                              reload();
+                            }}
+                            title="Remove from this device"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* a footer BAND, like `.mh-pager`: `.ds-hint` has `margin: 0` and
+              `.ds-panel` has no padding, so this sentence sat flush in the panel's
+              rounded bottom-left corner while the cell above it was inset 16. */}
+          <p className="ds-panel-foot ds-hint">
             {signedIn
               ? `The last ${MAX_LOCAL_RUNS} runs are kept on your account and on this device; older ones drop off.`
               : `Kept on this device only (the last ${MAX_LOCAL_RUNS}) — sign in to keep them on your account.`}

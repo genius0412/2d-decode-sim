@@ -434,7 +434,8 @@ button {
 .status-wrap {
   position: absolute;
   top: 12px;
-  right: 12px;
+  /* max(), so a landscape notch pushes it in but desktop keeps the plain 12 */
+  right: max(12px, env(safe-area-inset-right));
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -806,6 +807,18 @@ button {
   font-weight: 600;
 }
 
+/* SHELL dialogs are sentence case, matching `.ann-actions`' own "Got it". The 1.5px
+   tracking that suits GameView's all-caps match overlays reads as gaps between letters
+   in sentence case, so it is relaxed here only. */
+.overlay-buttons.ds-dialog-actions button {
+  letter-spacing: 0.01em;
+}
+/* the mobile pre-match panel stacks: `stretch` so both buttons are the same width,
+   where the inline `alignItems: center` it replaces sized each to its own text */
+.overlay-buttons.stack {
+  flex-direction: column;
+  align-items: stretch;
+}
 .overlay-buttons {
   display: flex;
   gap: 10px;
@@ -1606,6 +1619,7 @@ button {
   gap: 1px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
   transition: background 0.1s;
+  font-size: var(--ds-t-xs);
 }
 .mobile-btn .mb-ico {
   line-height: 1;
@@ -1623,6 +1637,7 @@ button {
 .mobile-btn.shoot {
   border-color: var(--ds-on-field-accent);
   color: var(--ds-on-field-accent);
+  font-size: var(--ds-t-sm);
 }
 .mobile-btn.editing {
   border-style: dashed;
@@ -1727,8 +1742,11 @@ button {
     /* and BELOW the MENU/RESET buttons. Both clusters are absolutely positioned into
        the top corners, and once the chips are allowed to use the full width they run
        under the buttons (they overlapped before this too — the row was just off-screen
-       where nobody saw it). The buttons end ~36px down, so clear them. */
-    top: 44px;
+       where nobody saw it).
+       DERIVED from the same inset the buttons use, not a flat 44: `.game-buttons` is
+       positioned from `env(safe-area-inset-top)`, so on a notched phone (inset ~47px)
+       the buttons occupy 47-83px while a flat 44 put the chips straight under them. */
+    top: calc(max(6px, env(safe-area-inset-top)) + 38px);
   }
   .robot-status {
     flex-wrap: wrap;
@@ -1897,10 +1915,10 @@ button {
    "searching…" screen normally implies, so it has to read as its own object
    instead of blending into the status text above it. */
 .ds-tip {
-  margin: 14px 0 0;
+  margin: 0;
   border: 1px solid var(--ds-line);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border-radius: var(--ds-round);
+  padding: var(--ds-s-3);
   background: var(--ds-tile);
   font-size: 12px;
   line-height: 1.5;
@@ -1912,11 +1930,17 @@ button {
 /* MAINTENANCE: the scheduled state informs, the biting state interrupts. Both use
    an edge + ink rather than a saturated fill, so a banner that sits on every menu
    screen for half an hour doesn't become something people stop seeing. */
+/* the shell insets `.ds-bar`, `.ds-main` and `.ds-foot` at 22px; this strip was at
+   14, so its left edge sat 8px outboard of everything above and below it. 22px is the
+   shell inset, not a spacing step. */
+.ds-maint-wrap {
+  padding: 12px 22px 0;
+}
 .ds-maint {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 0 0 14px;
+  margin: 0;
   padding: 10px 14px;
   border: 1px solid var(--ds-warn);
   border-radius: 10px;
@@ -2468,7 +2492,6 @@ input.admin-months {
    tight over a multi-screen document, so `.legal-md` enlarges it and caps the
    measure at ~72 characters. Colour tokens are unchanged — these are the same
    pairs `npm run contrast` already audits. */
-.ds-legal { padding: 16px; }
 .legal-md {
   font-size: 14px;
   line-height: 1.65;

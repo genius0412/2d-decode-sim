@@ -16,32 +16,15 @@ import type { Presence, RoomInvite } from '../net/api';
 export type ShellNav = 'home' | 'play' | 'configure' | 'records' | 'profile' | 'admin';
 
 /** ambient "who's around" chip in the top bar: a live-green dot + the online /
- * signed-in tally, with the ranked-queue depth in the tooltip. Renders nothing
- * until presence lands (server unconfigured / asleep / first poll pending). */
+ * signed-in tally. Renders nothing until presence lands (server unconfigured /
+ * asleep / first poll pending) — `.ds-bar-live` holds the space so the bar does
+ * not re-flow when it does. */
 function PresenceChip({ p }: { p: Presence }) {
   return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        fontSize: 13,
-        whiteSpace: 'nowrap',
-        color: 'var(--ds-mut)',
-      }}
-    >
-      <span
-        style={{
-          width: 7,
-          height: 7,
-          borderRadius: '50%',
-          background: 'var(--ds-ok)',
-          boxShadow: '0 0 6px var(--ds-ok)',
-          flex: 'none',
-        }}
-      />
-      <b style={{ color: 'var(--ds-ink)', fontWeight: 600 }}>{p.online}</b> online
-      {p.signedIn > 0 && <span style={{ opacity: 0.7 }}>· {p.signedIn} signed in</span>}
+    <span className="ds-presence">
+      <span className="ds-presence-dot" />
+      <b>{p.online}</b> online
+      {p.signedIn > 0 && <span className="ds-presence-sub">· {p.signedIn} signed in</span>}
     </span>
   );
 }
@@ -125,9 +108,17 @@ export function AppShell({
         <div className="ds-bar-right">
           {/* the header is on EVERY menu screen, so this is the one placement that
               makes queue depth visible everywhere rather than only where someone
-              already went looking for a match */}
-          <QueueCounts className="bar" allGames />
-          {presence && <PresenceChip p={presence} />}
+              already went looking for a match.
+
+              BOTH of these render nothing until the presence poll lands, and the
+              cluster is `margin-left: auto` — so without a reserved box the whole
+              right-hand side of the bar re-flows a second after every page load.
+              `.ds-bar-live` owns that reservation. `shiftaudit` forces hover and
+              state classes but never an async fetch, so it cannot catch this. */}
+          <span className="ds-bar-live">
+            <QueueCounts className="bar" allGames />
+            {presence && <PresenceChip p={presence} />}
+          </span>
           {right}
         </div>
       </header>
@@ -191,13 +182,24 @@ export function AppShell({
           <button className="ds-foot-link" onClick={onPrivacy}>
             Privacy
           </button>
+          {/* immediately after Privacy, not after Terms. Its label is fixed by the
+              privacy policy, which names the link verbatim (legalText.ts), so it
+              cannot be shortened — but two items both starting "Privacy" should at
+              least sit together rather than have Terms between them. */}
+          <ConsentLink />
           <button className="ds-foot-link" onClick={onTerms}>
             Terms
           </button>
-          <ConsentLink />
           {/* main replaced the bare GitHub link with Changes — keep that, plus
-              monetization's Support/Privacy/Terms destinations */}
-          <button className="ds-foot-link bold" onClick={onChangelog}>
+              monetization's Support/Privacy/Terms destinations.
+
+              NO `.bold`. These eight are peer destinations, and the row was
+              rendering them in three weights purely by accident of markup: 400
+              for the six plain `.ds-foot-link`s, 700 for this one because it
+              carried `.bold`, and 600 for Discord because it is the only `<a>`.
+              Neither ranking was designed. One treatment for all eight; if an
+              item ever has to lead, promote it by POSITION. */}
+          <button className="ds-foot-link" onClick={onChangelog}>
             Changes
           </button>
           <a href={LINKS.discord} target="_blank" rel="noreferrer">

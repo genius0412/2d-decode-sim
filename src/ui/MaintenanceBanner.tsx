@@ -57,10 +57,17 @@ export function MaintenanceBanner({ presence }: { presence: Presence | null }) {
   const line = maintenanceLine(presence?.maintenance ?? null);
   if (!line) return null;
   const biting = presence?.maintenance?.biting ?? false;
+  // The WRAPPER carries the shell's own 22px side inset (`.ds-bar`, `.ds-main`
+  // and `.ds-foot` all use it). The banner is a direct child of `.ds-app`, so
+  // without it the strip sat 8px outboard of the brand mark above it and the page
+  // heading below it. It is inside this component rather than around the call
+  // site so that nothing is rendered at all when there is no maintenance window.
   return (
-    <div className={`ds-maint${biting ? ' biting' : ''}`} role="status">
-      <span aria-hidden>{biting ? '⛔' : '🛠'}</span>
-      <span>{line}</span>
+    <div className="ds-maint-wrap">
+      <div className={`ds-maint${biting ? ' biting' : ''}`} role="status">
+        <span aria-hidden>{biting ? '⛔' : '🛠'}</span>
+        <span>{line}</span>
+      </div>
     </div>
   );
 }

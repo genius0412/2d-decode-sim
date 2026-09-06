@@ -67,22 +67,13 @@ export function queuedGames(
 }
 
 /**
- * What the widening controls SAY, given how long we have waited and how many times
- * the player pressed EXPAND SEARCH.
- *
- * Pulled out of the JSX because the bug being fixed was precisely that these strings
- * never changed: the button called `expandSearch()` on the socket and nothing on
- * screen moved, so it read as dead and invited repeated pressing. The searching
- * screen needs a signed-in account to reach, so this is the part that can actually
- * be tested — and it is the part that was wrong.
- */
-export function expandLabel(bumps: number): string {
-  return bumps > 0 ? `EXPANDED ×${bumps}` : 'EXPAND SEARCH';
-}
-
-/**
  * The line under the spinner: manual presses win over the automatic ramp, because
  * a press is a thing the player just did and deserves the acknowledgement.
+ *
+ * This is the ONLY thing that moves on a press now. There used to be an
+ * `expandLabel` that rewrote the button to "EXPANDED ×2", which turned a control
+ * into a past-tense status — the button says what it does, the hint says what
+ * happened.
  *
  * The thresholds track `RADIUS_INTERVAL_MS` on the server (3s a step, worldwide by
  * the second one). It never claims to be searching "your region" any more, because

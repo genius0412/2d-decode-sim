@@ -362,8 +362,11 @@ export function FriendToasts({
                 >
                   Accept
                 </button>
+                {/* GHOST, as in the panel and the flyout. Bordered, it read as a
+                    second competing action where the other two places read as one
+                    action plus an out — the same decision, offered three times. */}
                 <button
-                  className="ds-btn small"
+                  className="ds-btn small ghost"
                   onClick={() => {
                     void friends.declineInvite(t.invite!.id);
                     dismissToast(t.id);

@@ -27,14 +27,16 @@ export function Contributors({ onOpenProfile }: { onOpenProfile: (username: stri
           <span className="ds-count">{CONTRIBUTORS.length}</span>
         </div>
         <div className="ds-panel-body">
+          {/* No caption under this grid. It read "Names link to that driver's
+              in-game profile where they have one" — a sentence explaining that
+              links are links, under cards where the linked names already
+              hover-underline in the accent colour and the unlinked ones already
+              render as `.static` plain text. */}
           <div className="contrib-grid">
             {CONTRIBUTORS.map((c) => (
               <ContributorCard key={c.fallbackName} c={c} onOpenProfile={onOpenProfile} />
             ))}
           </div>
-          <p className="ds-hint" style={{ marginTop: 14 }}>
-            Names link to that driver’s in-game profile where they have one.
-          </p>
         </div>
       </section>
     </>
@@ -75,20 +77,26 @@ function ContributorCard({
     <div className="contrib-card">
       <Avatar url={c.discordAvatarUrl} name={name} />
       <div className="contrib-body">
+        {/* NO `title` on either of these. Both said "View <name>'s profile", on
+            two adjacent controls, over visible labels that already name the
+            person — the button text IS the accessible name. */}
         {username ? (
-          <button className="contrib-name" onClick={open} title={`View ${name}’s profile`}>
+          <button className="contrib-name" onClick={open}>
             {name}
           </button>
         ) : (
           <span className="contrib-name static">{name}</span>
         )}
         {username ? (
-          <button className="contrib-user" onClick={open} title={`View ${name}’s profile`}>
+          <button className="contrib-user" onClick={open}>
             @{username}
           </button>
         ) : (
           c.role && <span className="contrib-user static">{c.role}</span>
         )}
+        {/* `aria-label` only, no `title`. The glyph has no visible label so the
+            aria-label is required; the title just duplicated it into a hover
+            tooltip on an obvious Discord/GitHub mark. */}
         <div className="contrib-icons">
           {c.discordUrl && (
             <a
@@ -96,7 +104,6 @@ function ContributorCard({
               href={c.discordUrl}
               target="_blank"
               rel="noreferrer"
-              title={`${name} on Discord`}
               aria-label={`${name} on Discord`}
             >
               <DiscordGlyph />
@@ -108,7 +115,6 @@ function ContributorCard({
               href={c.githubUrl}
               target="_blank"
               rel="noreferrer"
-              title={`${name} on GitHub`}
               aria-label={`${name} on GitHub`}
             >
               <GitHubGlyph />

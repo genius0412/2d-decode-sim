@@ -1109,20 +1109,26 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>About this simulation</h2>
-            <p className="ds-sub" style={{ maxWidth: 420 }}>
+            <p className="ds-sub overlay-sub">
               Chain Reaction is a game for the <b>Unofficial FTC Discord’s CAD Competition</b>.
               This simulator is a rough, for-fun approximation of it. <b>The simulation is
               not realistic</b>, so how robots drive, shoot, and score here shouldn’t drive your
               CAD-competition design decisions. Build for the real game, not for this sim.
             </p>
-            <div className="overlay-buttons">
+            {/* SENTENCE CASE, and `.ds-dialog-actions` to drop the all-caps
+                tracking with it. These five are SHELL dialogs — the same surface
+                as Announcements' "Got it" and every `.ds-btn` around them — not
+                the match overlays in GameView, whose caps match the HUD they sit
+                on. Shipping `GOT IT` here beside `Got it` there was one word in
+                two casings in one shell. */}
+            <div className="overlay-buttons ds-dialog-actions">
               <button
                 onClick={() => {
                   markChainDisclaimerSeen();
                   setShowChainDisclaimer(false);
                 }}
               >
-                GOT IT
+                Got it
               </button>
             </div>
           </div>
@@ -1134,10 +1140,10 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>You’re already in a game</h2>
-            <p className="ds-sub" style={{ maxWidth: 380 }}>
+            <p className="ds-sub overlay-sub">
               You can only be in one game at a time.
             </p>
-            <div className="overlay-buttons">
+            <div className="overlay-buttons ds-dialog-actions">
               <button
                 onClick={() => {
                   const ref = loadActiveGame();
@@ -1146,10 +1152,10 @@ export function App() {
                   else setActiveGame(null);
                 }}
               >
-                REJOIN
+                Rejoin
               </button>
               <button className="ghost" onClick={abandonActiveGame}>
-                ABANDON
+                Abandon
               </button>
             </div>
           </div>
@@ -1159,21 +1165,21 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>Start position invalid</h2>
-            <p className="ds-sub" style={{ maxWidth: 380 }}>
+            <p className="ds-sub overlay-sub">
               Your saved start position isn’t legal for the selected chassis. Fix it (or pick a
               preset) before starting.
             </p>
-            <div className="overlay-buttons">
+            <div className="overlay-buttons ds-dialog-actions">
               <button
                 onClick={() => {
                   setBadStart(false);
                   navigate('configure', { sub: 'match' });
                 }}
               >
-                FIX START POSITION
+                Fix start position
               </button>
               <button className="ghost" onClick={() => setBadStart(false)}>
-                CANCEL
+                Cancel
               </button>
             </div>
           </div>
@@ -1183,13 +1189,13 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>{lockedOut ? 'Down for maintenance' : 'Server restarting soon'}</h2>
-            <p className="ds-sub" style={{ maxWidth: 380 }}>
+            <p className="ds-sub overlay-sub">
               {lockedOut
                 ? maintenanceLine(maintenance) ??
                   'DSIM is down for maintenance. New games are paused.'
                 : 'Server is restarting shortly. New games are paused for a moment.'}
             </p>
-            <div className="overlay-buttons">
+            <div className="overlay-buttons ds-dialog-actions">
               <button onClick={() => setStartBlocked(false)}>OK</button>
             </div>
           </div>
@@ -1199,13 +1205,13 @@ export function App() {
         <div className="overlay">
           <div className="overlay-panel">
             <h2>Update required</h2>
-            <p className="ds-sub" style={{ maxWidth: 380 }}>
+            <p className="ds-sub overlay-sub">
               A newer version has shipped. Refresh to update before starting.
             </p>
-            <div className="overlay-buttons">
-              <button onClick={() => window.location.reload()}>REFRESH &amp; UPDATE</button>
+            <div className="overlay-buttons ds-dialog-actions">
+              <button onClick={() => window.location.reload()}>Refresh &amp; update</button>
               <button className="ghost" onClick={() => setPendingStart(null)}>
-                NOT NOW
+                Not now
               </button>
             </div>
           </div>

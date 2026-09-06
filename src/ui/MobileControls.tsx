@@ -35,9 +35,14 @@ function useViewport(): { w: number; h: number } {
   return vp;
 }
 
-/** one action button (fire / intake / catalyst). Hold-style in play; draggable in edit. */
+/** one action button (fire / intake / catalyst). Hold-style in play; draggable in edit.
+ *
+ * `auto` (the robot is handling this action itself) rides the ARIA label and the
+ * `.auto` ghosting, never the drawn label: `label` renders INSIDE an 82px circle, so
+ * "SHOOT (automatic)" wrapped and overflowed the button in the layout editor. */
 function ActionButton({
   label,
+  auto,
   glyph,
   cls,
   size,
@@ -50,6 +55,7 @@ function ActionButton({
   onDragEnd,
 }: {
   label: string;
+  auto?: boolean;
   glyph: string;
   cls: string;
   size: number;
@@ -63,13 +69,10 @@ function ActionButton({
 }) {
   const [pressed, setPressed] = useState(false);
   const dragging = useRef(false);
-  const style: React.CSSProperties = {
-    left,
-    top,
-    width: size,
-    height: size,
-    fontSize: cls === 'shoot' ? 12 : 11,
-  };
+  // POSITION AND SIZE ONLY — the type scale is `.mobile-btn` / `.mobile-btn.shoot`
+  // in the sheet, where the colours already live (`.mb-ico`/`.mb-lbl` size off it in em).
+  const style: React.CSSProperties = { left, top, width: size, height: size };
+  const aria = auto ? `${label} (automatic)` : label;
   if (editing) {
     return (
       <button
@@ -90,7 +93,7 @@ function ActionButton({
           (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
           onDragEnd();
         }}
-        aria-label={`${label} (drag to move)`}
+        aria-label={`${aria} (drag to move)`}
       >
         <span className="mb-ico" aria-hidden>
           {glyph}
@@ -117,7 +120,7 @@ function ActionButton({
       onTouchStart={down}
       onTouchEnd={up}
       onTouchCancel={up}
-      aria-label={label}
+      aria-label={aria}
     >
       <span className="mb-ico" aria-hidden>
         {glyph}
@@ -327,7 +330,8 @@ export function MobileControls({
           return (
             <ActionButton
               key={b.name}
-              label={b.auto ? `${b.label} (automatic)` : b.label}
+              label={b.label}
+              auto={b.auto}
               glyph={b.glyph}
               cls={`${b.cls}${b.auto ? ' auto' : ''}`}
               size={size}

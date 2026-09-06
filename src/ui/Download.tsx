@@ -37,15 +37,20 @@ export function Download() {
       <p className="ds-eyebrow">{APP_NAME} · {mobile ? 'On mobile' : 'Desktop'}</p>
       <h1 className="ds-h1">{mobile ? 'Play on your phone' : 'Download for desktop'}</h1>
       {mobile ? (
-        <div className="ds-panel" style={{ marginBottom: 18 }}>
+        // no inline margin: `.ds-main > .ds-panel` owns the panel stack now.
+        <div className="ds-panel">
           <div className="ds-panel-h">
             <span className="ds-panel-title">Runs in your browser</span>
           </div>
           <div className="ds-panel-body">
-            <p className="ds-hint" style={{ margin: 0 }}>
-              No download needed. DSIM runs in your mobile browser. To run it full-screen, open
-              your browser’s <b>Share</b> menu and tap <b>Add to Home Screen</b>. The desktop builds
-              below are for Windows, macOS, and Linux.
+            {/* one sentence — the one the reader can act on. "No download needed.
+                DSIM runs in your mobile browser" restated the panel title, and
+                "The desktop builds below are for Windows, macOS, and Linux"
+                described the section directly beneath it, which is already headed
+                by its own platform labels. */}
+            <p className="ds-hint">
+              To run full-screen, open your browser’s <b>Share</b> menu and tap{' '}
+              <b>Add to Home Screen</b>.
             </p>
           </div>
         </div>
@@ -57,14 +62,18 @@ export function Download() {
           the only elements in the design system that carry their own bottom margin. */}
       <div className="ds-dlpage">
         <div className="ds-dl-hero">
-          <div className="ds-dl-plat">
-            <span className="glyph">🖥️</span>
-            {os ? OS_LABEL[os] : 'Windows · macOS · Linux'}
-            {os && <span className="ds-chip" style={{ marginLeft: 4 }}>your platform</span>}
-          </div>
+          {/* No 🖥️ and no "your platform" chip. The emoji is the only element on
+              this page rendered in the OS font — it ignores the theme and
+              `currentColor` and looks different per platform — decorating a line
+              that already NAMES the platform. And the chip was a third signal for
+              one fact: the line prints the detected OS, the button below reads
+              "Download for Windows ↓", and the build list is sorted to put it
+              first. */}
+          <div className="ds-dl-plat">{os ? OS_LABEL[os] : 'Windows · macOS · Linux'}</div>
           <div className="ds-req">
+            {/* "Installer or portable" was a caption restating the labels of the
+                cards 40px below it ("Windows · Installer", "Windows · Portable"). */}
             <span>≈120 MB</span>
-            <span>Installer or portable</span>
             <span>{version ? version : 'latest release'}</span>
           </div>
           {featured && (

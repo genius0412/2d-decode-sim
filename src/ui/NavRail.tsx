@@ -1,9 +1,13 @@
 import type { ShellNav } from './AppShell';
 import { QueueCounts } from './QueueCounts';
 
-/** the four top-level destinations, in the order they appear on the home menu */
+/** the four top-level destinations, in the order they appear on the home menu.
+ *
+ * A hint NAMES WHAT IS BEHIND THE LABEL; it never restates it. "Play → Pick a
+ * game mode" said nothing the word Play did not, in the one slot that renders
+ * twice (the home keycap `.mh` and the rail `.rh`). */
 export const RAIL_ITEMS: ReadonlyArray<{ id: ShellNav; label: string; hint: string }> = [
-  { id: 'play', label: 'Play', hint: 'Pick a game mode' },
+  { id: 'play', label: 'Play', hint: 'Ranked, records, practice' },
   { id: 'configure', label: 'Configure', hint: 'Robot & match setup' },
   { id: 'records', label: 'Records', hint: 'Leaderboard & career' },
   { id: 'profile', label: 'Profile', hint: 'Account & settings' },

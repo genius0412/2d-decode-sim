@@ -3,8 +3,7 @@ import type { RoomConfig } from '../net/protocol';
 import type { RoomInvite } from '../net/api';
 import { useFriends } from './useFriends';
 import { challengeLine, challengeOf } from './challenge';
-import { PeopleGlyph } from './FriendsPanel';
-import { SupporterBadge } from './SupporterBadge';
+import { PeopleGlyph, PersonRow, Section } from './FriendsPanel';
 
 /**
  * Compact friend flyout for `Lobby`, which bypasses `AppShell` (and its
@@ -76,7 +75,11 @@ export function InviteFlyout({
   return (
     <div className="ds-invite-root" ref={rootRef}>
       <button className="ds-chip ds-invite-toggle" onClick={() => setOpen((o) => !o)}>
-        <PeopleGlyph size={13} /> {room ? 'Invite friends' : 'Friends'}
+        {/* NO typed space: `.ds-chip` is an inline-flex row with its own gap, so a
+            JSX space becomes a leading space INSIDE the label's anonymous flex item
+            — the gap plus ~3px of text, two spacing systems in one 20px stretch. */}
+        <PeopleGlyph size={13} />
+        {room ? 'Invite friends' : 'Friends'}
         {badge > 0 && (
           <span className="fr-badge ds-invite-badge" aria-label={`${badge} invites`}>
             {badge}
@@ -90,99 +93,83 @@ export function InviteFlyout({
           ) : (
             <>
               {invites.length > 0 && (
-                <div className="fr-section">
-                  <h3 className="fr-sec-h">Challenges</h3>
+                <Section title="Challenges" count={invites.length}>
                   {invites.map((inv) => {
                     // a RATED challenge has no room to join — accepting it means
                     // leaving this lobby for the ranked queue, which only the app
                     // shell can do
                     const rated = !!challengeOf(inv, '');
                     return (
-                      <div className="fr-row" key={inv.id}>
-                        <span className="fr-who static">
-                          <span className="fr-nameline">
-                            <span className="fr-name">{inv.from.handle}</span>
-                            <SupporterBadge supporter={inv.from.supporter} role={inv.from.role} />
-                          </span>
-                          <span className="fr-sub">{challengeLine(inv.format)}</span>
-                        </span>
-                        <span className="fr-actions">
-                          <button
-                            className="ds-btn small primary"
-                            disabled={rated && !onAcceptChallenge}
-                            onClick={() => {
-                              if (rated) {
-                                setOpen(false);
-                                // deliberately NOT dismissed: the server verifies
-                                // the party token against this very row on every
-                                // `queue`, including the re-queue a transport
-                                // reconnect sends. Deleting it here would fail the
-                                // challenge the moment the socket blipped. It ages
-                                // out on the read TTL instead.
-                                onAcceptChallenge?.(inv);
-                              } else {
-                                // GO WHERE THE HOST IS, not where we are
-                                join(inv.room, inv.region, inv.id);
-                              }
-                            }}
-                          >
-                            Accept
-                          </button>
-                          <button
-                            className="ds-btn small ghost"
-                            onClick={() => void friends.declineInvite(inv.id)}
-                          >
-                            Decline
-                          </button>
-                        </span>
-                      </div>
+                      <PersonRow key={inv.id} p={inv.from} sub={challengeLine(inv.format)}>
+                        <button
+                          className="ds-btn small primary"
+                          disabled={rated && !onAcceptChallenge}
+                          onClick={() => {
+                            if (rated) {
+                              setOpen(false);
+                              // deliberately NOT dismissed: the server verifies
+                              // the party token against this very row on every
+                              // `queue`, including the re-queue a transport
+                              // reconnect sends. Deleting it here would fail the
+                              // challenge the moment the socket blipped. It ages
+                              // out on the read TTL instead.
+                              onAcceptChallenge?.(inv);
+                            } else {
+                              // GO WHERE THE HOST IS, not where we are
+                              join(inv.room, inv.region, inv.id);
+                            }
+                          }}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          className="ds-btn small ghost"
+                          onClick={() => void friends.declineInvite(inv.id)}
+                        >
+                          Decline
+                        </button>
+                      </PersonRow>
                     );
                   })}
-                </div>
+                </Section>
               )}
 
               {room && (
-                <div className="fr-section">
-                  <h3 className="fr-sec-h">Invite a friend</h3>
+                <Section title="Invite a friend">
                   {online.length === 0 ? (
-                    <p className="fr-empty">No friends online right now.</p>
+                    <p className="fr-empty">No friends online.</p>
                   ) : (
                     online.map((f) => (
-                      <div className="fr-row" key={f.userId}>
-                        <span className="fr-who static">
-                          <span className="fr-nameline">
-                            <span className="fr-name">{f.handle}</span>
-                            <SupporterBadge supporter={f.supporter} role={f.role} />
-                          </span>
-                          <span className="fr-sub">@{f.username}</span>
-                        </span>
-                        <span className="fr-actions">
-                          <button
-                            className="ds-btn small"
-                            disabled={!f.username || !!(f.username && invited[f.username])}
-                            onClick={() => {
-                              const u = f.username;
-                              if (!u) return;
-                              void friends
-                                .inviteToRoom(
-                                  u,
-                                  room.code,
-                                  room.config.game ?? 'decode',
-                                  room.config.kind,
-                                  room.config.record,
-                                  null,
-                                  room.region ?? null,
-                                )
-                                .then(() => setInvited((m) => ({ ...m, [u]: true })));
-                            }}
-                          >
-                            {f.username && invited[f.username] ? 'Invited ✓' : 'Invite'}
-                          </button>
-                        </span>
-                      </div>
+                      <PersonRow key={f.userId} p={f}>
+                        <button
+                          className="ds-btn small"
+                          disabled={!f.username || !!(f.username && invited[f.username])}
+                          onClick={() => {
+                            const u = f.username;
+                            if (!u) return;
+                            void friends
+                              .inviteToRoom(
+                                u,
+                                room.code,
+                                room.config.game ?? 'decode',
+                                room.config.kind,
+                                room.config.record,
+                                null,
+                                room.region ?? null,
+                              )
+                              .then(() => setInvited((m) => ({ ...m, [u]: true })));
+                          }}
+                        >
+                          {/* NO trailing ✓: 'Invite' → 'Invited ✓' grew the button
+                              ~22px inside a `flex: none` `.fr-actions`, squeezing
+                              the name beside it into its ellipsis — a row visibly
+                              reflowing on a click that changed only a label. */}
+                          {f.username && invited[f.username] ? 'Invited' : 'Invite'}
+                        </button>
+                      </PersonRow>
                     ))
                   )}
-                </div>
+                </Section>
               )}
 
               {invites.length === 0 && !room && <p className="fr-empty">No pending challenges.</p>}

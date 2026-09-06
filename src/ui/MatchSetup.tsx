@@ -38,7 +38,9 @@ export function MatchSetup({
   function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
   }
-  function showToast(message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') {
+  /** NOT a toast — CLAUDE.md forbids those, and this is an inline `<p>` under the
+   * auto-path section. Named for what it is so nobody goes looking for a toast system. */
+  function setImportNotice(message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') {
     setNotice({ bad: type === 'error' || type === 'warning', text: message });
   }
 
@@ -80,15 +82,18 @@ export function MatchSetup({
   }
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    // clear the LAST import's line first. It was only ever set, never cleared, so a
+    // failed import's red line sat under the section for the rest of the session.
+    setNotice(null);
     const file = event.target.files?.[0];
     if (!file) return;
     if (!file.name.endsWith('.pp')) {
-      showToast('Pick a .pp file.', 'error');
+      setImportNotice('Pick a .pp file.', 'error');
       event.target.value = '';
       return;
     }
     if (settings.savedAutos.length >= MAX_SAVED_AUTOS) {
-      showToast(`You can save up to ${MAX_SAVED_AUTOS} autos. Delete one first.`, 'warning');
+      setImportNotice(`You can save up to ${MAX_SAVED_AUTOS} autos. Delete one first.`, 'warning');
       event.target.value = '';
       return;
     }
@@ -123,19 +128,19 @@ export function MatchSetup({
           autoPath: autoPathData,
           autoPathEnabled: true,
         });
-        showToast(`Saved ${file.name}.`, 'success');
+        setImportNotice(`Saved ${file.name}.`, 'success');
       } catch (error) {
         const errMsg = getErrorMessage(error);
         const message = errMsg.includes('Invalid file format')
           ? 'That does not look like a Pedro Pathing file.'
           : `Error loading file: ${errMsg}`;
-        showToast(message, 'error');
+        setImportNotice(message, 'error');
       } finally {
         event.target.value = '';
       }
     };
     reader.onerror = () => {
-      showToast('Couldn’t read that file.', 'error');
+      setImportNotice('Couldn’t read that file.', 'error');
       event.target.value = '';
     };
     reader.readAsText(file);
@@ -161,7 +166,7 @@ export function MatchSetup({
         <span className="ds-panel-title">Match setup</span>
       </div>
 
-      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div className="ds-panel-body stack">
         <section className="ds-sec">
           <h2>Alliance</h2>
           <div className="ds-opts two">
@@ -211,7 +216,7 @@ export function MatchSetup({
               onDeleteSaved={(c, i) => set(deleteSavedStart(settings, c, i))}
             />
           )}
-          <div className="ds-opts" style={{ marginTop: 12 }}>
+          <div className="ds-opts fill">
             <button
               className={`ds-opt mini ${settings.practiceDummies ? 'on' : ''}`}
               onClick={() => set({ practiceDummies: !settings.practiceDummies })}
@@ -260,7 +265,7 @@ export function MatchSetup({
               );
             })}
             {settings.savedAutos.length < MAX_SAVED_AUTOS && (
-              <label className="ds-opt ds-opt-add" style={{ cursor: 'pointer' }}>
+              <label className="ds-opt ds-opt-add">
                 <span className="ot">＋ Import .pp</span>
                 <input type="file" accept=".pp" onChange={handleFileChange} style={{ display: 'none' }} />
               </label>
@@ -269,30 +274,23 @@ export function MatchSetup({
           {settings.autoPath && (
             <button
               className={`ds-opt ${settings.autoPathEnabled ? 'on' : ''}`}
-              style={{ marginTop: 10 }}
               onClick={() => set({ autoPathEnabled: !settings.autoPathEnabled })}
             >
               <span className="ot">Auto path {settings.autoPathEnabled ? 'ON' : 'OFF'}</span>
-              <span className="od">
-                {settings.autoPathEnabled
-                  ? `Running: ${settings.autoPath.fileName}`
-                  : 'Selected auto is off'}
-              </span>
+              {/* the FILENAME either way. The `.ot` line above already says ON/OFF, so
+                  the old OFF branch ("Selected auto is off") said nothing twice AND
+                  dropped the one thing the OFF state cannot otherwise tell you. */}
+              <span className="od">{settings.autoPath.fileName}</span>
             </button>
           )}
           {notice && (
-            <p className={notice.bad ? 'ds-form-err' : 'ds-hint'} role="status" style={{ marginTop: 10 }}>
+            <p className={notice.bad ? 'ds-form-err' : 'ds-hint'} role="status">
               {notice.text}
             </p>
           )}
           <p className="ds-hint">
             Build a <code>.pp</code> path at{' '}
-            <a
-              href="https://visualizer.pedropathing.com"
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: 'var(--ds-accent)' }}
-            >
+            <a href="https://visualizer.pedropathing.com" target="_blank" rel="noreferrer">
               visualizer.pedropathing.com
             </a>
             .

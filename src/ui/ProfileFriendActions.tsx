@@ -50,17 +50,20 @@ export function ProfileFriendActions({
   if (isFriend) {
     return (
       <span className="ds-profile-friend-actions">
+        {/* the status LEADS the row. It sat between the primary action and the two
+            destructive ones, which is the one place a badge cannot go: the eye
+            groups by distance, so it read as a third button in the middle of a
+            strip of buttons rather than as the state they act on. */}
+        <span className="ds-chip on">✓ Friends</span>
         {challengeable && (
           <button
             className="ds-btn primary"
             disabled={busy}
-            title={`Challenge @${username} to a match`}
             onClick={() => friends.openChallenge(username)}
           >
             Challenge
           </button>
         )}
-        <span className="ds-chip on">✓ Friends</span>
         <button className="ds-btn ghost" disabled={busy} onClick={() => run(() => friends.unfriend(username))}>
           Unfriend
         </button>
@@ -73,19 +76,16 @@ export function ProfileFriendActions({
 
   if (incomingReq) {
     return (
+      // DEFAULT size, like every other branch and like the `ShareButton` this shares
+      // a header row with. This was the only state that used `.ds-btn small`, so the
+      // profile header's controls changed HEIGHT depending on your relationship with
+      // the person — and nothing about "they sent you a request" argues for smaller
+      // buttons.
       <span className="ds-profile-friend-actions">
-        <button
-          className="ds-btn small primary"
-          disabled={busy}
-          onClick={() => run(() => friends.accept(username))}
-        >
+        <button className="ds-btn primary" disabled={busy} onClick={() => run(() => friends.accept(username))}>
           Accept
         </button>
-        <button
-          className="ds-btn small ghost"
-          disabled={busy}
-          onClick={() => run(() => friends.decline(username))}
-        >
+        <button className="ds-btn ghost" disabled={busy} onClick={() => run(() => friends.decline(username))}>
           Decline
         </button>
       </span>

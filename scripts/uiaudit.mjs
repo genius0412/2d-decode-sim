@@ -48,10 +48,10 @@ const BASELINE = {
   'undefined-token': 0,
   'duplicate-selector': 0,
   'var-literal-fallback': 0,
-  'inline-spacing': 78,
+  'inline-spacing': 29,
   'fractional-font-size': 0,
   'banned-font-weight': 0,
-  'off-grid-gap': 178,
+  'off-grid-gap': 169,
 };
 
 // ── 1. undefined custom properties ───────────────────────────────────────────
@@ -86,21 +86,37 @@ for (const f of css) {
 const owner = new Map();
 for (const f of css) {
   let depth = 0;
+  // A SELECTOR LIST SPANS LINES. Matching only `^sel {` treats the LAST line of
+  //   .fr-empty,
+  //   .fr-note,
+  //   .fr-error {
+  // as a standalone rule, which is a false positive — and acting on that one is what
+  // collapsed that group into a single block and turned `.fr-empty` red. So the
+  // prelude is accumulated across lines and only single-selector rules own a name.
+  let prelude = '';
   read(f).forEach((l, i) => {
     const code = l.replace(/\/\*.*?\*\//g, '');
     if (depth === 0) {
-      const m = code.match(/^([.#][^{}@]*?)\s*\{\s*$/);
-      if (m) {
-        for (const sel of m[1].split(',').map((s) => s.trim()).filter(Boolean)) {
-          // a compound like `.a .b` or `.a:hover` is its own thing; only exact repeats count
+      const open = code.indexOf('{');
+      if (open === -1) {
+        prelude += ' ' + code;
+      } else {
+        prelude = (prelude + ' ' + code.slice(0, open)).trim();
+        const sels = prelude.split(',').map((x) => x.trim()).filter(Boolean);
+        // `.a, .b { }` is a shared BASE; `.a { }` after it is a per-variant override,
+        // which is the normal shape, not the bug. Only a lone selector owns itself.
+        if (sels.length === 1 && /^[.#]/.test(sels[0]) && !sels[0].startsWith('@')) {
+          const sel = sels[0];
           const prev = owner.get(sel);
           if (prev) hit('duplicate-selector', f, i + 1, `${sel} — also at ${prev}`);
           else owner.set(sel, `${f}:${i + 1}`);
         }
+        prelude = '';
       }
     }
     depth += (code.match(/\{/g) || []).length - (code.match(/\}/g) || []).length;
     if (depth < 0) depth = 0;
+    if (depth === 0 && code.includes('}')) prelude = '';
   });
 }
 

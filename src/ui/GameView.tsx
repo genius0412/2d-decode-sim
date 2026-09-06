@@ -38,8 +38,9 @@ function NetQuality({ net, open, onToggle }: { net: NetStatus; open: boolean; on
     `Connection: ${label.toLowerCase()}\n` +
     `Round-trip ping: ${ping} (you ↔ server)\n` +
     `Server updates: ${hz} (target 30)\n` +
-    `Jitter: ${jit} (unevenness - the main cause of choppiness)\n` +
-    `Click to ${open ? 'hide' : 'show'} the ping graph`;
+    // the four MEASUREMENTS only. That it opens a graph is already said by the 📈
+    // caret, the pointer cursor, role="button" and the `.active` border state.
+    `Jitter: ${jit} (unevenness - the main cause of choppiness)`;
   return (
     <span
       className={`chip net-quality clickable ${cls} ${open ? 'active' : ''}`}
@@ -386,7 +387,9 @@ export function GameView({
                 <p>The server may have restarted. Refresh the page to reconnect.</p>
                 <div className="overlay-buttons">
                   <button onClick={() => window.location.reload()}>REFRESH</button>
-                  <button onClick={onExit}>MENU</button>
+                  <button className="ghost" onClick={onExit}>
+                    MENU
+                  </button>
                 </div>
               </>
             ) : (
@@ -458,25 +461,25 @@ export function GameView({
                 {padButtonLabel(settings.bindings.pad.buttons.start[0] ?? 9)} to start
               </p>
             )}
+            {/* `.overlay-buttons`, not `.ds-cta`: every other button in every
+                `.overlay-panel` — including the net overlay's REFRESH/MENU a few
+                lines up — is that one, and `.ds-cta.ghost` grounds on `--ds-line`,
+                which is the wrong edge for a card floating on a dark scrim. */}
             {window.matchMedia('(pointer: coarse)').matches && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
-                <button
-                  className="ds-cta"
-                  onClick={() => controllerRef.current?.startMatch()}
-                >
-                  START MATCH
-                </button>
-                <button
-                  className="ds-cta ghost"
-                  onClick={onExit}
-                >
+              <div className="overlay-buttons stack">
+                <button onClick={() => controllerRef.current?.startMatch()}>START MATCH</button>
+                <button className="ghost" onClick={onExit}>
                   BACK TO MENU
                 </button>
               </div>
             )}
-            <p className="ds-hint">
-              Esc · menu &nbsp;·&nbsp; {keyLabel(settings.bindings.keys.restart[0] ?? '?')} · restart
-            </p>
+            {/* KEYBOARD ONLY. A phone has just been handed START MATCH and BACK TO
+                MENU precisely because it has no keys to press. */}
+            {!window.matchMedia('(pointer: coarse)').matches && (
+              <p className="ds-hint">
+                Esc · menu &nbsp;·&nbsp; {keyLabel(settings.bindings.keys.restart[0] ?? '?')} · restart
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -705,9 +708,7 @@ function Hud({ hud, showEventLog }: { hud: HudSnapshot; showEventLog: boolean })
               </span>
             )}
             {hud.net?.server && (
-              <span className="chip on" title={`This match is hosted on the ${hud.net.server} server`}>
-                🌐 {hud.net.server}
-              </span>
+              <span className="chip on">🌐 {hud.net.server}</span>
             )}
             {/* who is watching. Shown only when somebody IS: a standing "0 watching"
                 is noise on an already-busy chip row, and the moment worth surfacing
@@ -1132,7 +1133,7 @@ function Results({
         </table>
         {ranked && <EloResults rows={eloResults} />}
         {matchResult && (
-          <p className="ds-hint" style={{ color: 'var(--ds-accent)' }}>
+          <p className="ds-hint ok">
             {matchResult.kind === 'record'
               ? '✓ Recorded - sign in to save it to the leaderboard.'
               : '✓ Match recorded.'}
@@ -1142,7 +1143,7 @@ function Results({
             offline has no authority to put it there — so the copy promises only what happened:
             the run is kept, and it is yours to watch. */}
         {practiceRun && !matchResult && (
-          <p className="ds-hint" style={{ color: 'var(--ds-accent)' }}>
+          <p className="ds-hint ok">
             {signedIn
               ? '✓ Saved to your practice replays.'
               : '✓ Saved on this device — sign in to keep it on your account.'}
@@ -1156,7 +1157,12 @@ function Results({
           )}
           {canRematch && <button onClick={onRematch}>REMATCH</button>}
           {coopRematch && <RematchVote vote={coopRematch} onToggle={onCoopRematch} />}
-          <button onClick={onExit}>MENU</button>
+          {/* the EXIT, not a fourth primary: `.overlay-buttons button` is accent-filled
+              unless `.ghost`, so an unmarked MENU sat beside REMATCH and WATCH REPLAY
+              with nothing saying which one the screen expects. */}
+          <button className="ghost" onClick={onExit}>
+            MENU
+          </button>
         </div>
         {/* REPORT is deliberately not in the button row. It is a rare, deliberate action and
             the row is where REMATCH and MENU live — the two things every player reaches for

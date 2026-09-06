@@ -92,7 +92,7 @@ export function Profile({
     <div className="ds-panel">
       <div className="ds-empty">
         <div className="big">No such player</div>
-        No account with the username <code>@{username}</code>.
+        <code>@{username}</code>
       </div>
     </div>
   );

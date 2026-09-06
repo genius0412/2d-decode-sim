@@ -8,7 +8,7 @@ import { createWorld, DEFAULT_ASSISTS, DEFAULT_SPEC, PLAYER_ASSISTS, coerceAssis
 import { drawWheels } from '../src/games/chain/parts';
 import { sanitizePlayer, sanitizePlayerPatch } from '../src/net/sanitize';
 import { derivedRole, savedStartCap } from '../src/ui/startPositions';
-import { queuedModes, queuedGames, queuesFor, anyoneQueued, expandLabel, widenHint } from '../src/ui/queueDepth';
+import { queuedModes, queuedGames, queuesFor, anyoneQueued, widenHint } from '../src/ui/queueDepth';
 import { roomJoinRegion } from '../src/net/roomRegion';
 import {
   parkQueue, takeQueue, dropQueue, updateQueue, peekQueue, subscribeQueue, elapsedLabel, elapsedSeconds,
@@ -6095,8 +6095,8 @@ function pushContest(A: Partial<RobotSpec>, B: Partial<RobotSpec>, seconds = 3):
       queuedGames(pres(2, 0), games).length === 0);
 
     // EXPAND SEARCH used to call the server and change nothing on screen, so it read
-    // as a dead button. These are the strings that now have to move when it is pressed.
-    check('expand: the button says so after a press', expandLabel(0) === 'EXPAND SEARCH' && expandLabel(2) === 'EXPANDED ×2');
+    // as a dead button. The HINT is what moves on a press — the button label stays a
+    // verb rather than becoming "EXPANDED ×2", which is a status, not a control.
     check('expand: a press changes the hint immediately, at any elapsed time',
       widenHint(1, 0) !== widenHint(0, 0) && widenHint(1, 0) === widenHint(1, 99));
     check('expand: with no presses the hint still follows the automatic ramp',

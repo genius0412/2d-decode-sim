@@ -108,7 +108,7 @@ export function AudioSection({
         <div className="ds-panel-h">
           <span className="ds-panel-title">Audio</span>
         </div>
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="ds-panel-body stack">
           <VolumeRow
             label="Master"
             value={vol.master}
@@ -168,9 +168,9 @@ export function AudioSection({
             onChange={(voice) => setVolume({ voice })}
             onAudition={() => audio.say('Volume', true)}
           />
-          {silent && (
-            <p className="ds-hint">Master is at 0% - everything is silent until you raise it.</p>
-          )}
+          {/* NO "master is at 0%" line. The `muted` prop already greys every value in
+              the panel for exactly this state and the Master row itself reads 0%; a
+              sentence that appears and disappears also moved the panel's height. */}
         </div>
       </section>
 
@@ -178,7 +178,7 @@ export function AudioSection({
         <div className="ds-panel-h">
           <span className="ds-panel-title">Visual</span>
         </div>
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="ds-panel-body stack">
           <div className="ds-opts three">
             {THEMES.map((t) => (
               <button

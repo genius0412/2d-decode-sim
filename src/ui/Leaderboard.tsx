@@ -111,7 +111,9 @@ function RobotSpecSummary({ spec, game }: { spec: RobotSpec; game?: GameId }) {
   const isChain = game === 'chain';
   const stat = (value: ReactNode, label: string, small = false) => (
     <div className="ds-stat">
-      <span className="sv" style={small ? { fontSize: 14 } : undefined}>{value}</span>
+      {/* `small` is the TEXT variant of a stat value (a drivetrain name, an
+          archetype) — a type step, so it is a class, not an inline size. */}
+      <span className={`sv${small ? ' sm' : ''}`}>{value}</span>
       <span className="sl">{label}</span>
     </div>
   );
@@ -200,7 +202,7 @@ function MyStanding({ me }: { me: EloStanding }) {
           <strong>{remaining}</strong> {remaining === 1 ? 'match' : 'matches'} until placement
         </span>
         <span className="lb-standing-sub">
-          {me.games}/{PLACEMENT_GAMES} placement matches played. Finish them to join the leaderboard.
+          {me.games}/{PLACEMENT_GAMES} placement matches played
         </span>
         <span className="lb-standing-bar" aria-hidden>
           <span style={{ width: `${Math.min(100, (me.games / PLACEMENT_GAMES) * 100)}%` }} />
@@ -367,7 +369,7 @@ export function Leaderboard({
             <div className="big">{isRecords ? 'No entries yet' : 'No placed players yet'}</div>
             {isRecords
               ? 'Be the first to set a score on this board.'
-              : `Players appear here after ${PLACEMENT_GAMES} ranked matches. Be the first to place.`}
+              : `Players appear here after ${PLACEMENT_GAMES} ranked matches.`}
           </div>
         )}
         {status === 'ok' && rows.length > 0 && (
@@ -384,7 +386,7 @@ export function Leaderboard({
                 <th>Driver</th>
                 {isRecords && <th>Robot</th>}
                 {!isRecords && <th>Games</th>}
-                <th style={{ textAlign: 'right' }}>{valueLabel}</th>
+                <th className="r">{valueLabel}</th>
               </tr>
             </thead>
             <tbody>
@@ -436,14 +438,13 @@ export function Leaderboard({
                                 e.stopPropagation();
                                 setOpenRow(isOpen ? null : r.userId);
                               }}
-                              title="View robot"
                             >
                               {DT_LABEL[cfg.spec.drivetrain]}
                               {cfg.partnerSpec && ` + ${DT_LABEL[cfg.partnerSpec.drivetrain]}`}
                               <span className="tw">{isOpen ? '▴' : '▾'}</span>
                             </button>
                           ) : (
-                            <span style={{ color: 'var(--ds-mut)' }}>-</span>
+                            <span className="ds-muted">-</span>
                           )}
                         </td>
                       )}

@@ -14,17 +14,24 @@ import { APP_NAME } from '../seasons';
  * A live privacy policy is a prerequisite for the AdSense application, so this page
  * must stay reachable without an account and without JavaScript-gated routing.
  */
-function LegalPage({ title, sub, body }: { title: string; sub: string; body: string }) {
+function LegalPage({ title, sub, body }: { title: string; sub?: string; body: string }) {
   return (
     <>
       <p className="ds-eyebrow">{APP_NAME} · Legal</p>
       <h1 className="ds-h1">{title}</h1>
+      {/* `sub` is OPTIONAL, because most of the time it is the title said again
+          as a sentence. Only keep one where it carries something the heading
+          cannot — Privacy's "how to get rid of it" does; Terms' did not. The
+          "Updated" date is the part that always earns the line. */}
       <p className="ds-sub">
-        {sub} Updated {LEGAL_UPDATED}.
+        {sub ? `${sub} ` : ''}Updated {LEGAL_UPDATED}.
       </p>
 
       <section className="ds-panel">
-        <div className="ds-legal">
+        {/* `.ds-panel-body`, not the one-off `.ds-legal` — the two were the same
+            16px, written twice. `.legal-md` still owns the DOCUMENT's own rhythm
+            inside it; only the container padding is shared. */}
+        <div className="ds-panel-body">
           <Markdown text={body} className="md legal-md" />
         </div>
       </section>
@@ -58,11 +65,7 @@ export function Terms() {
           about your account or a payment.
         </p>
       )}
-      <LegalPage
-        title="Terms of Use"
-        sub="The rules for using the sim, the servers, and supporter memberships."
-        body={TERMS_MD}
-      />
+      <LegalPage title="Terms of Use" body={TERMS_MD} />
     </>
   );
 }

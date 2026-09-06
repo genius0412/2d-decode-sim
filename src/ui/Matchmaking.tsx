@@ -11,7 +11,7 @@ import { MatchStrategy } from './MatchStrategy';
 import { MatchAudio } from '../audio';
 import { DODGE_REASON, type DodgeVerdict } from '../dodge';
 import { STANDING_MAX, WINDOW_HOURS, lockRemaining, tierOf } from '../standing';
-import { expandLabel, widenHint, queuesFor } from './queueDepth';
+import { widenHint, queuesFor } from './queueDepth';
 import { parkQueue, takeQueue, updateQueue, dropQueue, elapsedSeconds, type ParkedQueue } from './queueKeeper';
 import { usePresence } from './usePresence';
 import { useServerNotice } from '../net/notice';
@@ -19,6 +19,21 @@ import { APP_NAME } from '../seasons';
 import { Logo } from './Logo';
 import { useEscape } from './useEscape';
 import { formatLabel, type PendingChallenge } from './challenge';
+
+/**
+ * ONE string for the one fact, on both waiting screens.
+ *
+ * They carried two near-identical 24-word paragraphs saying the same thing in the
+ * "don't worry, we'll handle it" register. The fact is worth keeping — that the
+ * queue survives leaving the screen is genuinely non-obvious, and a first-time
+ * searcher has not yet seen the `QueueBar` that demonstrates it — but a "Tip:"
+ * label on the only tip on screen is a label for a category of one.
+ */
+const BACKGROUND_QUEUE_TIP = (
+  <>
+    <b>← Back</b> keeps you in the queue.
+  </>
+);
 
 /**
  * Region-aware ranked matchmaking. We connect to the DESIGNATED matchmaker (a
@@ -421,9 +436,10 @@ export function Matchmaking({
           Your account standing is {tierOf(lock.score).name.toLowerCase()} ({lock.score}/{STANDING_MAX}).{' '}
           {tierOf(lock.score).blurb}
         </span>
-        <span className="ds-muted">
-          Custom rooms and solo practice are unaffected — and finishing matches you start is what earns it back.
-        </span>
+        {/* "finishing matches earns it back" is `dodgeNote`'s line, and the two
+            notices can stand one above the other in the same panel. Said once, in
+            one wording, by whichever one is up. */}
+        <span className="ds-muted">Custom rooms and solo practice are unaffected.</span>
       </div>
     );
   };
@@ -562,7 +578,7 @@ export function Matchmaking({
    * Run, MatchStrategy) — back control + brand mark, then a titled panel. */
   const page = (title: JSX.Element, sub: string, body: JSX.Element): JSX.Element => (
     <div className="ds-console">
-      <div className="ds-console-in" style={{ maxWidth: 520 }}>
+      <div className="ds-console-in narrow">
         <div className="ds-head">
           <button className="ds-back" onClick={onCancel}>
             ← Back
@@ -644,17 +660,16 @@ export function Matchmaking({
           ? `${formatLabel(ch.format)} · ${elapsed}s`
           : `${formatLabel(ch.format)} · ${queue.size}/${queue.need} in queue · ${elapsed}s`,
         <>
-          <p className="ds-hint">
-            {ch.partyOnly
-              ? 'They start the moment they accept. This match counts for ELO.'
-              : 'Once they accept, you queue together as a team.'}
-          </p>
+          {/* the rated line is gone: the sub two rows above already reads "Rated 1v1 ·
+              14s", and "they start the moment they accept" is what "Waiting for @name"
+              means. The premade line stays — being put on the SAME alliance is the one
+              thing here the title does not say. */}
+          {!ch.partyOnly && (
+            <p className="ds-hint">You queue together as a team once they accept.</p>
+          )}
           {/* the wait here is somebody else's response time, so it is the screen
               MOST worth telling people they can leave */}
-          <p className="ds-tip">
-            <b>Tip:</b> press <b>← Back</b> and keep playing — you stay in the queue, and
-            we’ll pull you in the moment they accept.
-          </p>
+          <p className="ds-tip">{BACKGROUND_QUEUE_TIP}</p>
           {error && <p className="ds-form-err">⚠ {error}</p>}
           {dodgeNote()}
           {lockNote()}
@@ -678,17 +693,17 @@ export function Matchmaking({
             {widenHint(bumps, elapsed)}
           </p>
         )}
-        <p className="ds-tip">
-          <b>Tip:</b> press <b>← Back</b> and keep playing — your place in the queue is
-          kept, and we’ll pull you into the match the moment it’s found.
-        </p>
+        <p className="ds-tip">{BACKGROUND_QUEUE_TIP}</p>
         {error && <p className="ds-form-err">⚠ {error}</p>}
-          {dodgeNote()}
-          {lockNote()}
+        {dodgeNote()}
+        {lockNote()}
         <div className="ds-actions">
           {!noWiden && multiServer() && (
+            // the label stays a VERB. `expandLabel` turned it into "EXPANDED ×2" past
+            // the first press — a past-tense status that no longer says what pressing
+            // it does, and a second statement of a count `widenHint` already carries.
             <button className="ds-cta ghost" onClick={expand}>
-              {expandLabel(bumps)}
+              EXPAND SEARCH
             </button>
           )}
           <button className="ds-cta ghost" onClick={cancel}>
@@ -713,15 +728,21 @@ export function Matchmaking({
           <span className="ot">2v2</span>
         </button>
       </div>
-      <p className="ds-hint">
+      {/* the mode picker's CAPTION, not a third row: at the panelbox's plain gap it
+          sat exactly equidistant from the tiles it describes and the unrelated region
+          toggle below, so it belonged to neither. */}
+      <p className="ds-hint ds-hint-caption">
         {presence ? (
           <>
             {/* THIS GAME's depth. A combined count named people you cannot be paired
                 with — the matchmaker buckets by game — which made the number an
                 argument for queueing into a pool that, for you, was empty. */}
-            <b style={{ color: 'var(--ds-ink)' }}>{depth[mode]}</b> waiting in{' '}
-            {mode.toUpperCase()} · {depth[mode === '1v1' ? '2v2' : '1v1']} in{' '}
-            {(mode === '1v1' ? '2v2' : '1v1').toUpperCase()} · {presence.online} online
+            {/* ALL THREE numbers bold and inked, off `.ds-hint b` — one of three
+                parallel numbers in a sentence styled and the other two not read as
+                formatting that gave up halfway through. */}
+            <b>{depth[mode]}</b> waiting in {mode.toUpperCase()} ·{' '}
+            <b>{depth[mode === '1v1' ? '2v2' : '1v1']}</b> in{' '}
+            {(mode === '1v1' ? '2v2' : '1v1').toUpperCase()} · <b>{presence.online}</b> online
           </>
         ) : (
           'Checking who’s online…'
@@ -735,8 +756,8 @@ export function Matchmaking({
         </div>
       )}
       {error && <p className="ds-form-err">⚠ {error}</p>}
-          {dodgeNote()}
-          {lockNote()}
+      {dodgeNote()}
+      {lockNote()}
       {restartPending && (
         <p className="ds-form-err">⚠ Server is restarting shortly - queueing is paused for a moment.</p>
       )}

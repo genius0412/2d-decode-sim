@@ -143,7 +143,7 @@ export function ControlsSection({ bindings, onChange, onEditTouchControls }: Pro
   return (
     <section className="ds-sec">
       <h2>Controls</h2>
-      <div className="ds-bind-block" style={{ marginBottom: 18 }}>
+      <div className="ds-bind-block">
         <h3>Touch controls</h3>
         <button className="ds-btn" onClick={onEditTouchControls}>
           Customize touch controls

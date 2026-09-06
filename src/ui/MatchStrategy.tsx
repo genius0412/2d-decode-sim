@@ -216,21 +216,14 @@ export function MatchStrategy({
             Match <span className="accent">Strategy</span>
           </h1>
         </div>
-        <p
-          className="ds-sub"
-          style={{
-            marginTop: -10,
-            display: 'flex',
-            gap: 10,
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexWrap: 'wrap',
-          }}
-        >
+        {/* the negative margin cancelling `.ds-console-in`'s gap is gone: two spacing
+            systems fighting over one axis. The countdown chip's tooltip is gone too —
+            the `.ds-hint` at the foot of this screen states the same rule at length. */}
+        <p className="ds-sub ds-sub-row">
           <span>
             {mode.toUpperCase()} · {readyCount}/{players.length} ready
           </span>
-          <span className={`ds-chip ${secsLeft <= STRAT_TICK_FROM ? 'off' : 'on'}`} title="Match cancels if not everyone readies in time">
+          <span className={`ds-chip ${secsLeft <= STRAT_TICK_FROM ? 'off' : 'on'}`}>
             ⏱ {secsLeft}s
           </span>
         </p>
@@ -282,7 +275,7 @@ export function MatchStrategy({
                       {spec.name} · Team {pl.teamNumber || '-'}
                     </span>
                     {buildRow(spec)}
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                    <div className="ds-strat-chips">
                       <span className={`ds-chip ${pl.alliance}`}>{pl.alliance.toUpperCase()}</span>
                       <span className="ds-chip">
                         {pl.startPose
@@ -354,7 +347,7 @@ export function MatchStrategy({
         {/* re-pick: quick-swap a saved robot, or open the full builder */}
         <section className="ds-sec">
           <h2>Your robot</h2>
-          <div className="ds-opts" style={{ flexWrap: 'wrap' }}>
+          <div className="ds-opts">
             {settings.savedRobots.map((r, i) => {
               const active =
                 r.length === mySpec.length &&
@@ -370,13 +363,15 @@ export function MatchStrategy({
                   onClick={() => pickSpec({ ...r })}
                 >
                   <span className="ot">{r.name || `Robot ${i + 1}`}</span>
-                  <span className="ds-note">{DRIVETRAIN_LABELS[r.drivetrain]}</span>
+                  {/* `.od`, like every other `.ds-opt` sub-line: `.ds-opt.on .od`
+                      re-inks against the selected card's mint fill and `.ds-note`
+                      has no such rule, so the picked robot's drivetrain stayed muted. */}
+                  <span className="od">{DRIVETRAIN_LABELS[r.drivetrain]}</span>
                 </button>
               );
             })}
             <button className="ds-opt mini" onClick={() => setBuilding(true)}>
               <span className="ot">Edit build ✎</span>
-              <span className="ds-note">full builder</span>
             </button>
           </div>
         </section>

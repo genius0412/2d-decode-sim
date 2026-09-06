@@ -93,9 +93,7 @@ export function ProfileMenu({
             </button>
           ) : (
             <div className="ds-profile-guest">
-              <p className="ds-hint" style={{ margin: 0 }}>
-                Sign in to save records and rank up.
-              </p>
+              <p className="ds-hint">Sign in to save records and rank up.</p>
             </div>
           )}
 

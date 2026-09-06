@@ -95,7 +95,7 @@ function StatsSignedIn({ nav }: { nav: CareerNav }) {
         <div className="ds-panel">
           <div className="ds-empty">
             <div className="big">Stats need the game server</div>
-            Set <code>VITE_GAME_SERVER_URL</code> - ELO and records live on the match server.
+            Set <code>VITE_GAME_SERVER_URL</code>.
           </div>
         </div>
         {/* the local half needs no server either */}

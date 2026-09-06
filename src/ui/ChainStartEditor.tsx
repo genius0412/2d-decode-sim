@@ -373,7 +373,10 @@ export function ChainStartEditor({
         </div>
 
         <div className="ds-startpos-tools">
-          <label className="ds-startpos-toggle" title="When on, releasing a drag on an illegal spot snaps the robot to the nearest legal pose. Off = free placement (illegal poses aren't saved).">
+          {/* CR snaps LIVE, every move (see `onMove`) — G04 plus the corner assembly
+              leave a band too narrow to free-drag. DECODE's twin snaps on RELEASE, so
+              the two tooltips must not be the same sentence. */}
+          <label className="ds-startpos-toggle" title="When on, the robot follows your cursor along the legal band as you drag. Off = free placement (illegal poses aren't saved).">
             <input type="checkbox" checked={snapOn} onChange={(e) => setSnapOn(e.target.checked)} />
             <span>Snap to legal</span>
           </label>
@@ -400,7 +403,6 @@ export function ChainStartEditor({
                   setDraft(null);
                   onCategory(c);
                 }}
-                title={`Start in the ${chainRoleLabel(c)} Lab corner`}
               >
                 {chainRoleLabel(c)}
               </button>

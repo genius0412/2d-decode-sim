@@ -179,7 +179,6 @@ export function StandingCard({ compact = false }: { compact?: boolean }) {
           <div className="ds-standing-headtext">
             <span className="ds-standing-cap">Account standing</span>
             <span className="ds-standing-name">Good standing</span>
-            <p className="ds-standing-blurb">Nothing on your account.</p>
           </div>
         </div>
       </div>

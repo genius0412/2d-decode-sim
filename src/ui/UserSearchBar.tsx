@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { searchUsers, type PublicProfile } from '../net/api';
-import { SupporterBadge } from './SupporterBadge';
+import { PersonRow } from './FriendsPanel';
 
 /**
  * "Search name or @username" — a standalone public search, independent of the friends
@@ -44,27 +44,20 @@ export function UserSearchBar({ onOpenProfile }: { onOpenProfile: (username: str
         aria-label="Search for a player by display name or username"
         onChange={(e) => setQuery(e.target.value)}
       />
-      {results.length > 0 && (
+      {/* ONE dropdown whose CONTENTS change. The "no matches" line used to render
+          OUTSIDE the box as bare body text, so typing one more character swapped a
+          framed dropdown for unframed prose 4px higher up — the same input and the
+          same action producing two different objects. */}
+      {query.trim().length >= 2 && (
         <div className="ds-usersearch-results">
-          {results.map((p) => (
-            <button
-              key={p.userId}
-              className="fr-who"
-              onClick={() => pick(p.username)}
-              disabled={!p.username}
-              title={p.username ? `View @${p.username}` : undefined}
-            >
-              <span className="fr-nameline">
-                <span className="fr-name">{p.handle}</span>
-                <SupporterBadge supporter={p.supporter} role={p.role} />
-              </span>
-              <span className="fr-sub">@{p.username}</span>
-            </button>
-          ))}
+          {results.length === 0 ? (
+            <p className="fr-empty">No players found.</p>
+          ) : (
+            results.map((p) => (
+              <PersonRow key={p.userId} p={p} onOpenProfile={pick} />
+            ))
+          )}
         </div>
-      )}
-      {query.trim().length >= 2 && results.length === 0 && (
-        <p className="fr-empty">No players found.</p>
       )}
     </div>
   );

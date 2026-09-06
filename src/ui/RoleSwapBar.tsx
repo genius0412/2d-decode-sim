@@ -55,7 +55,7 @@ export function RoleSwapBar({
             </button>
           </>
         ) : (
-          <button type="button" className="ds-btn ghost small" onClick={rs.requestSwap} title="Ask your partner to swap start roles">
+          <button type="button" className="ds-btn ghost small" onClick={rs.requestSwap}>
             ⇄ Swap roles
           </button>
         )}

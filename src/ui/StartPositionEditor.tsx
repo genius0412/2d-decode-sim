@@ -311,8 +311,12 @@ export function StartPositionEditor({
           )}
         </div>
 
-        {/* CLOSE / FAR category tabs (hidden when a 2v2 role locks the category) */}
-        {!lockedCategory && (
+        {/* CLOSE / FAR. Locked by a 2v2 role, otherwise a pair of tabs. ONE ternary in
+            the same slot as `ChainStartEditor`'s — the two files are maintained as
+            copies, and a divergence with identical output is where the next drift starts. */}
+        {lockedCategory ? (
+          <div className="ds-startpos-role">{lockedCategory === 'close' ? 'CLOSE' : 'FAR'} robot</div>
+        ) : (
           <div className="ds-startpos-tabs">
             {(['close', 'far'] as StartCat[]).map((c) => (
               <button
@@ -328,9 +332,6 @@ export function StartPositionEditor({
               </button>
             ))}
           </div>
-        )}
-        {lockedCategory && (
-          <div className="ds-startpos-role">{lockedCategory === 'close' ? 'CLOSE' : 'FAR'} robot · start positions</div>
         )}
 
         <div className="ds-startpos-presets">

@@ -39,9 +39,7 @@ export function ModeSelect({
 
       {activeGame && (
         <div className="ds-rejoin" role="alert">
-          <div className="ds-rejoin-txt">
-            <b>You’re already in a game.</b>
-          </div>
+          <b>You’re already in a game.</b>
           <button className="ds-btn primary" onClick={onRejoin}>
             Rejoin match →
           </button>
@@ -79,11 +77,22 @@ export function ModeSelect({
                 Find Match
                 <QueueCounts className="tile" />
               </span>
-              {(!multiplayer || !signedIn) && (
-                <span className="d">
-                  {!multiplayer ? 'Needs the game server' : 'Sign in to play ranked'}
-                </span>
-              )}
+              {/* ALWAYS rendered, even with nothing to say. `signedIn` resolves
+                  ASYNCHRONOUSLY (AccountSync), so a line that appears and then
+                  vanishes grows and re-collapses this tile — and `.ds-tiles` is a
+                  grid, so the whole "Compete · online" row moves with it a second
+                  after the page paints. The other two tiles in this row key only
+                  off `multiplayer`, which is synchronous, and the grid stretches
+                  them to match this one's height. */}
+              {/* the placeholder is a NBSP, not a space: a plain space collapses to
+                  zero height, and holding the line is the entire point. */}
+              <span className="d" aria-hidden={multiplayer && signedIn}>
+                {multiplayer && signedIn
+                  ? ' '
+                  : !multiplayer
+                    ? 'Needs the game server'
+                    : 'Sign in to play ranked'}
+              </span>
             </span>
           </button>
 

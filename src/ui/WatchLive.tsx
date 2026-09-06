@@ -62,46 +62,45 @@ export function WatchLive({
       <p className="ds-eyebrow">{APP_NAME} · Live</p>
       <h1 className="ds-h1">Watch Live</h1>
 
-      {!configured ? (
-        <div className="ds-panel">
+      {/* ONE panel, four bodies. The populated grid used to render with NO panel at
+          all, so the page swapped a ~90px bordered card for a bare full-width grid of
+          shadowed tiles the instant `/api/live` answered — and on a 4-second poll a
+          room list emptying popped the card straight back in. The container is not
+          allowed to appear and disappear; only its contents change. */}
+      <div className="ds-panel">
+        {!configured ? (
           <div className="ds-empty">
             <div className="big">Spectating needs the game server</div>
             Set <code>VITE_GAME_SERVER_URL</code> - live matches run on the match server.
           </div>
-        </div>
-      ) : error ? (
-        <div className="ds-panel">
+        ) : error ? (
           <div className="ds-empty">
             <div className="big">Couldn’t reach the game server</div>
             {error}
           </div>
-        </div>
-      ) : rooms === null ? (
-        <div className="ds-panel">
+        ) : rooms === null ? (
           <div className="ds-loading">Loading live matches…</div>
-        </div>
-      ) : rooms.length === 0 ? (
-        <div className="ds-panel">
+        ) : rooms.length === 0 ? (
           <div className="ds-empty">
             <div className="big">Nothing live right now</div>
-            Check back when a match or record run is in progress, or start one yourself. Playing a
-            custom game with friends? Watch it with its room code below.
           </div>
-        </div>
-      ) : (
-        <div className="ds-opts">
-          {rooms.map((r) => (
-            <button key={r.room} className="ds-opt" onClick={() => onWatch(r.room, r.region)}>
-              <span className="ot">{title(r)}</span>
-              <span className="od">
-                {seasonFor(r.game).name} · {r.kind === 'record' ? 'Record' : 'Ranked'} {r.mode} ·{' '}
-                {phaseLabel(r.phase)} {r.timeLeft > 0 ? `· ${r.timeLeft}s` : ''} · {score(r)}
-                {r.spectators > 0 ? ` · 👁 ${r.spectators}` : ''}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+        ) : (
+          // `.ds-panel-body` supplies the padding `.ds-empty`/`.ds-loading` carry
+          // themselves, so all four bodies sit the same distance inside the card
+          <div className="ds-panel-body ds-opts">
+            {rooms.map((r) => (
+              <button key={r.room} className="ds-opt" onClick={() => onWatch(r.room, r.region)}>
+                <span className="ot">{title(r)}</span>
+                <span className="od">
+                  {seasonFor(r.game).name} · {r.kind === 'record' ? 'Record' : 'Ranked'} {r.mode} ·{' '}
+                  {phaseLabel(r.phase)} {r.timeLeft > 0 ? `· ${r.timeLeft}s` : ''} · {score(r)}
+                  {r.spectators > 0 ? ` · ${r.spectators} watching` : ''}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {configured && <WatchByCode onWatch={onWatch} />}
     </>
@@ -138,9 +137,10 @@ function WatchByCode({ onWatch }: { onWatch: (roomCode: string, region?: string)
   return (
     <div className="ds-panel">
       <h2 className="ds-h2">Watch a custom game</h2>
-      <p className="ds-hint">
-        Custom rooms aren’t listed publicly. Enter the room code to watch one.
-      </p>
+      {/* "Enter the room code to watch one" was the heading, the input's placeholder
+          and its aria-label said a third time. The sentence that stays answers a real
+          question — why isn't my friend's room in the list above? */}
+      <p className="ds-hint">Custom rooms aren’t listed publicly.</p>
       <div className="ds-watchcode">
         <input
           className="ds-input"
@@ -162,8 +162,7 @@ function WatchByCode({ onWatch }: { onWatch: (roomCode: string, region?: string)
       </div>
       {status === 'missing' && (
         <p className="ds-hint">
-          No live match under that code. It may have finished, or the match hasn’t started yet —
-          a room is only watchable once the drivers are playing.
+          No live match under that code — it may have finished, or not started yet.
         </p>
       )}
     </div>

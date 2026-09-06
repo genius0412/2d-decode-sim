@@ -46,15 +46,16 @@ const mmss = (sec: number): string => {
  * leaderboard period, and in the replays table it is the `balance_version` COLUMN that holds
  * it while `sim_version` holds this (see repo.ts + migration 0031).
  */
+const DIFFERENT_MATCH = 'so the same inputs would play back as a different match.';
+
 const REFUSAL_TEXT: Record<ReplayRefusal, (r: Replay) => string> = {
   future: () => 'Recorded by a newer version of DSIM. Refresh the page, then open it again.',
   balance: (r) =>
     `Played on balance v${r.balanceVersion}; this build runs v${BALANCE_VERSION}. ` +
-    'Robots drive and score differently now, so the same inputs would play back as a ' +
-    'different match.',
+    `Robots drive and score differently now, ${DIFFERENT_MATCH}`,
   behaviour: (r) =>
     `Played on sim v${r.sim}; this build runs v${SIM_VERSION}. The physics or the rules have ` +
-    'changed, so the same inputs would play back as a different match.',
+    `changed, ${DIFFERENT_MATCH}`,
   unstamped: () =>
     'Recorded before DSIM tracked which sim version produced a replay, so there is no way to ' +
     'tell whether it would play back correctly.',
@@ -668,11 +669,7 @@ export function ReplayView({
                 {/* Each option states its COST as well as its name — the formats differ by how
                     long they take and where they will play, and a menu of bare nouns hides
                     exactly the difference that decides which you want. */}
-                {formats.length === 0 && (
-                  <p className="ds-dl-note">
-                    This browser can’t save video. You can still download the replay data below.
-                  </p>
-                )}
+                {formats.length === 0 && <p className="ds-dl-note">This browser can’t save video.</p>}
                 {formats.map((f) => (
                   <button
                     key={f.id}
@@ -704,19 +701,22 @@ export function ReplayView({
             )}
           </div>
         ) : (
-          <span style={{ width: 90 }} />
+          // the same box the menu occupies, so the title stays centred on the
+          // screens with nothing to download — `.ds-dl` owns that width, rather
+          // than a literal repeating it here and drifting from it
+          <span className="ds-dl" aria-hidden />
         )}
       </div>
 
-      {status === 'loading' && <div className="ds-loading" style={{ margin: 'auto' }}>Loading replay…</div>}
+      {status === 'loading' && <div className="ds-loading">Loading replay…</div>}
       {status === 'error' && (
-        <div className="ds-empty" style={{ margin: 'auto' }}>
+        <div className="ds-empty">
           <div className="big">Couldn’t load the replay</div>
           {error}
         </div>
       )}
       {status === 'stale' && (
-        <div className="ds-empty" style={{ margin: 'auto' }}>
+        <div className="ds-empty">
           <div className="big">Replay unavailable</div>
           {refusal && replay.current ? REFUSAL_TEXT[refusal](replay.current) : ''}
           {/* a FUTURE container is not a retired one — the score line would read as consolation

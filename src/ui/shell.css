@@ -362,6 +362,48 @@
   color: inherit;
   cursor: pointer;
 }
+/* RESERVE the async cluster. `QueueCounts` and `PresenceChip` both render nothing
+   until the presence poll lands, and `.ds-bar-right` is `margin-left: auto`, so the
+   whole right side of the bar re-flowed a second after every page load. 168px is the
+   settled width of both at 13px — a one-off geometry, per ui-standard §1.2.
+   `shiftaudit` cannot see this: it forces state classes, never a fetch. */
+.ds-bar-live {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ds-s-3);
+  min-width: 168px;
+}
+@media (max-width: 640px) {
+  /* the phone bar hides the region picker and has nothing to reserve */
+  .ds-bar-live {
+    min-width: 0;
+  }
+}
+/* the presence chip, previously eleven inline declarations */
+.ds-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-s-1);
+  font-size: var(--ds-t-md);
+  white-space: nowrap;
+  color: var(--ds-mut);
+}
+.ds-presence b {
+  color: var(--ds-ink);
+  font-weight: 600;
+}
+.ds-presence-dot {
+  width: var(--ds-s-2);
+  height: var(--ds-s-2);
+  border-radius: var(--ds-round-full);
+  background: var(--ds-ok);
+  box-shadow: 0 0 var(--ds-s-2) var(--ds-ok);
+  flex: none;
+}
+.ds-presence-sub {
+  color: var(--ds-mut);
+}
 .ds-bar-right {
   margin-left: auto;
   display: flex;
@@ -551,7 +593,7 @@
   background: var(--ds-bar);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--ds-s-4);
 }
 .ds-rail-home {
   font: inherit;
@@ -629,7 +671,7 @@
   background: var(--ds-bar);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--ds-s-4);
   min-width: 0;
   /* ITS OWN SCROLL. `.ds-app` is the app's single scroll container, so with
      `align-self: stretch` this aside grew to the height of `.ds-main` and a long
@@ -650,7 +692,7 @@
 }
 .ds-friends.collapsed {
   width: 56px;
-  padding: 14px 8px;
+  padding: 24px 8px 40px;
   align-items: center;
 }
 .fr-toggle {
@@ -705,7 +747,7 @@
   font: inherit;
   font-size: 14px;
   line-height: 1;
-  padding: 4px 6px;
+  padding: var(--ds-s-1) var(--ds-s-2);
   border: 1px solid transparent;
   border-radius: var(--ds-round-sm);
   background: none;
@@ -791,7 +833,7 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 4px 6px;
+  padding: var(--ds-s-1) var(--ds-s-2);
   border: 1px solid transparent;
   border-radius: var(--ds-round-sm);
   background: none;
@@ -893,10 +935,17 @@
 .fr-empty,
 .fr-note,
 .fr-error {
-  margin: 2px 0;
+  margin: 0;
+  padding: var(--ds-s-1) var(--ds-s-2);
   font-size: 12px;
-  color: var(--ds-red-ink);
+  color: var(--ds-mut);
   line-height: 1.45;
+}
+/* the two coloured variants of the shared base above. This is NOT the duplicate-selector
+   bug `uiaudit` looks for — a base group plus per-variant overrides is the normal shape,
+   and collapsing it is what turned `.fr-empty` red. */
+.fr-error {
+  color: var(--ds-red-ink);
 }
 .fr-note {
   color: var(--ds-ok-ink);
@@ -927,7 +976,7 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--ds-s-4);
   padding: 10px;
   border: 1px solid var(--ds-line);
   border-radius: var(--ds-round);
@@ -1020,7 +1069,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 0;
   padding: 24px 0 8px;
 }
 .ds-home-title {
@@ -1028,19 +1077,19 @@
   font-weight: 800;
   letter-spacing: -0.02em;
   line-height: 1.05;
-  margin: 2px 0 18px;
+  margin: 0 0 var(--ds-s-4);
 }
 /* game switcher (DECODE / Chain Reaction) — centered under the title */
 .ds-home-games {
   justify-content: center;
-  margin: -6px 0 18px;
+  margin: 0 0 var(--ds-s-5);
 }
 /* Discord / GitHub — prominent pills near the top of the home menu */
 .ds-home-links {
   display: flex;
   justify-content: center;
   gap: 10px;
-  margin: 0 0 22px;
+  margin: 0 0 var(--ds-s-5);
 }
 .ds-home-link {
   display: inline-flex;
@@ -1133,6 +1182,7 @@
   margin-top: 22px;
   font-size: 14px;
   color: var(--ds-mut);
+  margin: var(--ds-s-5) 0 0;
 }
 .ds-home-loadout b {
   color: var(--ds-ink);
@@ -1141,7 +1191,7 @@
    the title and the game switcher. It is here for the person (or crawler) who
    arrived with no idea what DSIM is; keep it to a sentence. */
 .ds-home-lead {
-  margin: -8px 0 20px;
+  margin: 0 0 var(--ds-s-5);
   font-size: 15px;
   line-height: 1.55;
   color: var(--ds-mut);
@@ -1239,20 +1289,13 @@
   background: none;
   border: 0;
   padding: 0;
-  color: inherit;
+  color: var(--ds-ink-dim);
   cursor: pointer;
+  font-weight: 600;
 }
 .ds-foot-link:hover {
   color: var(--ds-ink);
 }
-.ds-foot-link.bold {
-  font-weight: 700;
-  color: var(--ds-ink-dim);
-}
-.ds-foot-link.bold:hover {
-  color: var(--ds-accent);
-}
-
 /* ---- footer ---------------------------------------------------------- */
 .ds-foot {
   display: flex;
@@ -1294,6 +1337,10 @@
 }
 
 /* ---- chips + buttons ------------------------------------------------- */
+/* a chip that is a BUTTON is clickable; one rule rather than a per-instance cursor */
+button.ds-chip {
+  cursor: pointer;
+}
 .ds-chip {
   font-family: var(--ds-font-mono);
   font-size: 12px;
@@ -1430,6 +1477,11 @@
    `margin: 4px auto 16px`, so the designed 14/14 rendered as 18/30. Only the
    horizontal auto survives, because a max-width box in a flex column is not centred
    without it. */
+/* replaces an inline maxWidth that was 420 on one dialog and 380 on four, where the
+   420 case carried the LONGEST copy */
+.overlay-sub {
+  max-width: 42ch;
+}
 .overlay-panel .ds-sub {
   margin-inline: auto;
 }
@@ -1452,6 +1504,22 @@
   letter-spacing: -0.015em;
   margin: 0 0 8px;
 }
+/* MatchStrategy's mode/countdown line and Lobby's room-code line. Deliberately NOT
+   centred: both consoles are left-aligned throughout, and centring inside `.ds-sub`'s
+   own 64ch cap aligned the row with nothing. */
+.ds-sub-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-s-2);
+  flex-wrap: wrap;
+}
+/* the chip row inside a strategy card. `.ds-strat-meta` is a flex column at gap 2;
+   an inline `marginTop: 4` made this one child a third value. */
+.ds-strat-chips {
+  display: flex;
+  gap: var(--ds-s-1);
+  flex-wrap: wrap;
+}
 .ds-sub {
   color: var(--ds-mut);
   margin: 0 0 24px;
@@ -1462,7 +1530,7 @@
 /* Spans the full content column so it lines up with the `.ds-panel` board below
    it (which has no max-width of its own). */
 .ds-usersearch {
-  margin: 0 0 20px;
+  margin: 0 0 var(--ds-s-4);
 }
 .ds-usersearch .ds-input {
   width: 100%;
@@ -1470,7 +1538,7 @@
 .ds-usersearch-results {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-s-1);
   margin-top: 6px;
   padding: 6px;
   border: 1px solid var(--ds-line);
@@ -1503,7 +1571,7 @@
   justify-content: center;
   gap: 12px;
   flex-wrap: wrap;
-  margin: 2px 0 24px;
+  margin: var(--ds-s-5) 0 0;
 }
 .ds-homestats .ds-stat {
   min-width: 128px;
@@ -1530,12 +1598,6 @@
   border-radius: var(--ds-round-md);
   background: color-mix(in srgb, var(--ds-accent) 12%, transparent);
 }
-.ds-rejoin-txt {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 /* ---- play tiles ------------------------------------------------------ */
 .ds-tiles {
   display: grid;
@@ -1664,6 +1726,156 @@
    class did not exist. */
 .ds-panel-body {
   padding: var(--ds-s-4);
+}
+/* the two body LAYOUTS that were being hand-written beside it — three different stack
+   gaps (10, 14, 16) for the same job on one page. The child margin reset is
+   load-bearing: `.ds-claim-row` and `.ds-claim-msg` carry their own margin-top, which
+   would stack on the gap. One owner per gap. */
+.ds-panel-body.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-s-3);
+}
+.ds-panel-body.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ds-s-3);
+}
+.ds-panel-body.stack > *,
+.ds-panel-body.row > * {
+  margin-block: 0;
+}
+/* opt-in: children hug their content rather than filling (a lone CTA button) */
+.ds-panel-body.stack.start {
+  align-items: flex-start;
+}
+/* an input and its button, wrapping. Copy-pasted inline three times at gap 10, beside
+   `.ds-claim-row`'s gap 8 for the identical pattern one panel below. */
+.ds-field-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ds-s-2);
+}
+.ds-field-row > .grow {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+/* a panel FOOTER band, same anatomy as `.mh-pager`. `.ds-hint` is `margin: 0` and
+   `.ds-panel` has no padding, so a trailing sentence landed flush in the panel's
+   rounded bottom-left corner while the cell above it was inset 16. */
+.ds-panel-foot {
+  padding: var(--ds-s-3) var(--ds-s-4);
+  border-top: 1px solid var(--ds-line);
+}
+/* the field status under a `.ds-panelbox` control is EMPTY until you save or mistype,
+   and a line that only appears once you have saved moves the panel under it. 1.45em is
+   exactly one line of `.ds-hint`. */
+.ds-panelbox > .ds-hint {
+  min-height: 1.45em;
+}
+/* the status pair `.ds-claim-msg` already has */
+.ds-hint.ok {
+  color: var(--ds-ok-ink);
+}
+.ds-hint.err {
+  color: var(--ds-red-ink);
+}
+.ds-hint.warn {
+  color: var(--ds-warn);
+}
+/* a paragraph that introduces the first panel below it */
+.ds-page-note {
+  margin-bottom: var(--ds-s-4);
+}
+/* a panel header whose only slot is its action */
+.cl-head {
+  justify-content: flex-end;
+}
+.cl-head .ds-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-s-2);
+}
+.ds-hint .ok {
+  color: var(--ds-ok-ink);
+}
+.ds-hint .err {
+  color: var(--ds-danger);
+}
+.ds-hint .ok::before,
+.ds-hint .err::before {
+  content: ' · ';
+  color: var(--ds-mut);
+}
+.ds-field > .cap .val.over {
+  color: var(--ds-danger);
+}
+.ds-acct-email {
+  font-weight: 700;
+  color: var(--ds-ink);
+}
+.ds-acct-id {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-s-1);
+}
+.ds-acct-uuid {
+  cursor: pointer;
+  font-size: var(--ds-t-sm);
+  word-break: break-all;
+  color: var(--ds-mut);
+}
+/* alignment was expressed three ways in one table — an inline `textAlign` on the
+   header, `.sc` on the body cell, and nothing on the matching th — so a header and its
+   column could drift apart silently. */
+.ds-table th.r,
+.ds-table td.r {
+  text-align: right;
+}
+/* `.sc` is two jobs in one class: mono/tabular/right AND the accent colour. Match
+   history's two `.sc` cells each want a different colour and were overriding it
+   inline. Modifiers, so the leaderboard keeps the accent. */
+.ds-table .sc.ink {
+  color: var(--ds-ink);
+}
+.ds-table .sc.pos {
+  color: var(--ds-ok-ink);
+}
+.ds-table .sc.neg {
+  color: var(--ds-danger);
+}
+.ds-table .sc.none {
+  color: var(--ds-mut);
+}
+/* --ds-ok-ink, not --ds-ok: the latter is a fill (see the THEMING gotcha) */
+.mh-result {
+  font-weight: 700;
+}
+.mh-result.win {
+  color: var(--ds-ok-ink);
+}
+.mh-result.loss {
+  color: var(--ds-danger);
+}
+/* `.ds-btn` is inline-block and JSX strips the whitespace-only line between two of
+   them, so the practice-run actions touched at 0px */
+.pr-actions {
+  display: inline-flex;
+  gap: var(--ds-s-2);
+  justify-content: flex-end;
+}
+/* a stat value that is TEXT (a drivetrain, an archetype) rather than a number */
+/* the signed-out half of the profile popover had NO rule, so the guest prompt sat 4px
+   closer to the edge than the signed-in name — the popover's inset changed with auth
+   state. Matches `.ds-profile-id`. */
+.ds-profile-guest {
+  padding: var(--ds-s-1);
+}
+.ds-replay > .ds-empty,
+.ds-replay > .ds-loading {
+  margin: auto;
 }
 /* opt-out of the corner-clipping `overflow: hidden` for panels that host a
    popup (the region-picker listbox) which must extend past the card edge.
@@ -2132,13 +2344,13 @@
 
 /* share-profile button in a career/profile panel header */
 .ds-share {
-  margin-left: 8px;
+  margin-left: 0;
   white-space: nowrap;
 }
 .ds-profile-friend-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-s-2);
   flex-wrap: wrap;
 }
 
@@ -2313,6 +2525,10 @@ tr.lb-detail td {
 }
 
 /* ---- states ---------------------------------------------------------- */
+/* a headline-only empty state should not reserve the gap for a sentence */
+.ds-empty .big:only-child {
+  margin-bottom: 0;
+}
 .ds-empty {
   padding: 30px 20px;
   text-align: center;
@@ -2748,6 +2964,20 @@ tr.lb-detail td {
 .ds-console-in > .ds-sub-tight {
   margin-top: -10px;
 }
+/* the console scaffold's own width, which Lobby, Matchmaking and RecordRun each
+   re-typed as an inline `maxWidth: 520`. */
+.ds-console-in.narrow {
+  max-width: 520px;
+}
+/* Lobby's room-code line: a label and a chip on one row. Deliberately NOT centred —
+   the console is left-aligned throughout, and centring inside its own 64ch cap
+   aligned it with nothing. */
+.ds-sub-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-s-2);
+  flex-wrap: wrap;
+}
 .ds-console-in {
   width: min(900px, 94vw);
   margin: 0 auto;
@@ -2950,8 +3180,8 @@ tr.lb-detail td {
 /* Drivetrain grid (the only `.ds-opts.four`): now label-only chips — center the
    label so the four read as an even segmented row instead of top-left labels. */
 .ds-opts.four .ds-opt {
-  justify-content: center;
-  text-align: center;
+  justify-content: flex-start;
+  text-align: left;
 }
 /* count badge next to a section title, e.g. "Saved robots 2/3" */
 .ds-count {
@@ -3169,8 +3399,8 @@ tr.lb-detail td {
 .ds-chal-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 4px;
+  gap: var(--ds-s-3);
+  margin-bottom: var(--ds-s-4);
   /* five formats is taller than a laptop modal on a short viewport — scroll the
      list rather than the page, so the title and any error stay put */
   max-height: min(58vh, 460px);
@@ -3183,6 +3413,17 @@ tr.lb-detail td {
   background: var(--ds-panel);
   border-color: var(--ds-line-strong);
   box-shadow: var(--ds-block-sm);
+}
+/* a one-option "picker" that is a STATEMENT rather than a control — Chain Reaction
+   has exactly one intake. Keeps the `.ds-opt.on` card, drops every pointer
+   affordance. NOT `:disabled`: the option is not unavailable, it is the only one. */
+.ds-opt.static {
+  cursor: default;
+}
+.ds-opts .ds-opt.static:hover,
+.ds-opts .ds-opt.static:active {
+  transform: none;
+  box-shadow: 2px 2px 0 var(--ds-accent-edge);
 }
 .ds-opt.mini {
   padding: 10px 12px;
@@ -3237,6 +3478,13 @@ tr.lb-detail td {
   flex-direction: column;
   gap: 14px;
   box-shadow: var(--ds-block);
+}
+/* three inline `flex` overrides of the same class, written once */
+.ds-fields > .ds-field.wide {
+  flex: 1 1 100%;
+}
+.ds-fields > .ds-field.narrow {
+  flex: 0 1 110px;
 }
 .ds-fields {
   display: flex;
@@ -3444,6 +3692,18 @@ input[type='range']:focus-visible {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 8px;
+}
+/* a stat value that is a WORD (a drivetrain, an archetype) rather than a number —
+   body size in a 128px tile. `.sm` is the repo's bare-word modifier convention, the
+   same shape as `.ds-btn.small`. */
+.ds-stat .sv.sm {
+  font-size: var(--ds-t-md);
+}
+/* the measurement sentinel above `.ds-hero`: self-cancelling, so it is layout-neutral
+   either way; this just gives it an owner in the sheet. */
+.ds-hero-sentinel {
+  height: 1px;
+  margin-bottom: -1px;
 }
 .ds-stat {
   border: 1px solid var(--ds-line-soft);
@@ -3695,6 +3955,14 @@ a.ds-cta {
 .ds-cta.ghost:active {
   box-shadow: 0 0 0 var(--ds-line);
 }
+/* the third copy of a rule `.ds-tip b` and `.ds-dodge b` already had */
+.ds-hint b {
+  color: var(--ds-ink);
+}
+/* there is no global anchor colour, so a link inside a hint rendered UA-blue */
+.ds-hint a {
+  color: var(--ds-accent);
+}
 .ds-hint {
   color: var(--ds-mut);
   font-size: 12px;
@@ -3826,7 +4094,7 @@ button.ds-key:active {
   border: 1px solid var(--ds-line);
   border-left: 3px solid var(--ds-line);
   border-radius: var(--ds-round);
-  padding: 8px 12px;
+  padding: var(--ds-s-2) var(--ds-s-3);
 }
 .ds-player.red {
   border-left-color: var(--ds-red);
@@ -3966,9 +4234,6 @@ button.ds-key:active {
   align-items: center;
   gap: 12px;
 }
-.ds-dl-plat .glyph {
-  font-size: 22px;
-}
 .ds-req {
   display: flex;
   gap: 16px;
@@ -4076,7 +4341,6 @@ button.ds-key:active {
   font: 600 11px/1.3 var(--ds-font-mono);
   color: var(--ds-mut);
   padding: 4px 10px;
-  margin-top: 4px;
   border-radius: var(--ds-round);
   border: 1px dashed var(--ds-line);
 }
@@ -4206,7 +4470,6 @@ button.ds-key:active {
   gap: 10px;
   flex-wrap: wrap;
   padding: 8px 10px;
-  margin-bottom: 10px;
   border-radius: var(--ds-round);
   background: var(--ds-panel);
   border: 1px solid var(--ds-line);
@@ -4304,7 +4567,10 @@ button.ds-key:active {
   text-transform: uppercase;
 }
 /* the bar can carry several games; let it wrap rather than push the bar wider */
-.ds-qcount.bar { white-space: normal; }
+.ds-qcount.bar {
+  white-space: normal;
+  margin-right: 2px;
+}
 /* ON A FILLED SURFACE the defaults above are wrong, and one of them was invisible:
    the home menu's PLAY button is `.primary`, i.e. an --ds-accent FILL, and the count
    painted --ds-accent on it — the same colour as its own background, 1:1. The muted
@@ -4335,9 +4601,6 @@ button.ds-key:active {
 .ds-qcount.tile {
   margin-left: 8px;
 }
-.ds-qcount.bar {
-  margin-right: 2px;
-}
 
 /* ---- background ranked queue bar (QueueBar.tsx) -----------------------
    Fixed to the bottom of the viewport, above everything, and only present while a
@@ -4352,7 +4615,7 @@ button.ds-key:active {
   z-index: 60;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-s-2);
   padding: 8px 12px;
   border: 1px solid var(--ds-line-strong);
   border-radius: var(--ds-round-full);
@@ -4411,7 +4674,7 @@ button.ds-key:active {
   z-index: 60;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-s-2);
   padding: 4px 12px;
   border: 1px solid var(--ds-hud-line);
   border-radius: var(--ds-round-full);

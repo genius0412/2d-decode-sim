@@ -47,14 +47,19 @@ export function DesktopUpdate() {
         <span className="ds-panel-title">Desktop app</span>
         {version && <span className="ds-chip">v{version}</span>}
       </div>
-      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' }}>
-        <div className="ds-opts" style={{ width: '100%' }}>
+      {/* `.ds-panel-body.stack` — the four properties written out here
+          inline (padding 16, flex column, gap 12, align flex-start) are the same
+          four retyped in half a dozen other panel bodies. */}
+      <div className="ds-panel-body stack">
+        <div className="ds-opts">
           <button className={`ds-opt ${autoCheck ? 'on' : ''}`} onClick={toggleAuto} aria-pressed={autoCheck}>
             <span className="ot">Auto-check for updates {autoCheck ? 'ON' : 'OFF'}</span>
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* `.ds-actions` already IS this row (flex, wrap, centred) — no need for a
+            fourth hand-written copy of it. */}
+        <div className="ds-actions">
           <button className="ds-btn" onClick={check} disabled={checking}>
             {checking ? 'Checking…' : 'Check for updates'}
           </button>
@@ -65,15 +70,12 @@ export function DesktopUpdate() {
           )}
         </div>
 
-        {error && (
-          <p className="ds-hint" style={{ margin: 0, color: 'var(--ds-danger)' }}>
-            Couldn’t reach the update server. Try again.
-          </p>
-        )}
+        {/* the colour is a CLASS. `.ds-hint` is already `margin: 0`, so both inline
+            `margin: 0` were no-ops kept alive next to a colour literal — and
+            `.ds-claim-msg.ok/.err` already exist for exactly this status pair. */}
+        {error && <p className="ds-hint err">Couldn’t reach the update server. Try again.</p>}
         {result && !result.updateAvailable && (
-          <p className="ds-hint" style={{ margin: 0, color: 'var(--ds-ok)' }}>
-            You’re on the latest version.
-          </p>
+          <p className="ds-hint ok">You’re on the latest version.</p>
         )}
       </div>
     </div>

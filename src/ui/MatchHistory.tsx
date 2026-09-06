@@ -6,6 +6,7 @@ import {
   type MatchHistoryPlayer,
 } from '../net/api';
 import { SupporterBadge } from './SupporterBadge';
+import { fmtDayTime } from './fmtDate';
 
 type TypeFilter = NonNullable<MatchHistoryOpts['type']>;
 type ResultFilter = NonNullable<MatchHistoryOpts['result']>;
@@ -23,17 +24,6 @@ const RESULT_OPTS: { id: ResultFilter; label: string }[] = [
   { id: 'loss', label: 'Losses' },
 ];
 const PAGE_SIZES = [10, 25, 50];
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
 
 function typeLabel(r: MatchHistoryEntry): string {
   if (r.kind === 'record') return r.mode === 'duo' ? 'Duo run' : 'Solo run';
@@ -65,7 +55,6 @@ function PlayerLink({
             e.stopPropagation();
             onOpenProfile(p.username!);
           }}
-          title={`View @${p.username}`}
         >
           {p.handle}
         </button>
@@ -261,9 +250,9 @@ export function MatchHistory({
                   <th>Type</th>
                   <th>Players</th>
                   <th>Result</th>
-                  <th style={{ textAlign: 'right' }}>Score</th>
-                  <th style={{ textAlign: 'right' }}>ELO Δ</th>
-                  <th></th>
+                  <th className="r">Score</th>
+                  <th className="r">ELO Δ</th>
+                  <th className="r" />
                 </tr>
               </thead>
               <tbody>
@@ -273,9 +262,13 @@ export function MatchHistory({
                   const watchable = !!r.replayId && !!onWatch;
                   return (
                     <tr key={`${r.kind}-${r.id}`}>
-                      <td className="mh-when">{fmtDate(r.createdAt)}</td>
+                      <td className="mh-when">{fmtDayTime(r.createdAt)}</td>
                       <td>
-                        <span className={`ds-dt mh-type ${r.kind === 'record' ? 'rec' : r.ranked ? 'ranked' : 'custom'}`}>
+                        {/* a record run takes the bare chip: `.mh-type.rec` was in the
+                            markup with no rule behind it, and the three kinds already
+                            read apart — ranked is accent, custom is dimmed, a run says
+                            "Solo run" / "Duo run" in the chip itself. */}
+                        <span className={`ds-dt mh-type ${r.kind === 'record' ? '' : r.ranked ? 'ranked' : 'custom'}`}>
                           {typeLabel(r)}
                         </span>
                       </td>
@@ -286,36 +279,30 @@ export function MatchHistory({
                         {r.kind === 'record' ? (
                           <span className="mh-run">run</span>
                         ) : r.won == null ? (
-                          <span style={{ color: 'var(--ds-mut)' }}>-</span>
+                          <span className="ds-muted">-</span>
                         ) : (
-                          <span style={{ color: r.won ? 'var(--ds-ok)' : 'var(--ds-danger)', fontWeight: 700 }}>
+                          <span className={`mh-result ${r.won ? 'win' : 'loss'}`}>
                             {r.won ? 'WIN' : 'LOSS'}
                           </span>
                         )}
                       </td>
-                      <td className="sc" style={{ color: 'var(--ds-ink)' }}>
+                      {/* `.sc` carries the accent colour as well as the mono/tabular/
+                          right-align typography, and both score cells here want a
+                          different colour — so they take a modifier instead of each
+                          fighting the class inline. */}
+                      <td className="sc ink">
                         <ScoreCell r={r} />
                       </td>
-                      <td
-                        className="sc"
-                        style={{
-                          color:
-                            delta == null
-                              ? 'var(--ds-mut)'
-                              : delta >= 0
-                                ? 'var(--ds-ok)'
-                                : 'var(--ds-danger)',
-                        }}
-                      >
+                      <td className={`sc ${delta == null ? 'none' : delta >= 0 ? 'pos' : 'neg'}`}>
                         {delta == null ? '-' : delta >= 0 ? `+${delta}` : delta}
                       </td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td className="r">
                         {watchable ? (
                           <button className="ds-btn ghost mh-watch" onClick={() => onWatch!(r.replayId!)}>
                             Watch ▶
                           </button>
                         ) : (
-                          <span style={{ color: 'var(--ds-mut)', fontSize: 12 }}>-</span>
+                          <span className="ds-muted">-</span>
                         )}
                       </td>
                     </tr>

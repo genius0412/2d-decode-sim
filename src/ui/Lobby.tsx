@@ -299,7 +299,7 @@ export function Lobby({
   if (phase === 'entry' || phase === 'connecting' || phase === 'error') {
     return (
       <div className="ds-console">
-        <div className="ds-console-in" style={{ maxWidth: 520 }}>
+        <div className="ds-console-in narrow">
           <div className="ds-head">
             <button className="ds-back" onClick={onCancel}>
               ← Back
@@ -346,7 +346,7 @@ export function Lobby({
                 </select>
               </label>
             )}
-            <div className="ds-opts two" style={{ marginTop: 4 }}>
+            <div className="ds-opts two">
               <button
                 className={`ds-opt ${entryMode === 'create' ? 'on' : ''}`}
                 onClick={() => setEntryMode('create')}
@@ -391,10 +391,7 @@ export function Lobby({
               )}
             </div>
             {multiServer() && !regionLocked && (
-              <p className="ds-hint">
-                Both players must pick the same region — a friend joining your invite is sent
-                here automatically.
-              </p>
+              <p className="ds-hint">Both players must pick the same region.</p>
             )}
           </div>
         </div>
@@ -433,15 +430,17 @@ export function Lobby({
             {isRecord ? 'Duo' : 'Room'} <span className="accent">{code}</span>
           </h1>
         </div>
-        <p className="ds-sub" style={{ marginTop: -10, display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+        {/* NOT centred: `.ds-console` is left-aligned throughout — the title, every
+            `<h2>`, the roster and the action row all start at x=0 of the column — and
+            this line was centred inside its own 64ch cap rather than the column, so it
+            landed about a quarter of the way across and lined up with nothing. */}
+        <p className="ds-sub ds-sub-tight ds-sub-row">
           <span>
             {isHost ? 'You are the host' : 'Waiting for the host to start'} · {players.length}/
             {capacity} drivers
           </span>
           <button
             className="ds-chip"
-            title="Copy the room code to share"
-            style={{ cursor: 'pointer' }}
             onClick={() => {
               void navigator.clipboard?.writeText(code);
               setCopied(true);
@@ -460,10 +459,13 @@ export function Lobby({
               return (
                 <div key={p.clientId} className={`ds-player ${p.alliance}`}>
                   <span className="pdot" />
+                  {/* the badge TRAILS the whole name, as it does in `.fr-nameline`,
+                      `.lb-name` and the career chip. Between the name and its "(you)"
+                      suffix it read as "Alice ♥ (you)". */}
                   <span className="pnm">
                     {p.name}
-                    <SupporterBadge supporter={p.supporter} role={p.role} />
                     {isMe ? ' (you)' : ''}
+                    <SupporterBadge supporter={p.supporter} role={p.role} />
                   </span>
                   <span className="ptm">
                     {p.spec.name} · {p.teamNumber || '-'}
