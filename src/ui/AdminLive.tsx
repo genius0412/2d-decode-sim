@@ -12,6 +12,7 @@ import {
 } from '../net/api';
 import { SEASONS } from '../seasons';
 import { windowLabel } from './MaintenanceBanner';
+import { adminFail } from './adminCopy';
 
 /**
  * The operator's live view: who is connected, what each of them is doing, which
@@ -292,7 +293,7 @@ function RecentGames({ onWatchReplay }: { onWatchReplay?: (replayId: string) => 
               </div>
               {m.replayId && onWatchReplay ? (
                 <button className="ds-btn small ghost" onClick={() => onWatchReplay(m.replayId as string)}>
-                  Replay
+                  Watch replay
                 </button>
               ) : (
                 <span className="ds-muted" title="This match saved no replay">
@@ -439,7 +440,7 @@ function MaintenancePanel() {
     setBusy(true);
     const ok = await adminSetMaintenance(next);
     setBusy(false);
-    setStatus(ok ? okMsg : 'Failed — check admin sign-in / database.');
+    setStatus(ok ? okMsg : adminFail('apply that change'));
     load();
   };
 
@@ -483,7 +484,7 @@ function MaintenancePanel() {
           {mins > 0 ? 'SCHEDULE LOCKDOWN' : 'LOCK DOWN NOW'}
         </button>
         <button className="ds-btn ghost" disabled={busy || !live} onClick={lift}>
-          LIFT
+          LIFT LOCKDOWN
         </button>
       </div>
       <p className="ds-hint" style={{ margin: 0 }}>

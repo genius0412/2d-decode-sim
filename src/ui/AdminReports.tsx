@@ -8,7 +8,7 @@ import {
   type ScoreReport,
 } from '../net/api';
 import { REPORT_LABELS, type ReportedUser, type ReportReason } from '../report';
-import { STANDING_EVENT_LABEL, STANDING_MAX, tierOf, type StandingEventKind } from '../standing';
+import { STANDING_COST, STANDING_EVENT_LABEL, STANDING_MAX, tierOf, type StandingEventKind } from '../standing';
 import { SEASONS } from '../seasons';
 
 /**
@@ -103,6 +103,14 @@ function ReportedRow({
   }, [expanded, detail, u.userId]);
 
   const triage = async (status: 'reviewed' | 'dismissed'): Promise<void> => {
+    if (
+      status === 'reviewed' &&
+      !window.confirm(
+        `Uphold the reports against ${u.handle}? That costs ${STANDING_COST.reportUpheld} standing, ` +
+          'locks them out of ranked, and takes rating — more each time it happens.',
+      )
+    )
+      return;
     setBusy(true);
     await adminSetReportStatus(u.userId, status);
     setBusy(false);
@@ -193,7 +201,7 @@ function ReportedRow({
                       </span>
                       {m.replayId && onWatchReplay ? (
                         <button className="ds-btn small" onClick={() => onWatchReplay(m.replayId as string)}>
-                          ▶ Watch
+                          Watch replay
                         </button>
                       ) : (
                         <span className="ds-muted" title="This match saved no replay">no replay</span>
@@ -210,7 +218,7 @@ function ReportedRow({
                   Dismiss {u.open > 0 ? `(${u.open})` : ''}
                 </button>
                 <button className="ds-btn small" disabled={busy || u.open === 0} onClick={() => void triage('reviewed')}>
-                  Mark reviewed
+                  Uphold {u.open > 0 ? `(${u.open})` : ''}
                 </button>
               </div>
             </>
@@ -254,6 +262,14 @@ function ScoreReportQueue({ onWatchReplay }: { onWatchReplay?: (replayId: string
   if (!rows || rows.length === 0) return null;
 
   const resolve = (id: string, verdict: 'upheld' | 'rejected', smite: number): void => {
+    if (
+      smite > 0 &&
+      !window.confirm(
+        `Reject this report and take ${smite} standing from the player who filed it? ` +
+          'Only for a claim made in bad faith.',
+      )
+    )
+      return;
     setBusy(id);
     void adminResolveScoreReport(id, verdict, smite).then(() => {
       setBusy(null);

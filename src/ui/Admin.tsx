@@ -24,6 +24,7 @@ import {
 import { Markdown } from './markdown';
 import { AdminLive } from './AdminLive';
 import { AdminReports } from './AdminReports';
+import { adminFail } from './adminCopy';
 
 type AdminTab = 'live' | 'server' | 'content' | 'moderation';
 const TABS: { id: AdminTab; label: string }[] = [
@@ -122,7 +123,7 @@ export function Admin({
     const rows = await adminFetchRecords(recMode, recDt);
     setRecBusy(false);
     setRecords(rows);
-    setRecStatus(rows.length ? `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}.` : 'No records in this bucket (or not signed in as admin).');
+    setRecStatus(rows.length ? `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}.` : 'No records in this bucket. If you expected some, check that you are still signed in as an admin.');
   };
 
   const deleteRecord = async (row: AdminRecordRow): Promise<void> => {
@@ -131,7 +132,7 @@ export function Admin({
     const ok = await adminDeleteRecord(row.recordId);
     setRecBusy(false);
     if (ok) setRecords((rs) => rs.filter((r) => r.recordId !== row.recordId));
-    setRecStatus(ok ? `Deleted ${row.handle}'s run.` : 'Failed - check admin sign-in.');
+    setRecStatus(ok ? `Deleted ${row.handle}’s run.` : adminFail('delete the run'));
   };
 
   const clearUser = async (row: AdminRecordRow): Promise<void> => {
@@ -140,7 +141,11 @@ export function Admin({
     const removed = await adminClearUserRecords(row.userId);
     setRecBusy(false);
     if (removed != null) setRecords((rs) => rs.filter((r) => r.userId !== row.userId));
-    setRecStatus(removed != null ? `Cleared ${removed} run${removed === 1 ? '' : 's'} by ${row.handle}.` : 'Failed - check admin sign-in.');
+    setRecStatus(
+      removed != null
+        ? `Cleared ${removed} run${removed === 1 ? '' : 's'} by ${row.handle}.`
+        : adminFail('clear the runs'),
+    );
   };
 
   const searchUsers = async (): Promise<void> => {
@@ -149,7 +154,7 @@ export function Admin({
     setUserBusy(false);
     setUsers(found);
     setRename(Object.fromEntries(found.map((u) => [u.userId, u.handle])));
-    setUserStatus(found.length ? `${found.length} match${found.length === 1 ? '' : 'es'}.` : 'No matches (or not signed in as admin).');
+    setUserStatus(found.length ? `${found.length} match${found.length === 1 ? '' : 'es'}.` : 'No matches. If you expected some, check that you are still signed in as an admin.');
   };
 
   const renameUser = async (userId: string, current: string): Promise<void> => {
@@ -164,7 +169,7 @@ export function Admin({
     const saved = await adminRenameUser(userId, next);
     setUserBusy(false);
     if (saved) setUsers((us) => us.map((u) => (u.userId === userId ? { ...u, handle: saved } : u)));
-    setUserStatus(saved ? `Renamed to "${saved}".` : 'Failed - check admin sign-in.');
+    setUserStatus(saved ? `Renamed to "${saved}".` : adminFail('rename the player'));
   };
 
   /** comp a membership. Confirmed because it costs real money to honour. */
@@ -180,7 +185,7 @@ export function Admin({
     const r = await adminGrantSupporter(u.userId, months, reason);
     setUserBusy(false);
     if (!r) {
-      setUserStatus('Failed - check admin sign-in.');
+      setUserStatus(adminFail('grant the membership'));
       return;
     }
     setUsers((us) =>
@@ -202,7 +207,7 @@ export function Admin({
     const r = await adminRevokeSupporter(u.userId, reason);
     setUserBusy(false);
     if (!r) {
-      setUserStatus('Failed - check admin sign-in.');
+      setUserStatus(adminFail('revoke the membership'));
       return;
     }
     setUsers((us) =>
@@ -223,7 +228,7 @@ export function Admin({
     setBusy(true);
     const ok = await fn();
     setBusy(false);
-    setStatus(ok ? okMsg : 'Failed - are you still signed in as an admin?');
+    setStatus(ok ? okMsg : adminFail('apply that change'));
   };
 
   const startSeason = async (newAct: boolean): Promise<void> => {
@@ -241,7 +246,7 @@ export function Admin({
     setSeasonStatus(
       season != null
         ? `Started a new ${what}. New runs now score onto it; older periods are archived but still viewable.`
-        : 'Failed - are you still signed in as an admin (and is the DB configured)?',
+        : adminFail(`start the new ${what.toLowerCase()}`),
     );
   };
 
@@ -251,7 +256,9 @@ export function Admin({
     const freed = await adminPurgeReplays();
     setSeasonBusy(false);
     setSeasonStatus(
-      freed != null ? `Purged ${freed} archived-season replay${freed === 1 ? '' : 's'}.` : 'Failed - check admin sign-in / DB.',
+      freed != null
+        ? `Purged ${freed} archived-season replay${freed === 1 ? '' : 's'}.`
+        : adminFail('purge the replays'),
     );
   };
 
@@ -283,19 +290,19 @@ export function Admin({
       setAnnTitle('');
       setAnnTagline('');
       setAnnBody('');
-      setAnnStatus(`Published - players see it on their next load. ${created.kind === 'patch' ? '' : 'It plays a cinematic reveal.'}`);
+      setAnnStatus(`Published. Players see it on their next load. ${created.kind === 'patch' ? '' : 'It plays a cinematic reveal.'}`);
     } else {
-      setAnnStatus('Failed - check admin sign-in / DB.');
+      setAnnStatus(adminFail('publish the announcement'));
     }
   };
 
   const retireAnnouncement = async (a: Announcement): Promise<void> => {
-    if (!window.confirm(`Retire "${a.title}"? It stops appearing for anyone who hasn't seen it yet.`)) return;
+    if (!window.confirm(`Retire "${a.title}"? It stops appearing for anyone who hasn’t seen it yet.`)) return;
     setAnnBusy(true);
     const ok = await adminDeleteAnnouncement(a.id);
     setAnnBusy(false);
     if (ok) setAnnouncements((rows) => rows.filter((r) => r.id !== a.id));
-    setAnnStatus(ok ? `Retired "${a.title}".` : 'Failed - check admin sign-in.');
+    setAnnStatus(ok ? `Retired "${a.title}".` : adminFail('retire the announcement'));
   };
 
   const isCinematic = annKind !== 'patch';
@@ -344,7 +351,7 @@ export function Admin({
           <button
             className="ds-btn"
             disabled={busy}
-            onClick={() => run(() => adminAnnounce(minutes * 60, message), `Announced - restart in ${minutes} min.`)}
+            onClick={() => run(() => adminAnnounce(minutes * 60, message), `Announced. Restart in ${minutes} min.`)}
           >
             ANNOUNCE RESTART
           </button>
@@ -359,7 +366,7 @@ export function Admin({
         {status && <p className="ds-hint" style={{ marginTop: 12 }}>{status}</p>}
       </div>
       <p className="ds-hint" style={{ marginTop: 16 }}>
-        Reminder: this only warns players - it doesn’t restart the server. Run your deploy when
+        Reminder: this only warns players. It doesn’t restart the server. Run your deploy when
         the countdown reaches 0.
       </p>
         </>
@@ -405,7 +412,7 @@ export function Admin({
           </label>
         )}
         <label className="admin-field col">
-          <span>{isCinematic ? 'Details (shown in “What’s new”) - Markdown' : 'Notes - Markdown'}</span>
+          <span>{isCinematic ? 'Details (shown in “What’s new”) · Markdown' : 'Notes · Markdown'}</span>
           <textarea
             className="admin-textarea"
             value={annBody}
@@ -442,7 +449,7 @@ export function Admin({
                   <strong>{a.title}</strong>
                   <span className="ds-hint"> · {new Date(a.publishedAt).toLocaleDateString()}</span>
                 </span>
-                <button className="ds-btn ghost sm danger" disabled={annBusy} onClick={() => retireAnnouncement(a)}>
+                <button className="ds-btn ghost smallall danger" disabled={annBusy} onClick={() => retireAnnouncement(a)}>
                   RETIRE
                 </button>
               </div>
@@ -466,7 +473,7 @@ export function Admin({
             type="text"
             value={seasonName}
             maxLength={40}
-            placeholder="e.g. Spring Showdown - blank ⇒ Act X · Season Y"
+            placeholder="e.g. Spring Showdown · blank ⇒ Act X · Season Y"
             onChange={(e) => setSeasonName(e.target.value)}
           />
         </label>
@@ -494,10 +501,10 @@ export function Admin({
           people waiting on it. */}
       <AdminReports onWatchReplay={onWatchReplay} />
       <hr className="adm-sep" />
-      <h2 className="ds-h2">Moderation - records</h2>
+      <h2 className="ds-h2">Moderation · records</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Inspect a leaderboard bucket (live season) and remove cheated or invalid runs. Deleting a
-        run also deletes its replay. “Clear all” wipes every run by that player - for confirmed
+        run also deletes its replay. “Clear all” wipes every run by that player, for confirmed
         cheaters.
       </p>
       <div className="admin-card">
@@ -525,10 +532,10 @@ export function Admin({
                   <strong>{r.handle}</strong> · {r.score} pts · {r.drivetrain}
                   <span className="ds-hint"> · {new Date(r.createdAt).toLocaleDateString()}</span>
                 </span>
-                <button className="ds-btn ghost sm" disabled={recBusy} onClick={() => deleteRecord(r)}>
+                <button className="ds-btn ghost small" disabled={recBusy} onClick={() => deleteRecord(r)}>
                   DELETE
                 </button>
-                <button className="ds-btn ghost sm danger" disabled={recBusy} onClick={() => clearUser(r)}>
+                <button className="ds-btn ghost smallall danger" disabled={recBusy} onClick={() => clearUser(r)}>
                   CLEAR ALL
                 </button>
               </div>
@@ -539,8 +546,8 @@ export function Admin({
       </div>
 
       {/* main's heading was "Moderation - display names"; this section now does
-          memberships too. Hyphen, not an em dash, per main's site-wide copy pass. */}
-      <h2 className="ds-h2" style={{ marginTop: 32 }}>Players - names &amp; memberships</h2>
+          memberships too. */}
+      <h2 className="ds-h2" style={{ marginTop: 32 }}>Players · names &amp; memberships</h2>
       <p className="ds-sub" style={{ margin: '0 0 20px' }}>
         Find a player by display name, username, or exact user id. Force an inappropriate name to
         something clean, comp a supporter membership, or revoke one after a chargeback. Every
@@ -573,7 +580,7 @@ export function Admin({
                     onChange={(e) => setRename((m) => ({ ...m, [u.userId]: e.target.value }))}
                   />
                   <button
-                    className="ds-btn ghost sm"
+                    className="ds-btn ghost small"
                     disabled={userBusy || (rename[u.userId] ?? '').trim() === u.handle}
                     onClick={() => renameUser(u.userId, u.handle)}
                   >
@@ -615,17 +622,17 @@ export function Admin({
                       setGrantMonths((m) => ({ ...m, [u.userId]: e.target.value }))
                     }
                   />
-                  <button className="ds-btn ghost sm" disabled={userBusy} onClick={() => grantSupporter(u)}>
+                  <button className="ds-btn ghost small" disabled={userBusy} onClick={() => grantSupporter(u)}>
                     GRANT
                   </button>
                   <button
-                    className="ds-btn ghost sm"
+                    className="ds-btn ghost small"
                     disabled={userBusy || !u.supporter}
                     onClick={() => revokeSupporter(u)}
                   >
                     REVOKE
                   </button>
-                  <button className="ds-btn ghost sm" disabled={userBusy} onClick={() => loadHistory(u.userId)}>
+                  <button className="ds-btn ghost small" disabled={userBusy} onClick={() => loadHistory(u.userId)}>
                     HISTORY
                   </button>
                 </div>
