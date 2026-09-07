@@ -388,24 +388,29 @@ export function updateRobot(
   /**
    * ...AND THE SAME WHEELS CARRY THE VELOCITY ROUND A CORNER.
    *
-   * Turning while moving needs a lateral force of `m·v·ω`, and without it the world-frame
-   * velocity simply stays where it was while the chassis rotates out from under it — every
-   * drivetrain side-slipping through every corner, which is "I drive straight and turn with
-   * tank and feel shifted sideways in a weird way".
+   * Turning while moving needs a lateral force of `m·v·ω` — that is what holds the velocity's
+   * angle to the chassis while the nose comes round. Without it the world-frame velocity simply
+   * stays where it was and every drivetrain side-slips through every corner, which is "I drive
+   * straight and turn with tank and feel shifted sideways in a weird way".
    *
-   * The drive model already pulls the robot-frame lateral velocity toward the commanded one at
-   * its own `accel`, so the tyres only add what they have OVER that: `LATERAL_GRIP` above 1 is
-   * a tread scrubbing harder than the motors can correct, and below 1 (rollers, omnis) the
-   * drive is already the stronger of the two and this term does nothing. That is the old
-   * velocity-carve's cap, stated as the force it always was.
+   * IT IS THE CENTRIPETAL DEMAND, NOT A CORRECTION OF THE ERROR AFTERWARDS. Correcting the
+   * lateral velocity once it has appeared is a first-order lag and leaves a permanent residual:
+   * measured, a tank through the smoke suite's own turn carried 3.0% of its velocity sideways
+   * that way, against 0.4% here and a 1.0% ceiling. The tyres do this BEFORE the slip exists,
+   * which is exactly what the old velocity-carve was doing when it rotated `r.vel` by the
+   * heading change — the same quantity, stated as the force it always was.
+   *
+   * The cap is unchanged: `LATERAL_GRIP` as a fraction of the drivetrain's own traction
+   * ceiling. Past what the tyres can supply — fast enough, turning hard enough — the robot
+   * slides through the corner exactly as it did before, and it slides sooner on omnis than on
+   * treads.
    */
-  const extraLat = Math.max(0, grip - 1) * dp.accel * m;
-  if (extraLat > 0) {
-    const err = stepped.y - velRobot.y; // robot-frame lateral error the drive is correcting
-    const f = clamp((err * m) / dt, -extraLat, extraLat);
-    const world = rot({ x: 0, y: f }, r.heading);
-    fx += world.x;
-    fy += world.y;
+  const speed = hyp(r.vel.x, r.vel.y);
+  if (speed > 0.01 && r.angVel !== 0) {
+    const a = Math.min(speed * Math.abs(r.angVel), grip * dp.accel);
+    const sgn = Math.sign(r.angVel);
+    fx += (m * a * -r.vel.y * sgn) / speed;
+    fy += (m * a * r.vel.x * sgn) / speed;
   }
   const wheels = wheelLocals(r.spec);
   // the budget ONE wheel has across its roll axis, as a force
