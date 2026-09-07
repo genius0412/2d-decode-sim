@@ -13,6 +13,8 @@ import { useFriendsCtx } from './friendsContext';
 import { challengeLine, formatLabel } from './challenge';
 import { Select, type SelectOption } from './Select';
 import { SupporterBadge } from './SupporterBadge';
+import type { GameId } from '../games/types';
+import type { RoomKind } from '../net/protocol';
 
 /** compact game name for an activity line ("In a match · DECODE") */
 function gameShort(game: 'decode' | 'chain' | null): string {
@@ -36,6 +38,16 @@ function canChallenge(f: FriendRow): boolean {
 }
 
 const OPEN_KEY = 'decodesim.friendsPanelOpen';
+
+/** The room currently open beside this panel. Its region is the hosting region,
+ * which may be different from the sender's currently preferred server. */
+export interface RoomInviteTarget {
+  code: string;
+  game: GameId;
+  kind: RoomKind;
+  record?: 'solo' | 'duo';
+  region?: string | null;
+}
 
 /**
  * Between these widths there is room for the left rail and the content, but not
@@ -91,6 +103,8 @@ export function FriendsPanel({
   onJoinInvite,
   onSpectate,
   myUserId,
+  room,
+  allowProfileNavigation = true,
 }: {
   signedIn: boolean;
   onOpenProfile: (username: string) => void;
@@ -100,6 +114,10 @@ export function FriendsPanel({
   onSpectate: (room: string, region?: string) => void;
   /** the signed-in account's user id — drives "Recently played" suggestions */
   myUserId?: string | null;
+  /** Active room: online rows invite to it instead of starting a new challenge. */
+  room?: RoomInviteTarget;
+  /** Keep links inert when leaving this surface would abandon a live room. */
+  allowProfileNavigation?: boolean;
 }) {
   const [open, setOpen] = useState(() => {
     try {
@@ -122,6 +140,7 @@ export function FriendsPanel({
   };
 
   const friends = useFriendsCtx();
+  const [invited, setInvited] = useState<Record<string, 'sending' | 'sent'>>({});
   const { incoming, outgoing, blocked, invites, friends: list } = friends.data;
   // challenges I sent that are still live (absent on an older server)
   const sent = friends.data.sent ?? [];
@@ -133,6 +152,12 @@ export function FriendsPanel({
     for (const f of list) (f.online ? on : off).push(f);
     return [on, off];
   }, [list]);
+
+  // These acknowledgements belong to the current room only. A newly-created or
+  // rejoined room starts with fresh Invite buttons.
+  useEffect(() => setInvited({}), [room?.code]);
+
+  const openProfile = allowProfileNavigation ? onOpenProfile : undefined;
 
   if (!expanded) {
     return (
@@ -221,7 +246,7 @@ export function FriendsPanel({
           {incoming.length > 0 && (
             <Section title="Requests" count={incoming.length}>
               {incoming.map((p) => (
-                <PersonRow key={p.userId} p={p} onOpenProfile={onOpenProfile}>
+                <PersonRow key={p.userId} p={p} onOpenProfile={openProfile}>
                   <button
                     className="ds-btn small primary"
                     onClick={() => void friends.accept(p.username ?? '')}
@@ -249,7 +274,7 @@ export function FriendsPanel({
                 <PersonRow
                   key={f.userId}
                   p={f}
-                  onOpenProfile={onOpenProfile}
+                  onOpenProfile={openProfile}
                   sub={presenceLine(f)}
                   // ANCHORED to the start of the row. As the first child of
                   // `.fr-actions` its x position was decided by however many buttons
@@ -267,7 +292,28 @@ export function FriendsPanel({
                       mutually exclusive by construction (`canChallenge` excludes a
                       friend already in a match, which is exactly when `watch` is
                       set), and the row has space for one action beside the menu. */}
-                  {f.watch ? (
+                  {room && f.username ? (
+                    <InviteButton
+                      username={f.username}
+                      room={room}
+                      status={invited[f.username]}
+                      onInvite={() => {
+                        const username = f.username!;
+                        setInvited((current) => ({ ...current, [username]: 'sending' }));
+                        void friends
+                          .inviteToRoom(
+                            username, room.code, room.game, room.kind, room.record, undefined, room.region,
+                          )
+                          .then(() => setInvited((current) => ({ ...current, [username]: 'sent' })))
+                          .catch(() =>
+                            setInvited((current) => {
+                              const { [username]: _, ...rest } = current;
+                              return rest;
+                            }),
+                          );
+                      }}
+                    />
+                  ) : f.watch ? (
                     <button
                       className="ds-btn small ghost"
                       onClick={() => onSpectate(f.watch!.room, f.watch!.region)}
@@ -292,7 +338,7 @@ export function FriendsPanel({
           {offline.length > 0 && (
             <FoldSection title="Offline" count={offline.length}>
               {offline.map((f) => (
-                <PersonRow key={f.userId} p={f} onOpenProfile={onOpenProfile} sub={offlineFor(f.offlineSeconds)}>
+                <PersonRow key={f.userId} p={f} onOpenProfile={openProfile} sub={offlineFor(f.offlineSeconds)}>
                   <RowMenu username={f.username} friends={friends} />
                 </PersonRow>
               ))}
@@ -302,7 +348,7 @@ export function FriendsPanel({
           {outgoing.length > 0 && (
             <Section title="Sent requests" count={outgoing.length}>
               {outgoing.map((p) => (
-                <PersonRow key={p.userId} p={p} onOpenProfile={onOpenProfile}>
+                <PersonRow key={p.userId} p={p} onOpenProfile={openProfile}>
                   <button
                     className="ds-btn small ghost"
                     onClick={() => void friends.cancel(p.username ?? '')}
@@ -322,7 +368,7 @@ export function FriendsPanel({
           {blocked.length > 0 && (
             <FoldSection title="Blocked" count={blocked.length}>
               {blocked.map((p) => (
-                <PersonRow key={p.userId} p={p} onOpenProfile={onOpenProfile}>
+                <PersonRow key={p.userId} p={p} onOpenProfile={openProfile}>
                   <button
                     className="ds-btn small ghost"
                     // A blocked row can only exist if you named that account by
@@ -345,7 +391,7 @@ export function FriendsPanel({
             myUserId={myUserId}
             known={friends.data}
             onAdd={friends.add}
-            onOpenProfile={onOpenProfile}
+            onOpenProfile={openProfile}
           />
         </>
       )}
@@ -391,7 +437,7 @@ function RecentlyPlayed({
   myUserId?: string | null;
   known: { friends: FriendRow[]; incoming: PublicProfile[]; outgoing: PublicProfile[]; blocked: PublicProfile[] };
   onAdd: (username: string) => Promise<'sent' | 'accepted'>;
-  onOpenProfile: (username: string) => void;
+  onOpenProfile?: (username: string) => void;
 }) {
   const [people, setPeople] = useState<PublicProfile[]>([]);
   const [added, setAdded] = useState<Record<string, boolean>>({});
@@ -456,10 +502,9 @@ function RecentlyPlayed({
 
 /**
  * A titled stack of rows — the ONE construction for a section anywhere in the
- * friends surfaces. Exported so `InviteFlyout` uses it too: it was hand-rolling a
- * `<div className="fr-section">` with the same heading markup, which is how five
- * variants of a four-line pattern came to differ in element and in whether the
- * count chip existed at all.
+ * friends surfaces. Keeping the heading construction in one place prevents
+ * variants of the same four-line pattern from drifting in element or count-chip
+ * behavior.
  *
  * `count` is OPTIONAL: a suggestion list ("Recently played") and a search box
  * ("Add a friend") are not tallies of anything, and printing a number there would
@@ -518,8 +563,8 @@ function FoldSection({
  * `Leaderboard`'s player cell uses, so every friend/request/result/search row
  * behaves identically to a name anywhere else in the app.
  *
- * THE ONE construction, exported for `InviteFlyout` and `UserSearchBar`. It was
- * six hand-written copies of this block across three files, and each one had to
+ * THE ONE construction, exported for `UserSearchBar`. It replaced several
+ * hand-written copies of this block, and each one had to
  * re-assert by hand that `SupporterBadge` is a SIBLING of `.fr-name` rather than a
  * child (CLAUDE.md; the name ellipsises on overflow and would truncate a nested
  * badge with it). The seventh copy is the one that forgets.
@@ -583,6 +628,32 @@ function ChallengeButton({
   return (
     <button className="ds-btn small primary fr-challenge" onClick={() => onChallenge(username)}>
       Challenge
+    </button>
+  );
+}
+
+/** Invite an online friend into the room already open beside this panel. This
+ * deliberately replaces Challenge in that state: starting another room while
+ * connected to one is both confusing and likely to abandon the current room. */
+function InviteButton({
+  username,
+  room,
+  status,
+  onInvite,
+}: {
+  username: string;
+  room: RoomInviteTarget;
+  status?: 'sending' | 'sent';
+  onInvite: () => void;
+}) {
+  return (
+    <button
+      className="ds-btn small primary fr-challenge"
+      title={`Invite @${username} to room ${room.code}`}
+      disabled={!!status}
+      onClick={onInvite}
+    >
+      {status === 'sending' ? 'Inviting…' : status === 'sent' ? 'Invited ✓' : 'Invite'}
     </button>
   );
 }
@@ -721,8 +792,8 @@ function AddFriend({
 }
 
 /** monoline people glyph, `currentColor` — the one people-icon this app uses,
- * so a chip that needs the concept (InviteFlyout's "Friends" toggle) reaches for
- * this instead of a platform emoji (colourful, off-theme, inconsistent across OSes). */
+ * so every friends control avoids platform emoji (colourful, off-theme, and
+ * inconsistent across operating systems). */
 export function PeopleGlyph({ size = 20 }: { size?: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true">
