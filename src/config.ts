@@ -748,6 +748,31 @@ export const PHYS_ALLOWED_ERROR = 0.01;
  * between a wall and an auto-path robot (kinematic, and it does not yield) left the step at
  * 959 in/s — six field widths a second — before this clamp.
  */
+/**
+ * The angular twin of `PHYS_MAX_ROBOT_SPEED`, in rad/s: a SOLVER-EXPLOSION GUARD, not a
+ * gameplay lever. Every drivetrain's own `maxTurn` is under 11 rad/s and the hardest legal
+ * hit adds a couple more, so this is several times anything the game can produce — a body
+ * past it is an over-constrained contact, not a shove anybody felt. Absolute, for the same
+ * reason the speed guard is: what spins a slow chassis is the OTHER robot's authority.
+ */
+/**
+ * How much of the tyres' Coulomb yaw capacity actually opposes a contact (0..1).
+ *
+ * The capacity itself is not a dial — it is `LATERAL_GRIP · accel · m · d`, four wheels at
+ * their moment arm — but taking all of it refuses IMPACTS as well as drags, and the two want
+ * opposite answers. A corner hit spins a real robot because the impact force is momentarily
+ * far above the friction limit; this sim's contacts are SOFT, so the same hit arrives spread
+ * across a dozen ticks with a modest torque in each, and a full-capacity refusal eats it: an
+ * off-centre ram that turns a chassis 21.6° unscaled turned it 2.4°.
+ *
+ * ⚠️ SO THIS IS A DIAL, and it is honest about being one, exactly like `CONTACT_PAIR_SPIN`
+ * was. Slice B removes the need for it: with per-wheel forces the traction opposes the
+ * contact torque inside the solve, where an impulse can exceed it and a lean cannot.
+ * Swept against both scenes at once — the reported "we strafe together" drag and the
+ * off-centre ram — see the numbers in `updateRobot`.
+ */
+export const CONTACT_YAW_HOLD = 0.35;
+export const PHYS_MAX_ROBOT_SPIN = 25;
 export const PHYS_MAX_ROBOT_SPEED = 300;
 /**
  * How far a robot's footprint may sit outside the field before it is walked back in.

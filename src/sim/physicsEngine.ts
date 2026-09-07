@@ -3,7 +3,9 @@ import type { Alliance, Artifact, RobotState, Vec2, World } from '../types';
 import * as C from '../config';
 import { robotExtents } from './physics';
 import { shoveMass } from './drivetrain';
-import { dcos, dsin, hyp } from '../math';
+import type { DriveWrench } from './robot';
+import { chassisInertia } from './robot';
+import { clamp, dcos, dsin, hyp, wrapAngle } from '../math';
 import type { FieldColliders } from '../games/types';
 
 /**
@@ -174,6 +176,9 @@ export function solveRobots(
   dt: number,
   colliders: FieldColliders,
   gateCol?: Record<Alliance, number>,
+  /** the DRIVE, as a force + torque per robot id (`updateRobot`). Absent ⇒ this robot is
+   *  coasting: the solver still owns its motion, nothing is being asked of the wheels. */
+  drive?: Map<number, DriveWrench>,
 ): Map<number, Vec2> {
   const preVels = new Map<number, Vec2>();
   const robots = world.robots;
@@ -220,11 +225,24 @@ export function solveRobots(
             .setTranslation(r.pos.x, r.pos.y)
             .setRotation(r.heading)
             .setLinvel(r.vel.x, r.vel.y)
-        : RAPIER.RigidBodyDesc.dynamic()
+        : /**
+           * ROTATION IS NOT LOCKED ANY MORE — slice A.
+           *
+           * It was, and everything angular had to be hand-built around that: the two-body
+           * impulse in `squareUpPair`, the settling nudge, `CONTACT_PAIR_SPIN`, the slip
+           * relief. A locked body cannot yaw from a contact, so an off-centre hit produced
+           * nothing at all and the bespoke pass existed to put it back.
+           *
+           * With the drive arriving as a force (see `updateRobot`), the solver can answer the
+           * angular half itself, from the same normal and friction impulses it already
+           * computes — a flank drag yaws you because the friction acts off the centre of mass,
+           * not because a heuristic says so.
+           */
+          RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(r.pos.x, r.pos.y)
             .setRotation(r.heading)
-            .lockRotations()
-            .setLinvel(r.vel.x, r.vel.y),
+            .setLinvel(r.vel.x, r.vel.y)
+            .setAngvel(r.angVel),
     );
     // PUSHING POWER. `shoveMass` is the collider mass that DELIVERS this robot's
     // `pushForce` given the accel the motor model used — see drivetrain.ts, which owns
@@ -232,14 +250,33 @@ export function solveRobots(
     // mass. BUTTERFLY: the set that is DOWN decides both the traction factor and the
     // gearing, so dropping the traction wheels really does turn it into a pusher
     // mid-match (and back) — `r.butterflyTank` carries that into both terms.
+    /**
+     * ...AND THE MASS PROPERTIES ARE STATED, not derived from the box.
+     *
+     * `setMass` alone would put the centre of mass at the FOOTPRINT's centre, which sits
+     * forward of the chassis by half the intake reach — so a robot would pivot about a point
+     * out in front of itself and the drive model's `maxTurn` (worked out about the chassis
+     * centre, from its half-diagonal) would no longer be the free-space answer. The COM is
+     * pinned back to the body origin and the inertia is the chassis rectangle's, which is the
+     * same expression `squareUpPair`'s impulse already used — so nothing in the sim disagrees
+     * about how hard this robot is to spin.
+     */
+    const m = shoveMass(r.spec, r.butterflyTank, r.powerDraw);
     rw.createCollider(
       RAPIER.ColliderDesc.cuboid(hx, e.half)
         .setTranslation(forward, 0) // body-local (rotated by heading)
-        .setMass(shoveMass(r.spec, r.butterflyTank, r.powerDraw))
+        .setMassProperties(m, { x: -forward, y: 0 }, chassisInertia(m, r.spec))
         .setRestitution(0)
         .setFriction(C.PHYS_FRICTION),
       body,
     );
+    // the DRIVE, for this tick. A pure force acts at the centre of mass and a pure torque
+    // about it, so the two are independent: driving forward never yaws you by itself.
+    const w = drive?.get(r.id);
+    if (w && !r.autoPathActive) {
+      if (w.fx !== 0 || w.fy !== 0) body.addForce({ x: w.fx, y: w.fy }, true);
+      if (w.tau !== 0) body.addTorque(w.tau, true);
+    }
     // ...and only a DYNAMIC body has a result worth reading back.
     if (!r.autoPathActive) bodies.push({ r, body, wasOut: outsideBy(r, colliders.bounds) });
   }
@@ -282,10 +319,68 @@ export function solveRobots(
      * ABSOLUTE speed and not a multiple of this robot's own (see `PHYS_MAX_ROBOT_SPEED`; the
      * per-robot version fired on ordinary shoves of a slow chassis by a fast one).
      */
-    const speed = hyp(v.x, v.y);
+    const w = drive?.get(r.id);
+    let vx = v.x;
+    let vy = v.y;
+    /**
+     * A CONTACT MAY NOT DRAG YOU SIDEWAYS PAST WHAT YOUR TYRES REFUSE.
+     *
+     * `wantX/wantY` is the velocity the drive asked for, so the rest of the solver's answer is
+     * what the contact did; `holdLat` is the wheels' Coulomb capacity across their own axis for
+     * this tick (see `updateRobot`). Only the SIDEWAYS component is held — the longitudinal one
+     * passes through, because that is a wheel rolling rather than scrubbing, and holding it
+     * would make an unpowered robot unpushable again.
+     *
+     * Like `yawHold`, this is the piece slice B removes: per-wheel forces put the same traction
+     * inside the solve, opposing the drag as it happens.
+     */
+    if (w && w.holdLat > 0) {
+      const c = dcos(body.rotation());
+      const sn = dsin(body.rotation());
+      const dx = vx - w.wantX;
+      const dy = vy - w.wantY;
+      const lat = -dx * sn + dy * c; // the contact's contribution across the wheels
+      const refuse = Math.sign(lat) * Math.min(Math.abs(lat), w.holdLat);
+      vx -= -sn * refuse;
+      vy -= c * refuse;
+    }
+    const speed = hyp(vx, vy);
     const scale = speed > C.PHYS_MAX_ROBOT_SPEED ? C.PHYS_MAX_ROBOT_SPEED / speed : 1;
-    r.vel.x = v.x * scale;
-    r.vel.y = v.y * scale;
+    r.vel.x = vx * scale;
+    r.vel.y = vy * scale;
+    /**
+     * THE SOLVER OWNS THE HEADING NOW. `updateRobot` used to integrate it, because a
+     * rotation-locked body had no rotation to report; the drive arrives as a torque instead
+     * and this reads back what the wheels and every contact did between them.
+     *
+     * The spin guard is the angular twin of `PHYS_MAX_ROBOT_SPEED` and is dead code in
+     * ordinary play for the same reason: nothing on this field can legitimately spin a robot
+     * past a few times its own top rate, so a larger number is the solver failing an
+     * over-constrained contact rather than a hit anybody felt.
+     */
+    /**
+     * ...and a CONTACT MAY NOT SPIN YOU PAST WHAT YOUR TYRES ALLOW. `wantW` is what the drive
+     * asked for, so anything else in the solver's answer came from a contact, and `yawHold` is
+     * the Coulomb capacity of the wheels to refuse it (see `updateRobot`). Whatever is left
+     * over is a real spin: an off-centre ram still turns you, it just cannot out-torque treads.
+     */
+    let av = body.angvel();
+    if (w && w.yawHold > 0) {
+      const d = av - w.wantW;
+      const mag = Math.abs(d);
+      av = w.wantW + Math.sign(d) * Math.max(0, mag - w.yawHold);
+    }
+    r.angVel = clamp(av, -C.PHYS_MAX_ROBOT_SPIN, C.PHYS_MAX_ROBOT_SPIN);
+    /**
+     * THE HEADING IS INTEGRATED FROM THAT, NOT READ OFF THE BODY.
+     *
+     * `body.rotation()` carries Rapier's positional PENETRATION CORRECTION as well as the
+     * motion — a bias applied straight to the pose, with no angular velocity behind it — and
+     * that is not a rotation anything did. A robot placed a hair inside the gate stub, idle,
+     * with `angvel` reading 0.0000 the whole time, was quietly turned 7.2° by it. The tyres'
+     * refusal above governs the rotation, so the heading follows the rotation it governs.
+     */
+    r.heading = wrapAngle(r.heading + r.angVel * dt);
   }
 
   rw.free();

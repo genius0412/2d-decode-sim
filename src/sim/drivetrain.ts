@@ -136,13 +136,22 @@ export function shoveMass(spec: RobotSpec, tankMode = false, powerDraw = 0): num
  * asymptotically instead of a constant ramp. Braking (target opposes v) pulls
  * harder (MOTOR_BRAKE_MULT). `MOTOR_TORQUE_CURVE` 0 ⇒ the old constant accel.
  * Deterministic (pure arithmetic); shared by fwd / strafe / turn. */
-export function motorStep(v: number, target: number, aStall: number, vFree: number, dt: number): number {
+export function motorStep(
+  v: number,
+  target: number,
+  aStall: number,
+  vFree: number,
+  dt: number,
+  /** braking authority as a multiple of `aStall`. The rotational caller raises it while a
+   *  contact is trying to spin the chassis — see `updateRobot`. */
+  brakeMult: number = C.MOTOR_BRAKE_MULT,
+): number {
   const err = target - v;
   if (err === 0) return v;
   const braking = v !== 0 && Math.sign(err) !== Math.sign(v);
   let frac: number;
   if (braking) {
-    frac = C.MOTOR_BRAKE_MULT;
+    frac = brakeMult;
   } else {
     const s = vFree > 0 ? Math.min(Math.abs(v) / vFree, 1) : 0;
     frac = Math.max(1 - C.MOTOR_TORQUE_CURVE * s, C.MOTOR_MIN_TORQUE_FRAC);

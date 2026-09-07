@@ -1,8 +1,8 @@
 import type { Alliance, Artifact, RobotCommand, RobotState, Vec2, World } from '../types';
 import * as C from '../config';
-import { classifierRect, footprintExtents, gateHandleRect, goalFaceNormal, goalLineValue, viewAngleOf, type Rect } from './field';
-import { dot, rot, clamp, hyp, datan2, wrapAngle } from '../math';
-import { activeDrive, driveParams, pushForce, shoveMass } from './drivetrain';
+import { classifierRect, footprintExtents, goalFaceNormal, goalLineValue, viewAngleOf, type Rect } from './field';
+import { dot, rot, clamp, hyp, datan2 } from '../math';
+import { activeDrive, driveParams } from './drivetrain';
 
 const ALLIANCES: Alliance[] = ['red', 'blue'];
 
@@ -486,11 +486,6 @@ function mtvOf(
   return { nx: o.x, ny: o.y, depth: minOv };
 }
 
-/** the same SAT overlap, against the robot's FOOTPRINT (chassis + intake) — what Rapier
- * collides with, and what the gate is pressed with. See `footprintCornersOf`. */
-function footprintMTV(r: RobotState, rect: Rect): { nx: number; ny: number; depth: number } | null {
-  return mtvOf(footprintCornersOf(r), r.heading, rect, r.pos);
-}
 
 /** SAT overlap of the robot's CHASSIS with a rect */
 function classifierMTV(r: RobotState, rect: Rect): { nx: number; ny: number; depth: number } | null {
@@ -569,15 +564,11 @@ function pressOn(preVel: Vec2 | undefined, ext: Vec2 | undefined, nx: number, ny
  */
 type ContactAcc = {
   deltas: Map<number, TurnDelta[]>;
-  dw: Map<number, number>;
   ext: Map<number, Vec2>;
-  /** velocity to GIVE BACK: the part of the solve's sideways drag the contact could not
-   *  actually have supplied, or the tyres would have refused. See `capDrag`. */
-  lin: Map<number, Vec2>;
 };
 
 function newAcc(): ContactAcc {
-  return { deltas: new Map(), dw: new Map(), ext: new Map(), lin: new Map() };
+  return { deltas: new Map(), ext: new Map() };
 }
 
 /** this robot's delta list, created on demand — the static pass appends to the same array
@@ -589,24 +580,6 @@ function accList(acc: ContactAcc, id: number): TurnDelta[] {
     acc.deltas.set(id, list);
   }
   return list;
-}
-
-function accDelta(acc: ContactAcc, id: number, d: TurnDelta): void {
-  accList(acc, id).push(d);
-}
-
-function accSpin(acc: ContactAcc, id: number, dw: number): void {
-  acc.dw.set(id, (acc.dw.get(id) ?? 0) + dw);
-}
-
-function accSlip(acc: ContactAcc, id: number, dx: number, dy: number): void {
-  const v = acc.lin.get(id);
-  if (v) {
-    v.x += dx;
-    v.y += dy;
-  } else {
-    acc.lin.set(id, { x: dx, y: dy });
-  }
 }
 
 function accPush(acc: ContactAcc, id: number, nx: number, ny: number, press: number): void {
@@ -633,33 +606,10 @@ function accPush(acc: ContactAcc, id: number, nx: number, ny: number, press: num
  * the default chassis) that only a violent hit reaches, and the wall checks pin the peak a
  * contact may produce.
  */
-function applyAcc(world: World, acc: ContactAcc, preVels: Map<number, Vec2>, dt: number): void {
+function applyAcc(world: World, acc: ContactAcc): void {
   for (const r of world.robots) {
     // a robot on an auto path has its pose written by the path, not by contact
     if (!r.autoPathActive) {
-      /**
-       * GIVE BACK the sideways drag the contact could not have supplied (`capDrag`).
-       *
-       * Clamped to the whole velocity change the solve made, because two contacts on one
-       * chassis each propose their own give-back along their own tangent and the sum could
-       * otherwise push it past where it started the tick — a contact may cancel a drag, never
-       * reverse it into a shove of its own.
-       */
-      const back = acc.lin.get(r.id);
-      if (back) {
-        const pv = preVels.get(r.id);
-        const dv = pv ? hyp(r.vel.x - pv.x, r.vel.y - pv.y) : Infinity;
-        const mag = hyp(back.x, back.y);
-        const k = mag > dv ? dv / mag : 1;
-        r.vel.x += back.x * k;
-        r.vel.y += back.y * k;
-      }
-      const dw = acc.dw.get(r.id);
-      if (dw) {
-        const maxTurn = driveParams(r.spec, r.butterflyTank).maxTurn;
-        r.heading = wrapAngle(r.heading + dw * dt);
-        r.angVel = clamp(r.angVel + dw, -maxTurn, maxTurn);
-      }
       const deltas = acc.deltas.get(r.id);
       if (deltas) sumTurn(r, deltas);
     }
@@ -749,8 +699,6 @@ function squareUpWalls(
 function squareUpStatics(
   r: RobotState,
   preVel: Vec2 | undefined,
-  dt: number,
-  world: World | undefined,
   out: TurnDelta[],
   ext: Vec2 | undefined,
 ): void {
@@ -771,210 +719,20 @@ function squareUpStatics(
   }
 
   /**
-   * THE GATE HANDLE IS STRUCTURE, AND THE INTAKE IS PART OF THE CONTACT AREA.
+   * THE GATE HANDLE IS RAPIER'S NOW — slice A.
    *
-   * "If I push on the gate all the way and keep holding, it should apply torque to the robot
-   * but it doesn't. Remember that if the gate is fully open, then that part acts like a wall
-   * essentially for collisions." The arm already stopped a robot — measured, a robot pressing
-   * a fully-open gate ends with its intake tip at x=-65.7 against a pivot at -66.0 — but a
-   * stop with no torque leaves the robot at whatever angle it arrived at.
+   * A hand-rolled point contact used to live here: the arm is a 2.5in hinged bar with no
+   * flush to settle to, so the square-up model could not describe it and it was solved as a
+   * textbook single-point impulse instead, writing `vel`, `heading` and `angVel` straight onto
+   * the chassis. Every word of that reasoning still holds — it just is not ours to do. The arm
+   * is a real collider in the solve (`buildGateArms`), the bodies rotate, and the same normal
+   * and friction impulses now come out of the solver, including the J_t term that makes
+   * catching the stub with your flank turn you INTO it.
    *
-   * The reason nothing fired is that every contact test in this pass is built from
-   * `robotCorners`, the CHASSIS, and the gate is pressed with the INTAKE: the chassis's
-   * front-most corner stops half an inch short of the stub the robot is leaning on. The
-   * footprint is what Rapier collides with and it is what this reads now.
-   *
-   * GROWN BY THE TOUCH EPSILON, because Rapier leaves a hair of separation and a strict
-   * overlap test would fire never. Damped by GATE_ARM_TORQUE_MULT: a 2.5in hinged bar is not
-   * a wall.
+   * Leaving both in place was not subtle: a robot resting on the arm with the driver doing
+   * nothing was spun a full 360°, because the bespoke half wrote the heading behind the
+   * solver's back where the tyres' refusal could not see it.
    */
-  if (world) {
-    for (const a of ALLIANCES) {
-      const raw = gateHandleRect(a, world.goals[a].gatePos);
-      if (!raw) continue;
-      const arm = { x0: raw.x0 - eps, x1: raw.x1 + eps, y0: raw.y0 - eps, y1: raw.y1 + eps };
-      const mtv = footprintMTV(r, arm);
-      if (!mtv) continue;
-      /**
-       * THE NORMAL HAS TO BE THE STUB'S, NOT THE SAT'S MINIMUM-OVERLAP AXIS.
-       *
-       * SAT returns whichever of the four candidate axes overlaps least, and two of those are
-       * the ROBOT'S OWN. When it picks one of those the normal comes back aligned with the
-       * chassis — and `applyContactTorque` measures "how far from flush" against that normal,
-       * so the answer is zero by construction and no torque is ever applied. Measured on a
-       * robot leaning 6 degrees on the gate: contacts found, torque 0.26, press 5.9, and the
-       * heading did not move a hundredth of a degree for four seconds. "Still no torque being
-       * applied at gate."
-       *
-       * The stub is axis-aligned, so its face normal is the axis from its centre to the
-       * robot's, snapped to whichever component dominates — the face the robot is actually on.
-       */
-      /**
-       * THE NORMAL IS THE ONE THE SEPARATION IS ALONG — the same one Rapier pushes the robot
-       * out along, because it is computed the same way.
-       *
-       * Two wrong answers preceded it. Snapping to whichever axis the robot's CENTRE was
-       * furthest along treats the stub as if it were all face, so near a corner it jumps
-       * between +x and +/-y as the robot slides past the diagonal. Clamping the centre onto
-       * the rect fixes the jump and replaces it with a subtler error: the direction from a
-       * 2.5in stub to the middle of an 18in chassis has nothing to do with the surface where
-       * they actually touch, so the impulse pushed one way while Rapier separated them
-       * another. "Still not colliding that accurately."
-       *
-       * The minimum translation vector is the direction that separates the two shapes, it is
-       * what a collision solver uses, and `mtvOf` blends near-tied axes so the corner case is
-       * continuous rather than a flip.
-       */
-      const nx = mtv.nx;
-      const ny = mtv.ny;
-      const contacts = footprintCornersOf(r)
-        .filter((c) => c.x > arm.x0 && c.x < arm.x1 && c.y > arm.y0 && c.y < arm.y1)
-        .map((c) => ({ c, d: mtv.depth }));
-      {
-        /**
-         * ...AND THE STUB'S OWN CORNERS, WHICHEVER ARE INSIDE THE ROBOT. A robot pressing a
-         * 2.5in stub with its front EDGE has no footprint corner inside it, and the obvious
-         * fallback — the nearest point ON the stub — puts the contact dead ahead of the
-         * robot's centre, where the lever arm is zero and the torque with it. The contact a
-         * tilted robot actually makes is the stub's own CORNER digging into its front edge.
-         */
-        for (const c of [
-          { x: arm.x0, y: arm.y0 },
-          { x: arm.x1, y: arm.y0 },
-          { x: arm.x1, y: arm.y1 },
-          { x: arm.x0, y: arm.y1 },
-        ]) {
-          /**
-           * ...EACH WITH ITS OWN DEPTH, which is the whole reason this produces a torque.
-           *
-           * Handing both corners the same `mtv.depth` makes them symmetric about a robot
-           * pressing square-on, the two cross products cancel, and the torque is ZERO — which
-           * is exactly what "still no torque being applied at gate" looks like: it only turned
-           * at big tilts, where one corner falls outside the contact band and stops cancelling
-           * the other. The corner that is deeper into the chassis is the one bearing the load,
-           * and that asymmetry is what squares the robot up. The wall path has always worked
-           * this way (per-corner depth from the wall plane).
-           */
-          const depth = pointDepthInRobot(r, c);
-          if (depth > -eps) contacts.push({ c, d: Math.max(depth, 0) });
-        }
-      }
-      if (contacts.length === 0) {
-        // neither body has a corner in the other — the contact is the closest point pair
-        contacts.push({ c: { x: clamp(r.pos.x, arm.x0, arm.x1), y: clamp(r.pos.y, arm.y0, arm.y1) }, d: mtv.depth });
-      }
-      /**
-       * A STUB IS A POINT, AND A POINT IS A REAL CONTACT — so it is solved as one.
-       *
-       * Every other surface in this pass is a FACE, and faces go through the square-up model:
-       * a chassis pressed flat on one bears on two corners whose moments cancel at flush, and
-       * that model is a stand-in for a distributed contact the sim does not integrate. The
-       * gate handle is 2.5in of bar. It has no flush to settle to, and every attempt to
-       * describe it in the square-up model's terms got one case right and another wrong —
-       * squaring instead of turning, then turning away instead of into, then not turning at
-       * all.
-       *
-       * There is no need for a stand-in here, because a single point contact on a rigid body
-       * is the textbook case:
-       *
-       *   J_n = -(1 + e)(v_p . n) / (1 + (r x n)^2 / (I/m))
-       *   J_t = clamp(-(v_p . t) / (1 + (r x t)^2 / (I/m)), -mu J_n, mu J_n)
-       *   dv = J_n n + J_t t          dw = (r x (J_n n + J_t t)) / (I/m)
-       *
-       * with `v_p` the velocity of the CONTACT POINT (rotation included), and `I/m` the square
-       * chassis's (l^2 + w^2)/12, so the robot's mass cancels out of both lines.
-       *
-       * THE FRICTION TERM IS THE ANSWER TO THE SIDE HIT. A normal push through a point can
-       * only ever swing a robot AWAY from what it touched; catching a post with your flank
-       * does the opposite, because the post drags that side back. "It is a collision to the
-       * SIDE of the robot, meaning the robot should turn INTO THE CORNER." That is J_t, and
-       * nothing else in a contact can produce it.
-       *
-       * It goes into `angVel`, not into `heading`. The drivetrain owns angVel and pulls it
-       * back toward the commanded turn every tick (`motorStep`), which is the wheels resisting
-       * — so a hit spins the chassis and the robot recovers, instead of the heading being
-       * stepped by a number and staying there.
-       *
-       * The arm's own softness is the one thing that is not textbook, and it is real: while
-       * the lever still has travel, part of the push goes into lifting it rather than into the
-       * robot (`gateArmTorqueMult`), and at its stop the whole impulse lands.
-       */
-      let cx = 0;
-      let cy = 0;
-      let wsum = 0;
-      let dMax = -Infinity;
-      for (const { d } of contacts) dMax = Math.max(dMax, d);
-      for (const { c, d } of contacts) {
-        const load = Math.max(0, Math.min(d, 2) - (Math.min(dMax, 2) - C.CONTACT_COMPLIANCE));
-        if (load <= 0) continue;
-        cx += c.x * load;
-        cy += c.y * load;
-        wsum += load;
-      }
-      if (wsum <= 0) continue;
-      const cpx = cx / wsum;
-      const cpy = cy / wsum;
-      const lx = cpx - r.pos.x;
-      const ly = cpy - r.pos.y;
-      /**
-       * THE NORMAL IMPULSE IS WHAT THE SURFACE TOOK OFF THE ROBOT THIS TICK.
-       *
-       * Reading it off the contact point's CURRENT velocity is the impact case only, and it
-       * dies immediately: one tick after the hit the approach has already been cancelled, so
-       * every tick of a sustained push produces almost nothing (measured 1-3 degrees over
-       * three seconds of driving into the arm). A robot leaning on structure is not making a
-       * series of tiny impacts — it is applying a steady force, and the surface is supplying
-       * an equal and opposite one.
-       *
-       * `pressAlong(preVel, n)` is exactly that force, in the units this needs: the approach
-       * the collision pass removed this tick, which for a robot driving into something is its
-       * drive acceleration times dt, every tick, for as long as it keeps driving. So the same
-       * expression covers both regimes — a hard hit is one big value, a steady push is a small
-       * one repeated — which is what a contact actually is.
-       */
-      const press = pressOn(preVel, ext, nx, ny);
-      if (press <= 0) continue; // separating, or not driving into it — no contact force
-      const iOverM = (r.spec.length * r.spec.length + r.spec.width * r.spec.width) / 12;
-      const rxn = lx * ny - ly * nx;
-      const jn = ((1 + C.CONTACT_RESTITUTION) * press) / (1 + (rxn * rxn) / iOverM);
-      // ...and the friction is bounded by it, opposing however that point of the chassis is
-      // sliding along the surface right now
-      const pv = robotPointVelocity(r, { x: cpx, y: cpy });
-      const vn = pv.x * nx + pv.y * ny;
-      let tx = pv.x - nx * vn;
-      let ty = pv.y - ny * vn;
-      const vt = hyp(tx, ty);
-      let jt = 0;
-      if (vt > 1e-6) {
-        tx /= vt;
-        ty /= vt;
-        const rxt = lx * ty - ly * tx;
-        jt = clamp(-vt / (1 + (rxt * rxt) / iOverM), -C.CONTACT_MU * jn, C.CONTACT_MU * jn);
-      }
-      const soft = C.gateArmTorqueMult(world.goals[a].gatePos);
-      const ix = (jn * nx + jt * tx) * soft;
-      const iy = (jn * ny + jt * ty) * soft;
-      r.vel.x += ix;
-      r.vel.y += iy;
-      /**
-       * ...AND THE ROTATION IT PRODUCES HAPPENS THIS TICK, not just as angular velocity.
-       *
-       * The drivetrain owns `angVel` and `motorStep` pulls it toward the commanded turn at
-       * turnAccel — which is hundreds of rad/s^2, so it erases anything a contact injects
-       * BEFORE the next tick's heading integration ever sees it. Setting angVel alone is
-       * therefore a rotation that never happens: measured, an impulse of 0.09 rad/s per tick
-       * against a chassis that turned 1.9 degrees in a second and a bit.
-       *
-       * So the chassis rotates by the impulse's own `dw * dt` here (that is simply
-       * integrating the new angular velocity over the rest of this tick), and angVel carries
-       * the remainder into the next one, where the wheels fight it. That is the real pair: a
-       * hit turns you, and your drivetrain pulls you back.
-       */
-      const dw = (lx * iy - ly * ix) / iOverM;
-      r.heading = wrapAngle(r.heading + dw * dt);
-      r.angVel = clamp(r.angVel + dw, -driveParams(r.spec).maxTurn, driveParams(r.spec).maxTurn);
-    }
-  }
 
   for (const a of ALLIANCES) {
     const rect = classifierRect(a);
@@ -1041,8 +799,6 @@ function squareUpPair(
   a: RobotState,
   b: RobotState,
   preVels: Map<number, Vec2>,
-  cmds: Map<number, RobotCommand> | undefined,
-  dt: number,
   out: { a: number; b: number }[],
   acc: ContactAcc,
 ): void {
@@ -1104,217 +860,38 @@ function squareUpPair(
 
   out.push(a.id < b.id ? { a: a.id, b: b.id } : { a: b.id, b: a.id });
 
-  // ...and BEFORE the press gate, because the drag this bounds is worst in exactly the case
-  // that gate throws out: a pusher leaning on a victim who is strafing away from it.
-  capDrag(a, b, preVels.get(a.id), cmds?.get(a.id), nx, ny, dt, acc);
-  capDrag(b, a, preVels.get(b.id), cmds?.get(b.id), nx, ny, dt, acc);
-
-  const contacts: { c: Vec2; d: number }[] = [];
-  for (const c of cb) {
-    const d = pointDepthInRobot(a, c);
-    if (d > -C.CONTACT_TOUCH_EPS) contacts.push({ c, d: Math.max(d, 0) });
-  }
-  for (const c of ca) {
-    const d = pointDepthInRobot(b, c);
-    if (d > -C.CONTACT_TOUCH_EPS) contacts.push({ c, d: Math.max(d, 0) });
-  }
-  if (contacts.length === 0) return;
-
-  // the load-weighted centre of the manifold — where the pair actually bear on each other.
-  // ONE point, shared by both responses, so they cannot disagree about where they are touching.
-  let cx = 0;
-  let cy = 0;
-  let wsum = 0;
-  let dMax = -Infinity;
-  for (const { d } of contacts) dMax = Math.max(dMax, d);
-  for (const { c, d } of contacts) {
-    const load = Math.max(0, Math.min(d, 2) - (Math.min(dMax, 2) - C.CONTACT_COMPLIANCE));
-    if (load <= 0) continue;
-    cx += c.x * load;
-    cy += c.y * load;
-    wsum += load;
-  }
-  if (wsum <= 0) return;
-  cx /= wsum;
-  cy /= wsum;
-
   /**
-   * Relative velocity of the pair, from the PRE-solve LINEAR velocities — Rapier has already
-   * taken the normal part out of `r.vel`, so the pre-solve reading is the approach the pair is
-   * re-injecting this tick: one big value for a ram, a small one repeated for a sustained lean,
-   * which is what a contact actually is.
+   * ...AND THAT IS NEARLY ALL THIS PASS DOES NOW — slice A.
    *
-   * DELIBERATELY LINEAR — the ω×r terms are NOT in here, and putting them in is a trap.
-   * They are the textbook contact-point velocity and adding them looks like an obvious
-   * improvement; what it actually produces is a hard limit cycle. A robot PIVOTING against
-   * another has ω×r ≈ 9 rad/s × 10 in ≈ 90 in/s at the contact, so a chassis that is not
-   * driving anywhere generates an enormous press every tick. The settling `align` then slams
-   * into its per-tick ceiling while the impulse's `dw` writes the heading the other way, and
-   * the `press <= 0` gate below flickers as the sign turns over: measured, a robot commanded
-   * to pivot off a defender reversed direction on 53% of ticks with swings up to 2.34°/tick,
-   * ended up rotating 0.4° in two seconds against a full stick, and made the idle victim
-   * shudder too. Both chassis buzz visibly at 60 Hz, in the most ordinary defensive situation
-   * there is.
+   * Everything else that used to live here was standing in for an angular response Rapier was
+   * not allowed to give: the bodies were rotation-LOCKED, so an off-centre hit produced no yaw
+   * at all and a two-body point impulse had to be hand-rolled, scaled by `CONTACT_PAIR_SPIN`
+   * because taking only its rotation left out everything that relieves a sustained contact; a
+   * settling nudge flattened a held pair toward flush; `CONTACT_SLIP_RELIEF` stopped that
+   * settling term steering a pusher after its victim; and `capDrag` bounded a friction that an
+   * imposed velocity had made unbounded in the first place.
    *
-   * So `press` — which GATES this whole response and scales the settling term — is the LINEAR
-   * closing speed and nothing else. The rotation still reaches the IMPULSE below, where it
-   * belongs and where it is stable: there it only damps, because a body turning into a contact
-   * gets an impulse opposing the turn rather than a per-tick heading rewrite.
+   * The bodies rotate now and the drive arrives as a force, so the solver produces all of it
+   * out of the same normal and friction impulses — off-centre hits, flank drags, a held pair
+   * bearing itself flush. Keeping the heuristics on top would double it, and measurably did:
+   * with both running, an off-centre ram spun its victim 26.3 degrees where the old model gave
+   * 12.6.
+   *
+   * TWO THINGS SURVIVE, because neither of them is a rotation:
+   *   · `rrContacts`, recorded above on geometric overlap alone — every protected-zone rule in
+   *     both games reads it, and touching an opponent in their zone is a foul whether or not
+   *     anybody is pressing.
+   *   · the transmitted PUSH below, which is how a robot held against a wall by an opponent
+   *     feels that opponent's load in the STATIC pass (`pressOn`). Rapier resolves the contact
+   *     but does not tell the bespoke wall aligner who is leaning on whom.
    */
   const pva = preVels.get(a.id) ?? a.vel;
   const pvb = preVels.get(b.id) ?? b.vel;
-  const rax = cx - a.pos.x;
-  const ray = cy - a.pos.y;
-  const rbx = cx - b.pos.x;
-  const rby = cy - b.pos.y;
-  const vrx = pva.x - pvb.x;
-  const vry = pva.y - pvb.y;
-  const press = vrx * nx + vry * ny; // > 0 = closing
-  if (press <= 0) return; // touching but unloaded — no torque, no spin, nothing transmitted
+  const press = (pva.x - pvb.x) * nx + (pva.y - pvb.y) * ny; // > 0 = closing
+  if (press <= 0) return; // touching but unloaded — nothing transmitted
 
-  /**
-   * SETTLING: bumpers are compliant, so a pair held together flattens toward flush. The
-   * heuristic spin flick is suppressed (spinMult 0) — the impulse below is this pair's rotation.
-   *
-   * ...AND THE PAIR GETS NO VETO OVER THE FIELD. `sumTurn` clamps the SUMMED alignment to the
-   * tightest `flushErr` any contributor reports, which is right for static faces (turning past
-   * one would be turning into it) and wrong for an opponent, who will simply slide. When two
-   * chassis are parallel the SAT normal lands on one of their own axes, so the pair's flushErr
-   * is ~0 — and a robot pinned face-to-face against a wall at 20° had the wall's own −2.86°/tick
-   * correction thrown away every tick and sat there. Sweeping the pinner's heading, the pair was
-   * the binding cap over most of the range: 40° off flush at some angles, against 0.3° once the
-   * veto is removed. So the pair keeps its own align (already capped internally at its own flush)
-   * and reports `Infinity` outward.
-   */
-  /**
-   * ...AND A SLIDING CONTACT CANNOT ALIGN ANYTHING. This is the "contact that can slip" the
-   * note on `CONTACT_PAIR_SPIN` calls the real fix, and it is what stops a pusher being
-   * STEERED BY ITS VICTIM.
-   *
-   * The settling term turns BOTH chassis flush to the shared normal. Held still that is right
-   * — compliant bumpers do flatten. But the normal belongs to the PAIR, so when the victim
-   * turns, the normal turns, and the pusher was turned to keep up: measured, a pusher
-   * commanding nothing but straight forward copied its victim's heading at 102-110% and rode
-   * it 72in across the field still touching. Reported as "when I am driving into another robot
-   * and they are turning and strafing to try to escape, I turn with them and follow them" —
-   * the sim was steering for them.
-   *
-   * Real bumpers let go. A robot spinning or strafing off your corner is SLIDING across it,
-   * and a sliding surface transmits almost no aligning torque. So the settling term is scaled
-   * by how much the contact is slipping, measured at the contact point WITH the ω×r terms,
-   * because a pivoting chassis slips without either robot's centre moving at all.
-   *
-   * ω×r IS SAFE HERE AND NOT IN `press`, and the difference is the whole reason this is a
-   * separate quantity: it enters as a MAGNITUDE that only ever attenuates. It has no sign to
-   * flip and cannot drive the heading, so it cannot produce the limit cycle documented above,
-   * where the aligning term and the impulse fought each other tick by tick. It is a grip
-   * fraction in (0, 1].
-   *
-   * It is also self-limiting in exactly the right place: a pair that is genuinely HELD slips
-   * zero (measured: 0.0 in/s, both leaning or the victim idle) and keeps the full settling it
-   * has always had, while an escaping victim slips 5-36 in/s and the alignment fades.
-   */
-  const vaCx = pva.x - a.angVel * ray;
-  const vaCy = pva.y + a.angVel * rax;
-  const vbCx = pvb.x - b.angVel * rby;
-  const vbCy = pvb.y + b.angVel * rbx;
-  const slip = Math.abs((vaCx - vbCx) * -ny + (vaCy - vbCy) * nx);
-  const grip = 1 / (1 + slip / C.CONTACT_SLIP_RELIEF);
-
-  const settle = (d: TurnDelta): TurnDelta => ({ ...d, align: d.align * grip, flushErr: Infinity });
-  accDelta(acc, a.id, settle(contactTorqueDelta(a, -nx, -ny, press, contacts, true, 1, 0)));
-  accDelta(acc, b.id, settle(contactTorqueDelta(b, nx, ny, press, contacts, true, 1, 0)));
-
-  // ...and each chassis carries this push into whatever ELSE it is resting on, which is what
-  // squares a robot up against the wall an opponent is holding it against. See `pressOn`.
   accPush(acc, a.id, -nx, -ny, press);
   accPush(acc, b.id, nx, ny, press);
-
-  /**
-   * THE ROTATION, as a real two-body point impulse rather than a heuristic flick.
-   *
-   *   J_n = (1 + e)(v_rel · n) / (1/mA + 1/mB + (rA × n)²/IA + (rB × n)²/IB)
-   *   J_t = min(v_t / k_t, µ·J_n)                     dω = (r × J) / I
-   *
-   * the textbook case, and the same model `squareUpStatics` already uses for the gate handle
-   * — a point contact on a rigid body — extended to a second body that can move. `shoveMass`
-   * is the mass on both counts because it is the mass Rapier just solved this pair with.
-   *
-   * IT EXISTS BECAUSE A SHOVED ROBOT DID NOT TURN AT ALL. Rapier locks rotation, and the only
-   * other source scaled with the robot's OWN press, which is zero for anybody who is not
-   * driving. Measured, ramming an idle robot at y-offsets 0/4/8/12in — the last grazing a
-   * corner of a 16.5in chassis — left the victim at heading 0.00° and angVel 0.000 every
-   * time, while the AGGRESSOR yawed 3.5°. Cornering an opponent to spin them is the most
-   * basic defensive move in FTC and it could not happen.
-   *
-   * J_t IS WHAT MAKES A FLANK HIT TURN YOU INTO IT rather than away: a normal push through a
-   * point can only ever swing a chassis off what it touched, and catching an opponent with
-   * your flank does the opposite because they drag that side back. Nothing else in a contact
-   * produces it, which is why µ here is a material constant and not a dial.
-   *
-   * A dead-centre hit has no moment arm on either body and no slip, so both terms vanish and
-   * a square ram stays square. That falls out of the geometry; it is not a special case.
-   */
-  const ma = shoveMass(a.spec, a.butterflyTank, a.powerDraw);
-  const mb = shoveMass(b.spec, b.butterflyTank, b.powerDraw);
-  const ia = (ma * (a.spec.length * a.spec.length + a.spec.width * a.spec.width)) / 12;
-  const ib = (mb * (b.spec.length * b.spec.length + b.spec.width * b.spec.width)) / 12;
-  const raxn = rax * ny - ray * nx;
-  const rbxn = rbx * ny - rby * nx;
-  const kn = 1 / ma + 1 / mb + (raxn * raxn) / ia + (rbxn * rbxn) / ib;
-  /**
-   * ...and HERE the contact-point velocity is the full one, rotation included.
-   *
-   * This is where ω×r belongs and the only place it is stable, because the impulse can only
-   * ever OPPOSE the closing it is given: a chassis already turning into the contact hands the
-   * solve a bigger `vn`, gets a bigger impulse, and is damped. Take it out and the rotation has
-   * nothing acting against it — a sustained corner push spun a victim to 55° and 9.4 rad/s,
-   * which is the drivetrain's own top spin rate, from a shove.
-   *
-   * ROTATION MAY ONLY DAMP THIS IMPULSE, NEVER DRIVE IT — hence the clamp to [0, press].
-   *
-   * Zero at the bottom because a contact pushes and never pulls: a body rotating AWAY reports
-   * a negative closing speed and would otherwise be dragged back in. `press` at the top is the
-   * more interesting half. A chassis turning INTO the contact reports a LARGER closing speed,
-   * and taking that at face value is a deadlock: the resistance scales up to meet the turn,
-   * while the reaction that would resolve it in reality — the corner shoving the other robot
-   * aside — cannot appear here, because this impulse deliberately contributes no translation
-   * and Rapier's bodies are rotation-locked, so the push only arrives on the NEXT tick via the
-   * new overlap. Measured with the top clamp missing: a robot at full rotate stick while being
-   * shoved managed 84° in five seconds against 2747° free, and a tank managed −13°. You could
-   * not spin off a defender at all.
-   *
-   * Damping still works, because that is the rotVn < 0 half: a victim spun by an off-centre hit
-   * turns away from the contact, reports less closing, and converges. Removing rotVn entirely
-   * was tried and it is the other failure — a sustained corner push wound the victim up to 55°
-   * and 9.4 rad/s, its own top spin rate, with nothing acting against it.
-   */
-  const rotVn = (-a.angVel * ray + b.angVel * rby) * nx + (a.angVel * rax - b.angVel * rbx) * ny;
-  const vn = clamp(press + rotVn, 0, press);
-  const jn = ((1 + C.CONTACT_RESTITUTION) * vn) / kn;
-  let jx = -jn * nx; // impulse ON a; b takes the opposite
-  let jy = -jn * ny;
-  const tvx = vrx - a.angVel * ray + b.angVel * rby - nx * vn;
-  const tvy = vry + a.angVel * rax - b.angVel * rbx - ny * vn;
-  const vt = hyp(tvx, tvy);
-  if (vt > 1e-6) {
-    const tx = tvx / vt;
-    const ty = tvy / vt;
-    const raxt = rax * ty - ray * tx;
-    const rbxt = rbx * ty - rby * tx;
-    const kt = 1 / ma + 1 / mb + (raxt * raxt) / ia + (rbxt * rbxt) / ib;
-    const jt = Math.min(vt / kt, C.CONTACT_MU * jn);
-    jx -= jt * tx;
-    jy -= jt * ty;
-  }
-  /**
-   * ...AND ONLY THE ROTATION IS TAKEN. Rapier already resolved the linear half, inelastically
-   * and mass-weighted, so adding this impulse's translation on top would bounce apart a pair
-   * whose restitution is deliberately zero. Rotation is the one thing the locked bodies could
-   * not give us, and it is the one thing taken.
-   */
-  accSpin(acc, a.id, ((rax * jy - ray * jx) / ia) * C.CONTACT_PAIR_SPIN);
-  accSpin(acc, b.id, ((rbx * -jy - rby * -jx) / ib) * C.CONTACT_PAIR_SPIN);
 }
 
 /**
@@ -1338,130 +915,29 @@ export function driveIntent(r: RobotState, cmd: RobotCommand | undefined): Vec2 
       );
 }
 
-/**
- * A CONTACT CANNOT DRAG YOU SIDEWAYS HARDER THAN FRICTION AND YOUR OWN TYRES ALLOW.
- *
- * Reported as "when two robots are pushing into each other, and one of them tries to escape
- * by strafing, the other robot that is strictly pushing is almost stuck and they strafe
- * together — friction does NOT work like that". Measured before this: a TANK commanding
- * nothing but straight forward was carried 58in sideways in three seconds, at up to 50 in/s,
- * by a mecanum strafing out from under it — 101% of the victim's own sideways travel. A tank
- * cannot strafe at all; its treads scrub sideways at nearly twice their drive traction.
- *
- * The cause is that this sim pushes by SETTING VELOCITY, so the normal impulse Rapier needs to
- * resolve a drive-in is whatever it takes — and its Coulomb friction is a fraction of THAT.
- * A number with no upper bound multiplied by 0.7 is still unbounded, which is how a bumper
- * ended up gripping like a clamp. Both real bounds are missing, and both are cheap:
- *
- *  · WHAT THE CONTACT CAN SUPPLY — `CONTACT_MU` times a normal load no larger than the other
- *    robot's whole push force. It cannot press harder than it can drive.
- *  · WHAT THE TYRES REFUSE — `LATERAL_GRIP` (already the drivetrain's sideways traction as a
- *    fraction of its drive ceiling) in the direction the drag pulls, forward being full drive
- *    traction. This is the same ellipse the turn-carve in `updateRobot` uses.
- *
- * Whatever is left over is what the solve is allowed to have imparted this tick; the rest is
- * handed back in `applyAcc`. For two equal tanks the supply (0.8x) is far under the resist
- * (1.8x) and the drag is ZERO — treads do not get pulled sideways by a bumper. For mecanum on
- * mecanum a little gets through, which is right: rollers slip.
- *
- * ONLY THE TANGENTIAL PART. The normal component is the shove itself and is untouched, so a
- * T-bone still moves you, a ram still transfers momentum, and the flank-hit SPIN — which comes
- * from `J_t` in the impulse below, not from this — is unchanged.
- */
-function capDrag(
-  self: RobotState,
-  other: RobotState,
-  preVel: Vec2 | undefined,
-  cmd: RobotCommand | undefined,
-  nx: number,
-  ny: number,
-  dt: number,
-  acc: ContactAcc,
-): void {
-  if (!preVel || self.autoPathActive) return;
-  const dvx = self.vel.x - preVel.x;
-  const dvy = self.vel.y - preVel.y;
-  const dn = dvx * nx + dvy * ny;
-  let tx = dvx - dn * nx;
-  let ty = dvy - dn * ny;
-  const mag = hyp(tx, ty);
-  if (mag < 1e-9) return;
-  tx /= mag;
-  ty /= mag;
-  const supply =
-    (C.CONTACT_MU * pushForce(other.spec, other.butterflyTank, other.powerDraw)) /
-    shoveMass(self.spec, self.butterflyTank, self.powerDraw);
-  // the drag direction in the ROBOT frame: +x forward (full drive traction), +y sideways
-  // (this drivetrain's lateral grip) — a unit vector, so this is the traction ellipse
-  const lt = rot({ x: tx, y: ty }, -self.heading);
-  const gLat = C.LATERAL_GRIP[self.spec.drivetrain] ?? 0.5;
-  const grip = hyp(lt.x, lt.y * gLat);
-  /**
-   * ...AND TRACTION SPENT DRIVING IS NOT AVAILABLE TO REFUSE ANYTHING. The tyres have one
-   * budget, and a robot commanding motion along this axis has already spent it - its own
-   * drive model is where that traction is accounted, so counting it again here would have a
-   * robot pushing through a friction that is simultaneously holding it.
-   *
-   * It is the whole difference between the two robots in a wall pin. The HOLDER commands
-   * straight forward and is asked to slide sideways, so its treads are idle in that axis and
-   * refuse the drag. The VICTIM is strafing for the gap, so along this axis it has nothing
-   * spare: the friction holding it against the wall applies in full and the pin stands,
-   * exactly as it did before this cap existed. Without the term a wall pin evaporates - the
-   * victim walks 54.7in out of one, and `npm test` says so.
-   */
-  const intent = driveIntent(self, cmd);
-  const along = Math.min(1, Math.abs(intent.x * tx + intent.y * ty));
-  const resist =
-    grip *
-    driveParams(self.spec, self.butterflyTank).accel *
-    (1 - self.powerDraw) *
-    (1 - along);
-  const cap = Math.max(0, supply - resist) * dt;
-  if (mag <= cap) return;
-  accSlip(acc, self.id, -tx * (mag - cap), -ty * (mag - cap));
-}
-
 /** every robot-robot pair, in a stable id order (determinism). Shared by both games. */
-function squareUpPairs(
-  world: World,
-  preVels: Map<number, Vec2>,
-  cmds: Map<number, RobotCommand> | undefined,
-  dt: number,
-  acc: ContactAcc,
-): void {
+function squareUpPairs(world: World, preVels: Map<number, Vec2>, acc: ContactAcc): void {
   for (let i = 0; i < world.robots.length; i++) {
     for (let j = i + 1; j < world.robots.length; j++) {
-      squareUpPair(world.robots[i], world.robots[j], preVels, cmds, dt, world.rrContacts, acc);
+      squareUpPair(world.robots[i], world.robots[j], preVels, world.rrContacts, acc);
     }
   }
 }
 
-/** post-Rapier bespoke pass: square tilted chassis flush, spin a chassis that was hit
- * off-centre, and record robot-robot contacts (rrContacts) for the penalty engine.
- * `preVels` are the pre-solve velocities from solveRobots. Pairs run FIRST but only
- * accumulate, so the statics work out their geometry against the pose the solve left rather
- * than one an opponent has already turned — see `ContactAcc`. */
-export function squareUpRobots(
-  world: World,
-  preVels: Map<number, Vec2>,
-  dt: number,
-  cmds?: Map<number, RobotCommand>,
-): void {
+/** post-Rapier pass: square a tilted chassis flush against the STATIC field (walls, goal
+ * faces, the classifier), record robot-robot contacts (`rrContacts`) for the penalty engine,
+ * and carry an opponent's push into the surface a robot is being held against. The angular
+ * response to a COLLISION is the solver's now — see `squareUpPair`. `preVels` are the
+ * pre-solve velocities, which is what says how hard each robot is driving in. */
+export function squareUpRobots(world: World, preVels: Map<number, Vec2>): void {
   const acc = newAcc();
-  squareUpPairs(world, preVels, cmds, dt, acc);
+  squareUpPairs(world, preVels, acc);
   for (const r of world.robots) {
-    // A ROBOT ON AN AUTO PATH IS SKIPPED HERE, not just in `applyAcc`. Everything the static
-    // pass produces is routed through the accumulator and discarded for a path robot — except
-    // the gate handle, which resolves a point impulse and writes `vel`/`heading`/`angVel`
-    // straight onto the chassis. That used to be unreachable for a path robot, whose own
-    // velocity is zero so `pressAlong` returned 0; `pressOn`'s transmitted load gives it a
-    // press it never had. Measured: an opponent ramming a path robot parked on the blue gate
-    // handle rotated it 7.4 degrees off the heading its path commands, and a `wait` segment
-    // never rewrites heading, so it stayed there after the pusher left.
+    // a robot on an AUTO PATH is posed by the path; the static pass has nothing to say
     if (r.autoPathActive) continue;
-    squareUpStatics(r, preVels.get(r.id), dt, world, accList(acc, r.id), acc.ext.get(r.id));
+    squareUpStatics(r, preVels.get(r.id), accList(acc, r.id), acc.ext.get(r.id));
   }
-  applyAcc(world, acc, preVels, dt);
+  applyAcc(world, acc);
 }
 
 /** post-Rapier square-up for a game whose only statics are perimeter WALLS (Chain
@@ -1473,16 +949,14 @@ export function squareUpRobotsWalls(
   preVels: Map<number, Vec2>,
   halfX: number,
   halfY: number,
-  dt: number,
-  cmds?: Map<number, RobotCommand>,
 ): void {
   const acc = newAcc();
-  squareUpPairs(world, preVels, cmds, dt, acc);
+  squareUpPairs(world, preVels, acc);
   for (const r of world.robots) {
     if (r.autoPathActive) continue; // the path owns the pose — see squareUpRobots
     squareUpWalls(r, preVels.get(r.id), halfX, halfY, accList(acc, r.id), acc.ext.get(r.id));
   }
-  applyAcc(world, acc, preVels, dt);
+  applyAcc(world, acc);
 }
 
 // ------------------------------------------------------------ ball steps ----

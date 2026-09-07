@@ -22,7 +22,7 @@ import { rot, approach, hyp } from '../math';
 import { solveBalls, solveRobots } from './physicsEngine';
 import { decodeColliders } from '../games/decode/colliders';
 import { classifierRect } from './field';
-import { intakeClaims, updateRobot, updateRobotActions } from './robot';
+import { intakeClaims, updateRobot, updateRobotActions, type DriveWrench } from './robot';
 import { driveParams } from './drivetrain';
 import { checkGoalEntry, doorwayArtifact, gateColliderPos, updateBasins, updateGates, updateRails } from './goal';
 import { updateHumanPlayers } from './humanPlayer';
@@ -110,12 +110,13 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   }
 
   // ---- robots (movement) -------------------------------------------------
+  // The drive model no longer writes velocity: it returns the FORCE the wheels are asking
+  // for and the solve below applies it (see `updateRobot`). A robot on an auto path is
+  // posed by the path and asks for nothing.
+  const drive = new Map<number, DriveWrench>();
   for (const r of world.robots) {
-    // Only call updateRobot for robots NOT on an auto path.
-    // Robots on auto path have their pos/heading set by updatePathTraversal
-    // and their velocities zeroed out.
     if (!r.autoPathActive) {
-      updateRobot(world, r, actualCommands.get(r.id) ?? ZERO_CMD, dt);
+      drive.set(r.id, updateRobot(world, r, actualCommands.get(r.id) ?? ZERO_CMD, dt));
     }
   }
 
@@ -136,8 +137,8 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // runs before the pass that records them — so the list has to survive the drive phase and
   // carry last tick's contacts into it. Nothing between the top of `step` and here reads it.
   world.rrContacts.length = 0;
-  const preVels = solveRobots(world, dt, decodeColliders, gateCol);
-  squareUpRobots(world, preVels, dt, actualCommands);
+  const preVels = solveRobots(world, dt, decodeColliders, gateCol, drive);
+  squareUpRobots(world, preVels);
 
   // ---- robots (actions: intake/fire/turret) ------------------------------
   // passive dummies never act — skip the aim solve / flywheel / fire / intake work

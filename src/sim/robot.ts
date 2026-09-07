@@ -1,8 +1,8 @@
-import type { Artifact, ArtifactColor, RobotCommand, RobotState, World } from '../types';
+import type { Artifact, ArtifactColor, RobotCommand, RobotSpec, RobotState, World } from '../types';
 import * as C from '../config';
 import { approach, rot, wrapAngle, hyp, dsin, dcos, datan2, clamp } from '../math';
 import { classifierRect, flywheelSpinTarget, goalCenter, launchTriangles, viewAngleOf } from './field';
-import { activeDrive, driveParams, motorStep, motorStepVec } from './drivetrain';
+import { activeDrive, driveParams, motorStep, motorStepVec, shoveMass } from './drivetrain';
 import { robotIntersectsConvex } from './physics';
 import { robotsEnabled } from './match';
 
@@ -69,7 +69,33 @@ export function aimSolution(r: RobotState): { yaw: number; speed: number; angle:
  * Updates the robot's drive physics (position, velocity, angular velocity, heading).
  * This function is for movement only.
  */
-export function updateRobot(world: World, r: RobotState, cmd: RobotCommand, dt: number): void {
+/** what the drivetrain asks the solver for this tick: a world-frame force and a torque
+ *  about the chassis centre. See the note at the bottom of `updateRobot`. */
+export interface DriveWrench {
+  fx: number;
+  fy: number;
+  tau: number;
+  /** the velocity the motor model asked for this tick (world frame) — the solve's answer is
+   *  compared against it so the tyres can refuse what a CONTACT added. */
+  wantX: number;
+  wantY: number;
+  /** ...and the same for rotation. */
+  wantW: number;
+  /** how much SIDEWAYS velocity a contact may not impart, in in/s for this tick. Longitudinal
+   *  drag is deliberately NOT held: a back-driven wheel rolls, which is why an unpowered robot
+   *  can be pushed at all — but no wheel rolls sideways. */
+  holdLat: number;
+  /** how much of that a contact may not impart, in rad/s for this tick (Coulomb, from
+   *  `LATERAL_GRIP`). Zero once nothing is touching this robot. */
+  yawHold: number;
+}
+
+export function updateRobot(
+  world: World,
+  r: RobotState,
+  cmd: RobotCommand,
+  dt: number,
+): DriveWrench {
   // ---- BUTTERFLY: drop the other wheel set (edge-triggered, so holding swaps once) ----
   // Lives here rather than in either game's step because it is a DRIVETRAIN behaviour and
   // both games route their drive through updateRobot. The swap is instantaneous in the
@@ -276,41 +302,145 @@ export function updateRobot(world: World, r: RobotState, cmd: RobotCommand, dt: 
     dt,
     shoved ? C.MOTOR_SHOVE_BRAKE : C.MOTOR_BRAKE_MULT,
   );
-  r.vel = rot(stepped, r.heading);
-  r.angVel = motorStep(r.angVel, targetOmega, dp.turnAccel, dp.maxTurn, dt);
-
-  // Rapier (solveRobots) integrates POSITION from r.vel and resolves collisions
-  // this same tick; heading is integrated here (rotation is locked in Rapier and
-  // the bespoke square-up nudge owns it).
-  const turn = r.angVel * dt;
-  r.heading = wrapAngle(r.heading + turn);
   /**
-   * ...AND THE VELOCITY TURNS WITH IT, as far as the wheels can carry it.
+   * ...AND THE WHEELS HAND THE SOLVER A FORCE, NOT A VELOCITY.
    *
-   * Velocity lives in the WORLD frame, so turning the heading used to leave it pointing where
-   * the chassis USED to face: every drivetrain side-slipped through every turn, and the motor
-   * model then dragged the leftover lateral component away at its own accel over the following
-   * ticks. On tank — which cannot strafe at all and whose treads have enormous lateral grip —
-   * that reads as being shoved sideways mid-turn. "When I drive straight and turn with tank, I
-   * feel like I get shifted slightly in a weird way."
+   * This is the whole of slice A. The motor model is UNCHANGED — `motorStepVec` above still
+   * decides the velocity the drivetrain wants this tick, from the same torque–speed curve and
+   * the same traction-limited `dp.accel` — but that answer is now converted into the force
+   * that would produce it (`F = m·Δv/dt`) and handed to Rapier, instead of being written
+   * straight onto `r.vel` behind the solver's back.
    *
-   * Bending the velocity round with the heading is what the wheels DO: turning while moving
-   * needs a lateral force of m·v·ω, and the tyres supply it up to their own traction limit.
-   * So the carve is what that limit can pay for — all of it for treads, most of it for swerve,
-   * less than half for mecanum's rollers — and past what they can supply the robot slides
-   * through the corner exactly as it did before, which is the honest failure mode rather than
-   * a permanent one.
+   * In FREE SPACE the two are identical: `a = F/m` is the accel the motor model asked for, so
+   * top speed, the accel curve, the turn rate and stopping distance do not move (the balance
+   * contract). In CONTACT they are completely different, and that is the point — a velocity
+   * that is imposed forces the solver to invent whatever normal impulse it takes to satisfy
+   * it, so friction (µ·N) was a fraction of an unbounded number and a bumper gripped like a
+   * clamp. A force is a force: the contact can only ever resolve what the wheels actually
+   * supply, and a pushing contest settles at the ratio of the two `pushForce`s by itself.
+   *
+   * `shoveMass` STAYS the mass, and staying is what keeps the balance intact — it is defined
+   * as `pushForce / accel`, so `m·a_cmd` in free space reproduces the old accel exactly while
+   * the sustained force at the stops is exactly `pushForce`. See drivetrain.ts; the note there
+   * about the sim "pushing by SETTING VELOCITY" is what this replaces.
    */
-  if (turn !== 0) {
-    const speed = hyp(r.vel.x, r.vel.y);
-    if (speed > 0.01) {
-      const grip = C.LATERAL_GRIP[r.spec.drivetrain] ?? 0.5;
-      const supply = grip * dp.accel; // this drivetrain's traction ceiling, sideways
-      const need = speed * Math.abs(r.angVel); // the lateral accel the turn demands
-      const carry = need <= 1e-6 ? 1 : Math.min(1, supply / need);
-      r.vel = rot(r.vel, turn * carry);
-    }
+  const wantRobot = { x: stepped.x - velRobot.x, y: stepped.y - velRobot.y };
+  const want = rot(wantRobot, r.heading);
+  const m = shoveMass(r.spec, r.butterflyTank, r.powerDraw);
+  let fx = (m * want.x) / dt;
+  let fy = (m * want.y) / dt;
+
+  /**
+   * The turn, as a TORQUE about the chassis centre. Same `motorStep` the heading integration
+   * used to consume; `solveRobots` gives the body the matching inertia, so in free space the
+   * resulting dω is exactly the one the motor model asked for.
+   *
+   * ...AND THE TYRES REFUSE A SPIN THEY ARE NOT MAKING, which is the angular twin of the
+   * cornering force below and the thing a rotation-locked body never needed. Being spun by a
+   * contact is resisted by the wheels' LATERAL grip at their moment arm, not by the drive
+   * motors' torque — that is the whole difference between treads and rollers, and without it
+   * a tank leaning on a robot strafing out from under it was yawed 17.7° by the friction and
+   * then drove off along its own new heading. `LATERAL_GRIP` is already that quantity (the
+   * drivetrain's sideways traction as a fraction of its drive ceiling), so this introduces no
+   * new dial: four wheels at the half-diagonal can refuse `grip · accel · m · d` of torque,
+   * against the motors' `I · turnAccel`, and whichever is larger is what the chassis has.
+   *
+   * IT ONLY EVER BRAKES, and only while ROBOT-ROBOT CONTACT is on the books — so free-space
+   * driving is untouched to the digit (the balance contract) and a commanded turn is never
+   * slowed, since `motorStep` reads the boost only on the braking branch and `approach` still
+   * stops dead at the target. Same gate, and same reasoning, as `MOTOR_SHOVE_BRAKE`.
+   */
+  const inertia = chassisInertia(m, r.spec);
+  const wNext = motorStep(r.angVel, targetOmega, dp.turnAccel, dp.maxTurn, dt);
+  const tau = (inertia * (wNext - r.angVel)) / dt;
+  /**
+   * ...AND HOW MUCH SPIN THE TYRES WILL REFUSE, which a torque cannot express.
+   *
+   * A torque computed here can only null the spin a contact gave us LAST tick — it is a fixed
+   * quantity by the time the solver runs, so a contact re-injects its own inside the same step
+   * and the heading integrates the difference. Measured on the reported scene, a tank leaning
+   * on a robot strafing out from under it settled at ω ≈ 0.9 rad/s and yawed 22° in two thirds
+   * of a second, while the treads' actual capacity to refuse that torque is three times what
+   * the contact was supplying.
+   *
+   * So the refusal is stated as a Coulomb CAP for `solveRobots` to apply on write-back: four
+   * wheels at the half-diagonal can hold `grip · accel · m · d` of torque, which is this much
+   * angular velocity in one tick. `LATERAL_GRIP` is the same constant the cornering force uses
+   * — the drivetrain's sideways traction as a fraction of its drive ceiling — so treads refuse
+   * being spun and rollers largely do not, which is the whole difference between them.
+   *
+   * EVERY CONTACT, not just robot-robot: a chassis resting on the gate handle has the same
+   * treads under it as one being leaned on by an opponent, and scoping this to `rrContacts`
+   * left a robot idling against the arm free to be spun a full 360° by it. Free driving is
+   * untouched without needing a gate, because with nothing touching you the solver's answer IS
+   * what the drive asked for and there is nothing to refuse.
+   *
+   * ⚠️ THIS IS THE ONE PIECE OF SLICE A THAT SLICE B DELETES. Per-wheel forces put each
+   * wheel's lateral traction inside the solve, where it opposes the contact torque as it
+   * happens rather than trimming the result afterwards.
+   */
+  const grip = C.LATERAL_GRIP[r.spec.drivetrain] ?? 0.5;
+  const arm = hyp(r.spec.length, r.spec.width) / 2;
+  const yawHold = ((grip * dp.accel * m * arm) / inertia) * dt * C.CONTACT_YAW_HOLD;
+  /**
+   * ...AND THE SIDEWAYS HALF OF THE SAME REFUSAL, for the same reason and with the same
+   * `LATERAL_GRIP`. A contact's friction acts on the chassis inside the step, so the drive
+   * force computed here can only answer last tick's drag; the tyres state their Coulomb
+   * capacity and `solveRobots` trims what is left.
+   *
+   * ONLY SIDEWAYS, and that asymmetry is the model: a wheel being back-driven ROLLS, so a
+   * robot with no drive command has almost nothing to refuse a push along its wheels with
+   * (`MOTOR_SHOVE_BRAKE` is what little there is) — which is why pushing an idle opponent
+   * works at all. Sideways it does not roll, it scrubs, and treads scrub far harder than
+   * rollers do. Head-on shoves and rams are therefore untouched by this.
+   */
+  const holdLat = grip * dp.accel * dt;
+
+  /**
+   * ...AND CORNERING IS A REAL LATERAL FORCE NOW, which is what it always was.
+   *
+   * Velocity lives in the WORLD frame, so a chassis that turns without its velocity turning
+   * with it side-slips through every corner: the old model bent `r.vel` round by the heading
+   * change, capped at what the tyres could supply. That cap — `LATERAL_GRIP` as a fraction of
+   * the drivetrain's own traction ceiling — is unchanged; only its form is. Turning at ω while
+   * moving at v needs a centripetal `v·ω`, the tyres supply up to `grip·accel` of it, and past
+   * that the robot slides through the corner exactly as it did before.
+   *
+   * On tank — treads, `LATERAL_GRIP` 1.8 — this is what stops "I drive straight and turn and
+   * feel shifted sideways in a weird way".
+   */
+  const speed = hyp(r.vel.x, r.vel.y);
+  if (speed > 0.01 && r.angVel !== 0) {
+    const grip = C.LATERAL_GRIP[r.spec.drivetrain] ?? 0.5;
+    const a = Math.min(speed * Math.abs(r.angVel), grip * dp.accel);
+    const s = Math.sign(r.angVel);
+    fx += (m * a * -r.vel.y * s) / speed;
+    fy += (m * a * r.vel.x * s) / speed;
   }
+  const wantWorld = rot(stepped, r.heading);
+  return {
+    fx,
+    fy,
+    tau,
+    wantX: wantWorld.x,
+    wantY: wantWorld.y,
+    wantW: wNext,
+    yawHold,
+    holdLat,
+  };
+}
+
+/**
+ * The chassis's angular inertia about its own centre, for `m` = `shoveMass`.
+ *
+ * A rectangle's `m(L² + W²)/12`, over the CHASSIS rather than the footprint, and about the
+ * chassis centre rather than the footprint's — the same expression `squareUpPair`'s two-body
+ * impulse already used, so the two agree about how hard this robot is to spin, and the drive
+ * model's `maxTurn` (derived from the half-diagonal about that centre) stays the free-space
+ * answer. `solveRobots` states the same mass properties on the body.
+ */
+export function chassisInertia(m: number, spec: RobotSpec): number {
+  return (m * (spec.length * spec.length + spec.width * spec.width)) / 12;
 }
 
 /**

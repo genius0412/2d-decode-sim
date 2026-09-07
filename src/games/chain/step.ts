@@ -2,7 +2,7 @@ import type { RobotCommand, World } from '../../types';
 import * as C from '../../config';
 import { solveRobots } from '../../sim/physicsEngine';
 import { squareUpRobotsWalls } from '../../sim/physics';
-import { updateRobot } from '../../sim/robot';
+import { updateRobot, type DriveWrench } from '../../sim/robot';
 import { robotsEnabled } from '../../sim/match';
 import { CHAIN_HALF_X, CHAIN_HALF_Y } from './config';
 import { chainColliders } from './colliders';
@@ -37,6 +37,8 @@ export function chainStep(world: World, dt: number, commands: Map<number, RobotC
 
   const enabled = robotsEnabled(world);
   const actual = new Map<number, RobotCommand>();
+  // the drive, as a wrench per robot — see DECODE's `step` and `updateRobot`
+  const drive = new Map<number, DriveWrench>();
   for (const r of world.robots) {
     let cmd = enabled ? (commands.get(r.id) ?? ZERO_CMD) : ZERO_CMD;
     // turretless shooters (drum/dumper) turn the whole robot to face the goal while the
@@ -58,7 +60,7 @@ export function chainStep(world: World, dt: number, commands: Map<number, RobotC
             rightDrive: cmd.rightDrive * cog,
           }
         : cmd;
-    updateRobot(world, r, driven, dt);
+    drive.set(r.id, updateRobot(world, r, driven, dt));
   }
 
   // beams (difficult terrain): drag the across-velocity BEFORE the solve so a crossing
@@ -69,10 +71,10 @@ export function chainStep(world: World, dt: number, commands: Map<number, RobotC
   // same placement as DECODE's `step`; see `MOTOR_SHOVE_BRAKE`.
   world.rrContacts.length = 0;
   // Rapier owns robot translation/velocity + wall containment on the CR field.
-  const preVels = solveRobots(world, dt, chainColliders);
+  const preVels = solveRobots(world, dt, chainColliders, undefined, drive);
   // square a tilted chassis flush against the walls (and other robots) — the same
   // contact-torque pass DECODE runs, restricted to CR's perimeter walls.
-  squareUpRobotsWalls(world, preVels, CHAIN_HALF_X, CHAIN_HALF_Y, dt, actual);
+  squareUpRobotsWalls(world, preVels, CHAIN_HALF_X, CHAIN_HALF_Y);
   // then hard-block any robot whose frame can't clear a beam (kept on its side).
   beamBlock(world);
   // and curb-block a mecanum strafing sideways into a beam (can't climb the ridge laterally —
