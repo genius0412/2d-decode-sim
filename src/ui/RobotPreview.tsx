@@ -28,8 +28,15 @@ const DIM_FONT = 11;
  * environment it was designed for, so it needs no translation, and the supporter
  * chassis colour becomes previewable for the first time.
  *
- * NO ALLIANCE. A robot in the builder is not red or blue, so the outline is neutral
- * green rather than picking a side you have not chosen yet.
+ * NO ALLIANCE. A robot in the builder is not red or blue, so the outline is the
+ * app's own accent rather than a side you have not chosen yet — read from
+ * `--ds-on-field-accent` so the stylesheet stays the one source of truth.
+ *
+ * ⚠️ THE ON-FIELD ACCENT, NOT `--ds-accent`. Those are different colours: the plain
+ * accent INVERTS with the theme (#366758 light, #5fb597 dark) because it is meant to
+ * read against a themed panel, and its light value on this hardcoded-dark mat is
+ * almost invisible. `--ds-on-field-accent` is the same mint in both themes, tuned for
+ * exactly this ground — see the THEMING note in CLAUDE.md for the three categories.
  */
 export function RobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -86,8 +93,14 @@ export function RobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?: num
       heading: Math.PI / 2,
       // straight ahead: a turret slewed at some goal it cannot see reads as a fault
       turretHeading: Math.PI / 2,
+      // EMPTY. `createWorld` hands robot 0 the match PRELOAD, and `drawRobot` rings
+      // the turret in artifact green while the hopper has anything in it — so the
+      // builder was previewing a robot mid-match, with a second green that had
+      // nothing to do with the chassis. You are configuring a robot here, not a
+      // loaded one; the ring draws its empty grey instead.
+      hopper: [],
     };
-    drawRobot(ctx, robot, false, [], undefined, undefined, C.COLORS.green);
+    drawRobot(ctx, robot, false, [], undefined, undefined, onFieldAccent());
     ctx.restore();
 
     // the caption, in SCREEN space — inside the flipped camera it would be mirrored
@@ -111,6 +124,23 @@ export function RobotPreview({ spec, size = 200 }: { spec: RobotSpec; size?: num
       aria-label={`${spec.width} by ${spec.length} inch robot, ${spec.intake} intake`}
     />
   );
+}
+
+/**
+ * The app's accent as the canvas should draw it.
+ *
+ * Read from the stylesheet rather than copied into `config.ts`, so the preview
+ * follows the palette instead of drifting from it the way the old SVG schematic did.
+ * The literal is the fallback for a context with no computed style (a test renderer,
+ * or a canvas built before the sheet lands) — it is the token's own value, not a
+ * second opinion about what the accent should be.
+ */
+function onFieldAccent(): string {
+  if (typeof getComputedStyle !== 'function') return '#5fb597';
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue('--ds-on-field-accent')
+    .trim();
+  return v || '#5fb597';
 }
 
 /** the BUILD, not the identity: renaming a robot must not respawn a world */
