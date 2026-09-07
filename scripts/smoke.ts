@@ -5352,9 +5352,21 @@ function ramOffCentre(offset: number, ticks = 90): { victim: number; peakW: numb
   };
   const fwd = headings([0, 1, 2]);
   const rev = headings([2, 1, 0]);
+  /**
+   * ⚠️ TO SOLVER NOISE, NOT BIT-IDENTICALLY, since rotation became Rapier's.
+   *
+   * This asked for 1e-12 when the angular response was a bespoke accumulator that summed every
+   * contact before writing once, which is order-independent by construction. The bodies rotate
+   * in the solve now, and Rapier's body order follows `world.robots` — the comment above always
+   * said that was inherent — so permuting the ids reorders float arithmetic. Measured, that is
+   * worth 1.25e-8 rad (7e-7 degrees) at worst, which is noise and not an asymmetry; a real one
+   * would show up thousands of times larger, as the bug this check was written for did.
+   * DETERMINISM is untouched: the same order gives the same answer, which is what replays and
+   * reconcile depend on.
+   */
   check(
     'the contact-torque pass is invariant to which robot holds which id',
-    fwd.every((h, i) => Math.abs(h - rev[i]) < 1e-12),
+    fwd.every((h, i) => Math.abs(h - rev[i]) < 1e-6),
     fwd.map((h, i) => `${((h * 180) / Math.PI).toFixed(4)}/${((rev[i] * 180) / Math.PI).toFixed(4)}`).join(' '),
   );
 }
