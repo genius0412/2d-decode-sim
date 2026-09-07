@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '../game';
-import type { Alliance, GameSettings as GS } from '../types';
+import type { Alliance, GameSettings as GS, RobotSpec } from '../types';
 import { START_POSES } from '../config';
 import { CHAIN_START_POSES } from '../games/chain/config';
 import { StartPositionEditor } from './StartPositionEditor';
@@ -9,6 +9,8 @@ import { selectStart, switchCategory, saveStart, deleteSavedStart, indexCategory
 import { useRoleSwap, useDismissable } from './useRoleSwap';
 import { RoleSwapBar } from './RoleSwapBar';
 import { SupporterBadge } from './SupporterBadge';
+import { Menu } from './Menu';
+import { DRIVETRAIN_LABELS, buildSummary } from './robotLabels';
 import { gameServerUrl, gameServerUrlWith, gameServers, multiServer, selectedServer } from '../net/env';
 import { roomJoinRegion } from '../net/roomRegion';
 import { WebSocketTransport } from '../net/transport';
@@ -110,6 +112,8 @@ export function Lobby({
   const restartPending =
     !!notice && notice.kind === 'restart' && (notice.until === undefined || notice.until > Date.now());
   const [error, setError] = useState('');
+  // the full builder, opened from the room over the top of it (see below)
+  const [building, setBuilding] = useState(false);
 
   const lobbyRef = useRef<LobbyClient | null>(null);
   const startedRef = useRef(false);
@@ -258,6 +262,34 @@ export function Lobby({
   const setAlliance = (alliance: Alliance): void => lobbyRef.current?.update({ alliance });
   const toggleReady = (): void => lobbyRef.current?.update({ ready: !me?.ready });
 
+  /**
+   * RE-PICK, in a custom room exactly as in the ranked strategy window.
+   *
+   * You bring whatever build you happened to have selected when you opened the
+   * lobby, and until now the only way to change it was to leave the room, edit,
+   * and re-share the code — which for the host means everybody else loses the
+   * room too. Nothing about the server had to change for this: `case 'update'`
+   * takes a sanitized `spec` patch from any room, re-clamps it to the build
+   * limits, and clears `ready` if the new chassis makes your start pose illegal.
+   *
+   * Both halves ECHO TO THE SERVER as well as persisting locally: the roster row
+   * is what the other drivers see and what the match is built from, so a swap
+   * that only touched `settings` would show everyone the old robot and then spawn
+   * the new one.
+   */
+  const pickSpec = (spec: RobotSpec): void => {
+    onSettingsChange({ ...settings, spec });
+    lobbyRef.current?.update({ spec, assists: settings.assists });
+  };
+
+  /** the full builder edits settings.spec live; mirror every change to the server */
+  const onBuilderChange = (next: GS): void => {
+    onSettingsChange(next);
+    lobbyRef.current?.update({ spec: next.spec, assists: next.assists });
+  };
+
+  const mySpec = me?.spec ?? settings.spec;
+
   // 2v2 ROLE + consent swap: first robot on the alliance = CLOSE, second = FAR;
   // either can propose a swap the other must accept (see useRoleSwap).
   const rs = useRoleSwap(
@@ -393,6 +425,34 @@ export function Lobby({
             {multiServer() && !regionLocked && (
               <p className="ds-hint">Both players must pick the same region.</p>
             )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // full-builder takeover: the My Robot menu over the room, with a Done button back.
+  // It replaces the room's UI, NOT the room — this is a render branch inside `Lobby`,
+  // so the socket, the roster and the host's start all keep running behind it, and
+  // every edit is mirrored to the server as you make it.
+  if (building) {
+    return (
+      <div className="ds-console">
+        <div className="ds-console-in">
+          <div className="ds-head">
+            <button className="ds-back" onClick={() => setBuilding(false)}>
+              ← Done
+            </button>
+            <span className="ds-mark">
+              <Logo size={24} />
+              {APP_NAME}
+            </span>
+          </div>
+          <Menu settings={settings} onChange={onBuilderChange} />
+          <div className="ds-actions">
+            <button className="ds-cta" onClick={() => setBuilding(false)}>
+              DONE ▶
+            </button>
           </div>
         </div>
       </div>
@@ -554,6 +614,42 @@ export function Lobby({
                 onDeleteSaved={(c, i) => applyStart(deleteSavedStart(sCat, c, i))}
               />
             )}
+          </section>
+        )}
+
+        {/* re-pick: quick-swap a saved robot, or open the full builder. Same section,
+            same order and same wording as the ranked strategy window — these are the
+            two pre-match screens and a driver should not have to learn each one. */}
+        {me && (
+          <section className="ds-sec">
+            <h2>Your robot</h2>
+            <p className="ds-sub ds-sub-tight">
+              {mySpec.name} · {buildSummary(mySpec, settings.game)}
+            </p>
+            <div className="ds-opts">
+              {settings.savedRobots.map((r, i) => {
+                const active =
+                  r.length === mySpec.length &&
+                  r.width === mySpec.width &&
+                  r.intake === mySpec.intake &&
+                  r.drivetrain === mySpec.drivetrain &&
+                  r.driveRpm === mySpec.driveRpm &&
+                  r.massLb === mySpec.massLb;
+                return (
+                  <button
+                    key={i}
+                    className={`ds-opt mini ${active ? 'on' : ''}`}
+                    onClick={() => pickSpec({ ...r })}
+                  >
+                    <span className="ot">{r.name || `Robot ${i + 1}`}</span>
+                    <span className="od">{DRIVETRAIN_LABELS[r.drivetrain]}</span>
+                  </button>
+                );
+              })}
+              <button className="ds-opt mini" onClick={() => setBuilding(true)}>
+                <span className="ot">Edit build ✎</span>
+              </button>
+            </div>
           </section>
         )}
 
