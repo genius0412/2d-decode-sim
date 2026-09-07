@@ -876,8 +876,15 @@ export class Room {
 
     for (const c of this.clients.values()) c.send(this.matchStartMsg(this.robotOf.get(c.id) ?? 0));
     // the votes were cleared above — SAY so, or both clients carry the old full
-    // tally into the new run and the button reads "2/2" on a run nobody voted for
-    if (this.config.kind === 'record') this.broadcastRematch();
+    // tally into the new run and the button reads "2/2" on a run nobody voted for.
+    //
+    // EVERY ROOM, and this was the last record-only gate left over from when the
+    // vote was co-op's alone. It is also the ONLY place a client is told the tally
+    // at the start of a match — `refreshRematch` fires on a leave or a reattach,
+    // never on an ordinary join — so a custom room's drivers sat at `need: 0`, and
+    // both the HUD button and the results-screen one hide below `need > 1`.
+    // Reported as "rematch button does not appear in a custom game".
+    this.broadcastRematch();
     // spectators already watching a lobby/strategy room get the match start too (yourRobotId -1)
     for (const c of this.spectators.values()) c.send(this.matchStartMsg(-1));
     this.startLoop();
