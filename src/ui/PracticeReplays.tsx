@@ -121,11 +121,6 @@ export function PracticeReplays({
     <div className="ds-panel">
       <div className="ds-panel-h">
         <span className="ds-panel-title">Practice replays</span>
-        {/* `.ds-count`, not `.ds-dt`: a bordered type chip rendered an EMPTY outlined
-            box in the header whenever the list was empty or still loading, and this
-            is the count-beside-a-title job `.ds-count` is for. `.ds-panel-h` is
-            `space-between`, so it needs no spacer to sit right. */}
-        {rows.length > 0 && <span className="ds-count">{rows.length} kept</span>}
       </div>
 
       {loading && rows.length === 0 ? (
@@ -201,8 +196,8 @@ export function PracticeReplays({
               rounded bottom-left corner while the cell above it was inset 16. */}
           <p className="ds-panel-foot ds-hint">
             {signedIn
-              ? `The last ${MAX_LOCAL_RUNS} runs are kept on your account and on this device; older ones drop off.`
-              : `Kept on this device only (the last ${MAX_LOCAL_RUNS}) — sign in to keep them on your account.`}
+              ? `Last ${MAX_LOCAL_RUNS} runs are saved.`
+              : `Last ${MAX_LOCAL_RUNS} runs are saved on this device. Sign in to keep them on your account.`}
           </p>
         </>
       )}
