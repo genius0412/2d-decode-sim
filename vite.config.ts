@@ -24,8 +24,11 @@ const BUILD_ID = (() => {
 if (process.env.ELECTRON === '1') {
   process.env.VITE_GAME_SERVERS ??=
     '[{"id":"iad","label":"US East","region":"iad","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"ord","label":"US Central","region":"ord","url":"wss://dohun-sim-decode.fly.dev"},' +
     '{"id":"sjc","label":"US West","region":"sjc","url":"wss://dohun-sim-decode.fly.dev"},' +
     '{"id":"lhr","label":"Europe","region":"lhr","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"gru","label":"South America","region":"gru","url":"wss://dohun-sim-decode.fly.dev"},' +
+    '{"id":"jnb","label":"Africa","region":"jnb","url":"wss://dohun-sim-decode.fly.dev"},' +
     '{"id":"syd","label":"Oceania","region":"syd","url":"wss://dohun-sim-decode.fly.dev"},' +
     '{"id":"nrt","label":"Asia","region":"nrt","url":"wss://dohun-sim-decode.fly.dev"}]';
   process.env.VITE_NEON_AUTH_URL ??=

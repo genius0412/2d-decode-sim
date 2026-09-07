@@ -22,7 +22,11 @@ APP="${FLY_APP:-dohun-sim-decode}"
 # ord (US Central) joined 2026-09-06 for the same reason it is cheap to have: a
 # satellite costs nothing while it is stopped, and it only wakes when somebody in
 # the middle of the country actually hosts a room there.
-SATELLITES=(ord sjc lhr syd nrt)
+# gru (São Paulo) and jnb (Johannesburg) joined the same day, on the same logic:
+# both continents were >200ms from EVERY existing region, which is the difference
+# between playable and not. There is NO Middle East region on Fly — the nearest
+# option for those players stays lhr, or fra if it is ever added here.
+SATELLITES=(ord sjc lhr gru jnb syd nrt)
 SATELLITE_SIZE=shared-cpu-1x
 # MB. Was 1024, on the grounds that shared-cpu-1x's 256MB default is "too tight for
 # Node+tsx+Rapier" — but the runtime stopped using tsx when the Dockerfile started

@@ -573,7 +573,7 @@ ball data); reconnect re-primes with a keyframe. **DEPLOY**: `Dockerfile`+`fly.t
 (SIM/server change): commit on alpha → **`./scripts/fly-deploy.sh`** → verify `/health` →
 Vercel auto-deploys clients. **NEVER deploy with a bare `flyctl deploy`** — fly.toml can
 only express ONE `[[vm]]` size, so a bare deploy re-applies `shared-cpu-4x` (iad's size) to
-EVERY machine and silently UPSIZES the cheap satellites (sjc/lhr/syd/nrt, `shared-cpu-1x`/1024MB)
+EVERY machine and silently UPSIZES the cheap satellites (ord/sjc/lhr/gru/jnb/syd/nrt, `shared-cpu-1x`/512MB)
 to shared-cpu-4x. The wrapper deploys and then re-shrinks them; verify with
 `fly machine list -a dohun-sim-decode`. **The one Fly app serves EVERY client version** (alpha/beta/
 main all bake the same `VITE_GAME_SERVER_URL`), so protocol changes MUST stay

@@ -77,6 +77,8 @@ const REGION_LABELS: Record<string, string> = {
   ord: 'US Central',
   sjc: 'US West',
   lhr: 'Europe',
+  gru: 'South America',
+  jnb: 'Africa',
   syd: 'Australia',
   nrt: 'Asia',
 };

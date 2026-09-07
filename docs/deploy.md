@@ -138,6 +138,8 @@ fly scale count 1 --region iad -a dohun-sim-decode   # one machine PER region
 fly scale count 1 --region ord -a dohun-sim-decode
 fly scale count 1 --region sjc -a dohun-sim-decode
 fly scale count 1 --region lhr -a dohun-sim-decode
+fly scale count 1 --region gru -a dohun-sim-decode   # São Paulo
+fly scale count 1 --region jnb -a dohun-sim-decode   # Johannesburg
 fly scale count 1 --region syd -a dohun-sim-decode
 fly scale count 1 --region nrt -a dohun-sim-decode
 fly secrets set MATCHMAKER_REGION=iad -a dohun-sim-decode   # holds the global ranked queue
@@ -157,13 +159,18 @@ fly secrets set MATCHMAKER_REGION=iad -a dohun-sim-decode   # holds the global r
 - **Per-region VM sizes + the deploy reset (IMPORTANT).** `iad` runs `shared-cpu-4x`
   /1024MB (the always-warm matchmaker; 4 shared vCPUs give the 60 Hz loop ample headroom
   without a dedicated vCPU's cost — see fly.toml's COST-PASS note); EVERY other region —
-  `sjc` (joined 2026-07-20) plus the far satellites `lhr`/`syd`/`nrt` — runs the much cheaper
-  `shared-cpu-1x`/1024MB. fly.toml has only ONE `[[vm]]`, and **`fly deploy` re-applies it
+  `ord`/`sjc` plus the far satellites `lhr`/`gru`/`jnb`/`syd`/`nrt` — runs the much cheaper
+  `shared-cpu-1x`/512MB. fly.toml has only ONE `[[vm]]`, and **`fly deploy` re-applies it
   (`shared-cpu-4x`) to every machine — silently UPSIZING the satellites off their cheap
-  size.** So always deploy with **`scripts/fly-deploy.sh`** (deploy + re-shrink the
-  satellites) rather than a bare `fly deploy`. Verify after: `fly machine list -a
-  dohun-sim-decode` should show `iad` at `shared-cpu-4x:1024MB` and `sjc/lhr/syd/nrt` at
-  `shared-cpu-1x:1024MB`.
+  size.** A region added with `fly scale count` inherits that same `[[vm]]`, so a NEW
+  satellite is born at `shared-cpu-4x` too and is only shrunk once it is listed in the
+  script's `SATELLITES`. So always deploy with **`scripts/fly-deploy.sh`** (deploy +
+  re-shrink the satellites) rather than a bare `fly deploy`. Verify after: `fly machine
+  list -a dohun-sim-decode` should show `iad` at `shared-cpu-4x:1024MB` and every other
+  region at `shared-cpu-1x:512MB`.
+- **There is NO Middle East region on Fly** (`fly platform regions` is the authority, and
+  Africa has only `jnb`). The nearest machine for those players is `lhr`; `fra` would be
+  marginally closer and is the one to add if it ever matters.
 - **Calibrating `INTER_REGION_MS`** (`server/regions.ts`): measure machine-to-machine RTT over
   Fly's 6PN mesh — from each region's machine, TCP-connect to another region's hallpass
   (`<region>.<app>.internal:22`, since the app binds IPv4-only so port 8080 isn't on 6PN) and

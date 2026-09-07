@@ -13,7 +13,7 @@
  */
 
 /** the regions we actually deploy a machine to (keep in sync with `fly scale`) */
-export const DEPLOY_REGIONS = ['iad', 'ord', 'sjc', 'lhr', 'syd', 'nrt'] as const;
+export const DEPLOY_REGIONS = ['iad', 'ord', 'sjc', 'lhr', 'gru', 'jnb', 'syd', 'nrt'] as const;
 export type Region = (typeof DEPLOY_REGIONS)[number];
 
 /** the always-on machine that holds the global ranked queue (fly-replay target for
@@ -27,22 +27,28 @@ export const MATCHMAKER_REGION: string = process.env.MATCHMAKER_REGION ?? 'iad';
  * Fly's backbone changes (see docs/deploy.md). Only relative ordering matters for
  * host selection, so small drift is harmless.
  *
- * ⚠️ THE `ord` ROW IS ESTIMATED, NOT MEASURED (2026-09-06). The satellites
- * `auto_stop`, so by the time the region was added they were refusing connections
- * and the 6PN handshake measured cold-boot time rather than RTT — 2.1s to a stopped
- * iad. The figures below are geographic, and checked for consistency against the
- * measured rows: Chicago sits between iad and sjc (20/50 inside their measured 85),
- * further from London than iad is (95 > 76), and between sjc and iad for both
- * Pacific hops (109 < 150 < 164, 148 < 180 < 190). Good enough for an ordering, but
+ * ⚠️ THE `ord`, `gru` AND `jnb` ROWS ARE ESTIMATED, NOT MEASURED (2026-09-06). The
+ * satellites `auto_stop`, so by the time these regions were added they were refusing
+ * connections and the 6PN handshake measured cold-boot time rather than RTT — 2.1s to
+ * a stopped iad. The figures below are geographic, and checked for consistency against
+ * the measured rows: Chicago sits between iad and sjc (20/50 inside their measured 85),
+ * further from London than iad is (95 > 76), and between sjc and iad for both Pacific
+ * hops (109 < 150 < 164, 148 < 180 < 190). São Paulo and Johannesburg are checked the
+ * same way against the triangle their measured neighbours give: gru→ord (135) stays
+ * under gru→iad + iad→ord (135), jnb→iad (230) under jnb→lhr + lhr→iad (236), and the
+ * two of them are 340 apart across the South Atlantic — the one hop with no northern
+ * detour, which is why it beats jnb→lhr→gru (350). Good enough for an ordering, but
  * re-measure with every region WARM and replace these.
  */
 const RTT: Record<string, Record<string, number>> = {
-  iad: { iad: 0, ord: 20, sjc: 85, lhr: 76, syd: 190, nrt: 164 },
-  ord: { ord: 0, iad: 20, sjc: 50, lhr: 95, syd: 180, nrt: 150 },
-  sjc: { sjc: 0, ord: 50, iad: 85, lhr: 133, syd: 148, nrt: 109 },
-  lhr: { lhr: 0, ord: 95, iad: 76, sjc: 133, syd: 251, nrt: 236 },
-  syd: { syd: 0, ord: 180, iad: 190, sjc: 148, lhr: 251, nrt: 114 },
-  nrt: { nrt: 0, ord: 150, iad: 164, sjc: 109, lhr: 236, syd: 114 },
+  iad: { iad: 0, ord: 20, sjc: 85, lhr: 76, gru: 115, jnb: 230, syd: 190, nrt: 164 },
+  ord: { ord: 0, iad: 20, sjc: 50, lhr: 95, gru: 135, jnb: 245, syd: 180, nrt: 150 },
+  sjc: { sjc: 0, ord: 50, iad: 85, lhr: 133, gru: 180, jnb: 290, syd: 148, nrt: 109 },
+  lhr: { lhr: 0, ord: 95, iad: 76, sjc: 133, gru: 190, jnb: 160, syd: 251, nrt: 236 },
+  gru: { gru: 0, ord: 135, iad: 115, sjc: 180, lhr: 190, jnb: 340, syd: 310, nrt: 260 },
+  jnb: { jnb: 0, ord: 245, iad: 230, sjc: 290, lhr: 160, gru: 340, syd: 390, nrt: 360 },
+  syd: { syd: 0, ord: 180, iad: 190, sjc: 148, lhr: 251, gru: 310, jnb: 390, nrt: 114 },
+  nrt: { nrt: 0, ord: 150, iad: 164, sjc: 109, lhr: 236, gru: 260, jnb: 360, syd: 114 },
 };
 
 /** inter-region RTT (ms). Unknown regions fall back to a large penalty so an
