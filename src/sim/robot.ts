@@ -135,6 +135,17 @@ export function updateRobot(
   );
   r.powerDraw = draw;
   const slow = 1 - draw;
+  /**
+   * ...BUT NOT THE TYRES. Power draw is current the flywheel and intake are taking away from
+   * the drive MOTORS, and the traction model below is `LATERAL_GRIP` times this drivetrain's
+   * traction ceiling — which is mu*g, a property of rubber and weight. A spun-up flywheel does
+   * not make the wheels slippery.
+   *
+   * Taken from the scaled copy it did exactly that, and worst on the builds that carry the
+   * most flywheel: the reported gate surge came from a mecanum at `flywheelInertia` 1, whose
+   * tyres were reclaiming a contact's sideways shove at two thirds of the rate they should.
+   */
+  const tractionAccel = dp.accel;
   dp.maxSpeed *= slow;
   dp.accel *= slow;
   dp.maxTurn *= slow;
@@ -407,14 +418,14 @@ export function updateRobot(
    */
   const speed = hyp(r.vel.x, r.vel.y);
   if (speed > 0.01 && r.angVel !== 0) {
-    const a = Math.min(speed * Math.abs(r.angVel), grip * dp.accel);
+    const a = Math.min(speed * Math.abs(r.angVel), grip * tractionAccel);
     const sgn = Math.sign(r.angVel);
     fx += (m * a * -r.vel.y * sgn) / speed;
     fy += (m * a * r.vel.x * sgn) / speed;
   }
   const wheels = wheelLocals(r.spec);
   // the budget ONE wheel has across its roll axis, as a force
-  const wheelCap = (grip * dp.accel * m) / wheels.length;
+  const wheelCap = (grip * tractionAccel * m) / wheels.length;
   const swerve = dp.saturation === 'vec';
   // the chassis slip a contact left last tick, in the ROBOT frame (see RobotState.slipX)
   const slipW = r.slipW ?? 0;
