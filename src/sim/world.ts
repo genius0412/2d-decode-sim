@@ -5,7 +5,7 @@ import {
   collideBallBall,
   collideBallHeld,
   collideBallRect,
-  ballRobotFeedback,
+  clumpDrag,
   collideBallRobot,
   landOnIntakeLid,
   ballWedgedInRobot,
@@ -152,8 +152,8 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
 
   // ---- balls ---------------------------------------------------------------
   // GROUND balls: rolling friction (velocity only) → Rapier solve (ball↔ball,
-  // ball↔wall, ball↔goal-face, ball↔classifier) → bespoke ball↔robot (pin
-  // feedback / outflow-no-shove, kept scripted for feel) → hard field clamp.
+  // ball↔wall, ball↔goal-face, ball↔classifier, ball↔CHASSIS both ways) → the bespoke
+  // intake-mouth pass → hard field clamp.
   // WHERE EACH GROUND ARTIFACT STARTED THE TICK — the classifier eviction needs it, so it
   // can walk an artifact back along the path it took instead of shoving it out the nearest
   // face by depth+radius. One Vec2 per ground artifact.
@@ -169,18 +169,32 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
     ballFrom.set(b.id, { x: b.pos.x, y: b.pos.y });
     stepGroundBall(b, dt);
   }
-  // ROBOT-SIDE FEEDBACK FIRST — the stall on a pinned artifact, the drag of a clump. It
-  // touches only `r.vel`, and it must land BEFORE the solve: the chassis body in there is
-  // kinematic and cannot be told it is blocked, so a robot still driving at a trapped
-  // artifact makes the solver squirt it out sideways instead. See `ballRobotFeedback`.
+  /**
+   * THE ROBOT-SIDE FEEDBACK IS THE SOLVE NOW — there is no separate pass before it.
+   *
+   * There was: `ballRobotFeedback` wrote `r.vel` by hand, stalling the robot when an artifact
+   * was pinned against a static and bleeding momentum when it was not, because the chassis
+   * body in the solve was KINEMATIC and could not be told it was blocked. It had to run
+   * FIRST, so the solver was handed a robot that had already stopped and had no squeeze left
+   * to answer wrongly.
+   *
+   * The chassis is DYNAMIC now (see `solveBalls`), so the artifact is a real body between it
+   * and the wall and both contacts are satisfied in the same step. Writing the velocity by
+   * hand became actively wrong when the drive stopped writing `r.vel` every tick: the write
+   * persisted instead of being overwritten, and the robot wedged 8.2 degrees off its heading
+   * and slid diagonally at 24.0 in/s through the artifact it was supposed to be stuck behind.
+   */
+  // ...and the ONE piece of the old pass that survives it: a small velocity damper so a clump
+  // READS as something you are shifting. Explicitly a FEEL constant on top of the physical
+  // answer — see `clumpDrag`, which also documents why it has to run HERE and not after.
   for (const b of world.balls) {
     if (b.state.kind !== 'ground') continue;
-    for (const r of world.robots) ballRobotFeedback(b, r, dt);
+    for (const r of world.robots) if (!r.autoPathActive) clumpDrag(b, r);
   }
   solveBalls(world, dt, decodeColliders, intakeClaims(world, actualCommands));
-  // ball↔robot stays bespoke (see solveRobots): the pin stall + outflow-no-shove
-  // are deliberately non-physical. Iterated so a robot→ball→(wall/ball) chain
-  // converges instead of tunnelling in a single pass.
+  // the INTAKE MOUTH stays bespoke (see `solveBalls`): the mouth is open by design and its
+  // funnel geometry is per-preset. Iterated so a robot→ball→(wall/ball) chain converges
+  // instead of tunnelling in a single pass.
   /**
    * THE ARTIFACT IN A GATE'S DOORWAY IS BEING EXPELLED — the artifacts a robot is CARRYING
    * step aside for it. The CHASSIS never does: excluding an expelled artifact from the robot

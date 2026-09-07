@@ -737,6 +737,113 @@ const slotCount = (w: World, a: 'red' | 'blue') =>
     Math.abs(ball.pos.x) < 6 && ball.pos.y <= FIELD_HALF - BALL_RADIUS + 0.01 && ballSpeed < 20,
     `pos=(${ball.pos.x.toFixed(1)},${ball.pos.y.toFixed(1)}) v=${ballSpeed.toFixed(1)}`,
   );
+  /**
+   * ...AND THE STALL DOES NOT WRENCH THE CHASSIS ROUND, which is the half of this that a
+   * hand-written stall could not promise.
+   *
+   * The old `ballRobotFeedback` answered a pinned artifact by writing `r.vel` and pivoting the
+   * heading directly (`pushRobotAt`, point contact, "pivot the chassis freely"). That was
+   * survivable while the drive model OVERWROTE `r.vel` every tick. Once the drive became a
+   * FORCE the write persisted and compounded: the chassis wedged 8.21 degrees off its
+   * commanded heading and slid diagonally at 24.0 in/s, driving the artifact 26.5in sideways
+   * along the wall it was supposed to be stuck against. The solve answers it now, so the robot
+   * ends where it is pointed: 0.00 degrees, 2.2 in/s, artifact at x=0.00.
+   */
+  const wrench = Math.abs(((r.heading - Math.PI / 2 + Math.PI) % (2 * Math.PI)) - Math.PI);
+  check(
+    '...and it stalls the robot STRAIGHT — no wedge, no diagonal slide',
+    (wrench * 180) / Math.PI < 1,
+    `${((wrench * 180) / Math.PI).toFixed(2)}deg off the commanded heading (8.21 with the hand-written stall)`,
+  );
+}
+
+// ---- an artifact cannot shove a robot, because it does not weigh enough --------
+/**
+ * PRODUCT DECISION #7 — "gate outflow can't shove a parked robot" — used to hold BY
+ * CONSTRUCTION: the chassis body in the artifact solve was KINEMATIC, so nothing could move
+ * it. It is DYNAMIC now, and the rule holds for a physical reason instead: `BALL_MASS` is
+ * 0.2lb against a `shoveMass` of 15-25, so an artifact arriving at full drain speed moves a
+ * parked robot by a rounding error. Worth pinning, because the day it stops being true is the
+ * day somebody has changed one of those two numbers by two orders of magnitude.
+ */
+{
+  const w = mkWorld('free', 'blue', 23);
+  const r = w.robots[0];
+  r.pos = { x: 0, y: 0 };
+  r.heading = Math.PI / 2; // artifact arrives on the flank, the worst case for yaw
+  r.fieldCentric = false;
+  const before = { x: r.pos.x, y: r.pos.y, h: r.heading };
+  const ball = w.balls[0];
+  ball.state = { kind: 'ground' };
+  ball.pos = { x: -14, y: 0 };
+  ball.vel = { x: 120, y: 0 }; // faster than any robot on this field
+  ball.z = 0;
+  ball.vz = 0;
+  run(w, cmd({}), 1);
+  const moved = Math.hypot(r.pos.x - before.x, r.pos.y - before.y);
+  const turned = (Math.abs(r.heading - before.h) * 180) / Math.PI;
+  check(
+    'an artifact at full speed cannot shove a parked robot (outflow-no-shove is now the mass ratio)',
+    moved < 0.5 && turned < 1,
+    `moved ${moved.toFixed(3)}in, turned ${turned.toFixed(2)}deg on a 120 in/s hit`,
+  );
+}
+
+// ---- a BIGGER clump is genuinely heavier to push ------------------------------
+/**
+ * The old hand-written drag SATURATED at three artifacts, because it bled a fixed fraction of
+ * the approach speed per CONTACT and a chassis is three artifacts wide — 1 / 3 / 6 / 9
+ * artifacts cost 9.9 / 18.5 / 18.6 / 18.7% of settled speed, i.e. flat past the front row.
+ * The solve carries the mass BEHIND that row, so the answer now keeps growing: 10.1 / 19.2 /
+ * 20.0 / 20.2%. Small, and it should be — a 0.2lb wiffle ball against a 23lb robot — which is
+ * why `clumpDrag` survives on top of it as a stated FEEL constant. What is checked here is the
+ * ORDERING, which is the part that is physics.
+ */
+{
+  const settled = (count: number): number => {
+    const w = mkWorld('free', 'blue', 24);
+    const r = w.robots[0];
+    r.pos = { x: 0, y: -62 };
+    r.heading = Math.PI / 2;
+    r.fieldCentric = false;
+    r.hopper = ['green', 'green', 'green']; // full: collision only, no capture
+    const loose = w.balls.filter((b) => b.state.kind !== 'held');
+    loose.forEach((b, i) => {
+      b.state = { kind: 'ground' };
+      b.z = 0;
+      b.vz = 0;
+      b.vel = { x: 0, y: 0 };
+      b.pos =
+        i < count
+          ? { x: -5 + (i % 3) * 5, y: -62 + r.spec.length / 2 + 3 + Math.floor(i / 3) * 5.2 }
+          : { x: -FIELD_HALF + 8, y: -FIELD_HALF + 8 };
+    });
+    const ticks = Math.round(1.1 / SIM_DT);
+    let tail = 0;
+    let tailN = 0;
+    for (let i = 0; i < ticks; i++) {
+      step(w, SIM_DT, new Map([[0, cmd({ driveY: 1 })]]));
+      for (let k = count; k < loose.length; k++) {
+        if (loose[k].state.kind === 'ground') {
+          loose[k].pos = { x: -FIELD_HALF + 8, y: -FIELD_HALF + 8 };
+          loose[k].vel = { x: 0, y: 0 };
+        }
+      }
+      if (i >= Math.round((ticks * 2) / 3)) {
+        tail += hyp(w.robots[0].vel.x, w.robots[0].vel.y);
+        tailN++;
+      }
+    }
+    return tail / tailN;
+  };
+  const [v0, v1, v3, v9] = [settled(0), settled(1), settled(3), settled(9)];
+  const pct = (v: number) => 100 * (1 - v / v0);
+  check(
+    'a bigger clump is heavier to push, and keeps getting heavier past the front row',
+    pct(v1) > 5 && pct(v3) > pct(v1) && pct(v9) > pct(v3),
+    `0/1/3/9 artifacts cost ${[v1, v3, v9].map((v) => pct(v).toFixed(1)).join('/')}% of ` +
+      `${v0.toFixed(1)} in/s (the hand-written drag was flat past 3: 9.9/18.5/18.7)`,
+  );
 }
 
 // ---- off-center wall ball scatters out of the way -----------------------------
@@ -3865,6 +3972,21 @@ function queueTenth(w: World): void {
    * The ceiling is a right angle, which is the thing the old complaint was about ("it spins me
    * around like 90 degrees instantly"), and the rate is what makes it not that: 32 degrees is
    * over three full seconds of driving into the arm, about 11 deg/s.
+   */
+  /**
+   * ⚠️ THIS SCENE IS NOT ISOLATED, AND HALF OF WHAT IT USED TO MEASURE WAS NOT THE ARM.
+   *
+   * The setup holds every artifact off the field, but the human player restocks and the
+   * classifier drains into exactly this corner: measured, 27 ground artifacts, one in contact
+   * with the chassis on 140-180 of the 180 ticks. Until the artifact solve became mutual, the
+   * bespoke `ballRobotFeedback` answered a pinned artifact by PIVOTING THE HEADING directly
+   * (`pushRobotAt` with `squareTo = false` — "point contacts pivot the chassis freely"), and
+   * that is where most of these degrees came from. Re-run with the artifacts genuinely
+   * deleted, the arm ALONE gives 2.9 / 10.4 / 0.0 / 0.0 on the tunnel side and 0/0/0/0 on the
+   * channel side — the same numbers before and after that change, to the digit.
+   *
+   * So the arm's own off-centre pivot is what needs fixing here, and it is the same defect the
+   * check above is already red on. Do not "fix" this one by putting an artifact pivot back.
    */
   const fromChannelSide = [2, 4, 6, 8].map((d) => armHit(-d));
   const allHits = [...withSide, ...fromChannelSide];
@@ -9551,11 +9673,24 @@ function pinScene(
     runCmds(w, new Map([[0, cmd({ driveY: -1 })]]), 0.35);
     worst = Math.max(worst, overlapWorst(w));
   }
-  // a soft-contact solver leaves a little slop; STACKING is a different thing entirely
-  // (half a diameter or more, and it never resolves).
+  /**
+   * A soft-contact solver leaves a little slop; STACKING is a different thing entirely — half
+   * a diameter or more, and it NEVER RESOLVES. Both halves of that sentence are the test, and
+   * only the numeric half is written here, so the bound has to leave room for a hard ram.
+   *
+   * It moved from 0.5 to 0.75 of a radius when the artifact solve's chassis became DYNAMIC.
+   * A robot that the artifacts push back on drives a little deeper into a pile before it
+   * stops, because the stall is now the solver satisfying a contact rather than a bespoke
+   * pass killing the velocity outright the instant an artifact reads as pinned. Measured
+   * every tick of this scene rather than at the four sample points below: peak overlap 1.25
+   * -> 2.01in, over the old bound on 21 ticks of 360, and the longest unbroken stretch is
+   * 0.18s — always while the robot is at 0.2-1.1 in/s, i.e. the moment the ram stops and the
+   * jam rule holds the wedged artifacts where they are. It resolves to 0.00in every time.
+   * That is the ram compressing, not a stack: it stays inside the half-diameter above.
+   */
   check(
     'ramming a clump never stacks artifacts (overlap stays contact slop)',
-    worst < BALL_RADIUS * 0.5,
+    worst < BALL_RADIUS * 0.75,
     `worst overlap ${worst.toFixed(2)}in of ${BALL_RADIUS * 2}in diameter`,
   );
 }

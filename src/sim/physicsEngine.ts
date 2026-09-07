@@ -20,22 +20,22 @@ import type { FieldColliders } from '../games/types';
  * makes reconcile and bit-for-bit determinism trivially correct, and building
  * a handful of colliders + N bodies is microseconds.
  *
- * Rapier OWNS robot translation + velocity (→ wall/robot velocity-kill,
- * mass-weighted shoving, restitution-0 inelastic contact, and — because
- * RobotState is canonical and rebuilt each tick — pinned-ball feedback, all for
- * free). Rotation is LOCKED on the bodies; the bespoke contact-torque "square
- * up flush" nudge stays in physics.ts (`squareUpRobots`), the one piece the
- * plan calls out as not a Rapier primitive.
+ * Rapier OWNS robot translation, velocity AND rotation (→ wall/robot velocity-kill,
+ * mass-weighted shoving, restitution-0 inelastic contact). The drive reaches it as a
+ * FORCE + TORQUE (`DriveWrench`), so the angular half of a contact is the solver's own
+ * answer rather than a heuristic; the bespoke contact-torque "square up flush" nudge stays
+ * in physics.ts (`squareUpRobots`), the one piece the plan calls out as not a Rapier
+ * primitive.
  *
- * Slice 2 adds GROUND balls to the SAME unified solve (circle bodies, tiny
- * mass), so ball↔ball / ball↔robot / ball↔wall / ball↔goal-face /
- * ball↔classifier resolve together — and the pinned-ball → robot feedback falls
- * out of a real mass ratio. Rolling friction + rest-snap + the hard field clamp
- * stay bespoke around the solve (top-down plane has no floor to rub on, and
- * Rapier's soft contacts allow ~0.2in penetration the containment invariant
- * won't tolerate). Restitution combines with `Min` across every collider so the
- * per-pair coefficients fall straight out of the BALL_* constants. FLIGHT balls
- * (ballistic + rare low collisions) stay bespoke in world.ts / physics.ts.
+ * GROUND balls are a second solve (`solveBalls`): circle bodies at BALL_MASS against the
+ * field, each other, and the robots' CHASSIS — so ball↔ball / ball↔robot / ball↔wall /
+ * ball↔goal-face / ball↔classifier resolve together, and the pin stall a robot feels when it
+ * grinds an artifact into a wall falls out of the real mass ratio instead of being written
+ * by hand. Rolling friction + rest-snap + the hard field clamp stay bespoke around the solve
+ * (top-down plane has no floor to rub on, and Rapier's soft contacts allow ~0.2in penetration
+ * the containment invariant won't tolerate). Restitution combines with `Min` across every
+ * collider so the per-pair coefficients fall straight out of the BALL_* constants. FLIGHT
+ * balls (ballistic + rare low collisions) stay bespoke in world.ts / physics.ts.
  */
 
 
@@ -56,22 +56,28 @@ export function physicsReady(): boolean {
 /** give a static field collider a ball-bounce restitution combined with Min, so
  * a ground ball caroms off it at BALL_WALL_RESTITUTION while a robot (restitution
  * 0) still resolves fully inelastically against it — slice-1 robot feel intact. */
-function statics(desc: RAPIER.ColliderDesc): RAPIER.ColliderDesc {
-  return desc
+function statics(desc: RAPIER.ColliderDesc, groups?: number): RAPIER.ColliderDesc {
+  const d = desc
     // stated, not inherited — this used to fall through to Rapier's own default and so was
     // never a number anyone had chosen. Same value, so nothing moves. See PHYS_WALL_FRICTION.
     .setFriction(C.PHYS_WALL_FRICTION)
     .setRestitution(C.BALL_WALL_RESTITUTION)
     .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min);
+  // Only the ARTIFACT solve names a group here (see FIELD_GROUP). Left unset everywhere else,
+  // so the robot solve gets Rapier's default membership and is untouched to the digit.
+  return groups === undefined ? d : d.setCollisionGroups(groups);
 }
 
 /** build a game's static field colliders (perimeter walls + structures) onto the
  * fresh world, in the module's stable spec order (determinism). The geometry math
  * is memoized in the game module (`FieldColliders.statics`). */
-function buildStatics(rw: RAPIER.World, colliders: FieldColliders): void {
+function buildStatics(rw: RAPIER.World, colliders: FieldColliders, groups?: number): void {
   for (const s of colliders.statics) {
     rw.createCollider(
-      statics(RAPIER.ColliderDesc.cuboid(s.hx, s.hy).setTranslation(s.tx, s.ty).setRotation(s.rot)),
+      statics(
+        RAPIER.ColliderDesc.cuboid(s.hx, s.hy).setTranslation(s.tx, s.ty).setRotation(s.rot),
+        groups,
+      ),
     );
   }
 }
@@ -88,6 +94,7 @@ function makeWorld(
   colliders: FieldColliders,
   freq: number = C.PHYS_CONTACT_FREQ,
   allowedError: number = C.PHYS_ALLOWED_ERROR,
+  staticGroups?: number,
 ): RAPIER.World {
   const rw = new RAPIER.World({ x: 0, y: 0 }); // top-down plane: no gravity
   rw.timestep = dt;
@@ -101,7 +108,7 @@ function makeWorld(
   rw.integrationParameters.numSolverIterations = C.PHYS_SOLVER_ITERS;
   rw.integrationParameters.contact_natural_frequency = freq;
   rw.integrationParameters.normalizedAllowedLinearError = allowedError;
-  buildStatics(rw, colliders);
+  buildStatics(rw, colliders, staticGroups);
   return rw;
 }
 
@@ -163,13 +170,11 @@ function outsideBy(r: RobotState, bounds: { halfX: number; halfY: number }): Vec
  * Returns each robot's PRE-solve velocity (keyed by id) so the bespoke square-up
  * pass can scale contact torque by how hard the robot was driving in.
  *
- * Robots only — BALLS are a SEPARATE solve (`solveBalls`) followed by the bespoke
- * `collideBallRobot`. Ball↔robot is NOT a Rapier contact on purpose: the "gate
- * outflow can't shove a parked robot" rule (product decision #7) is deliberately
- * NON-physical, and a light ball can't stall a force-set-velocity robot in a
- * single solve. Keeping ball↔robot bespoke preserves both the pin stall and the
- * outflow-no-shove feel. Robots therefore never see ball bodies here (slice-1
- * robot behavior is byte-for-byte unchanged).
+ * Robots only — ARTIFACTS are a SEPARATE solve (`solveBalls`), which builds its own chassis
+ * bodies and is where ball↔robot momentum is exchanged in BOTH directions. Two solves rather
+ * than one because they want different contact stiffness (a robot can start a step deep
+ * inside a wall via its intake reach; an artifact never does) and because the artifact solve
+ * must see the CHASSIS where this one sees the whole footprint, intake included.
  */
 export function solveRobots(
   world: World,
@@ -390,17 +395,27 @@ export function solveRobots(
 /**
  * COLLISION GROUPS for the artifact solve. Rapier packs these as
  * `(membership << 16) | filter`, and two colliders interact only if each one's membership
- * is in the other's filter. Static field colliders keep the default (member of everything,
- * filter everything), so they are unaffected and need no changes.
+ * is in the other's filter — BOTH directions have to agree, which is why the field needs a
+ * membership of its own rather than the default "member of everything".
  *
- * The point is one exclusion: the chassis must not fight the intake over an artifact the
- * intake is actively drawing in. The funnel pulls toward the throat at the chassis front
- * face while the chassis collider pushes off it, and the artifact oscillates — measured
- * 1.45s to swallow one 7in off-centre against main's 0.33s. See `intakeClaims`.
+ * TWO exclusions, and the chassis's filter states them by naming the only thing it may touch:
+ *
+ * 1. IT MUST NOT FIGHT THE INTAKE over an artifact the intake is actively drawing in. The
+ *    funnel pulls toward the throat at the chassis front face while the chassis collider
+ *    pushes off it, and the artifact oscillates — measured 1.45s to swallow one 7in
+ *    off-centre against main's 0.33s. See `intakeClaims`.
+ *
+ * 2. IT MUST NOT RE-RESOLVE ANYTHING `solveRobots` ALREADY OWNS, which became a live concern
+ *    the moment the chassis stopped being kinematic. A dynamic body would meet the walls, the
+ *    goal faces, the classifier and every other chassis a SECOND time in this solve, and the
+ *    velocity written back would carry both answers — the wall's normal impulse counted twice,
+ *    robot-robot shoving counted twice. This solve exists to exchange momentum between robots
+ *    and ARTIFACTS and it is scoped to exactly that.
  */
 const LOOSE_GROUP = 0x0001ffff; // ordinary artifact: everything sees it
 const CLAIMED_GROUP = 0x0002ffff; // artifact the intake has hold of
-const CHASSIS_GROUP = 0x0004fffd; // chassis: filters OUT the claimed bit (0x0002)
+const CHASSIS_GROUP = 0x00040001; // chassis: ordinary artifacts and NOTHING else
+const FIELD_GROUP = 0x0008ffff; // walls/goal faces/classifier, in THIS solve only
 
 /**
  * Resolve GROUND-ball translation + velocity for one tick via a separate Rapier
@@ -418,13 +433,37 @@ const CHASSIS_GROUP = 0x0004fffd; // chassis: filters OUT the claimed bit (0x000
  * each other. Reordering and interleaving them were both tried and both bought under
  * 0.2in.
  *
- * KINEMATIC: the robot pushes artifacts and is never pushed back, which IS product
- * decision #7's "gate outflow can't shove a parked robot". The robot-side feel that
- * cannot fall out of a kinematic body — the stall on a pinned artifact and the drag of
- * a clump — is `ballRobotFeedback`, which runs BEFORE this solve for the reason
- * documented there. (A heavy DYNAMIC body was tried so the stall would be emergent; it
- * is not, because an artifact is ~0.3lb against 20-42lb and the drivetrain restores the
- * loss the same tick.)
+ * THE CHASSIS IS DYNAMIC, AND THAT IS WHAT MAKES THE PUSH MUTUAL.
+ *
+ * It was kinematic — the robot pushed artifacts and was never pushed back — and the
+ * robot-side feel was faked afterwards by a bespoke pass (`ballRobotFeedback`) that wrote
+ * `r.vel` directly: a "stall" branch when the artifact was pinned against a static, and a
+ * momentum bleed in open field. That worked while the drive model WROTE `r.vel` every tick,
+ * because whatever the fake wrote was overwritten the next tick and could not accumulate.
+ * With the drive arriving as a FORCE the write persists, and it went wrong exactly the way
+ * an un-overwritten velocity write does: grinding into a wall-pinned artifact, the chassis
+ * wedged 8.2 degrees off its commanded heading and slid diagonally at 24.0 in/s, driving the
+ * artifact 26.5in sideways along the wall it was supposed to be stuck against.
+ *
+ * A dynamic body needs none of it. The artifact is a real body between the chassis and the
+ * wall, the solver enforces both contacts at once, and the stall is the constraint being
+ * satisfied rather than a velocity somebody wrote. Measured on the same scene: 24.00 -> 0.03
+ * in/s, heading 8.21 -> 0.00 degrees off, and the artifact stays where it was pinned
+ * (x 26.50 -> -0.00) instead of being squirted along the wall.
+ *
+ * The old note said a heavy dynamic body had been tried and did not stall "because an
+ * artifact is ~0.3lb against 20-42lb and the drivetrain restores the loss the same tick".
+ * The mass ratio is unchanged and is not the point: a non-penetration constraint does not
+ * care how light the thing in the middle is, only that it cannot move. What changed is that
+ * the drivetrain no longer restores the loss, because it no longer writes the velocity at all.
+ *
+ * ...AND PRODUCT DECISION #7 STILL HOLDS, for a physical reason rather than by construction:
+ * `BALL_MASS` is 0.2lb against a `shoveMass` of 15-25, so an artifact arriving under its own
+ * momentum out of the gate moves a parked robot by a thousandth of an inch. Outflow does not
+ * shove because it cannot, not because it is forbidden.
+ *
+ * A robot on an AUTO PATH stays KINEMATIC: the path owns where it goes, so artifacts must
+ * collide with it and must not move it — the same call `solveRobots` makes, for the same reason.
  *
  * The INTAKE is deliberately absent: its mouth is open to artifacts by design (product
  * decision #10) and its funnel geometry is per-preset. That region stays bespoke, in
@@ -439,7 +478,13 @@ export function solveBalls(
   const groundBalls = world.balls.filter((b) => b.state.kind === 'ground');
   if (groundBalls.length === 0) return;
 
-  const rw = makeWorld(dt, colliders, C.PHYS_BALL_CONTACT_FREQ, C.PHYS_BALL_ALLOWED_ERROR);
+  const rw = makeWorld(
+    dt,
+    colliders,
+    C.PHYS_BALL_CONTACT_FREQ,
+    C.PHYS_BALL_ALLOWED_ERROR,
+    FIELD_GROUP,
+  );
   const ballBodies: { b: Artifact; body: RAPIER.RigidBody }[] = [];
   for (const b of groundBalls) {
     const body = rw.createRigidBody(
@@ -467,23 +512,42 @@ export function solveBalls(
   // creation order is untouched (Rapier resolution depends on it, and replays re-sim
   // through this). Chassis only — NOT robotExtents, which includes the intake reach:
   // that box is what the robot collides with, but to an artifact the mouth is open.
+  const chassis: { r: RobotState; body: RAPIER.RigidBody }[] = [];
   for (const r of world.robots) {
     const body = rw.createRigidBody(
-      RAPIER.RigidBodyDesc.kinematicVelocityBased()
+      (r.autoPathActive
+        ? RAPIER.RigidBodyDesc.kinematicVelocityBased()
+        : RAPIER.RigidBodyDesc.dynamic()
+      )
         .setTranslation(r.pos.x, r.pos.y)
         .setRotation(r.heading)
         .setLinvel(r.vel.x, r.vel.y)
         .setAngvel(r.angVel),
     );
+    /**
+     * THE SAME MASS PROPERTIES `solveRobots` STATES, so the two solves agree about how hard
+     * this robot is to shove and to spin. `shoveMass` is push AUTHORITY rather than weight
+     * (see drivetrain.ts) and `chassisInertia` is the chassis rectangle's about its own
+     * centre — and here the centre of mass needs no offset at all, because unlike the robot
+     * solve's footprint box (shifted forward by half the intake reach) this collider IS the
+     * chassis, centred on the body origin.
+     *
+     * NO DRIVE FORCE IS APPLIED HERE. The wheels already acted, in `solveRobots`, earlier in
+     * this same tick; adding the wrench again would drive the robot twice.
+     */
+    const m = shoveMass(r.spec, r.butterflyTank, r.powerDraw);
     rw.createCollider(
       RAPIER.ColliderDesc.cuboid(r.spec.length / 2, r.spec.width / 2)
+        .setMassProperties(m, { x: 0, y: 0 }, chassisInertia(m, r.spec))
         .setRestitution(C.BALL_ROBOT_RESTITUTION)
         .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
-        // ...and the chassis does NOT see artifacts the intake is drawing in.
+        // artifacts only — not the field, not each other, not what the intake has hold of.
+        // See CHASSIS_GROUP: everything else in that list belongs to `solveRobots`.
         .setCollisionGroups(CHASSIS_GROUP)
         .setFriction(C.PHYS_FRICTION),
       body,
     );
+    if (!r.autoPathActive) chassis.push({ r, body });
   }
 
   rw.step();
@@ -495,6 +559,26 @@ export function solveBalls(
     b.pos.y = p.y;
     b.vel.x = v.x;
     b.vel.y = v.y;
+  }
+
+  /**
+   * VELOCITY ONLY, NEVER THE POSE. `solveRobots` owns where a robot is and which way it
+   * faces — it is the pass that has the walls, the other robots and the gate arms in it, and
+   * it holds the perimeter invariant. Taking a pose from here would let a solve that cannot
+   * see any of that write one. So this reports what the ARTIFACTS did to the robot's motion
+   * and the next tick's drive answers it, which is exactly the shape the bespoke pass this
+   * replaces had (it only ever touched `r.vel` either).
+   *
+   * The guards are the same solver-explosion ceilings `solveRobots` applies and are dead code
+   * for the same reason: nothing an 0.2lb artifact does to a 15-25lb chassis approaches them.
+   */
+  for (const { r, body } of chassis) {
+    const v = body.linvel();
+    const speed = hyp(v.x, v.y);
+    const scale = speed > C.PHYS_MAX_ROBOT_SPEED ? C.PHYS_MAX_ROBOT_SPEED / speed : 1;
+    r.vel.x = v.x * scale;
+    r.vel.y = v.y * scale;
+    r.angVel = clamp(body.angvel(), -C.PHYS_MAX_ROBOT_SPIN, C.PHYS_MAX_ROBOT_SPIN);
   }
 
   rw.free();
