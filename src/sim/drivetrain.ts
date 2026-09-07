@@ -130,6 +130,22 @@ export function shoveMass(spec: RobotSpec, tankMode = false, powerDraw = 0): num
   return pushForce(spec, tankMode, powerDraw) / Math.max(accel, 1e-6);
 }
 
+/**
+ * ...AND THERE IS NOTHING TO BRAKE WHEN YOU ARE NOT MOVING.
+ *
+ * The braking branch is worth 1.4x the accel budget, and it is selected by "the demanded
+ * change opposes the current motion" — which a chassis at a DEAD STOP satisfies on nothing but
+ * the sign of its own numerical residue. Measured from a match file: a robot standing still
+ * against the gate, given a fresh strafe, was handed 6.58 in/s in its first tick against a
+ * 4.70 budget, because its velocity was -0.0000 rather than +0.0000. It reads as a lurch off
+ * the line, and it is most obvious exactly where everything else is still.
+ *
+ * So braking now needs motion worth braking: a thousandth of the free speed, which is far
+ * below anything a driver can perceive and far above float residue. Unit-free, so the same
+ * test serves the linear and the angular callers.
+ */
+const BRAKE_MIN_FRAC = 1e-3;
+
 /** advance a velocity toward `target` for one tick using a DC-motor torque–speed
  * curve: available (stall) accel falls ~linearly from full at rest to
  * MOTOR_MIN_TORQUE_FRAC near the free speed `vFree`, so speed approaches the top
@@ -148,7 +164,7 @@ export function motorStep(
 ): number {
   const err = target - v;
   if (err === 0) return v;
-  const braking = v !== 0 && Math.sign(err) !== Math.sign(v);
+  const braking = Math.abs(v) > vFree * BRAKE_MIN_FRAC && Math.sign(err) !== Math.sign(v);
   let frac: number;
   if (braking) {
     frac = brakeMult;
@@ -184,7 +200,7 @@ export function motorStepVec(
   const eMag = hyp(ex, ey);
   if (eMag === 0) return { x: vx, y: vy };
   const speed = hyp(vx, vy);
-  const braking = ex * vx + ey * vy < 0; // the demanded change opposes current motion
+  const braking = speed > vFree * BRAKE_MIN_FRAC && ex * vx + ey * vy < 0; // opposes real motion
   let frac: number;
   if (braking) {
     frac = brakeMult;

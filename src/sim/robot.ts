@@ -442,6 +442,25 @@ export function updateRobot(
       const ly = dcos(ang);
       const slip = sx * lx + sy * ly;
       if (slip === 0) continue;
+      /**
+       * A TYRE OPPOSES MOTION. IT NEVER CREATES IT.
+       *
+       * `slip` is the difference between what the solver did and what the wrench asked for,
+       * which reads both ways: a contact that DRAGS the chassis sideways shows up with one
+       * sign and is correctly refused, and a contact that BLOCKS it shows up with the other —
+       * at which point nulling the difference means shoving the chassis in the direction the
+       * wall just prevented. Reported from a match file as a surge of strafing speed while
+       * barely moving and already against the gate: measured at three separate moments in that
+       * run, a robot at a DEAD STOP with no rotation and nothing else touching it accelerated
+       * sideways from 0.0 to 6.6 to 10.9 in/s, roughly 400 in/s^2, which is more than its
+       * drivetrain can produce in the first place.
+       *
+       * So the force is admitted only when it opposes how this wheel is ACTUALLY sliding
+       * across itself. Nothing else about the model changes: a drag is still refused up to
+       * grip, an impact still gets through, and a blocked robot simply stays blocked.
+       */
+      const across = (velRobot.x - r.angVel * wl.y) * lx + (velRobot.y + r.angVel * wl.x) * ly;
+      if (slip * across <= 0) continue;
       // the force that would null it this tick, and what this one tyre can actually hold
       // EXACTLY what was seen, no more. The tyres answer a tick late, so answering HARDER to
       // close that gap is tempting and it oscillates: at a gain of 1.5 an 8in off-centre ram
