@@ -280,6 +280,20 @@ export interface RobotState {
   pos: Vec2;
   heading: number; // field frame, radians, 0 = +x, CCW positive
   vel: Vec2; // field frame, in/s
+  /**
+   * WHAT A CONTACT DID TO THIS CHASSIS LAST TICK — the velocity (and spin) the solver produced
+   * that the drivetrain did not ask for. Written by `solveRobots`, read one tick later by the
+   * per-wheel traction model in `updateRobot`, which is what a tyre resists.
+   *
+   * It has to be carried, because a force handed to the solver is computed BEFORE the solve
+   * and a contact happens DURING it. One tick of lag is not a fudge here: a real tyre has a
+   * relaxation length for exactly this reason, and the lag is what lets an IMPACT through (its
+   * first tick meets no resisting force) while a sustained lean is refused every tick after
+   * the first. Plain numbers, so snapshots and replays carry them like everything else.
+   */
+  slipX?: number;
+  slipY?: number;
+  slipW?: number;
   angVel: number;
   turretHeading: number; // field frame
   /** SWERVE per-module steer angles (robot frame, rad), one per wheel in the

@@ -75,19 +75,11 @@ export interface DriveWrench {
   fx: number;
   fy: number;
   tau: number;
-  /** the velocity the motor model asked for this tick (world frame) — the solve's answer is
-   *  compared against it so the tyres can refuse what a CONTACT added. */
+  /** the velocity and spin the motor model asked for. `solveRobots` diffs its own answer
+   *  against these to record what the CONTACTS did — see `RobotState.slipX`. */
   wantX: number;
   wantY: number;
-  /** ...and the same for rotation. */
   wantW: number;
-  /** how much SIDEWAYS velocity a contact may not impart, in in/s for this tick. Longitudinal
-   *  drag is deliberately NOT held: a back-driven wheel rolls, which is why an unpowered robot
-   *  can be pushed at all — but no wheel rolls sideways. */
-  holdLat: number;
-  /** how much of that a contact may not impart, in rad/s for this tick (Coulomb, from
-   *  `LATERAL_GRIP`). Zero once nothing is touching this robot. */
-  yawHold: number;
 }
 
 export function updateRobot(
@@ -352,81 +344,115 @@ export function updateRobot(
    */
   const inertia = chassisInertia(m, r.spec);
   const wNext = motorStep(r.angVel, targetOmega, dp.turnAccel, dp.maxTurn, dt);
-  const tau = (inertia * (wNext - r.angVel)) / dt;
-  /**
-   * ...AND HOW MUCH SPIN THE TYRES WILL REFUSE, which a torque cannot express.
-   *
-   * A torque computed here can only null the spin a contact gave us LAST tick — it is a fixed
-   * quantity by the time the solver runs, so a contact re-injects its own inside the same step
-   * and the heading integrates the difference. Measured on the reported scene, a tank leaning
-   * on a robot strafing out from under it settled at ω ≈ 0.9 rad/s and yawed 22° in two thirds
-   * of a second, while the treads' actual capacity to refuse that torque is three times what
-   * the contact was supplying.
-   *
-   * So the refusal is stated as a Coulomb CAP for `solveRobots` to apply on write-back: four
-   * wheels at the half-diagonal can hold `grip · accel · m · d` of torque, which is this much
-   * angular velocity in one tick. `LATERAL_GRIP` is the same constant the cornering force uses
-   * — the drivetrain's sideways traction as a fraction of its drive ceiling — so treads refuse
-   * being spun and rollers largely do not, which is the whole difference between them.
-   *
-   * EVERY CONTACT, not just robot-robot: a chassis resting on the gate handle has the same
-   * treads under it as one being leaned on by an opponent, and scoping this to `rrContacts`
-   * left a robot idling against the arm free to be spun a full 360° by it. Free driving is
-   * untouched without needing a gate, because with nothing touching you the solver's answer IS
-   * what the drive asked for and there is nothing to refuse.
-   *
-   * ⚠️ THIS IS THE ONE PIECE OF SLICE A THAT SLICE B DELETES. Per-wheel forces put each
-   * wheel's lateral traction inside the solve, where it opposes the contact torque as it
-   * happens rather than trimming the result afterwards.
-   */
-  const grip = C.LATERAL_GRIP[r.spec.drivetrain] ?? 0.5;
-  const arm = hyp(r.spec.length, r.spec.width) / 2;
-  const yawHold = ((grip * dp.accel * m * arm) / inertia) * dt * C.CONTACT_YAW_HOLD;
-  /**
-   * ...AND THE SIDEWAYS HALF OF THE SAME REFUSAL, for the same reason and with the same
-   * `LATERAL_GRIP`. A contact's friction acts on the chassis inside the step, so the drive
-   * force computed here can only answer last tick's drag; the tyres state their Coulomb
-   * capacity and `solveRobots` trims what is left.
-   *
-   * ONLY SIDEWAYS, and that asymmetry is the model: a wheel being back-driven ROLLS, so a
-   * robot with no drive command has almost nothing to refuse a push along its wheels with
-   * (`MOTOR_SHOVE_BRAKE` is what little there is) — which is why pushing an idle opponent
-   * works at all. Sideways it does not roll, it scrubs, and treads scrub far harder than
-   * rollers do. Head-on shoves and rams are therefore untouched by this.
-   */
-  const holdLat = grip * dp.accel * dt;
+  let tau = (inertia * (wNext - r.angVel)) / dt;
 
   /**
-   * ...AND CORNERING IS A REAL LATERAL FORCE NOW, which is what it always was.
+   * ...AND THE TYRES ARE FOUR WHEELS, EACH WITH ITS OWN GRIP — slice B.
    *
-   * Velocity lives in the WORLD frame, so a chassis that turns without its velocity turning
-   * with it side-slips through every corner: the old model bent `r.vel` round by the heading
-   * change, capped at what the tyres could supply. That cap — `LATERAL_GRIP` as a fraction of
-   * the drivetrain's own traction ceiling — is unchanged; only its form is. Turning at ω while
-   * moving at v needs a centripetal `v·ω`, the tyres supply up to `grip·accel` of it, and past
-   * that the robot slides through the corner exactly as it did before.
+   * A wheel makes force in two ways and they are not the same thing. Along its roll axis the
+   * motor drives it, and that is the chassis-level model above, unchanged. ACROSS that axis it
+   * makes no force of its own at all: it either grips and the chassis goes where the wheels
+   * point, or it breaks traction and scrubs. That second half is what a chassis-level model
+   * cannot express, and it is the whole of robot-on-robot feel — treads refusing to be dragged
+   * sideways or spun, rollers giving way.
    *
-   * On tank — treads, `LATERAL_GRIP` 1.8 — this is what stops "I drive straight and turn and
-   * feel shifted sideways in a weird way".
+   * SLICE A APPROXIMATED IT AFTER THE FACT: `solveRobots` compared the solver's answer against
+   * what the drive asked for and trimmed the difference (`holdLat`/`yawHold`), Coulomb-style.
+   * That works for a steady lean and fails for an impact, because trimming happens AFTER the
+   * solve and cannot tell a 40 in/s hit from a 2 in/s drag except by magnitude — so a scale
+   * factor (`CONTACT_YAW_HOLD`) had to split the difference, and near-centred rams stopped
+   * spinning anybody.
+   *
+   * Now it is a FORCE, computed per wheel and handed to the solver, which resolves it
+   * SIMULTANEOUSLY with the contact. The discrimination falls out for free: a lean asks for
+   * less than the tyre can supply and is refused outright, while an impact asks for more than
+   * `LATERAL_GRIP · accel / 4` and the excess goes through as real motion. Nothing decides
+   * which case it is — the traction limit does.
+   *
+   * PER WHEEL AND NOT PER CHASSIS, because that is what produces the yaw. Four lateral forces
+   * at their own moment arms resist a spin exactly as far as their grip allows, so the same
+   * expression that stops a tank being dragged sideways stops it being twisted, and neither
+   * needs a term of its own.
+   *
+   * THE SLIP IS MEASURED AGAINST THE COMMANDED MOTION, not against zero — that is what keeps
+   * this out of the balance. A robot turning at the rate it asked for is scrubbing its wheels
+   * exactly as much as the drive model already accounts for, so the deviation is zero and
+   * nothing is applied; in free space the term does not exist. What it sees is the difference
+   * between where the chassis is going and where the wheels are pointed, which only a contact
+   * (or a wall) can produce.
+   *
+   * SWERVE READS ITS PODS. `moduleAngles` is where each wheel is actually pointed, wobble and
+   * all, so a mis-steered pod resists along the wrong axis by itself.
    */
-  const speed = hyp(r.vel.x, r.vel.y);
-  if (speed > 0.01 && r.angVel !== 0) {
-    const grip = C.LATERAL_GRIP[r.spec.drivetrain] ?? 0.5;
-    const a = Math.min(speed * Math.abs(r.angVel), grip * dp.accel);
-    const s = Math.sign(r.angVel);
-    fx += (m * a * -r.vel.y * s) / speed;
-    fy += (m * a * r.vel.x * s) / speed;
+  const grip = C.LATERAL_GRIP[r.spec.drivetrain] ?? 0.5;
+  /**
+   * ...AND THE SAME WHEELS CARRY THE VELOCITY ROUND A CORNER.
+   *
+   * Turning while moving needs a lateral force of `m·v·ω`, and without it the world-frame
+   * velocity simply stays where it was while the chassis rotates out from under it — every
+   * drivetrain side-slipping through every corner, which is "I drive straight and turn with
+   * tank and feel shifted sideways in a weird way".
+   *
+   * The drive model already pulls the robot-frame lateral velocity toward the commanded one at
+   * its own `accel`, so the tyres only add what they have OVER that: `LATERAL_GRIP` above 1 is
+   * a tread scrubbing harder than the motors can correct, and below 1 (rollers, omnis) the
+   * drive is already the stronger of the two and this term does nothing. That is the old
+   * velocity-carve's cap, stated as the force it always was.
+   */
+  const extraLat = Math.max(0, grip - 1) * dp.accel * m;
+  if (extraLat > 0) {
+    const err = stepped.y - velRobot.y; // robot-frame lateral error the drive is correcting
+    const f = clamp((err * m) / dt, -extraLat, extraLat);
+    const world = rot({ x: 0, y: f }, r.heading);
+    fx += world.x;
+    fy += world.y;
   }
-  const wantWorld = rot(stepped, r.heading);
+  const wheels = wheelLocals(r.spec);
+  // the budget ONE wheel has across its roll axis, as a force
+  const wheelCap = (grip * dp.accel * m) / wheels.length;
+  const swerve = dp.saturation === 'vec';
+  // the chassis slip a contact left last tick, in the ROBOT frame (see RobotState.slipX)
+  const slipW = r.slipW ?? 0;
+  const sl = rot({ x: r.slipX ?? 0, y: r.slipY ?? 0 }, -r.heading);
+  if (sl.x !== 0 || sl.y !== 0 || slipW !== 0) {
+    for (let i = 0; i < wheels.length; i++) {
+      const wl = wheels[i];
+      // how fast THIS wheel is being dragged across itself, rotation included
+      const sx = sl.x - slipW * wl.y;
+      const sy = sl.y + slipW * wl.x;
+      // ...across the axis it rolls on. A pod steers; everything else is chassis-aligned.
+      const ang = swerve ? (r.moduleAngles?.[i] ?? 0) : 0;
+      const lx = -dsin(ang);
+      const ly = dcos(ang);
+      const slip = sx * lx + sy * ly;
+      if (slip === 0) continue;
+      // the force that would null it this tick, and what this one tyre can actually hold
+      // EXACTLY what was seen, no more. The tyres answer a tick late, so answering HARDER to
+      // close that gap is tempting and it oscillates: at a gain of 1.5 an 8in off-centre ram
+      // came out at 0.34 degrees against 11.7 at unity, because the over-correction cancels
+      // the spin it is chasing. Unity is the only stable answer.
+      const want = (-slip * m) / wheels.length / dt;
+      const f = clamp(want, -wheelCap, wheelCap);
+      const world = rot({ x: f * lx, y: f * ly }, r.heading);
+      fx += world.x;
+      fy += world.y;
+      tau += wl.x * f * ly - wl.y * f * lx;
+    }
+  }
+  /**
+   * WHAT THIS WRENCH ITSELF WILL PRODUCE, in free space — the whole of it, traction included,
+   * not just the motor's target. `solveRobots` diffs the solver's answer against these to find
+   * what the CONTACTS did, so anything we apply on purpose has to be in here or the model
+   * reads its own work as fresh slip and fights it: measured, that was a ±2.07 in/s limit
+   * cycle running forever with nothing touching the robot.
+   */
   return {
     fx,
     fy,
     tau,
-    wantX: wantWorld.x,
-    wantY: wantWorld.y,
-    wantW: wNext,
-    yawHold,
-    holdLat,
+    wantX: r.vel.x + (fx / m) * dt,
+    wantY: r.vel.y + (fy / m) * dt,
+    wantW: r.angVel + (tau / inertia) * dt,
   };
 }
 
@@ -439,6 +465,22 @@ export function updateRobot(
  * model's `maxTurn` (derived from the half-diagonal about that centre) stays the free-space
  * answer. `solveRobots` states the same mass properties on the body.
  */
+/**
+ * The four wheel ground-contact points in the ROBOT frame — the same layout `wheelContacts`
+ * puts in world space for BASE parking, kept here as locals because the traction model needs
+ * the moment arms rather than the world positions. FL/FR/BR/BL, matching `moduleAngles`.
+ */
+export function wheelLocals(spec: RobotSpec): { x: number; y: number }[] {
+  const ix = Math.max(spec.length / 2 - C.WHEEL_INSET, 1);
+  const iy = Math.max(spec.width / 2 - C.WHEEL_INSET, 1);
+  return [
+    { x: ix, y: iy },
+    { x: ix, y: -iy },
+    { x: -ix, y: -iy },
+    { x: -ix, y: iy },
+  ];
+}
+
 export function chassisInertia(m: number, spec: RobotSpec): number {
   return (m * (spec.length * spec.length + spec.width * spec.width)) / 12;
 }

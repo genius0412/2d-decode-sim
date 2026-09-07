@@ -319,31 +319,8 @@ export function solveRobots(
      * ABSOLUTE speed and not a multiple of this robot's own (see `PHYS_MAX_ROBOT_SPEED`; the
      * per-robot version fired on ordinary shoves of a slow chassis by a fast one).
      */
-    const w = drive?.get(r.id);
-    let vx = v.x;
-    let vy = v.y;
-    /**
-     * A CONTACT MAY NOT DRAG YOU SIDEWAYS PAST WHAT YOUR TYRES REFUSE.
-     *
-     * `wantX/wantY` is the velocity the drive asked for, so the rest of the solver's answer is
-     * what the contact did; `holdLat` is the wheels' Coulomb capacity across their own axis for
-     * this tick (see `updateRobot`). Only the SIDEWAYS component is held — the longitudinal one
-     * passes through, because that is a wheel rolling rather than scrubbing, and holding it
-     * would make an unpowered robot unpushable again.
-     *
-     * Like `yawHold`, this is the piece slice B removes: per-wheel forces put the same traction
-     * inside the solve, opposing the drag as it happens.
-     */
-    if (w && w.holdLat > 0) {
-      const c = dcos(body.rotation());
-      const sn = dsin(body.rotation());
-      const dx = vx - w.wantX;
-      const dy = vy - w.wantY;
-      const lat = -dx * sn + dy * c; // the contact's contribution across the wheels
-      const refuse = Math.sign(lat) * Math.min(Math.abs(lat), w.holdLat);
-      vx -= -sn * refuse;
-      vy -= c * refuse;
-    }
+    const vx = v.x;
+    const vy = v.y;
     const speed = hyp(vx, vy);
     const scale = speed > C.PHYS_MAX_ROBOT_SPEED ? C.PHYS_MAX_ROBOT_SPEED / speed : 1;
     r.vel.x = vx * scale;
@@ -359,17 +336,24 @@ export function solveRobots(
      * over-constrained contact rather than a hit anybody felt.
      */
     /**
-     * ...and a CONTACT MAY NOT SPIN YOU PAST WHAT YOUR TYRES ALLOW. `wantW` is what the drive
-     * asked for, so anything else in the solver's answer came from a contact, and `yawHold` is
-     * the Coulomb capacity of the wheels to refuse it (see `updateRobot`). Whatever is left
-     * over is a real spin: an off-centre ram still turns you, it just cannot out-torque treads.
+     * The spin the solver worked out, guarded only against its own explosions. The tyres have
+     * already had their say — four lateral traction forces went INTO this solve (see the wheel
+     * loop in `updateRobot`), so a contact that spun the chassis anyway did it against grip
+     * that was resisting at the time, which is the whole point of slice B.
      */
-    let av = body.angvel();
-    if (w && w.yawHold > 0) {
-      const d = av - w.wantW;
-      const mag = Math.abs(d);
-      av = w.wantW + Math.sign(d) * Math.max(0, mag - w.yawHold);
-    }
+    const av = body.angvel();
+    /**
+     * ...AND WHAT THE CONTACTS DID, kept for the wheels to resist next tick.
+     *
+     * The drive asked for `wantX/wantY/wantW`; anything else in the solver's answer arrived
+     * through a contact. The per-wheel traction model in `updateRobot` turns this into four
+     * lateral forces, each clipped to one tyre's grip — which is why a sustained lean is
+     * refused outright and an impact is not.
+     */
+    const w = drive?.get(r.id);
+    r.slipX = w ? vx - w.wantX : 0;
+    r.slipY = w ? vy - w.wantY : 0;
+    r.slipW = w ? av - w.wantW : 0;
     r.angVel = clamp(av, -C.PHYS_MAX_ROBOT_SPIN, C.PHYS_MAX_ROBOT_SPIN);
     /**
      * THE HEADING IS INTEGRATED FROM THAT, NOT READ OFF THE BODY.
