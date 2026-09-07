@@ -690,12 +690,28 @@
   /* do not hand the scroll back to the page when this list hits its end */
   overscroll-behavior: contain;
 }
+/* COLLAPSED IS A CARD, NOT A COLUMN STUB.
+   Expanded, `.ds-friends` is a column: `--ds-bar` behind a single `border-left`
+   that runs as far as its content does, which beside a full page reads as the
+   edge of the chrome. Collapsed, the content is ONE button — so all that was
+   left was a 64px strip with a rule down one side and nothing closing it at the
+   bottom. Stretching it back down the whole column (its older behaviour) is the
+   other wrong answer: a page-length border for one button. So it stops being a
+   column and becomes what it actually is — a small panel on the side, with the
+   app's own card anatomy (all four sides, the same radius and shadow as
+   `.ds-panel`), floated off the edges by one step of the grid.
+   The surface stays `--ds-bar` rather than `--ds-panel`: `.fr-toggle` hovers TO
+   `--ds-panel`, and a panel-coloured card would swallow its only hover state. */
 .ds-friends.collapsed {
   /* 64, not 56: "Friends" at 11px is 39px wide and the rail keeps 8px a side, so 56
      left one pixel of slack. */
   width: 64px;
-  padding: 24px 8px 40px;
+  padding: var(--ds-s-2);
+  margin: var(--ds-s-4) var(--ds-s-4) 0 0;
   align-items: center;
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-round);
+  box-shadow: var(--ds-block);
 }
 /* the whole collapsed rail IS the button — glyph over label, so the hit area is the
    width of the strip rather than a 38px square adrift in it */
@@ -3785,6 +3801,17 @@ input[type='range']:focus-visible {
     width: 100%;
     align-items: flex-start;
     padding: var(--ds-s-2) var(--ds-s-3);
+    /* UNDO the desktop CARD, for the same reason the block above undoes the desktop
+       column: here this is a strip across the top of the content, and a rounded,
+       shadowed, inset card spanning the full width is just a box drawn around a
+       chip. The media query adds no specificity, so these have to be restated —
+       `.ds-friends.collapsed` outranks the `.ds-friends` rules above whatever the
+       source order. */
+    margin: 0;
+    border: 0;
+    border-bottom: 1px solid var(--ds-line);
+    border-radius: 0;
+    box-shadow: none;
   }
   /* the collapsed control is a CHIP, not a full-width slab. `width: 100%` and the
      stacked glyph-over-label belong to the 64px desktop rail, where the strip IS the
