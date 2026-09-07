@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { GameSettings } from '../game';
 import type { Alliance, GameSettings as GS, RobotSpec } from '../types';
 import { START_POSES } from '../config';
@@ -23,8 +23,8 @@ import { generateRoomCode, normalizeRoomCode, isValidRoomCode, ROOM_CODE_LENGTH 
 import { APP_NAME } from '../seasons';
 import { Logo } from './Logo';
 import { useEscape } from './useEscape';
-import { InviteFlyout } from './InviteFlyout';
 import type { RoomInvite } from '../net/api';
+import { FriendsPanel, type RoomInviteTarget } from './FriendsPanel';
 
 interface Props {
   settings: GameSettings;
@@ -34,9 +34,15 @@ interface Props {
   /** what this room runs. Default: a versus custom room (2v2). Pass a record/duo
    * config to run this same lobby as a 2v0 co-op record run (opponent-free). */
   config?: RoomConfig;
-  /** is SOME account signed in — gates the friend flyout (invites need an
-   * account on both ends) */
+  /** is SOME account signed in — friends invitations need an account on both ends */
   signedIn?: boolean;
+  /** Saved DSIM display name, never the immutable auth-provider name. */
+  displayName?: string | null;
+  /** Account context forwarded into the persistent room friends panel. */
+  myUserId?: string | null;
+  onOpenProfile: (username: string) => void;
+  onJoinInvite: (invite: RoomInvite) => void;
+  onSpectate: (room: string, region?: string) => void;
   /** a room code to join automatically on mount (a friend's invite, clicked
    * from elsewhere in the app) — calls the exact same `join()` a manual code
    * entry does, just triggered once at mount instead of by a button click. */
@@ -54,13 +60,44 @@ interface Props {
   /** fired once `autoJoin` has been consumed, so the caller can clear its
    * one-shot pending state and a later normal visit doesn't re-trigger it */
   onAutoJoinConsumed?: () => void;
-  /** a RATED challenge was accepted from the friend flyout. It has no room code
-   * to join, so this leaves the lobby entirely for the ranked queue — the app
-   * shell owns that navigation, not us. */
-  onAcceptChallenge?: (inv: RoomInvite) => void;
 }
 
 type Phase = 'entry' | 'connecting' | 'room' | 'error';
+
+/** The lobby is a full-screen surface, so it cannot use AppShell's side panel.
+ * Keep the actual room UI and the shared FriendsPanel as siblings here instead. */
+function RoomFriendsLayout({
+  children,
+  signedIn,
+  myUserId,
+  onOpenProfile,
+  onJoinInvite,
+  onSpectate,
+  room,
+}: {
+  children: ReactNode;
+  signedIn: boolean;
+  myUserId?: string | null;
+  onOpenProfile: (username: string) => void;
+  onJoinInvite: (invite: RoomInvite) => void;
+  onSpectate: (room: string, region?: string) => void;
+  room?: RoomInviteTarget;
+}) {
+  return (
+    <div className="ds-room-layout">
+      {children}
+      <FriendsPanel
+        signedIn={signedIn}
+        myUserId={myUserId}
+        onOpenProfile={onOpenProfile}
+        onJoinInvite={onJoinInvite}
+        onSpectate={onSpectate}
+        room={room}
+        allowProfileNavigation={!room}
+      />
+    </div>
+  );
+}
 
 /**
  * Multiplayer lobby over the authoritative game server (Phase 0): join a room by
@@ -77,10 +114,14 @@ export function Lobby({
   onCancel,
   config = { kind: 'versus' },
   signedIn = false,
+  displayName,
+  myUserId,
+  onOpenProfile,
+  onJoinInvite,
+  onSpectate,
   autoJoin,
   autoJoinRegion,
   onAutoJoinConsumed,
-  onAcceptChallenge,
 }: Props) {
   const isRecord = config.kind === 'record';
   const capacity = roomCapacity(config);
@@ -103,7 +144,7 @@ export function Lobby({
   const [region, setRegion] = useState(autoJoinRegion || selectedServer()?.region || '');
   // the region came from an INVITE, so it is the host's and not ours to change
   const [regionLocked, setRegionLocked] = useState(!!autoJoinRegion);
-  const [name, setName] = useState(settings.spec.teamName || 'Player');
+  const [name, setName] = useState((displayName ?? settings.spec.teamName) || 'Player');
   const [players, setPlayers] = useState<LobbyPlayer[]>([]);
   const [hostId, setHostId] = useState('');
   const [myId, setMyId] = useState('');
@@ -117,6 +158,7 @@ export function Lobby({
 
   const lobbyRef = useRef<LobbyClient | null>(null);
   const startedRef = useRef(false);
+  const nameEditedRef = useRef(false);
 
   // tear down on unmount unless a match started (which hands the socket onward)
   useEffect(() => {
@@ -126,6 +168,13 @@ export function Lobby({
   }, []);
 
   useEscape(onCancel); // Esc leaves the lobby, same as ← Back
+
+  // The profile request may resolve after this screen mounts. Adopt the saved
+  // DSIM display name while the player is still choosing a room, but never erase
+  // a deliberate room-only name edit or mutate identity after joining.
+  useEffect(() => {
+    if (displayName && phase === 'entry' && !nameEditedRef.current) setName(displayName);
+  }, [displayName, phase]);
 
   const me = players.find((p) => p.clientId === myId) ?? null;
   const isHost = myId !== '' && myId === hostId;
@@ -315,6 +364,16 @@ export function Lobby({
   // settings with the category forced to the locked role (so the helpers write
   // memory/library into the right bucket even though the tabs are hidden)
   const sCat: GS = { ...settings, startCat: startRole ?? settings.startCat };
+  const roomInviteTarget: RoomInviteTarget | undefined =
+    phase === 'room'
+      ? {
+          code,
+          game: config.game ?? settings.game,
+          kind: config.kind,
+          record: config.record,
+          region: region || null,
+        }
+      : undefined;
 
   // A locked ROLE forces its category: if my active start is in the OTHER category
   // (carried in from single-player settings, or an old role before a swap/rejoin),
@@ -330,6 +389,13 @@ export function Lobby({
 
   if (phase === 'entry' || phase === 'connecting' || phase === 'error') {
     return (
+      <RoomFriendsLayout
+        signedIn={signedIn}
+        myUserId={myUserId}
+        onOpenProfile={onOpenProfile}
+        onJoinInvite={onJoinInvite}
+        onSpectate={onSpectate}
+      >
       <div className="ds-console">
         <div className="ds-console-in narrow">
           <div className="ds-head">
@@ -340,8 +406,6 @@ export function Lobby({
               <Logo size={24} />
               {APP_NAME}
             </span>
-            <span className="ds-head-spacer" />
-            <InviteFlyout signedIn={signedIn} onJoinRoom={join} onAcceptChallenge={onAcceptChallenge} />
           </div>
           <div className="ds-title">
             <h1>
@@ -358,7 +422,10 @@ export function Lobby({
               <input
                 className="ds-input"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  nameEditedRef.current = true;
+                  setName(e.target.value);
+                }}
                 maxLength={20}
               />
             </label>
@@ -428,6 +495,7 @@ export function Lobby({
           </div>
         </div>
       </div>
+      </RoomFriendsLayout>
     );
   }
 
@@ -437,6 +505,14 @@ export function Lobby({
   // every edit is mirrored to the server as you make it.
   if (building) {
     return (
+      <RoomFriendsLayout
+        signedIn={signedIn}
+        myUserId={myUserId}
+        onOpenProfile={onOpenProfile}
+        onJoinInvite={onJoinInvite}
+        onSpectate={onSpectate}
+        room={roomInviteTarget}
+      >
       <div className="ds-console">
         <div className="ds-console-in">
           <div className="ds-head">
@@ -456,10 +532,19 @@ export function Lobby({
           </div>
         </div>
       </div>
+      </RoomFriendsLayout>
     );
   }
 
   return (
+    <RoomFriendsLayout
+      signedIn={signedIn}
+      myUserId={myUserId}
+      onOpenProfile={onOpenProfile}
+      onJoinInvite={onJoinInvite}
+      onSpectate={onSpectate}
+      room={roomInviteTarget}
+    >
     <div className="ds-console">
       <div className="ds-console-in">
         <div className="ds-head">
@@ -470,20 +555,6 @@ export function Lobby({
             <Logo size={24} />
             {APP_NAME}
           </span>
-          <span className="ds-head-spacer" />
-          <InviteFlyout
-            signedIn={signedIn}
-            room={{
-              code,
-              config: { kind: config.kind, record: config.record, game: config.game ?? settings.game },
-              // WHERE this room actually is. Inviting from in here used to stamp no region at
-              // all, so the friend who accepted was routed to their own nearest machine — the
-              // same split, arrived at from the other side.
-              region: region || null,
-            }}
-            onJoinRoom={join}
-            onAcceptChallenge={onAcceptChallenge}
-          />
         </div>
         <div className="ds-title">
           <h1>
@@ -684,5 +755,6 @@ export function Lobby({
         )}
       </div>
     </div>
+    </RoomFriendsLayout>
   );
 }

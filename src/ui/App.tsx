@@ -899,8 +899,8 @@ export function App() {
   // Rich-presence heartbeat for the FULL-SCREEN surfaces (game / solo record /
   // ranked queue) that render outside AppShell's FriendsProvider — so friends see
   // "In a match" instead of the caller silently dropping to offline mid-game. The
-  // shell screens are heartbeated by the provider's own poll; lobby/duo-record by
-  // InviteFlyout. Fire-and-forget: it only records presence, never renders.
+  // shell and room screens are heartbeated by their FriendsProvider. Fire-and-forget:
+  // it only records presence, never renders.
   useEffect(() => {
     if (!signedIn) return;
     const full = screen === 'game' || screen === 'record' || screen === 'matchmaking';
@@ -931,6 +931,23 @@ export function App() {
     </>
   );
 
+  // Lobby screens bypass AppShell, so they need their own single friends store.
+  // Keeping it here means the persistent room panel has the same polling,
+  // challenge, and invitation semantics as the menu-shell panel.
+  const roomScreen = (node: JSX.Element): JSX.Element =>
+    fullScreen(
+      <FriendsProvider
+        signedIn={signedIn}
+        activity="lobby"
+        game={settings.game}
+        sound={settings.audio.volume.master > 0}
+        onHostRoom={hostForChallenge}
+        onQueueChallenge={startChallenge}
+      >
+        {node}
+      </FriendsProvider>,
+    );
+
   // full-screen surfaces (outside the shell)
   if (screen === 'game') {
     return fullScreen(
@@ -955,7 +972,7 @@ export function App() {
   }
   if (screen === 'lobby') {
     const auto = pendingAutoJoin?.config.kind === 'versus' ? pendingAutoJoin : undefined;
-    return fullScreen(
+    return roomScreen(
       <Lobby
         settings={settings}
         onSettingsChange={update}
@@ -963,10 +980,14 @@ export function App() {
         onCancel={() => navigate('modes')}
         config={auto?.config}
         signedIn={signedIn}
+        displayName={handle}
+        myUserId={accountUserId}
+        onOpenProfile={openProfile}
+        onJoinInvite={onJoinInvite}
+        onSpectate={spectateRoom}
         autoJoin={auto?.room}
         autoJoinRegion={auto?.region}
         onAutoJoinConsumed={() => setPendingAutoJoin(null)}
-        onAcceptChallenge={onJoinInvite}
       />
     );
   }
@@ -982,7 +1003,7 @@ export function App() {
   }
   if (screen === 'duorecord') {
     const auto = pendingAutoJoin?.config.kind === 'record' ? pendingAutoJoin : undefined;
-    return fullScreen(
+    return roomScreen(
       <Lobby
         settings={settings}
         onSettingsChange={update}
@@ -990,10 +1011,14 @@ export function App() {
         onStart={(s) => beginSession(s, 'record', true)}
         onCancel={() => navigate('modes')}
         signedIn={signedIn}
+        displayName={handle}
+        myUserId={accountUserId}
+        onOpenProfile={openProfile}
+        onJoinInvite={onJoinInvite}
+        onSpectate={spectateRoom}
         autoJoin={auto?.room}
         autoJoinRegion={auto?.region}
         onAutoJoinConsumed={() => setPendingAutoJoin(null)}
-        onAcceptChallenge={onJoinInvite}
       />
     );
   }
