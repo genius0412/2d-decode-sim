@@ -3854,7 +3854,12 @@ function queueTenth(w: World): void {
     let worst = 0;
     for (let i = 0; i < Math.round(4 / SIM_DT); i++) {
       step(w, SIM_DT, new Map([[0, cmd({})]])); // nothing pressed
-      worst = Math.max(worst, Math.abs(r.heading - h0));
+      // WRAPPED. `heading` lives in (-pi, pi], so a chassis resting a hair either side of the
+      // boundary reads as a full revolution the moment it crosses — this check reported an
+      // idle robot spinning 359.6deg while its angular velocity was 0.001 rad/s and the
+      // square-up was contributing no torque at all (press was 0 at every contact). The spin
+      // was arithmetic, not physics.
+      worst = Math.max(worst, Math.abs(wrapAngle(r.heading - h0)));
     }
     void label;
     return (worst * 180) / Math.PI;
@@ -3881,7 +3886,7 @@ function queueTenth(w: World): void {
   check(
     'a robot resting against something does not turn while the driver does nothing',
     turns.every((t) => t < 1),
-    `worst idle turn over four resting poses: ${Math.max(...turns).toFixed(1)}deg (the gate turned 359.6 on its own)`,
+    `worst idle turn over four resting poses: ${Math.max(...turns).toFixed(2)}deg (the gate turned 359.6 on its own)`,
   );
 }
 
