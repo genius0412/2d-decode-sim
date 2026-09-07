@@ -14,6 +14,7 @@ import {
 import type { Rect } from './field';
 import {
   closestPointOnRobot,
+  driveIntent,
   robotCorners,
   robotExtents,
   robotIntersectsRect,
@@ -22,8 +23,6 @@ import {
 import { pushingGate, ZERO_CMD } from './goal';
 import { awardCard, awardFoul } from './scoring';
 import { hyp, rot } from '../math';
-import { viewAngleOf } from './field';
-import { activeDrive } from './drivetrain';
 
 /**
  * DECODE penalty engine (Competition Manual Section 11). Pure and
@@ -911,18 +910,10 @@ function pinnedAgainstWall(pinner: RobotState, pinned: RobotState): boolean {
  */
 function attemptDir(r: RobotState, cmd: RobotCommand | undefined): Vec2 | null {
   if (!cmd) return null;
-  const tank = activeDrive(r.spec, r.butterflyTank).p.saturation === 'tank';
-  // a FIELD-CENTRIC stick is already in the driver frame, so it only needs the camera undone;
-  // a robot-centric one is rotated by the heading, exactly as `updateRobot` does it
-  const world =
-    !tank && r.fieldCentric
-      ? rot({ x: cmd.driveX, y: cmd.driveY }, -viewAngleOf(r.alliance))
-      : rot(
-          tank
-            ? { x: ((cmd.leftDrive ?? 0) + (cmd.rightDrive ?? 0)) / 2, y: 0 }
-            : { x: cmd.driveY, y: -cmd.driveX },
-          r.heading,
-        );
+  // `driveIntent` (physics.ts) is the one decode of a stick into a world-frame heading -
+  // tank's two side-drives, a field-centric stick with only the camera undone, exactly as
+  // `updateRobot` reads them. This rule needs only the DIRECTION.
+  const world = driveIntent(r, cmd);
   const m = hyp(world.x, world.y);
   return m > 0.1 ? { x: world.x / m, y: world.y / m } : null;
 }

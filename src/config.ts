@@ -117,7 +117,17 @@ export const BALANCE_VERSION = 4; // 2: real-motor drivetrain retune (torque–s
  *      SIDEWAYS exit — so a robot held flat against a wall and strafing to get out was ruled
  *      un-pinned however stuck it was, and billed NOTHING where the pre-rewrite code billed a
  *      MINOR. It now tests the VICTIM's intent instead (is it driving into the trap, or trying
- *      to leave), which is what the rule's "transitive ... against a FIELD element" describes.
+ *      to leave), which is what the rule's "transitive ... against a FIELD element" describes;
+ *    · BUMPER FRICTION IS BOUNDED (`capDrag`). The sim pushes by SETTING VELOCITY, so Rapier's
+ *      normal impulse is whatever a drive-in costs and its Coulomb friction was a fraction of
+ *      an unbounded number — a tank commanding nothing but straight forward was carried 58in
+ *      sideways by a mecanum strafing out from under it, 101% of the victim's own travel. The
+ *      tangential half of a contact is now capped by what the other robot can actually press
+ *      with and by the tyres it is pulling against, and a sideways exit along an open wall is
+ *      a real escape again (which is why the G422 wall-pin check is now the CORNER);
+ *    · AN UNPOWERED ROBOT NO LONGER BRAKES AGAINST A SHOVE at full stopping authority
+ *      (`MOTOR_SHOVE_BRAKE`) — three seconds of full throttle moved an idle equal chassis
+ *      15.5in, now 95in.
  */
 export const SIM_VERSION = 2;
 
@@ -889,6 +899,28 @@ export const MOTOR_MIN_TORQUE_FRAC = 0.06;
 /** braking torque multiplier: reversing / slowing pulls harder than peak drive
  * accel (motor back-EMF + reverse), so stops feel crisp. */
 export const MOTOR_BRAKE_MULT = 1.4;
+/**
+ * ...AND YOU CANNOT BRAKE AWAY SOMEBODY ELSE'S SHOVE, which is a different thing entirely.
+ *
+ * `MOTOR_BRAKE_MULT` is a robot stopping ITSELF: the driver lets go, the motors are driven
+ * against the robot's own momentum, and 1.4x peak drive accel is the honest number for that.
+ * Applied to a robot being PUSHED it says something else — that an unpowered chassis resists
+ * an opponent HARDER than that opponent can drive — and it made pushing an idle robot nearly
+ * impossible: measured on two identical tanks, three seconds of full throttle moved the
+ * victim 15.5in, at 5.1 in/s against a 89 in/s free speed. Reported as "pushing another robot
+ * when the other robot is not powered is super hard when it is usually not TOO hard".
+ *
+ * What actually resists there is back-EMF through a shorted motor plus rolling and gearbox
+ * drag — the wheels ROLL, they are not held. So a robot with NO drive command that is in
+ * contact with another robot brakes at this fraction instead. It is still real resistance
+ * (about 0.6x drive accel, so a push is slow work) but the pusher gets somewhere.
+ *
+ * ⚠️ It applies ONLY to a robot commanding nothing AND touching another robot. A driver
+ * actively driving back into a shove keeps full authority — a stalemate between two equal
+ * chassis stays a stalemate — and solo driving is untouched, so stopping distance in ordinary
+ * play is bit-for-bit what it was.
+ */
+export const MOTOR_SHOVE_BRAKE = 0.6;
 
 // --- PUSHING POWER ----------------------------------------------------------
 /**

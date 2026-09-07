@@ -248,9 +248,34 @@ export function updateRobot(world: World, r: RobotState, cmd: RobotCommand, dt: 
   // motor torque–speed integration in the robot frame: accel falls off toward the
   // free speed (dp.maxSpeed / dp.maxTurn) like a real DC motor (see motorStep).
   const velRobot = rot(r.vel, -r.heading);
+  /**
+   * BEING SHOVED IS NOT THE SAME AS STOPPING YOURSELF.
+   *
+   * A robot commanding nothing while an opponent is leaning on it is not braking, it is being
+   * back-driven: the wheels roll and what resists is back-EMF plus rolling drag, not the full
+   * 1.4x stopping authority `MOTOR_BRAKE_MULT` gives a driver hauling their own momentum down.
+   * Applied to the shove, that number said an idle chassis resists harder than any opponent
+   * can drive, and pushing one was nearly impossible (see `MOTOR_SHOVE_BRAKE`).
+   *
+   * The contact test reads LAST tick's `rrContacts` — this runs before the solve that records
+   * them, and `world.ts` clears them just before that solve for exactly this reason. One tick
+   * of latency on "am I being leaned on" is nothing next to the 0.2s a push takes to build.
+   */
+  const unpowered = targetFwd === 0 && targetStrafe === 0;
+  const shoved =
+    unpowered && world.rrContacts.some((c) => c.a === r.id || c.b === r.id);
   // translation steps as a VECTOR so the accel budget is isotropic — driving diagonally
   // accelerates at the same rate as straight (no √2 diagonal-speed advantage).
-  const stepped = motorStepVec(velRobot.x, velRobot.y, targetFwd, targetStrafe, dp.accel, dp.maxSpeed, dt);
+  const stepped = motorStepVec(
+    velRobot.x,
+    velRobot.y,
+    targetFwd,
+    targetStrafe,
+    dp.accel,
+    dp.maxSpeed,
+    dt,
+    shoved ? C.MOTOR_SHOVE_BRAKE : C.MOTOR_BRAKE_MULT,
+  );
   r.vel = rot(stepped, r.heading);
   r.angVel = motorStep(r.angVel, targetOmega, dp.turnAccel, dp.maxTurn, dt);
 

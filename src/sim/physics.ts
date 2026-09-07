@@ -1,8 +1,8 @@
-import type { Alliance, Artifact, RobotState, Vec2, World } from '../types';
+import type { Alliance, Artifact, RobotCommand, RobotState, Vec2, World } from '../types';
 import * as C from '../config';
-import { classifierRect, footprintExtents, gateHandleRect, goalFaceNormal, goalLineValue, type Rect } from './field';
+import { classifierRect, footprintExtents, gateHandleRect, goalFaceNormal, goalLineValue, viewAngleOf, type Rect } from './field';
 import { dot, rot, clamp, hyp, datan2, wrapAngle } from '../math';
-import { driveParams, shoveMass } from './drivetrain';
+import { activeDrive, driveParams, pushForce, shoveMass } from './drivetrain';
 
 const ALLIANCES: Alliance[] = ['red', 'blue'];
 
@@ -571,10 +571,13 @@ type ContactAcc = {
   deltas: Map<number, TurnDelta[]>;
   dw: Map<number, number>;
   ext: Map<number, Vec2>;
+  /** velocity to GIVE BACK: the part of the solve's sideways drag the contact could not
+   *  actually have supplied, or the tyres would have refused. See `capDrag`. */
+  lin: Map<number, Vec2>;
 };
 
 function newAcc(): ContactAcc {
-  return { deltas: new Map(), dw: new Map(), ext: new Map() };
+  return { deltas: new Map(), dw: new Map(), ext: new Map(), lin: new Map() };
 }
 
 /** this robot's delta list, created on demand — the static pass appends to the same array
@@ -594,6 +597,16 @@ function accDelta(acc: ContactAcc, id: number, d: TurnDelta): void {
 
 function accSpin(acc: ContactAcc, id: number, dw: number): void {
   acc.dw.set(id, (acc.dw.get(id) ?? 0) + dw);
+}
+
+function accSlip(acc: ContactAcc, id: number, dx: number, dy: number): void {
+  const v = acc.lin.get(id);
+  if (v) {
+    v.x += dx;
+    v.y += dy;
+  } else {
+    acc.lin.set(id, { x: dx, y: dy });
+  }
 }
 
 function accPush(acc: ContactAcc, id: number, nx: number, ny: number, press: number): void {
@@ -620,10 +633,27 @@ function accPush(acc: ContactAcc, id: number, nx: number, ny: number, press: num
  * the default chassis) that only a violent hit reaches, and the wall checks pin the peak a
  * contact may produce.
  */
-function applyAcc(world: World, acc: ContactAcc, dt: number): void {
+function applyAcc(world: World, acc: ContactAcc, preVels: Map<number, Vec2>, dt: number): void {
   for (const r of world.robots) {
     // a robot on an auto path has its pose written by the path, not by contact
     if (!r.autoPathActive) {
+      /**
+       * GIVE BACK the sideways drag the contact could not have supplied (`capDrag`).
+       *
+       * Clamped to the whole velocity change the solve made, because two contacts on one
+       * chassis each propose their own give-back along their own tangent and the sum could
+       * otherwise push it past where it started the tick — a contact may cancel a drag, never
+       * reverse it into a shove of its own.
+       */
+      const back = acc.lin.get(r.id);
+      if (back) {
+        const pv = preVels.get(r.id);
+        const dv = pv ? hyp(r.vel.x - pv.x, r.vel.y - pv.y) : Infinity;
+        const mag = hyp(back.x, back.y);
+        const k = mag > dv ? dv / mag : 1;
+        r.vel.x += back.x * k;
+        r.vel.y += back.y * k;
+      }
       const dw = acc.dw.get(r.id);
       if (dw) {
         const maxTurn = driveParams(r.spec, r.butterflyTank).maxTurn;
@@ -1011,6 +1041,8 @@ function squareUpPair(
   a: RobotState,
   b: RobotState,
   preVels: Map<number, Vec2>,
+  cmds: Map<number, RobotCommand> | undefined,
+  dt: number,
   out: { a: number; b: number }[],
   acc: ContactAcc,
 ): void {
@@ -1071,6 +1103,11 @@ function squareUpPair(
   const ny = by / bl;
 
   out.push(a.id < b.id ? { a: a.id, b: b.id } : { a: b.id, b: a.id });
+
+  // ...and BEFORE the press gate, because the drag this bounds is worst in exactly the case
+  // that gate throws out: a pusher leaning on a victim who is strafing away from it.
+  capDrag(a, b, preVels.get(a.id), cmds?.get(a.id), nx, ny, dt, acc);
+  capDrag(b, a, preVels.get(b.id), cmds?.get(b.id), nx, ny, dt, acc);
 
   const contacts: { c: Vec2; d: number }[] = [];
   for (const c of cb) {
@@ -1280,11 +1317,121 @@ function squareUpPair(
   accSpin(acc, b.id, ((rbx * -jy - rby * -jx) / ib) * C.CONTACT_PAIR_SPIN);
 }
 
+/**
+ * WHERE A ROBOT IS ASKING TO GO, in the WORLD frame, as a fraction of full stick.
+ *
+ * The same decode `updateRobot` does - tank reads its two side-drives, everything else the
+ * stick, and a field-centric stick only has the camera undone - kept in ONE place because two
+ * consumers now ask the question and a second copy would drift from the drive model. G422's
+ * "attempting to move" normalizes this; `capDrag` uses its magnitude.
+ */
+export function driveIntent(r: RobotState, cmd: RobotCommand | undefined): Vec2 {
+  if (!cmd) return { x: 0, y: 0 };
+  const tank = activeDrive(r.spec, r.butterflyTank).p.saturation === 'tank';
+  return !tank && r.fieldCentric
+    ? rot({ x: cmd.driveX, y: cmd.driveY }, -viewAngleOf(r.alliance))
+    : rot(
+        tank
+          ? { x: ((cmd.leftDrive ?? 0) + (cmd.rightDrive ?? 0)) / 2, y: 0 }
+          : { x: cmd.driveY, y: -cmd.driveX },
+        r.heading,
+      );
+}
+
+/**
+ * A CONTACT CANNOT DRAG YOU SIDEWAYS HARDER THAN FRICTION AND YOUR OWN TYRES ALLOW.
+ *
+ * Reported as "when two robots are pushing into each other, and one of them tries to escape
+ * by strafing, the other robot that is strictly pushing is almost stuck and they strafe
+ * together — friction does NOT work like that". Measured before this: a TANK commanding
+ * nothing but straight forward was carried 58in sideways in three seconds, at up to 50 in/s,
+ * by a mecanum strafing out from under it — 101% of the victim's own sideways travel. A tank
+ * cannot strafe at all; its treads scrub sideways at nearly twice their drive traction.
+ *
+ * The cause is that this sim pushes by SETTING VELOCITY, so the normal impulse Rapier needs to
+ * resolve a drive-in is whatever it takes — and its Coulomb friction is a fraction of THAT.
+ * A number with no upper bound multiplied by 0.7 is still unbounded, which is how a bumper
+ * ended up gripping like a clamp. Both real bounds are missing, and both are cheap:
+ *
+ *  · WHAT THE CONTACT CAN SUPPLY — `CONTACT_MU` times a normal load no larger than the other
+ *    robot's whole push force. It cannot press harder than it can drive.
+ *  · WHAT THE TYRES REFUSE — `LATERAL_GRIP` (already the drivetrain's sideways traction as a
+ *    fraction of its drive ceiling) in the direction the drag pulls, forward being full drive
+ *    traction. This is the same ellipse the turn-carve in `updateRobot` uses.
+ *
+ * Whatever is left over is what the solve is allowed to have imparted this tick; the rest is
+ * handed back in `applyAcc`. For two equal tanks the supply (0.8x) is far under the resist
+ * (1.8x) and the drag is ZERO — treads do not get pulled sideways by a bumper. For mecanum on
+ * mecanum a little gets through, which is right: rollers slip.
+ *
+ * ONLY THE TANGENTIAL PART. The normal component is the shove itself and is untouched, so a
+ * T-bone still moves you, a ram still transfers momentum, and the flank-hit SPIN — which comes
+ * from `J_t` in the impulse below, not from this — is unchanged.
+ */
+function capDrag(
+  self: RobotState,
+  other: RobotState,
+  preVel: Vec2 | undefined,
+  cmd: RobotCommand | undefined,
+  nx: number,
+  ny: number,
+  dt: number,
+  acc: ContactAcc,
+): void {
+  if (!preVel || self.autoPathActive) return;
+  const dvx = self.vel.x - preVel.x;
+  const dvy = self.vel.y - preVel.y;
+  const dn = dvx * nx + dvy * ny;
+  let tx = dvx - dn * nx;
+  let ty = dvy - dn * ny;
+  const mag = hyp(tx, ty);
+  if (mag < 1e-9) return;
+  tx /= mag;
+  ty /= mag;
+  const supply =
+    (C.CONTACT_MU * pushForce(other.spec, other.butterflyTank, other.powerDraw)) /
+    shoveMass(self.spec, self.butterflyTank, self.powerDraw);
+  // the drag direction in the ROBOT frame: +x forward (full drive traction), +y sideways
+  // (this drivetrain's lateral grip) — a unit vector, so this is the traction ellipse
+  const lt = rot({ x: tx, y: ty }, -self.heading);
+  const gLat = C.LATERAL_GRIP[self.spec.drivetrain] ?? 0.5;
+  const grip = hyp(lt.x, lt.y * gLat);
+  /**
+   * ...AND TRACTION SPENT DRIVING IS NOT AVAILABLE TO REFUSE ANYTHING. The tyres have one
+   * budget, and a robot commanding motion along this axis has already spent it - its own
+   * drive model is where that traction is accounted, so counting it again here would have a
+   * robot pushing through a friction that is simultaneously holding it.
+   *
+   * It is the whole difference between the two robots in a wall pin. The HOLDER commands
+   * straight forward and is asked to slide sideways, so its treads are idle in that axis and
+   * refuse the drag. The VICTIM is strafing for the gap, so along this axis it has nothing
+   * spare: the friction holding it against the wall applies in full and the pin stands,
+   * exactly as it did before this cap existed. Without the term a wall pin evaporates - the
+   * victim walks 54.7in out of one, and `npm test` says so.
+   */
+  const intent = driveIntent(self, cmd);
+  const along = Math.min(1, Math.abs(intent.x * tx + intent.y * ty));
+  const resist =
+    grip *
+    driveParams(self.spec, self.butterflyTank).accel *
+    (1 - self.powerDraw) *
+    (1 - along);
+  const cap = Math.max(0, supply - resist) * dt;
+  if (mag <= cap) return;
+  accSlip(acc, self.id, -tx * (mag - cap), -ty * (mag - cap));
+}
+
 /** every robot-robot pair, in a stable id order (determinism). Shared by both games. */
-function squareUpPairs(world: World, preVels: Map<number, Vec2>, acc: ContactAcc): void {
+function squareUpPairs(
+  world: World,
+  preVels: Map<number, Vec2>,
+  cmds: Map<number, RobotCommand> | undefined,
+  dt: number,
+  acc: ContactAcc,
+): void {
   for (let i = 0; i < world.robots.length; i++) {
     for (let j = i + 1; j < world.robots.length; j++) {
-      squareUpPair(world.robots[i], world.robots[j], preVels, world.rrContacts, acc);
+      squareUpPair(world.robots[i], world.robots[j], preVels, cmds, dt, world.rrContacts, acc);
     }
   }
 }
@@ -1294,9 +1441,14 @@ function squareUpPairs(world: World, preVels: Map<number, Vec2>, acc: ContactAcc
  * `preVels` are the pre-solve velocities from solveRobots. Pairs run FIRST but only
  * accumulate, so the statics work out their geometry against the pose the solve left rather
  * than one an opponent has already turned — see `ContactAcc`. */
-export function squareUpRobots(world: World, preVels: Map<number, Vec2>, dt: number): void {
+export function squareUpRobots(
+  world: World,
+  preVels: Map<number, Vec2>,
+  dt: number,
+  cmds?: Map<number, RobotCommand>,
+): void {
   const acc = newAcc();
-  squareUpPairs(world, preVels, acc);
+  squareUpPairs(world, preVels, cmds, dt, acc);
   for (const r of world.robots) {
     // A ROBOT ON AN AUTO PATH IS SKIPPED HERE, not just in `applyAcc`. Everything the static
     // pass produces is routed through the accumulator and discarded for a path robot — except
@@ -1309,7 +1461,7 @@ export function squareUpRobots(world: World, preVels: Map<number, Vec2>, dt: num
     if (r.autoPathActive) continue;
     squareUpStatics(r, preVels.get(r.id), dt, world, accList(acc, r.id), acc.ext.get(r.id));
   }
-  applyAcc(world, acc, dt);
+  applyAcc(world, acc, preVels, dt);
 }
 
 /** post-Rapier square-up for a game whose only statics are perimeter WALLS (Chain
@@ -1322,14 +1474,15 @@ export function squareUpRobotsWalls(
   halfX: number,
   halfY: number,
   dt: number,
+  cmds?: Map<number, RobotCommand>,
 ): void {
   const acc = newAcc();
-  squareUpPairs(world, preVels, acc);
+  squareUpPairs(world, preVels, cmds, dt, acc);
   for (const r of world.robots) {
     if (r.autoPathActive) continue; // the path owns the pose — see squareUpRobots
     squareUpWalls(r, preVels.get(r.id), halfX, halfY, accList(acc, r.id), acc.ext.get(r.id));
   }
-  applyAcc(world, acc, dt);
+  applyAcc(world, acc, preVels, dt);
 }
 
 // ------------------------------------------------------------ ball steps ----

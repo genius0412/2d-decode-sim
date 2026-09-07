@@ -48,7 +48,6 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   world.tick++;
 
   const enabled = robotsEnabled(world);
-  world.rrContacts.length = 0;
 
   // Create a map for the actual commands being executed by each robot this tick
   const actualCommands = new Map<number, RobotCommand>();
@@ -132,8 +131,13 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
     red: gateColliderPos(world, dt, actualCommands, 'red'),
     blue: gateColliderPos(world, dt, actualCommands, 'blue'),
   };
+  // CLEARED HERE, NOT AT THE TOP OF THE TICK. The drive phase above reads `rrContacts` to
+  // tell a robot being LEANED ON from one stopping itself (see `MOTOR_SHOVE_BRAKE`), and it
+  // runs before the pass that records them — so the list has to survive the drive phase and
+  // carry last tick's contacts into it. Nothing between the top of `step` and here reads it.
+  world.rrContacts.length = 0;
   const preVels = solveRobots(world, dt, decodeColliders, gateCol);
-  squareUpRobots(world, preVels, dt);
+  squareUpRobots(world, preVels, dt, actualCommands);
 
   // ---- robots (actions: intake/fire/turret) ------------------------------
   // passive dummies never act — skip the aim solve / flywheel / fire / intake work

@@ -166,6 +166,9 @@ export function motorStepVec(
   aStall: number,
   vFree: number,
   dt: number,
+  /** braking authority, as a multiple of `aStall`. Defaults to a robot stopping ITSELF;
+   *  a robot being SHOVED passes `MOTOR_SHOVE_BRAKE` instead — see that constant. */
+  brakeMult: number = C.MOTOR_BRAKE_MULT,
 ): { x: number; y: number } {
   const ex = tx - vx;
   const ey = ty - vy;
@@ -175,7 +178,7 @@ export function motorStepVec(
   const braking = ex * vx + ey * vy < 0; // the demanded change opposes current motion
   let frac: number;
   if (braking) {
-    frac = C.MOTOR_BRAKE_MULT;
+    frac = brakeMult;
   } else {
     const s = vFree > 0 ? Math.min(speed / vFree, 1) : 0;
     frac = Math.max(1 - C.MOTOR_TORQUE_CURVE * s, C.MOTOR_MIN_TORQUE_FRAC);

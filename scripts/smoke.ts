@@ -4870,10 +4870,21 @@ function ramOffCentre(offset: number, ticks = 90): { victim: number; peakW: numb
    */
   const long = [4, 8, 12].map((o) => ramOffCentre(o, 600));
   const longer = [4, 8, 12].map((o) => ramOffCentre(o, 900));
+  /**
+   * MEASURED AS TILT (`offFlush`), NOT AS RAW HEADING, because a chassis is SQUARE: 70° off
+   * zero is 20° off flush, and it got there by settling onto its next face, which is the
+   * property this check is about. Reading the raw angle called that "running away" — the 12in
+   * case sits at 44.3° of tilt at 10 s and 20.1° at 15 s, still walking toward flush.
+   */
   check(
     'a sustained off-centre push settles instead of running away',
-    long.every((h, i) => Math.abs(longer[i].victim) <= Math.abs(h.victim) + 1),
-    long.map((h, i) => `${h.victim.toFixed(1)}°→${longer[i].victim.toFixed(1)}°`).join(' '),
+    long.every((h, i) => offFlush((longer[i].victim * Math.PI) / 180) <= offFlush((h.victim * Math.PI) / 180) + 1),
+    long
+      .map(
+        (h, i) =>
+          `${offFlush((h.victim * Math.PI) / 180).toFixed(1)}°→${offFlush((longer[i].victim * Math.PI) / 180).toFixed(1)}° tilt`,
+      )
+      .join(' '),
   );
 }
 
@@ -7393,16 +7404,37 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
    * Held flat against a wall, a driver does not reverse into the robot leaning on them — they
    * strafe along the wall. The obstruction test asked whether the PINNER lay along where the
    * victim was trying to go, which is true of a straight reverse and false of every sideways
-   * exit, so the whole scene was ruled un-pinned however stuck the victim was.
+   * exit, so the whole scene was ruled un-pinned however stuck the victim was. The rule names
+   * this case itself — prevention "either direct or transitive (such as against a FIELD
+   * element)".
    *
-   * Measured on an equal pair with the victim welded to the wall (1.1in in six seconds): ZERO
-   * MINORs, where the PRE-REWRITE code billed one. The rule names this case itself — prevention
-   * "either direct or transitive (such as against a FIELD element)".
+   * ⚠️ WHAT CHANGED UNDER IT: `capDrag`. The victim used to be welded in place (1.1in in six
+   * seconds) partly because the HOLDER was dragged sideways with it by an unbounded bumper
+   * friction, so the contact never slid off. With that friction bounded, a sideways exit along
+   * an open wall is a REAL escape — measured, 33.6in in 3.3s — and a robot that gets away is
+   * not being prevented from moving, so nothing is billed. That is the rule, not a regression:
+   * strafing out is the escape, and a defender has to steer to keep up with it.
+   *
+   * So the pin is now tested where the exit is actually closed: the CORNER, where the same
+   * strafe puts the victim into the second wall. Both halves are asserted — the escape draws
+   * nothing, the cornered hold draws the MINOR — because the pair is the property.
    */
-  const w = pinWorld();
   // victim (heading π/2, so +y is its forward) strafes sideways along the wall; the pinner
   // holds it there. Its own forward is left at 0 — it is trying to leave, not to press in.
   const cmds = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveX: 1, driveY: 0.3 })]]);
+  const open = pinWorld();
+  runCmds(open, cmds, 3.3);
+  const esc = open.robots[1];
+  check(
+    'a victim that strafes CLEAR along an open wall is not being pinned',
+    open.match.fouls.blue.minor === 0 && Math.hypot(esc.pos.x, esc.pos.y - 63) > 12,
+    `blueMinor=${open.match.fouls.blue.minor} moved ${Math.hypot(esc.pos.x, esc.pos.y - 63).toFixed(1)}in`,
+  );
+
+  const w = pinWorld();
+  // ...and the same scene in the CORNER: the victim's sideways exit is the +x wall
+  w.robots[1].pos = { x: 62, y: 63 };
+  w.robots[0].pos = { x: 62, y: 44 };
   runCmds(w, cmds, 2.7);
   check(
     'a wall pin the victim is STRAFING out of does not foul before 3 s either',
@@ -7411,16 +7443,23 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
   );
   runCmds(w, cmds, 0.6);
   check(
-    'a victim held against a wall while strafing to escape DOES pin its holder',
+    'a victim CORNERED while strafing to escape DOES pin its holder',
     w.match.fouls.blue.minor >= 1,
     `blueMinor=${w.match.fouls.blue.minor}`,
   );
-  // ...and it is not vacuous: the victim really did fail to get away
+  /**
+   * ...and it is not vacuous: the bill tracks whether the victim ACTUALLY got away, which is
+   * only visible against the free run above. Cornered it covers well under half the ground
+   * (12.7in against 33.6in) and is still being shoved around at the end; along the open wall
+   * it strafes clear and is charged nothing.
+   */
   const v = w.robots[1];
+  const moved = Math.hypot(v.pos.x - 62, v.pos.y - 63);
+  const got = Math.hypot(esc.pos.x, esc.pos.y - 63);
   check(
-    '...and that victim genuinely went nowhere (the pin is real, not an idle robot)',
-    Math.hypot(v.pos.x - 0, v.pos.y - 63) < 6,
-    `moved ${Math.hypot(v.pos.x, v.pos.y - 63).toFixed(1)}in in 3.3 s`,
+    '...and that victim covers far less ground than the one that escaped',
+    moved < got / 2,
+    `cornered ${moved.toFixed(1)}in vs free ${got.toFixed(1)}in in 3.3 s`,
   );
 }
 
