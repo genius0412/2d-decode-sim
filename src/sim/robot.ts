@@ -80,6 +80,9 @@ export interface DriveWrench {
   wantX: number;
   wantY: number;
   wantW: number;
+  /** how much SIDEWAYS velocity a contact may impart in one tick before the tyres refuse it:
+   *  `LATERAL_GRIP` times this drivetrain's traction ceiling. See `solveRobots`. */
+  latCap: number;
 }
 
 export function updateRobot(
@@ -542,6 +545,7 @@ export function updateRobot(
     wantX: r.vel.x + (fx / m) * dt,
     wantY: r.vel.y + (fy / m) * dt,
     wantW: r.angVel + (tau / inertia) * dt,
+    latCap: grip * tractionAccel * dt,
   };
 }
 

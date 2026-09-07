@@ -324,8 +324,35 @@ export function solveRobots(
      * ABSOLUTE speed and not a multiple of this robot's own (see `PHYS_MAX_ROBOT_SPEED`; the
      * per-robot version fired on ordinary shoves of a slow chassis by a fast one).
      */
-    const vx = v.x;
-    const vy = v.y;
+    /**
+     * A CONTACT MAY NOT SLING YOU SIDEWAYS PAST WHAT THE TYRES HOLD — IN THE SAME TICK.
+     *
+     * The per-wheel traction answers a tick late, which is right for a sustained drag and
+     * wrong for an impact: driving into the gate structure at 30 in/s came out at 10.7 in/s
+     * pointing somewhere else, and the wheels then spent a tenth of a second clawing the
+     * sideways half back. Reported as a surge of strafing speed at the gate, and the old model
+     * never showed it because it re-imposed the commanded velocity every tick, so no impact
+     * could redirect anybody.
+     *
+     * ONLY THE SIDEWAYS HALF, and that is the whole point. The normal component still stops
+     * you, the ROTATION an off-centre hit produces is untouched — "the turning should honestly
+     * happen" — and what goes is the part a real tyre would simply refuse: a wall cannot
+     * accelerate a chassis along itself harder than friction allows.
+     */
+    let vx = v.x;
+    let vy = v.y;
+    const w = drive?.get(r.id);
+    if (w) {
+      const rc = dcos(r.heading);
+      const rs = dsin(r.heading);
+      const lat = -(vx - w.wantX) * rs + (vy - w.wantY) * rc;
+      const over = Math.abs(lat) - w.latCap;
+      if (over > 0) {
+        const back = Math.sign(lat) * over;
+        vx += rs * back;
+        vy -= rc * back;
+      }
+    }
     const speed = hyp(vx, vy);
     const scale = speed > C.PHYS_MAX_ROBOT_SPEED ? C.PHYS_MAX_ROBOT_SPEED / speed : 1;
     r.vel.x = vx * scale;
@@ -355,7 +382,6 @@ export function solveRobots(
      * lateral forces, each clipped to one tyre's grip — which is why a sustained lean is
      * refused outright and an impact is not.
      */
-    const w = drive?.get(r.id);
     r.slipX = w ? vx - w.wantX : 0;
     r.slipY = w ? vy - w.wantY : 0;
     r.slipW = w ? av - w.wantW : 0;
