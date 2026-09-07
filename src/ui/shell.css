@@ -712,6 +712,12 @@
   border: 1px solid var(--ds-line);
   border-radius: var(--ds-round);
   box-shadow: var(--ds-block);
+  /* IT PINS WHERE IT ALREADY SITS. `.ds-friends` sticks at `--ds-bar-h + 1px`, which is the
+     right offset for a column that starts flush under the bar and the wrong one for a card
+     inset by a grid step: unscrolled it sat at 79px, and the first scroll snapped it to 64 —
+     reported as "the Friends button moves up slightly when I scroll down". The sticky offset
+     has to equal the natural one, so it carries the same margin. */
+  top: calc(var(--ds-bar-h) + var(--ds-s-4));
 }
 /* the whole collapsed rail IS the button — glyph over label, so the hit area is the
    width of the strip rather than a 38px square adrift in it */
