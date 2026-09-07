@@ -524,8 +524,48 @@ export function updateRobot(
       const ny = by / blocked;
       const into = fx * nx + fy * ny;
       if (into > 0) {
+        /**
+         * IT REFUSES THE PUSH; IT DOES NOT STEER IT.
+         *
+         * Removing the blocked component as a projection (`f -= n(f·n)`) is the right answer
+         * for a free body sliding on a frictionless wedge, and the wrong one for a DRIVE
+         * force: the motors are making thrust along the robot's own axes, and an artifact
+         * jammed against the classifier cannot convert that thrust into sideways thrust. It
+         * did exactly that — measured on a real match, the lateral force flipped from -567 to
+         * +1158 on the SAME tick, every tick, and the chassis ramped smoothly to 27 in/s of
+         * strafe with the driver holding pure forward and the forward speed pinned at 0.1.
+         *
+         * Worse, it was invisible to the tyres. This runs BEFORE `wantX/wantY` are computed,
+         * so the sideways motion it produced was reported to `solveRobots` as the velocity the
+         * drive ASKED FOR — the per-wheel traction model saw no slip and never opposed it.
+         *
+         * Reported as "as the balls flow out and try to squeeze past the small gap between the
+         * intake corner and the field wall, they actually push the robot away to the side and
+         * let the balls go", four times in one match.
+         *
+         * So the blocked component is still removed — that is the stall, and without it a
+         * pinned artifact buzzes in the doorway (measured: 25 reversals in 2s, peaking at
+         * 235 in/s) — but the LATERAL half of what survives is capped at what the drive was
+         * already asking for. The robot can still be stopped, back off, or drive along the
+         * wall; it simply cannot be handed sideways thrust it never commanded.
+         */
+        const fx0 = fx;
+        const fy0 = fy;
         fx -= nx * into;
         fy -= ny * into;
+        // ...and whatever is left may not be MORE sideways thrust than the driver asked for.
+        // Removing the blocked component alone rotates the wrench, and a forward push against
+        // an artifact jammed on the classifier came out as pure strafe.
+        const rc = dcos(r.heading);
+        const rs = dsin(r.heading);
+        const lat = -fx * rs + fy * rc;
+        const lat0 = -fx0 * rs + fy0 * rc;
+        const over = Math.abs(lat) - Math.abs(lat0);
+        if (over > 0) {
+          const back = Math.sign(lat) * over;
+          fx += rs * back;
+          fy -= rc * back;
+        }
       }
       break;
     }
