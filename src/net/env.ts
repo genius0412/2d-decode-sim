@@ -74,6 +74,7 @@ export const appBuild = (): string =>
  * fall back to their uppercase code so a new region still shows something sane. */
 const REGION_LABELS: Record<string, string> = {
   iad: 'US East',
+  ord: 'US Central',
   sjc: 'US West',
   lhr: 'Europe',
   syd: 'Australia',

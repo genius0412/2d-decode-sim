@@ -135,6 +135,7 @@ matchmaking + a fair-midpoint host via `fly-replay`; see `docs/netcodeplan.md` P
 ```bash
 ./scripts/fly-deploy.sh                        # ship the image (NOT a bare `fly deploy` — see VM sizes below)
 fly scale count 1 --region iad -a dohun-sim-decode   # one machine PER region
+fly scale count 1 --region ord -a dohun-sim-decode
 fly scale count 1 --region sjc -a dohun-sim-decode
 fly scale count 1 --region lhr -a dohun-sim-decode
 fly scale count 1 --region syd -a dohun-sim-decode
