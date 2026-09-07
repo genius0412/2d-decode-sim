@@ -719,6 +719,29 @@
      has to equal the natural one, so it carries the same margin. */
   top: calc(var(--ds-bar-h) + var(--ds-s-4));
 }
+
+/* Full-screen room flows bypass `.ds-app`, so their own two-column shell gives
+   the same friends panel a stable viewport and leaves the console as the room
+   UI's independent scroller. */
+.ds-room-layout {
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+.ds-room-layout > .ds-console {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.ds-room-layout > .ds-friends {
+  top: 0;
+  max-height: 100dvh;
+}
+.ds-room-layout > .ds-friends.collapsed {
+  top: var(--ds-s-4);
+}
 /* the whole collapsed rail IS the button — glyph over label, so the hit area is the
    width of the strip rather than a 38px square adrift in it */
 .fr-toggle {
@@ -989,40 +1012,6 @@
 }
 .fr-note {
   color: var(--ds-ok-ink);
-}
-
-/* ---- Lobby's friend flyout (InviteFlyout.tsx) -------------------------
-   Lobby is a full-screen surface outside AppShell, so it can't reuse the
-   `.ds-friends` rail — this is a small self-contained popover instead, built
-   from the same `.fr-*` row/section classes so the content matches. */
-.ds-invite-root {
-  position: relative;
-  display: inline-flex;
-}
-.ds-invite-toggle {
-  cursor: pointer;
-}
-.ds-invite-badge {
-  position: static;
-  margin-left: 2px;
-}
-.ds-invite-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
-  width: 260px;
-  max-height: 320px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-s-4);
-  padding: 10px;
-  border: 1px solid var(--ds-line);
-  border-radius: var(--ds-round);
-  background: var(--ds-panel);
-  box-shadow: var(--ds-block-sm);
-  text-align: left;
 }
 
 /* ---- friend notifications (friendsContext.tsx FriendToasts) -----------
@@ -3837,6 +3826,24 @@ input[type='range']:focus-visible {
   .ds-friends.collapsed .fr-toggle-icon {
     width: 20px;
     height: 20px;
+  }
+
+  /* A room has its own scrolling console rather than `.ds-app` beneath this
+     panel. Keep the panel above that console on narrow screens and cap its
+     expanded list, so a long friends list cannot squeeze the room itself away. */
+  .ds-room-layout {
+    flex-direction: column;
+  }
+  .ds-room-layout > .ds-friends {
+    order: 1;
+    flex: none;
+    max-height: min(42dvh, 360px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .ds-room-layout > .ds-console {
+    order: 2;
+    flex: 1 1 0;
   }
   .ds-body > .ds-main {
     order: 3;

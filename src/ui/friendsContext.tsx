@@ -28,8 +28,8 @@ import { SupporterBadge } from './SupporterBadge';
  *    even when the panel is collapsed. The store sees every poll, so it diffs new
  *    arrivals into transient toasts.
  *
- * `Lobby`'s `InviteFlyout` is the ONE consumer that stays on its own `useFriends`
- * — it's a full-screen surface rendered OUTSIDE this provider.
+ * Full-screen room flows mount this provider too, so their persistent panel
+ * shares the same single poller and invitation behavior as the menu shell.
  */
 export interface FriendToast {
   id: number;
