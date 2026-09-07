@@ -479,6 +479,40 @@ const FIELD_GROUP = 0x0008ffff; // walls/goal faces/classifier, in THIS solve on
  * decision #10) and its funnel geometry is per-preset. That region stays bespoke, in
  * `collideBallRobot`, which now handles ONLY it.
  */
+/**
+ * THE MOMENTUM THE ARTIFACTS IN REACH ACTUALLY CARRY — the ceiling on what they may hand a
+ * chassis in one tick.
+ *
+ * `BALL_MASS · Σ|v|` over the ground artifacts close enough to touch, so the bound is the real
+ * conservation statement rather than a constant: an artifact cannot give away momentum it does
+ * not have, and three of them squeezing past a corner can give away exactly three artifacts'
+ * worth. It sums rather than takes the maximum because a STREAM is the reported case, and a
+ * bound that only ever admitted one artifact would be a different, tighter lie.
+ *
+ * This used to be `BALL_MASS · PHYS_MAX_ROBOT_SPEED`, which is 300 in/s — a solver-explosion
+ * guard standing in for "however fast an artifact might conceivably be", and 5-8x looser than
+ * any artifact on this field ever moves. Measured on a real match replay, the artifact channel
+ * asked to move a chassis sideways by up to 14.9 in/s in a SINGLE TICK, 78 ticks a match over
+ * 0.5 in/s; the constant bound admitted 4.5 of that, and the momentum bound admits what the
+ * artifacts brought with them.
+ *
+ * The radius is generous (half-diagonal + a diameter): it is a bound, not a contact test, and
+ * counting an artifact that turns out not to touch only makes the ceiling slightly higher —
+ * whereas missing one that does touch would clip a real collision.
+ */
+function artifactMomentum(world: World, r: RobotState): number {
+  const reach = hyp(r.spec.length, r.spec.width) / 2 + 2 * C.BALL_RADIUS;
+  let sum = 0;
+  for (const b of world.balls) {
+    if (b.state.kind !== 'ground') continue;
+    const dx = b.pos.x - r.pos.x;
+    const dy = b.pos.y - r.pos.y;
+    if (dx * dx + dy * dy > reach * reach) continue;
+    sum += hyp(b.vel.x, b.vel.y);
+  }
+  return sum;
+}
+
 export function solveBalls(
   world: World,
   dt: number,
@@ -586,9 +620,48 @@ export function solveBalls(
     const v = body.linvel();
     const speed = hyp(v.x, v.y);
     const scale = speed > C.PHYS_MAX_ROBOT_SPEED ? C.PHYS_MAX_ROBOT_SPEED / speed : 1;
-    r.vel.x = v.x * scale;
-    r.vel.y = v.y * scale;
-    r.angVel = clamp(body.angvel(), -C.PHYS_MAX_ROBOT_SPIN, C.PHYS_MAX_ROBOT_SPIN);
+    /**
+     * ...AND AN ARTIFACT MAY ONLY MOVE A ROBOT BY WHAT AN ARTIFACT WEIGHS — decision #7.
+     *
+     * The body stays dynamic at its real collision mass, because anything heavier stops
+     * separating properly and artifacts sink into the chassis: measured with it immovable,
+     * 5.26in of a 5in diameter buried and 87 ticks with an artifact CENTRE inside the robot,
+     * which is the "balls go on top of the robot" report. But its POSE is never taken from
+     * this solve — only its velocity — so separation stays honest while the MOTION handed back
+     * is bounded by the momentum the artifacts in reach ACTUALLY carry (`artifactMomentum`),
+     * which against a 15-25lb chassis is well under an inch per second.
+     *
+     * Past that it is not artifact momentum, it is the SCRIPTED half of the model leaking
+     * authority — the rail decides when and where artifacts arrive, and a robot parked on the
+     * outflow is exactly where that shows: "as the balls flow out and try to squeeze past the
+     * small gap between the intake corner and the field wall, they actually push the robot
+     * away to the side and let the balls go."
+     */
+    const cap =
+      (C.BALL_MASS * artifactMomentum(world, r)) /
+      Math.max(shoveMass(r.spec, r.butterflyTank, r.powerDraw), 1e-6);
+    let dvx = v.x * scale - r.vel.x;
+    let dvy = v.y * scale - r.vel.y;
+    /**
+     * ACROSS THE ROBOT ONLY. Along its wheels an artifact must be able to stop it — that is
+     * the pin stall, and bounding it there means a robot simply grinds through a jammed
+     * artifact instead (measured: 5.34in of a 5in diameter buried). Across the wheels there is
+     * nothing to negotiate: a stream squeezing past a corner cannot walk a robot sideways.
+     */
+    const rc = dcos(r.heading);
+    const rs = dsin(r.heading);
+    const lat = -dvx * rs + dvy * rc;
+    const over = Math.abs(lat) - cap;
+    if (over > 0) {
+      const back = Math.sign(lat) * over;
+      dvx += rs * back;
+      dvy -= rc * back;
+    }
+    r.vel.x += dvx;
+    r.vel.y += dvy;
+    const dw = clamp(body.angvel(), -C.PHYS_MAX_ROBOT_SPIN, C.PHYS_MAX_ROBOT_SPIN) - r.angVel;
+    const wCap = cap / Math.max(hyp(r.spec.length, r.spec.width) / 2, 1);
+    r.angVel += Math.abs(dw) > wCap ? Math.sign(dw) * wCap : dw;
   }
 
   rw.free();
