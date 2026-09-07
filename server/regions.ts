@@ -13,7 +13,7 @@
  */
 
 /** the regions we actually deploy a machine to (keep in sync with `fly scale`) */
-export const DEPLOY_REGIONS = ['iad', 'sjc', 'lhr', 'syd', 'nrt'] as const;
+export const DEPLOY_REGIONS = ['iad', 'ord', 'sjc', 'lhr', 'syd', 'nrt'] as const;
 export type Region = (typeof DEPLOY_REGIONS)[number];
 
 /** the always-on machine that holds the global ranked queue (fly-replay target for
@@ -26,13 +26,23 @@ export const MATCHMAKER_REGION: string = process.env.MATCHMAKER_REGION ?? 'iad';
  * hallpass), symmetric averages rounded. Re-measure + retune when the region set or
  * Fly's backbone changes (see docs/deploy.md). Only relative ordering matters for
  * host selection, so small drift is harmless.
+ *
+ * ⚠️ THE `ord` ROW IS ESTIMATED, NOT MEASURED (2026-09-06). The satellites
+ * `auto_stop`, so by the time the region was added they were refusing connections
+ * and the 6PN handshake measured cold-boot time rather than RTT — 2.1s to a stopped
+ * iad. The figures below are geographic, and checked for consistency against the
+ * measured rows: Chicago sits between iad and sjc (20/50 inside their measured 85),
+ * further from London than iad is (95 > 76), and between sjc and iad for both
+ * Pacific hops (109 < 150 < 164, 148 < 180 < 190). Good enough for an ordering, but
+ * re-measure with every region WARM and replace these.
  */
 const RTT: Record<string, Record<string, number>> = {
-  iad: { iad: 0, sjc: 85, lhr: 76, syd: 190, nrt: 164 },
-  sjc: { sjc: 0, iad: 85, lhr: 133, syd: 148, nrt: 109 },
-  lhr: { lhr: 0, iad: 76, sjc: 133, syd: 251, nrt: 236 },
-  syd: { syd: 0, iad: 190, sjc: 148, lhr: 251, nrt: 114 },
-  nrt: { nrt: 0, iad: 164, sjc: 109, lhr: 236, syd: 114 },
+  iad: { iad: 0, ord: 20, sjc: 85, lhr: 76, syd: 190, nrt: 164 },
+  ord: { ord: 0, iad: 20, sjc: 50, lhr: 95, syd: 180, nrt: 150 },
+  sjc: { sjc: 0, ord: 50, iad: 85, lhr: 133, syd: 148, nrt: 109 },
+  lhr: { lhr: 0, ord: 95, iad: 76, sjc: 133, syd: 251, nrt: 236 },
+  syd: { syd: 0, ord: 180, iad: 190, sjc: 148, lhr: 251, nrt: 114 },
+  nrt: { nrt: 0, ord: 150, iad: 164, sjc: 109, lhr: 236, syd: 114 },
 };
 
 /** inter-region RTT (ms). Unknown regions fall back to a large penalty so an
