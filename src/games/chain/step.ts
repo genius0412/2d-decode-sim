@@ -34,7 +34,6 @@ const ZERO_CMD: RobotCommand = {
 export function chainStep(world: World, dt: number, commands: Map<number, RobotCommand>): void {
   world.time += dt;
   world.tick++;
-  world.rrContacts.length = 0;
 
   const enabled = robotsEnabled(world);
   const actual = new Map<number, RobotCommand>();
@@ -65,11 +64,15 @@ export function chainStep(world: World, dt: number, commands: Map<number, RobotC
   // beams (difficult terrain): drag the across-velocity BEFORE the solve so a crossing
   // robot physically advances less this tick (momentum/traction/CoG decide how much).
   beamDrag(world, dt);
+  // CLEARED HERE, NOT AT THE TOP OF THE TICK — `updateRobot` above reads last tick's
+  // contacts to tell a robot being LEANED ON from one stopping itself. Same reasoning and
+  // same placement as DECODE's `step`; see `MOTOR_SHOVE_BRAKE`.
+  world.rrContacts.length = 0;
   // Rapier owns robot translation/velocity + wall containment on the CR field.
   const preVels = solveRobots(world, dt, chainColliders);
   // square a tilted chassis flush against the walls (and other robots) — the same
   // contact-torque pass DECODE runs, restricted to CR's perimeter walls.
-  squareUpRobotsWalls(world, preVels, CHAIN_HALF_X, CHAIN_HALF_Y, dt);
+  squareUpRobotsWalls(world, preVels, CHAIN_HALF_X, CHAIN_HALF_Y, dt, actual);
   // then hard-block any robot whose frame can't clear a beam (kept on its side).
   beamBlock(world);
   // and curb-block a mecanum strafing sideways into a beam (can't climb the ridge laterally —
