@@ -173,32 +173,6 @@ export function robotPointVelocity(r: RobotState, p: Vec2): Vec2 {
 
 // ------------------------------------------------- robot vs static field ----
 
-/** rigid-contact response: push the robot out along the normal AND apply the
- * summed contact torque, so driving tilted into a wall squares the chassis
- * up flush against it. Torque sums over all touching corners — a flush face
- * has symmetric contacts that cancel, so it is stable. */
-function pushRobotAt(
-  r: RobotState,
-  nx: number,
-  ny: number,
-  depth: number,
-  contacts: { c: Vec2; d: number }[],
-  // squaring against a flat face caps rotation at the remaining tilt; point
-  // contacts (a pinned ball) instead pivot the chassis freely
-  squareTo = true,
-): void {
-  r.pos.x += nx * depth;
-  r.pos.y += ny * depth;
-  const vn = r.vel.x * nx + r.vel.y * ny;
-  // how hard the robot is driving into the contact (in/s), before the kill
-  const press = vn < 0 ? -vn : 0;
-  if (vn < 0) {
-    r.vel.x -= nx * vn;
-    r.vel.y -= ny * vn;
-  }
-  applyContactTorque(r, nx, ny, press, contacts, squareTo);
-}
-
 /** the contact-torque response shared by wall and robot-robot contacts:
  * pushing harder squares up faster (pressure-scaled), the correction never
  * steps past flush, and fast off-axis hits convert speed into visible spin */
@@ -326,24 +300,6 @@ function contactTorqueDelta(
   const spinRaw = torque * press * C.CONTACT_IMPACT_SPIN * rateMult * spinMult;
   const spin = !squareTo || spinRaw * relSigned <= 0 ? spinRaw : 0;
   return { align, spin, bleed: r.angVel * align < 0, flushErr };
-}
-
-/**
- * ...and the writer for surfaces that answer alone (robot-robot, and the pre-solve constrain
- * path). Multi-surface cases go through `squareUpStatics`, which sums first — see
- * `contactTorqueDelta`.
- */
-function applyContactTorque(
-  r: RobotState,
-  nx: number,
-  ny: number,
-  press: number,
-  contacts: { c: Vec2; d: number }[],
-  squareTo: boolean,
-  rateMult = 1,
-): void {
-  const d = contactTorqueDelta(r, nx, ny, press, contacts, squareTo, rateMult);
-  applyTurn(r, d);
 }
 
 /** turn the chassis by a summed contact response */
@@ -1527,67 +1483,59 @@ export function evictBallFromRobot(b: Artifact, r: RobotState): void {
 }
 
 /**
- * ROBOT-SIDE feedback from one artifact — the stall on a pinned artifact and the drag of
- * shoving a clump. Moves NOTHING; only `r.vel` changes.
+ * ⚠️ A FEEL CONSTANT ON TOP OF THE PHYSICAL ANSWER, NOT PHYSICS. Say so out loud, because
+ * everything either side of it in this tick now IS physics.
  *
- * RUNS BEFORE `solveBalls`, and the order carries the whole design. Rapier's chassis body
- * is kinematic, so it cannot be told it is blocked: handed a robot still driving at a
- * dead-centre artifact trapped on a wall, the solver's only available answer is to squirt
- * the artifact out sideways — 34in along the wall with the robot sailing through at
- * 30 in/s. Stalling the robot FIRST means the solver is handed a robot that has already
- * stopped, and there is no squeeze left for it to answer wrongly.
+ * `solveBalls` answers "how much does a clump slow me down" honestly, and the honest answer
+ * is SMALL: `BALL_MASS` is 0.2lb against a `shoveMass` of 15-25, so the emergent steady-state
+ * loss measured on 1 / 3 / 6 / 9 artifacts shoved across open floor is 0.4 / 1.1 / 2.2 / 2.8%,
+ * where the old hand-written pass gave 9.9 / 18.5 / 18.6 / 18.7%. A real 5in wiffle ball
+ * really does not slow a 23lb robot down much, and the sim is not wrong about that.
  *
- * IS THE ARTIFACT ACTUALLY TRAPPED? — probed against THIS TICK'S PUSH, which is the whole
- * trick. Asking "could it move a full radius" calls an artifact pinned whenever a wall is
- * within 2.5in of it, so robots stalled on anything near a wall and stopped driving into
- * things at all: intake capture never fired, the gate drain stalled, foul counts collapsed
- * — nine checks, all from one over-wide probe. The physical question is narrower and it is
- * this: *can it move as far as I am about to push it?* That distance is the robot's own
- * approach in one tick, so a robot creeping up on a wall artifact is not stalled by it,
- * and a robot driving hard into a trapped one is.
+ * It is kept anyway, at its ORIGINAL strength — `BALL_PUSH_DRAG` is not retuned by any of
+ * this — for two reasons, both about the game rather than about mechanics:
+ *
+ *  · A clump is meant to READ as something you are shifting. The physical number is below the
+ *    threshold where a driver can feel anything at all.
+ *  · G408's carry test integrates the artifact's own speed, so how fast a robot can bulldoze
+ *    a pile across the field is a RULES input, not just a feel one — and smoke pins the two
+ *    scenes at either end of it. Without this the "nosing into a clump and backing off" scene
+ *    goes from 0 MINORs to 2: at full throttle an undragged robot covers 80in in the 1.2s it
+ *    is meant to be nosing, which herds the pile the length of the field.
+ *
+ * Together: 10.1 / 19.2 / 20.0 / 20.2% on those same 1 / 3 / 6 / 9, against the old 9.9 /
+ * 18.5 / 18.6 / 18.7. The SHAPE is the part that improved, and that part is physics — the old
+ * constant SATURATED at three artifacts, because only the row actually touching the bumper
+ * bled anything and a chassis is three artifacts wide. The solve carries the mass BEHIND that
+ * row, so a bigger clump is genuinely heavier now and this scales what is already there.
+ *
+ * A PURE DAMPER, and that is the whole of what makes it safe under a force model. It has no
+ * direction of its own — it can only ever oppose the speed the robot is closing at, and it
+ * touches neither the pose nor the heading. The pass this is the surviving half of also
+ * STALLED the robot and squared its chassis, and those writes persisted once the drive
+ * stopped overwriting `r.vel` every tick: the chassis wedged 8.2 degrees off its commanded
+ * heading and slid diagonally at 24.0 in/s. A damper cannot do that; it has nothing to wedge.
+ *
+ * ⚠️ IT RUNS BEFORE `solveBalls`, AND THAT IS NOT A LEFTOVER FROM THE OLD ORDER. Placed AFTER
+ * the solve it bleeds a velocity the robot has already been MOVED at, so the pose advances
+ * and the velocity does not, and the next tick's drive answers the lower velocity with more
+ * torque — the chassis creeps into the pile a little further every tick. Measured on the
+ * grind sweep: worst overlap 2.39 -> 4.15in on a 2.5in radius with 67 ticks of an artifact
+ * CENTRE inside the chassis, against 0 such ticks and 1.93in worst with the same constant on
+ * this side of the solve. In front of the solve it is simply the speed the robot arrives at,
+ * which is a thing a seed velocity is allowed to be.
  */
-export function ballRobotFeedback(b: Artifact, r: RobotState, dt: number): void {
+export function clumpDrag(b: Artifact, r: RobotState): void {
   const contact = ballRobotContact(r, b.pos);
   if (!contact) return;
-  const { nx, ny, pen, cp } = contact;
-  /**
-   * THE SPEED THAT MATTERS IS THE SURFACE'S AT THE CONTACT, NOT THE CENTRE'S.
-   *
-   * This read `r.vel`, which is the chassis's translation and says nothing about the corner
-   * that is actually arriving. A robot TURNING closes a gap with no translation at all, so a
-   * chassis swinging its rear corner onto an artifact resting on a wall was neither stalled
-   * nor drag-loaded by it — measured, an artifact left 2.19in inside the chassis, tracking
-   * the robot's own velocity, wedged into a 2.81in gap it does not fit in. `pointVelocity`
-   * is the same quantity the possession test and the lid carry already use.
-   */
+  const { nx, ny, cp } = contact;
+  // the SURFACE's speed into the artifact, not the centre's — a robot turning a corner onto
+  // an artifact is closing on it with no translation at all (`robotPointVelocity` carries ω×r)
   const pv = robotPointVelocity(r, cp);
-  const approach = pv.x * nx + pv.y * ny; // robot SURFACE speed INTO the artifact
-  const probe = Math.max(pen, Math.max(0, approach) * dt);
-  const px = b.pos.x + nx * probe;
-  const py = b.pos.y + ny * probe;
-  const pc = clampBallPosToStatics({ x: px, y: py });
-  const bx = px - pc.x; // push refused by the field, pointing into the wall
-  const by = py - pc.y;
-  const blocked = hyp(bx, by);
-  if (blocked > C.BALL_PIN_SLOP) {
-    const inx = bx / blocked;
-    const iny = by / blocked;
-    // only the robot's OWN drive transmits through a pinned artifact — one arriving under
-    // its own momentum (gate outflow) just stops against the chassis
-    const drivingIn = pv.x * inx + pv.y * iny;
-    if (drivingIn > C.BALL_PIN_PUSH_MIN_SPEED) {
-      // depth is SEPARATION and stays the real overlap; the STALL is the velocity kill
-      // inside pushRobotAt, which is what this call is actually for.
-      pushRobotAt(r, -inx, -iny, Math.min(blocked, pen), [{ c: cp, d: blocked }], false);
-    }
-    return;
-  }
-  // open field: artifacts have MASS — shoving one bleeds a little robot momentum, so a
-  // large CLUMP is cumulatively heavy to push (pinned artifacts take the stall above)
-  if (approach > 0) {
-    r.vel.x -= nx * approach * C.BALL_PUSH_DRAG;
-    r.vel.y -= ny * approach * C.BALL_PUSH_DRAG;
-  }
+  const approach = pv.x * nx + pv.y * ny;
+  if (approach <= 0) return; // backing away from it: nothing to resist
+  r.vel.x -= nx * approach * C.BALL_PUSH_DRAG;
+  r.vel.y -= ny * approach * C.BALL_PUSH_DRAG;
 }
 
 /**
