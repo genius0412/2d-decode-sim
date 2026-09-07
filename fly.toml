@@ -61,6 +61,15 @@ primary_region = 'iad'
 # EVERY other region runs shared-cpu-1x/1024MB via scripts/fly-deploy.sh — sjc joined the
 # satellites in the same pass. `fly deploy` re-applies THIS block to every machine, which
 # is why that script must always re-shrink them afterward.
+# COST PASS (2026-09-06): memory 1024 → 512. The CPU size is UNCHANGED, and the
+# measurement is why — `/api/perf` on the live primary with TWO rooms and 8 players
+# read 0.244 cores, against a shared-cpu-4x sustained baseline of ~0.25 (4 × 6.25%).
+# Two concurrent matches already sit at the baseline and run on burst credits, with
+# loop lag p99 at 11.4ms of the 16.67ms step budget. Going DOWN from here is the
+# throttle-flap above, not a saving. If concurrency grows, this goes UP.
+# Memory had no such constraint: RSS is 111MB under that same load, and the "too
+# tight for Node+tsx+Rapier" rationale expired when the Dockerfile started
+# esbuild-bundling the server and dropped tsx from the runtime entirely.
 [[vm]]
   size = 'shared-cpu-4x'
-  memory = '1024mb'
+  memory = '512mb'

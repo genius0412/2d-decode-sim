@@ -24,7 +24,13 @@ APP="${FLY_APP:-dohun-sim-decode}"
 # the middle of the country actually hosts a room there.
 SATELLITES=(ord sjc lhr syd nrt)
 SATELLITE_SIZE=shared-cpu-1x
-SATELLITE_MEMORY=1024 # MB — shared-cpu-1x defaults to 256MB, too tight for Node+tsx+Rapier
+# MB. Was 1024, on the grounds that shared-cpu-1x's 256MB default is "too tight for
+# Node+tsx+Rapier" — but the runtime stopped using tsx when the Dockerfile started
+# esbuild-BUNDLING the server (`CMD ["node", "dist-server/index.js"]`), so that
+# rationale went with it. MEASURED 2026-09-06: RSS is 111MB on the busy primary with
+# two live rooms. 512 is still 4.6x that, and 256 stays off the table because V8
+# wants headroom over the live set, not a ceiling on it.
+SATELLITE_MEMORY=512
 
 echo "==> fly deploy ($APP)"
 # NOTE: do NOT let a non-zero deploy skip the re-shrink below. `fly deploy` exits
