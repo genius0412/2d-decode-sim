@@ -1,9 +1,9 @@
 import type { Artifact, ArtifactColor, RobotCommand, RobotSpec, RobotState, World } from '../types';
 import * as C from '../config';
 import { approach, rot, wrapAngle, hyp, dsin, dcos, datan2, clamp } from '../math';
-import { classifierRect, flywheelSpinTarget, goalCenter, launchTriangles, viewAngleOf } from './field';
+import { classifierRect, flywheelSpinTarget, footprintExtents, goalCenter, launchTriangles, viewAngleOf } from './field';
 import { activeDrive, driveParams, motorStep, motorStepVec, shoveMass } from './drivetrain';
-import { robotIntersectsConvex } from './physics';
+import { clampBallPosToStatics, robotIntersectsConvex } from './physics';
 import { robotsEnabled } from './match';
 
 /** launch is legal when ANY part of the robot is inside a launch zone. Uses a
@@ -444,6 +444,60 @@ export function updateRobot(
       tau += wl.x * f * ly - wl.y * f * lx;
     }
   }
+  /**
+   * ...AND AN ARTIFACT THAT CANNOT GET OUT OF THE WAY STALLS THE DRIVE.
+   *
+   * The chassis collides with artifacts in the solve now, so a robot pushing one into a wall is
+   * stopped by the contact chain — but ONLY while the artifact is in front of the chassis. The
+   * INTAKE MOUTH is deliberately not a collider (it is open by design, and its funnel geometry
+   * is per-preset), so an artifact that ends up in the mouth is invisible to that chain: the
+   * robot keeps driving until its own intake tip reaches the wall, which leaves less clearance
+   * than an artifact's diameter, and the artifact has nowhere to be except inside the chassis.
+   * Reported as "balls are not colliding with the robot and instead go on top", and measured on
+   * a five-artifact row rammed into the far wall: one buried 2.66in of its 5in diameter into the
+   * front face, at a dead stop, for 219 consecutive ticks.
+   *
+   * This is the rule the sim has always had — "stall the robot first and there is no squeeze
+   * left to answer wrongly" — but as a FORCE rather than a write to `r.vel` behind the solver's
+   * back, which is what made the old version fight a force-based drive. Only the component
+   * pushing INTO the blocked artifact is removed, so the robot can still back off or drive
+   * along the wall, exactly as before.
+   *
+   * An artifact the INTAKE is drawing in is exempt: it is on its way into the hopper, not in
+   * the way. Once the hopper is full there is nothing being acquired and the stall applies.
+   */
+  const push = hyp(fx, fy);
+  if (push > 0) {
+    const px = fx / push;
+    const py = fy / push;
+    const eating = (cmd.intake || r.autoIntake) && r.hopper.length < C.HOPPER_CAPACITY;
+    const ext = footprintExtents(r.spec);
+    for (const b of world.balls) {
+      if (b.state.kind !== 'ground') continue;
+      const rel = { x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y };
+      if (rel.x * px + rel.y * py <= 0) continue; // behind the push; not in the way
+      const l = rot(rel, -r.heading);
+      if (l.x > ext.front + C.BALL_RADIUS || l.x < -ext.rear - C.BALL_RADIUS) continue;
+      if (Math.abs(l.y) > ext.half + C.BALL_RADIUS) continue;
+      if (eating && l.x > 0) continue; // in the mouth and being swallowed
+      // where this tick's push would put it, and whether the field refuses that
+      const probe = { x: b.pos.x + px * C.BALL_RADIUS, y: b.pos.y + py * C.BALL_RADIUS };
+      const clamped = clampBallPosToStatics(probe);
+      const bx = probe.x - clamped.x;
+      const by = probe.y - clamped.y;
+      const blocked = hyp(bx, by);
+      if (blocked <= C.BALL_PIN_SLOP) continue;
+      const nx = bx / blocked;
+      const ny = by / blocked;
+      const into = fx * nx + fy * ny;
+      if (into > 0) {
+        fx -= nx * into;
+        fy -= ny * into;
+      }
+      break;
+    }
+  }
+
   /**
    * WHAT THIS WRENCH ITSELF WILL PRODUCE, in free space — the whole of it, traction included,
    * not just the motor's target. `solveRobots` diffs the solver's answer against these to find
