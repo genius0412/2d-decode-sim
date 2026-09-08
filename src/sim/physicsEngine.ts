@@ -5,7 +5,7 @@ import { robotExtents } from './physics';
 import { shoveMass } from './drivetrain';
 import type { DriveWrench } from './robot';
 import { chassisInertia } from './robot';
-import { clamp, dcos, dsin, hyp, wrapAngle } from '../math';
+import { clamp, dcos, dsin, hyp, rot, wrapAngle } from '../math';
 import type { FieldColliders } from '../games/types';
 
 /**
@@ -674,6 +674,92 @@ export function solveBalls(
     const dw = clamp(body.angvel(), -C.PHYS_MAX_ROBOT_SPIN, C.PHYS_MAX_ROBOT_SPIN) - r.angVel;
     const wCap = cap / Math.max(hyp(r.spec.length, r.spec.width) / 2, 1);
     r.angVel += Math.abs(dw) > wCap ? Math.sign(dw) * wCap : dw;
+  }
+
+  /**
+   * ...AND A ROBOT MAY NOT STAND WHERE AN ARTIFACT IS.
+   *
+   * THE ORDERING IS THE WHOLE TRICK, and it is what lets this be stated without predicting
+   * anything. The solve above has just moved every artifact that COULD move; anything still
+   * deep inside a chassis is, by definition, one that could not. So there is no pin test here,
+   * no probe against the statics, and no guess about which way the robot meant to push — the
+   * artifacts sort themselves, and what is left over is simply wrong and gets undone.
+   *
+   * The ROBOT is backed out, along the shortest way out of its own chassis box. That is the
+   * same shape of rule as the perimeter invariant in `solveRobots`: a hard geometric statement
+   * applied after the solver has had its say, not a force smuggled into the drive. Which
+   * matters twice — `wantX/wantY` stay exactly what the wheels asked for, so the tyres still
+   * read every contact as slip and resist it, and nothing here can rotate a drive force into
+   * strafe the way subtracting from the wrench did.
+   *
+   * IT IS NOT A SHOVE and does not reopen product decision #7. An artifact gains no ground by
+   * it: the robot is only ever put back where it would have been had it not driven through
+   * something, only while it is actually inside, and it cannot accumulate because it is
+   * applied every tick and bounded by the overlap it removes. Velocity is untouched — a robot
+   * still driving in simply does it again next tick and is evicted again, which is what a
+   * stall looks like from outside, and one driving away is not held.
+   *
+   * COMPONENTWISE MAX, NOT A SUM: several artifacts along one face each demand their own
+   * clearance, and adding those demands together would fling the chassis off them.
+   */
+  for (const { r } of chassis) {
+    const hl = r.spec.length / 2;
+    const hw = r.spec.width / 2;
+    let px = 0; // the deepest eviction any artifact demands, in the ROBOT frame
+    let py = 0;
+    for (const { b } of ballBodies) {
+      const local = rot({ x: b.pos.x - r.pos.x, y: b.pos.y - r.pos.y }, -r.heading);
+      /**
+       * TRUE BOX-VS-CIRCLE, not the Minkowski box.
+       *
+       * Testing `|x| < half + R` on both axes calls a circle "overlapping" anywhere inside the
+       * rounded rectangle's bounding box, which near a CORNER is a region the circle does not
+       * actually reach. Evicting on that shoves robots that are squishing nothing: it nudged a
+       * ball the intake was funnelling (9.8 -> 10.2) and put a turning tank over its sideways
+       * budget at exactly the threshold. The honest test is the distance to the nearest point
+       * of the box.
+       */
+      let nx: number;
+      let ny: number;
+      let pen: number;
+      const cx = clamp(local.x, -hl, hl);
+      const cy = clamp(local.y, -hw, hw);
+      const dx = local.x - cx;
+      const dy = local.y - cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > 1e-12) {
+        // centre OUTSIDE the box: the nearest feature is that clamped point
+        const d = Math.sqrt(d2);
+        pen = C.BALL_RADIUS - d;
+        nx = dx / d;
+        ny = dy / d;
+      } else {
+        // centre INSIDE it — a closest-point test degenerates here, so leave by the nearest
+        // FACE. This is the case the whole pass exists for: 5.09in of a 5in artifact buried in
+        // a flank, its centre inside the chassis for 290 consecutive ticks.
+        const ox = hl - Math.abs(local.x);
+        const oy = hw - Math.abs(local.y);
+        if (ox < oy) {
+          nx = Math.sign(local.x || 1);
+          ny = 0;
+          pen = ox + C.BALL_RADIUS;
+        } else {
+          nx = 0;
+          ny = Math.sign(local.y || 1);
+          pen = oy + C.BALL_RADIUS;
+        }
+      }
+      const need = pen - C.BALL_SQUISH_SLOP;
+      if (need <= 0) continue; // a resting contact, which is what contact looks like
+      // the robot leaves along -n, away from the artifact
+      if (Math.abs(nx * need) > Math.abs(px)) px = -nx * need;
+      if (Math.abs(ny * need) > Math.abs(py)) py = -ny * need;
+    }
+    if (px !== 0 || py !== 0) {
+      const world = rot({ x: px, y: py }, r.heading);
+      r.pos.x += world.x;
+      r.pos.y += world.y;
+    }
   }
 
   rw.free();

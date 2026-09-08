@@ -605,6 +605,25 @@ export const BALL_MASS = 0.2; // lb
 /** a robot push refused by a wall beyond this distance means the ball is
  * PINNED — the constraint transmits back and stalls the robot */
 export const BALL_PIN_SLOP = 0.05; // in
+
+/**
+ * HOW FAR AN ARTIFACT MAY BE INSIDE A CHASSIS BEFORE THE ROBOT IS BACKED OUT OF IT.
+ *
+ * `solveRobots` decides where the robot ends up and artifacts are not in that solve, so a
+ * chassis drives THROUGH one; `solveBalls` runs afterwards and can move the ARTIFACT out of
+ * the way, which is the whole answer for a loose artifact and no answer at all for one already
+ * against a wall. What is left over is a robot standing where an artifact is.
+ *
+ * Reported from both ends, and they are one bug: "balls are not colliding with the robot and
+ * instead go on top", and "I should not be able to squish into balls; balls have momentum
+ * saved when they get stuck and then flow again". Rapier's penetration recovery is
+ * proportional to DEPTH, so every inch the chassis is buried is stored as separation velocity
+ * the artifact spends the moment it comes free — the squish IS the saved momentum.
+ *
+ * A real contact's worth, not a tuning dial: being fractionally inside is how a resting
+ * contact looks to any solver, and anything past that is the chassis occupying the artifact.
+ */
+export const BALL_SQUISH_SLOP = 0.3; // in
 /** the pin only pushes the robot back when the robot itself drives into it
  * faster than this — balls arriving under their own momentum just stop */
 export const BALL_PIN_PUSH_MIN_SPEED = 0.5; // in/s
