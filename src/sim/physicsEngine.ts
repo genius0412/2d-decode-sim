@@ -499,6 +499,14 @@ const FIELD_GROUP = 0x0008ffff; // walls/goal faces/classifier, in THIS solve on
  * The radius is generous (half-diagonal + a diameter): it is a bound, not a contact test, and
  * counting an artifact that turns out not to touch only makes the ceiling slightly higher —
  * whereas missing one that does touch would clip a real collision.
+ *
+ * ⚠️ IT MUST BE MEASURED BEFORE THE STEP, and that is not a detail. Read afterwards it includes
+ * the speed the ROBOT ITSELF just gave the artifacts, so a chassis driving a row of them along
+ * a wall keeps their momentum high, which keeps its own ceiling high, and momentum it handed
+ * out comes straight back as sideways push — measured at 20 degrees into five artifacts resting
+ * on a wall, the chassis squared up and then travelled 29.83in ALONG the wall while commanding
+ * nothing but forward, against 0.98in on the bare wall. A bound that the bounded party can
+ * inflate is not a bound. Taken before the solve it is what the artifacts BROUGHT with them.
  */
 function artifactMomentum(world: World, r: RobotState): number {
   const reach = hyp(r.spec.length, r.spec.width) / 2 + 2 * C.BALL_RADIUS;
@@ -521,6 +529,10 @@ export function solveBalls(
 ): void {
   const groundBalls = world.balls.filter((b) => b.state.kind === 'ground');
   if (groundBalls.length === 0) return;
+
+  // ...measured NOW, on the velocities the artifacts arrived with — see `artifactMomentum`
+  const brought = new Map<number, number>();
+  for (const r of world.robots) brought.set(r.id, artifactMomentum(world, r));
 
   const rw = makeWorld(
     dt,
@@ -638,7 +650,7 @@ export function solveBalls(
      * away to the side and let the balls go."
      */
     const cap =
-      (C.BALL_MASS * artifactMomentum(world, r)) /
+      (C.BALL_MASS * (brought.get(r.id) ?? 0)) /
       Math.max(shoveMass(r.spec, r.butterflyTank, r.powerDraw), 1e-6);
     let dvx = v.x * scale - r.vel.x;
     let dvy = v.y * scale - r.vel.y;

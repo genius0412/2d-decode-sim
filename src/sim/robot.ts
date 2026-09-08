@@ -560,9 +560,28 @@ export function updateRobot(
         const rs = dsin(r.heading);
         const lat = -fx * rs + fy * rc;
         const lat0 = -fx0 * rs + fy0 * rc;
-        const over = Math.abs(lat) - Math.abs(lat0);
-        if (over > 0) {
-          const back = Math.sign(lat) * over;
+        /**
+         * ...AND IT MAY ONLY EVER REDUCE THAT SIDEWAYS FORCE TOWARD ZERO. NEVER REVERSE IT.
+         *
+         * Capping the MAGNITUDE was not enough, and the reason is worth stating: a sign flip
+         * with a smaller magnitude passes a magnitude cap untouched, and a sign flip is exactly
+         * what removing the blocked component does to a wrench. Measured driving into five
+         * artifacts resting on a wall at 20 degrees, the lateral force went -955 -> +161 on the
+         * same tick, every tick, and 161 is less than 955 so nothing clamped it.
+         *
+         * What that -955 IS matters: with a pure forward command it is the drivetrain BRAKING
+         * its own sideways slide. So the stall was taking the robot's attempt to stop sliding
+         * and turning it into a push the other way. The chassis squared up to the wall and then
+         * travelled 29.83in ALONG it while commanding nothing but forward, against 0.98in on
+         * the bare wall — reported as "I'm still getting pushed around by artifacts against the
+         * wall".
+         *
+         * Clamping into the interval between 0 and what the wrench already had makes the stall
+         * strictly subtractive in the one axis where it has no business adding anything.
+         */
+        const want = clamp(lat, Math.min(0, lat0), Math.max(0, lat0));
+        const back = lat - want;
+        if (back !== 0) {
           fx += rs * back;
           fy -= rc * back;
         }
