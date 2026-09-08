@@ -10136,13 +10136,27 @@ function pinScene(
         Math.abs(back.match.phaseTimeLeft - run.world.match.phaseTimeLeft) < 1e-9,
       `${back.match.phase} ${back.match.phaseTimeLeft.toFixed(3)} vs ${run.world.match.phase} ${run.world.match.phaseTimeLeft.toFixed(3)}`,
     );
-    // NOT VACUOUS: the robot has to have actually driven and scored, or two parked
-    // robots would agree no matter what the countdown did
-    const startX = createWorld('match', 0x5010, [setup]).robots[0].pos.x;
+    /**
+     * NOT VACUOUS: the robot has to have actually driven and scored, or two parked
+     * robots would agree no matter what the countdown did.
+     *
+     * MEASURE THE DISPLACEMENT, NOT ONE AXIS OF IT. This read `|x − startX|`, and the
+     * scene drives the OTHER way: anchor 0 spawns facing −y hard against the side wall,
+     * and the scene is robot-centric (`fieldCentric: false` — see the trap above), so
+     * `driveX` is FORWARD, i.e. down the field in −y. The x term is therefore whatever
+     * the chassis happens to squirt sideways off that wall while it slides along it —
+     * incidental, and worth 31in on the build this check was written against and 0.7in
+     * once robot-on-wall contact was retuned, while the run itself travelled ~68in both
+     * times. The guard asks whether the robot drove, so it has to measure how far it
+     * drove; hyp is also what the per-drivetrain replay checks above use.
+     */
+    const startPos = createWorld('match', 0x5010, [setup]).robots[0].pos;
+    const end = run.world.robots[0].pos;
+    const drove = hyp(end.x - startPos.x, end.y - startPos.y);
     check(
       'solo practice: the recorded run actually drove and scored',
-      Math.abs(run.world.robots[0].pos.x - startX) > 5 && run.world.match.scores.blue.total > 0,
-      `moved ${Math.abs(run.world.robots[0].pos.x - startX).toFixed(1)}in, scored ${run.world.match.scores.blue.total}`,
+      drove > 5 && run.world.match.scores.blue.total > 0,
+      `moved ${drove.toFixed(1)}in (dx ${(end.x - startPos.x).toFixed(1)}, dy ${(end.y - startPos.y).toFixed(1)}), scored ${run.world.match.scores.blue.total}`,
     );
     // ...and the OLD controller-driven shape, which is what could not be recorded: no
     // preCountdown, the match started from outside the sim partway through.
@@ -10810,7 +10824,21 @@ function pinScene(
   // THE GENERATION GUARD: an input stamped with the old match must not be applied
   // to the new one, even though its tick is perfectly plausible here.
   const gNew = restarted?.gen ?? 1;
-  const drive = quantizeCommand({ driveX: 1, driveY: 1, rotate: 0, intake: false, fire: false });
+  /**
+   * POINT THE STICK AT THE OPEN FIELD, or the positive control below measures a wall.
+   *
+   * The room's robots are FIELD-CENTRIC (`DEFAULT_ASSISTS`), so this is a DRIVER-frame
+   * stick and blue's driver looks from the right wall (`viewAngleOf` −π/2): the sim
+   * applies `rot(stick, −viewAngle)`, which turns (+1,+1) into field (−x,+y) — straight
+   * into the side wall that anchor 0 already starts against. The robot then went nowhere
+   * but along that wall, at whatever COULOMB stick/slip allows a chassis pressing into
+   * it (see CLAUDE.md, Physics), and "does move it" was being asked of a stall: it
+   * cleared the 2in bar by 0.29in when this check was written and failed at 1.38in once
+   * wall contact was retuned, with nothing about the generation guard changed.
+   * (−1,−1) is the same stick reversed, so it maps to field (+x,−y) and drives into open
+   * floor — 48in in the same 60 ticks, on drivetrain alone.
+   */
+  const drive = quantizeCommand({ driveX: -1, driveY: -1, rotate: 0, intake: false, fire: false });
   const posOf = (): { x: number; y: number } => {
     const r = room.worldForTest()?.robots.find((x) => x.id === 0);
     return { x: r?.pos.x ?? 0, y: r?.pos.y ?? 0 };
