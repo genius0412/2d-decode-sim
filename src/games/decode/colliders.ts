@@ -2,6 +2,7 @@ import type { Alliance, World } from '../../types';
 import * as C from '../../config';
 import { classifierRect, gateHandleRect, goalFaceNormal, goalFacePoints, goalSide } from '../../sim/field';
 import { datan2, hyp } from '../../math';
+import { gateOverrun } from '../../sim/goal';
 import type { FieldColliders, StaticSpec } from '../types';
 
 /**
@@ -73,6 +74,10 @@ function decodeGateArms(
     // gateColliderPos) when provided, so a robot ramming the gate open glides
     // through on the same tick instead of hard-stopping against last tick's stub.
     const pos = gateCol ? gateCol[a] : world.goals[a].gatePos;
+    // ...unless a robot has simply OVERRUN it. The stub pivots at the classifier edge, so a
+    // chassis nosed into the gate mouth contains it at EVERY open fraction and was shoved out
+    // of it every tick with no command at all — see `gateOverrun`.
+    if (gateOverrun(world, a)) continue;
     const rect = gateHandleRect(a, pos); // ONE source of truth — the torque pass reads it too
     if (!rect) continue;
     out.push({

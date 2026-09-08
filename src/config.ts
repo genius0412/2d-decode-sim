@@ -2288,6 +2288,22 @@ export const GATE_ZONE = { xNear: 62, xFar: 72, y0: -2, y1: 3 };
  * without opening it, is a MAJOR) and the contact half of the push-to-open test.
  * Kept TIGHT around the actual lever handle (which pokes GATE_ARM_SHORT into the field,
  * centered on GATE_TAPE_Y): NOT a big loitering region — a robot must be against the arm. */
+/**
+ * How far a chassis must be PAST the handle's pivot, toward the wall, before the arm counts as
+ * overrun and stops being an obstacle to it (see `gateOverrun`).
+ *
+ * It is the handle's OWN LENGTH, and the reason is that a robot WORKING THE LEVER can never
+ * trip it: driving head-on at the stub, the stub is what stops you, so you never get past the
+ * pivot at all while the arm is down. Only a chassis that came in from the SIDE — nosed into
+ * the gate mouth over the floor below the channel, which is where you stand to collect the
+ * outflow — ends up with the pivot inside it, and that is the case with no way out.
+ *
+ * Swept. At half an inch it fires while the lever is still being worked and the drain stops
+ * dead, 0 of 9 artifacts out; the gate stops being a gate. The handle's own reach is the
+ * shortest threshold that leaves the mechanism intact.
+ */
+export const GATE_OVERRUN_SLOP = GATE_ARM_SHORT; // in
+
 export const GATE_ARM_REACH = 3; // in, field-side reach past the classifier edge (~ the handle)
 export const GATE_ARM_Y0 = -2; // mouth band edges, centered on the lever (GATE_TAPE_Y = 0.5)
 export const GATE_ARM_Y1 = 3;

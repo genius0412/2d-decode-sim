@@ -220,6 +220,45 @@ function gateArmSweep(a: Alliance, pos: number): Rect | null {
  * Bisected rather than solved, so the test is exactly the SAT the solve itself uses, with a
  * fixed iteration count to stay deterministic.
  */
+/**
+ * HAS A ROBOT SIMPLY OVERRUN THE HANDLE? — no arm position clears it.
+ *
+ * `gateRobotRest` lifts the arm to rest on a chassis in its swing, and that answers the
+ * ordinary case. It cannot answer this one: the handle PIVOTS at the classifier edge, so its
+ * stub sits there at every open fraction, and a robot nosed into the gate mouth — legal floor,
+ * below the channel — simply contains that pivot whatever the arm does. There is no height
+ * that clears it, so `gateRobotRest` returns 1 and the fully retracted stub is still inside
+ * the robot, which then gets pushed out of it every tick, forever.
+ *
+ * A 2.5in hinged bar does not move a 22lb chassis it is already inside. Once it has been
+ * overrun it stops being an obstacle to that robot — it is lying against a bumper, which is
+ * where a real one would be. It still blocks everybody it has NOT been overrun by, which is
+ * the job it exists for: a robot cannot strafe THROUGH a shut gate, because on the way in the
+ * stub is in front of the bumper and not inside it.
+ */
+export function gateOverrun(world: World, a: Alliance): boolean {
+  const rect = gateArmSweep(a, 1); // the stub at FULL lift: what is left when the arm gives up
+  if (!rect) return false;
+  const g = goalSide(a);
+  const pivotX = g * (C.FIELD_HALF - C.CLASSIFIER_W);
+  return world.robots.some((r) => {
+    if (!robotIntersectsRect(r, rect)) return false;
+    /**
+     * ...AND IT GOT THERE BY GOING PAST THE PIVOT, not by arriving in front of it. That
+     * direction is the whole test, and it matches the gate's own one-directional nature: a
+     * robot APPROACHING the handle is on the field side of the classifier edge and the stub is
+     * ahead of its bumper, so the arm blocks it exactly as it always did. A robot in the gate
+     * MOUTH has its chassis past that edge, over floor the channel does not cover, with the
+     * pivot inside it — nothing left for the arm to block, and no height it can retreat to.
+     *
+     * Without the direction test this fires on the ordinary intaking pose too and the handle
+     * simply vanishes: the drain went to 0 of 9 artifacts because the lever could no longer be
+     * worked at all.
+     */
+    return chassisCorners(r).some((c) => g * (c.x - pivotX) > C.GATE_OVERRUN_SLOP);
+  });
+}
+
 function gateRobotRest(world: World, a: Alliance): number {
   const blocked = (pos: number): boolean => {
     const rect = gateArmSweep(a, pos);
