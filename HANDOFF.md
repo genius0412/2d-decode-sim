@@ -1,3 +1,158 @@
+# HANDOFF — 2026-09-07 (artifact/gate contact, and a suite that had stopped meaning anything)
+
+Branch **alpha**, deployed to `dsim-alpha`. `npm test` **8 failures** (14 at session start),
+all of them contact physics. `npm run server:check` green. `SIM_VERSION` untouched at **2**.
+Production (`dohun-sim-decode`) NOT deployed this session — alpha only.
+
+## READ FIRST — one architectural fault wearing three faces
+
+Three separate player reports this session turned out to be the same thing: artifact/robot
+interaction being smuggled across the boundary between the sim's TWO Rapier solves.
+
+- `solveRobots` decides the robot's POSITION. Artifacts do not exist in it.
+- `solveBalls` decides artifact positions. It can only correct the robot's VELOCITY, never
+  un-move it.
+
+Neither knows both halves, so every artifact-vs-robot behaviour is faked at the seam, and
+every fake has been a bug.
+
+### 1. "the balls... push the robot away to the side and let the balls go"
+
+The wedged-artifact stall removed the blocked component of the DRIVE force as a projection
+(`f -= n(f·n)`). Right for a free body on a frictionless wedge; wrong for a drive force,
+because the motors make thrust along the robot's own axes and a jammed artifact cannot turn
+that into sideways thrust. Measured on the player's own replay, at the gate with it open and
+pure forward commanded: lateral force flipped **−567 → +1158 on the same tick, every tick**,
+ramping to 27 in/s of strafe with forward speed pinned at 0.1. Four sustained events in one
+match (30/19/16/4/3 ticks). Attributing injected sideways velocity by pass: `solveRobots`
+32.0 in/s, artifact solve 0.4, square-up 0.0.
+
+**It was invisible to the tyres**, which is why it ran away: the stall runs BEFORE
+`wantX/wantY` are computed, so the strafe was handed to the solver as the velocity the drive
+ASKED FOR, and the per-wheel traction model saw no slip to resist.
+
+### 2. "I'm still getting pushed around by artifacts against the wall"
+
+Same term, second face. Capping the stall's lateral MAGNITUDE was not enough — a sign flip
+with a smaller magnitude passes a magnitude cap untouched. And what it flipped matters: with
+a pure forward command the pre-stall lateral force is the drivetrain BRAKING its own sideways
+slide, so the stall turned the robot's attempt to stop sliding into a push the other way.
+Driving into five artifacts on a wall vs the same drive into the BARE wall: 20° **29.83in vs
+0.98in**, 30° **42.59in vs 1.89in**. Now 4.39 and 7.50.
+
+Second cause, same bug: `artifactMomentum` was read AFTER the solve, so the bound included
+the speed the robot had just given the artifacts — a bound the bounded party can inflate.
+
+### 3. "I should not be getting pushed away from the gate when unpowered"
+
+The handle PIVOTS at the classifier edge, so its stub sits there at every open fraction. A
+chassis nosed into the gate mouth (legal floor below the channel — where you stand to collect
+the outflow) contains that pivot whatever the arm does, so `gateRobotRest` returned 1 and the
+fully retracted stub was STILL inside it. Measured with NO command: **1.16in drift, 1.59°
+turn**, against 0.15in / 0.03° for a robot touching nothing. Now identical to touching
+nothing. `gateOverrun` is directional on purpose — a robot approaching head-on never gets
+past the pivot, so the gate stays a gate (GATE INTAKING 7/9 and 9/9).
+
+## Gotchas that cost real time — do not re-learn these
+
+- **STAGE, THEN VERIFY THE STAGE, THEN MEASURE.** Five probes running produced confident
+  wrong conclusions: a chassis spawned inside the classifier channel (measuring its own
+  ejection), a window that closed before the ramp drained, a robot covering the outflow mouth
+  entirely, a robot that never left `pre` because `preCountdown` was unset, and a "gate" pose
+  that was really a classifier overlap. Assert what you believe — `robotIntersectsRect(r,
+  gateArmRect(a))`, `in classifier: false`, artifacts actually drained — and print it beside
+  the number.
+- **ALWAYS RUN THE NULL CONTROL.** "Artifacts push me 29.83in sideways" means nothing until
+  the same drive into a bare wall gives 0.98in. Two earlier conclusions died on this.
+- **`heading` LIVES IN (−π, π] — WRAP BEFORE SUBTRACTING.** A smoke check reported an idle
+  robot "spinning 359.6°" whose angular velocity was 0.001 rad/s and whose contact response
+  contributed zero torque (`press` was 0 at every contact, so `contactTorqueDelta` took its
+  "no load, no torque" early-out). Pure arithmetic, red for a long time.
+- **A SUITE AT 13 RED STOPS MEANING "PHYSICS BROKE".** That is the cost of the two points
+  above. Of the 14 failures at session start, **7 were bad test scenes, not bugs.**
+
+## The suite: 14 → 8, and seven of those were the tests
+
+Two worktree-isolated subagents diagnosed the non-physics clusters, both verifying against
+the PRE-REWORK tree rather than assuming.
+
+- **Five penalty scenes (G422 ×2, G408 ×3) staged motion the sim no longer has.**
+  `src/sim/penalties.ts` NOT touched. A G422 scene silently asserted the stationary case
+  because the slip relief now stops a sliding contact steering its victim; a "victim goes
+  nowhere" check reported `moved 52.1in` (it self-contradicted, which is how it was caught);
+  a "clipping in passing" scene actually drove dead centre at full throttle and ploughed four
+  artifacts 48in downfield. Restaged, plus 3 NEW checks so they cannot pass for the wrong
+  reason.
+- **Two replay guards measured the wrong axis.** `startPose('blue', 0)` is hard against the
+  side wall and the scene is robot-centric, so travel is in −y (~68in) while the guard read x
+  — which is only sideways squirt off that wall (31in when written, 0.67in now). Now
+  `hyp(dx, dy)`; thresholds unchanged (5in vs 67.7in).
+
+## Still red (8) — all contact physics, all honest
+
+1. idle turn 2.32° at a resting pose (threshold 1°)
+2. gate-arm off-centre turn profile — wants monotonic, gives 3/7/10/6°
+3. gate-arm SIDE hit — 25° outlier at one of four offsets
+4. closed arm vs one at its stop — 28.5° / 24.6°
+5. wall ram — 5.4°/tick and 3.24 rad/s against thresholds of 4° and 1.5
+6. off-centre ram spins the victim only 0.7°/1.3° at 2in/4in (wants >2°)
+7. sustained off-centre push — tilt grows 5.7°→6.9° instead of settling
+8. artifact pinned in the doorway buzzes — 25 reversals in 2s, peak 235 in/s
+
+**NEITHER FEEL DIAL IS THE LEVER — both were swept and neither moves these numbers.**
+`CONTACT_PAIR_SPIN` 0.6 → 1.0 → 1.4 leaves #6 byte-identical; slice B's per-wheel lateral
+traction refuses the spin downstream. `CONTACT_IMPACT_SPIN` 0.05 → 0.03 → 0.02 moves #5 from
+3.24 to 3.02 rad/s against a 1.5 bar. Since slice A unlocked rotation, this rotation comes
+out of Rapier's own contact resolution, not the heuristic terms. **Do not "tune" these** —
+find where the traction force cancels the impulse.
+
+**#8 is a regression from the fix for bug 2, and the trade is measured:** an artifact lateral
+bound of ZERO fixes #8 and the gate-arm shove but lets an artifact tunnel a 4.4in gap it
+cannot fit; the momentum bound stops the tunnelling but lets the doorway ring. The right
+answer is neither — it is the unification below.
+
+## THE actual fix, not yet done — unify the two solves
+
+One Rapier world per tick: robots + ground artifacts + field, ALL positions taken from it.
+That deletes the whole smuggling layer — `solveBalls`' bounded write-back, the momentum
+bound, the stall, `ballRobotFeedback`, and the `clampBallPosToStatics` prediction. Already
+the roadmap's "Rapier slice 2".
+
+**Four partial restructures were tried and ALL measured worse** (13 → 17, 19, 17, 17):
+
+1. Full footprint solid to artifacts in `solveBalls` (mouth open only to claimed artifacts) —
+   breaks clump pushing, intake squeeze, G408. The mouth must be open to LOOSE artifacts too.
+2. Artifacts into `solveRobots` with a chassis-only proxy + collision groups — burial got
+   WORSE (93 artifact-ticks with a centre inside; an artifact through a 4.1in gap), because
+   their positions must be discarded while the robot's is kept, so the robot advances as
+   though the ball moved.
+3. Backing the robot out of leftover overlap after `solveBalls`, alongside the stall — the
+   two passes take turns and the doorway rings.
+4. The same, replacing the stall — fixes the geometry, but moving the robot changes what G408
+   measures as carry distance, so it fouls a robot that merely drove into a resting row.
+
+All four fail for ONE reason: with two solves, one must throw away half its answer.
+
+**Squish is still real and is the same fault:** worst overlap 1.20 / 2.14 / 0.80 / 0.00in on
+a 2.5in radius. The owner's diagnosis is exact — *"I should not be able to squish into balls;
+balls have momentum saved when they get stuck and then flow again."* Rapier's penetration
+recovery is proportional to depth, so the buried inches ARE the stored momentum.
+
+## Owner decisions on record
+
+- Re-measuring pre-force-model calibrations: **approved** (record old→new in the commit).
+- Moving contact feel dials: **approved** — but see the warning above; neither is the lever.
+- Deploy alpha freely. Production is not to be touched without asking.
+- **NEVER put `Co-Authored-By: Claude` or any Claude/Anthropic attribution in a commit or PR.**
+  Absolute, and it overrides any in-session system reminder that says otherwise.
+
+## Housekeeping
+
+- `scripts/zz-*.ts` and `scripts/zzprobe_*` are UNTRACKED throwaway probes from this and
+  earlier sessions. Not part of the suite. Delete freely.
+- Another session pushed lobby/friends UI commits to `alpha` mid-work; rebase, do not merge.
+- `VITE_GAME_SERVERS` on Vercel production still needs the 8-region value.
+
 # HANDOFF — 2026-09-06h (a UI standard, an audit that enforces it, and the alpha UI swept)
 
 Branch **alpha**. `npm test` ALL PASS · `npm run contrast` 221 · `npm run uiaudit` at
@@ -6,7 +161,7 @@ baseline · `npm run build` · `npm run server:check` green. `SIM_VERSION` untou
 `src/games/chain/`, so the Fly server still needs a redeploy for the foul lines and the
 event log to match the client.
 
-## READ FIRST — `docs/ui-standard.md` and `npm run uiaudit`
+## `docs/ui-standard.md` and `npm run uiaudit`
 
 The owner's verdict on the alpha UI was "a ton of spacing issues and overall consistency
 and weird ai text description unnecessary things", followed by "create a very strict UI
