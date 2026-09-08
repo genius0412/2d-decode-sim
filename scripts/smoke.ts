@@ -7400,35 +7400,40 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
    * A robot being bulldozed ACROSS the field is not being pinned for the whole trip: once
    * either robot is 2 ft from where the pin initiated, for more than 3 seconds, the count ends.
    * So a long push bills the first MINOR and then stops, rather than billing forever.
-   */
-  /**
-   * Staged with a SWERVE pinner, because it has to strafe: it presses the victim into the far
-   * wall (which is what makes it a pin at all) while walking it sideways ALONG that wall. A tank
-   * pinner cannot strafe, so the pair never travels and the scene silently tests nothing.
    *
-   * Counted as G422 EVENTS, not as `fouls.blue.minor` — a pair travelling the length of the far
-   * wall drives through protected zones on the way and picks up G424/G425 of its own.
+   * ⚠️ THE WALK IS APPLIED, NOT DRIVEN — the same way the criterion A scene above applies its
+   * separation by hand. This used to be staged as a SWERVE pinner strafing its victim sideways
+   * along the far wall, and no holder can do that any more: a contact that slides stops steering
+   * the robot on the other end of it, so measured, ten seconds of a 40 lb swerve pinner strafing
+   * at full throttle walked its victim 4.6in. A scene that tries to DRIVE the travel therefore
+   * silently asserts the stationary case and tests nothing. Criterion B is a clause about
+   * DISPLACEMENT FROM WHERE THE PIN BEGAN, so displacement is what the scene supplies; the hold
+   * either side of it is real physics, and the 12in case below is what keeps the 2 ft threshold
+   * honest rather than making this a test that any teleport clears the count.
+   *
+   * Counted as G422 EVENTS, not as `fouls.blue.minor` — a pin scene on the far wall can pick up
+   * G424/G425 of its own.
    */
-  const w = pinWorld();
-  // park the artifacts: a pair walking the length of the far wall otherwise ploughs a spike-mark
-  // pile along with it, which is a different scene (and G408's, not G422's)
-  for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
-  const [p2, v] = w.robots;
-  p2.spec.drivetrain = 'swerve'; p2.spec.massLb = 40; p2.spec.driveRpm = 200;
-  v.pos = { x: -30, y: 63 }; p2.pos = { x: -30, y: 44 };
-  const walk = new Map([
-    [0, cmd({ driveY: 1, driveX: 1, leftDrive: 1, rightDrive: 1 })],
-    [1, cmd({ driveY: -1, leftDrive: -1, rightDrive: -1 })],
-  ]);
-  runCmds(w, walk, 10);
-  const travelled = Math.hypot(v.pos.x + 30, v.pos.y - 63);
+  const walked = (walk: number): number => {
+    const w = pinWorld();
+    // park the artifacts: a pair on the far wall otherwise collects the spike-mark pile, which
+    // is a different scene (and G408's, not G422's)
+    for (const ball of w.balls) ball.state = { kind: 'held', robot: 99 };
+    runCmds(w, PIN_CMDS, 2.5); // a real hold, still under the 3 s threshold
+    for (const r of w.robots) r.pos = { x: r.pos.x + walk, y: r.pos.y };
+    runCmds(w, PIN_CMDS, 3.4); // >3 s spent 2 ft from where it began ⇒ criterion B ends it
+    runCmds(w, PIN_CMDS, 0.7); // ...so the 2.5 s already banked no longer crosses the 3-count
+    return pins(w).onBlue;
+  };
   check(
     'a pin that travels 2 ft from where it began stops billing (criterion B)',
-    // ≤1, not ==1: a pair that starts moving immediately never holds anybody for 3 CONTINUOUS
-    // seconds, so 0 is the criterion working harder, not failing. The contrast below is what
-    // gives the number meaning — the same hold that stays put bills all the way through.
-    pins(w).onBlue <= 1 && travelled > 24,
-    `${pins(w).onBlue} G422 over 10 s while the victim was walked ${travelled.toFixed(0)}in along the wall`,
+    walked(30) === 0,
+    `${walked(30)} G422 after 2.5 s of a hold, 30in of travel for 3.4 s, then 0.7 s more`,
+  );
+  check(
+    '...and the threshold is the rule’s own 2 ft: a pin that shuffles a FOOT keeps its count',
+    walked(12) === 2,
+    `${walked(12)} G422 for the same run walked only 12in`,
   );
   // ...and the same hold that does NOT travel keeps billing, which is the contrast that
   // makes the criterion mean something
@@ -7608,32 +7613,47 @@ const PIN_CMDS = new Map([[0, cmd({ driveY: 1 })], [1, cmd({ driveY: -1 })]]);
    * The other half of the same rule. Prevention is an OUTCOME, not a stick direction, so the
    * relaxed test above must not foul a robot the victim simply drove away from. Criterion B
    * and `PIN_STUCK_SPEED` are what decide that, and this is the comparison that shows they do:
-   * the SAME victim, the same sideways escape, against a holder it can beat and one it cannot.
+   * the SAME victim, the SAME 42 lb tank holding it, the same sideways escape — the only thing
+   * that differs is whether that escape has anywhere to go.
+   *
+   * ⚠️ THE VARIABLE IS THE EXIT, NOT THE HOLDER. This used to contrast a holder the victim
+   * could beat with one it could not, and holder strength no longer decides it: with the contact
+   * free to slip, a victim strafing along an OPEN wall gets clear of ANY holder — measured, 52in
+   * away from this same 42 lb tank at full throttle, in under two seconds — and one whose strafe
+   * runs into the second wall gets clear of none. Keeping the old staging asserted "goes nowhere"
+   * about a robot that had gone 52in, which is how it read when it broke.
    *
    * Note it is not "escaping ends the count" — a pin held for 3 s is still a pin, and a victim
    * that gets clear and is then RE-CAUGHT starts a new one. What escaping buys is that the bill
    * stops growing.
    */
-  const held = (pusher: Partial<RobotSpec>): { moved: number; minors: number } => {
-    const w = createWorld('match', 55, [setup(0, 'blue', pusher, 0), setup(1, 'red', {}, 0)]);
+  const held = (x0: number): { escaped: number; g422: number } => {
+    const w = createWorld('match', 55, [setup(0, 'blue', { drivetrain: 'tank', massLb: 42 }, 0), setup(1, 'red', {}, 0)]);
     w.match.phase = 'teleop';
     w.match.phaseTimeLeft = 200;
     for (const r of w.robots) { r.heading = Math.PI / 2; r.vel = { x: 0, y: 0 }; r.fieldCentric = false; }
-    w.robots[1].pos = { x: 0, y: 63 };
-    w.robots[0].pos = { x: 0, y: 44 };
+    w.robots[1].pos = { x: x0, y: 63 };
+    w.robots[0].pos = { x: x0, y: 44 };
     // a TANK pusher is commanded on its SIDE STICKS — given only driveY it does not move at
     // all, which silently turns "held against a wall" into "standing next to a wall"
-    const pc = w.robots[0].spec.drivetrain === 'tank'
-      ? cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 })
-      : cmd({ driveY: 1 });
+    const pc = cmd({ driveY: 1, leftDrive: 1, rightDrive: 1 });
     runCmds(w, new Map([[0, pc], [1, cmd({ driveX: 1 })]]), 20);
-    return { moved: Math.abs(w.robots[1].pos.x), minors: w.match.fouls.blue.minor };
+    // how far the victim's own escape (+x, along the wall it is held against) actually got it,
+    // and G422 EVENTS rather than `fouls.blue.minor`, since the corner staging sits in a
+    // protected zone's neighbourhood
+    return { escaped: w.robots[1].pos.x - x0, g422: pins(w).onBlue };
   };
-  const heavy = held({ drivetrain: 'tank', massLb: 42 });
+  const cornered = held(62); // the sideways exit runs into the +x wall
   check(
     'a victim a heavy tank holds against the wall goes nowhere and keeps being billed',
-    heavy.moved < 6 && heavy.minors >= 5,
-    `moved ${heavy.moved.toFixed(1)}in, ${heavy.minors} MINORs over 20 s`,
+    cornered.escaped < 6 && cornered.g422 >= 5,
+    `escaped ${cornered.escaped.toFixed(1)}in, ${cornered.g422} G422 over 20 s`,
+  );
+  const free = held(0); // ...and the identical hold with the wall open beside it
+  check(
+    '...while the same holder bills nothing once the victim can strafe clear',
+    free.g422 === 0 && free.escaped > 24,
+    `escaped ${free.escaped.toFixed(1)}in, ${free.g422} G422 over 20 s`,
   );
 }
 
@@ -8325,6 +8345,8 @@ function pinScene(
 // bumper, so POSSESSION_ACQUIRE_S has to sit well under that or it excuses everything - at
 // 1.0s it was completely inert, which is how the plateau got noticed.
 {
+  /** the furthest an artifact travelled in the LAST `clump()` run */
+  let clumpMoved = 0;
   const clump = (
     n: number,
     drive: (t: number) => RobotCommand,
@@ -8332,6 +8354,9 @@ function pinScene(
     cy = -10,
     ry = -22,
     hopper: ArtifactColor[] = [],
+    /** where the robot starts ACROSS the clump: 0 is dead centre, and an offset wide enough to
+     *  miss the middle column is how a scene drives PAST a pile rather than into it */
+    rx = 0,
   ) => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
@@ -8345,19 +8370,28 @@ function pinScene(
     const spare = w.balls.filter((b) => b.state.kind === 'ground').slice(n);
     w.balls = w.balls.filter((b) => !spare.includes(b));
     let k = 0;
+    const placed = new Map<number, { x: number; y: number }>();
     for (const b of w.balls) {
       if (b.state.kind !== 'ground' || k >= n) continue;
       b.pos = { x: -5 + (k % 3) * 5.1, y: cy + Math.floor(k / 3) * 5.1 };
       b.vel = { x: 0, y: 0 };
       b.z = 0;
       b.vz = 0;
+      placed.set(b.id, { ...b.pos });
       k++;
     }
-    r.pos = { x: 0, y: ry };
+    r.pos = { x: rx, y: ry };
     r.heading = Math.PI / 2;
     r.fieldCentric = false;
     for (let i = 0; i < Math.round(secs / SIM_DT); i++) {
       step(w, SIM_DT, new Map([[0, drive(i * SIM_DT)]]));
+    }
+    // how far the furthest artifact was actually moved — a scene that claims to have CLIPPED
+    // one has to show that it touched anything at all
+    clumpMoved = 0;
+    for (const b of w.balls) {
+      const s = placed.get(b.id);
+      if (s) clumpMoved = Math.max(clumpMoved, Math.hypot(b.pos.x - s.x, b.pos.y - s.y));
     }
     return w.match.fouls.blue.minor;
   };
@@ -8387,10 +8421,29 @@ function pinScene(
     `3-clump ${clump(3, herd, 12, ...HERD)} MINORs`,
   );
   // ...and the three cases that must stay clean, all previously reported
+  /**
+   * ...WHILE CLIPPING ONE IN PASSING STILL DOES NOT — and "in passing" now has to be staged as
+   * passing, because the artifact coupling changed under it.
+   *
+   * This drove DEAD CENTRE into the clump at full throttle for 0.9 s and then strafed off, on
+   * the strength of the balls being punted clear of the bumper and left behind. They are not any
+   * more: a struck artifact leaves at about the speed of the robot that struck it, so it rides
+   * the bumper instead, and 0.9 s at 56 in/s is 25in of that. Measured, four artifacts went 48in
+   * downfield still in contact — that is a plough, not a clip, and the rule is right to bill it
+   * (the identical scene with a full hopper is asserted to foul a hundred lines below).
+   *
+   * So the scene is what the check has always said in words: the robot drives PAST the pile,
+   * clipping its edge column on the way by. Contact is real — an artifact is knocked most of the
+   * length of the field — and it costs nothing, which is G408's own bulldozing carve-out:
+   * "INADVERTENT contact with a SCORING ELEMENT while in the path of the ROBOT moving about the
+   * FIELD".
+   */
+  const clipped = clump(6, push, 4, -10, -22, [], 11);
+  const clippedMove = clumpMoved;
   check(
     '...while clipping one in passing still does not',
-    clump(6, (t) => (t < 0.9 ? cmd({ driveY: 1, intake: true }) : cmd({ driveX: 1, intake: true })), 4) === 0,
-    'brief contact is bulldozing',
+    clipped === 0 && clippedMove > 24,
+    `${clipped} MINORs, and it really did clip one — knocked ${clippedMove.toFixed(0)}in`,
   );
   check(
     '...nor nosing in briefly and backing off',
@@ -8412,7 +8465,16 @@ function pinScene(
    * direction the robot is driving it. Contrast the check below, where the robot drove the pile
    * to the wall itself and the latch keeps it there.
    */
-  const wallRow = (n: number, hopper: ArtifactColor[], intake: boolean, secs: number, gain = 1) => {
+  const wallRow = (
+    n: number,
+    hopper: ArtifactColor[],
+    intake: boolean,
+    secs: number,
+    gain = 1,
+    /** how far OFF the wall the row starts, i.e. how much ground the robot can actually take it
+     *  over before the perimeter stops it. 0 is the row already resting there. */
+    gap = 0,
+  ) => {
     const w = mkWorld('match', 'blue', 42);
     startMatch(w);
     w.match.phase = 'teleop';
@@ -8420,17 +8482,19 @@ function pinScene(
     r.hopper = [...hopper];
     const spare = w.balls.filter((b) => b.state.kind === 'ground').slice(n);
     w.balls = w.balls.filter((b) => !spare.includes(b));
+    const rowY = FIELD_HALF - BALL_RADIUS - gap;
     let k = 0;
     for (const b of w.balls) {
       if (b.state.kind !== 'ground' || k >= n) continue;
-      // a ROW resting flush along the far wall — already there, nowhere left to go
-      b.pos = { x: (k - (n - 1) / 2) * 5.1, y: FIELD_HALF - BALL_RADIUS };
+      // a ROW across the field, `gap` in from the far wall — at gap 0 it is flush against it,
+      // already there, with nowhere left to go
+      b.pos = { x: (k - (n - 1) / 2) * 5.1, y: rowY };
       b.vel = { x: 0, y: 0 };
       b.z = 0;
       b.vz = 0;
       k++;
     }
-    r.pos = { x: 0, y: FIELD_HALF - BALL_RADIUS - 16 };
+    r.pos = { x: 0, y: rowY - 16 };
     r.heading = Math.PI / 2;
     r.fieldCentric = false;
     for (let i = 0; i < Math.round(secs / SIM_DT); i++) {
@@ -8454,18 +8518,29 @@ function pinScene(
     `blueMinor=${wallRow(9, ['green', 'green', 'green'], true, 10, 0.5)}`,
   );
   /**
-   * ...BUT THE LINE IS DISPLACEMENT, NOT INTENT, and this is the other side of it. Nosing into
-   * a row at the wall leaves it where it is; RAMMING the same row at full throttle scatters it
-   * forty inches along the wall, and that really is moving those artifacts somewhere. Measured:
-   * a 0.5-throttle press moves the outer artifacts 33-39 in and draws nothing, because they
-   * squirt SIDEWAYS out of the squeeze rather than covering ground where the robot is driving
-   * them; the full-throttle ram carries four of them past POSSESSION_CARRY_DIST in the push
-   * direction and costs three MINORs. Pinned so the boundary cannot drift unnoticed.
+   * ...BUT THE LINE IS DISPLACEMENT, NOT INTENT, and this is the other side of it. The SAME ram,
+   * at the SAME full throttle, against the SAME nine-row: the only thing that differs is whether
+   * the row has anywhere to go. Flush on the wall it does not — the check above stands at full
+   * throttle too — and 32in out it does, so the ram drives it the whole way and costs 3 MINORs.
+   *
+   * ⚠️ THE VARIABLE USED TO BE THE THROTTLE, and it cannot be any more. A row wedged between a
+   * bumper and the perimeter is barely displaceable now: measured, a full-throttle ram moves it
+   * 0in downrange and 6in sideways, where it used to squirt the outer artifacts forty inches
+   * along the wall — which is where the old contrast came from, and it was reading the SCATTER,
+   * not the herd. Since the artifacts genuinely go nowhere, no foul is the rule working: G408's
+   * own bulldozing carve-out, and the same verdict as the three checks above it.
    */
+  const ramAtWall = wallRow(9, ['green', 'green', 'green'], true, 10, 1);
+  const ramWithRoom = wallRow(9, ['green', 'green', 'green'], true, 10, 1, 32);
   check(
     '...but RAMMING a nine-row at full throttle, scattering it, does foul',
-    wallRow(9, ['green', 'green', 'green'], true, 10, 1) > 0,
-    `blueMinor=${wallRow(9, ['green', 'green', 'green'], true, 10, 1)}`,
+    ramWithRoom > 0,
+    `blueMinor=${ramWithRoom} for a row driven 32in into the wall`,
+  );
+  check(
+    '...while the identical ram of a row ALREADY on the wall still does not — it goes nowhere',
+    ramAtWall === 0,
+    `blueMinor=${ramAtWall}`,
   );
 
   /**
@@ -8626,10 +8701,21 @@ function pinScene(
   // because the helper always emptied it: this check has said "with a FULL robot" since it was
   // written and has never once had one, which mattered the moment the acquire carve-out started
   // depending on hopper room.
+  //
+  // ⚠️ AND THE ROBOT NOW HAS TO DO THE SHOVING. The clump used to be staged five inches off the
+  // wall — its back row already resting on it — so what the check really ran was a robot arriving
+  // among artifacts that were as good as parked. That is the case the three checks above say is
+  // NOT control, and it stopped fouling once a pile wedged on the perimeter stopped being
+  // squirted forty inches by the impact. Placed 30in out, the robot drives the pile the whole
+  // way into the wall and leans on it, which is what "shoving one against a wall" describes:
+  // 2 MINORs for the journey, none for the leaning (asserted just above).
+  const shoved = clump(6, push, 8, FIELD_HALF - BALL_RADIUS - 35, FIELD_HALF - 60, ['green', 'green', 'green']);
+  const shovedMove = clumpMoved;
   check(
     '...but shoving one against a wall with a FULL robot does',
-    clump(6, push, 8, FIELD_HALF - BALL_RADIUS - 5, FIELD_HALF - 30, ['green', 'green', 'green']) > 0,
-    'a full robot is acquiring nothing, and the field holding the pile is not an excuse',
+    shoved > 0 && shovedMove > 24,
+    `${shoved} MINORs, pile driven ${shovedMove.toFixed(0)}in — a full robot is acquiring nothing, ` +
+      'and the field holding the pile is not an excuse',
   );
 }
 
