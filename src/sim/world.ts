@@ -329,7 +329,56 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
     if (!jammed) continue;
     b.pos.x = was.x;
     b.pos.y = was.y;
+    /**
+     * ...BUT A JAM IS NOT A LICENCE TO SIT INSIDE ANOTHER ARTIFACT.
+     *
+     * The revert restores where this artifact STARTED the tick, and if that was already inside
+     * another one the freeze preserves the overlap rather than the jitter it exists for. Once
+     * both are frozen that way nothing separates them again: measured on a real match, a pair
+     * 2.76in interpenetrated on a 5in diameter, held for 5534 consecutive ticks -- 92 seconds
+     * -- at the gate outflow, the ball solve pushing them apart and this putting them back to
+     * the decimal every tick.
+     *
+     * Refusing the revert outright is the wrong repair: not advancing is the ANTI-TUNNEL half
+     * of this rule, and dropping it walks artifacts through gaps they do not fit (measured, a
+     * 5in artifact through 4.3in). So the artifact keeps its old position and is then pushed
+     * off whatever it is inside, along the line between the two. It gains no ground down the
+     * flow; it just stops sharing space.
+     */
+    for (const o of ground) {
+      if (o.id === b.id) continue;
+      if (Math.abs((o.z ?? 0) - (b.z ?? 0)) > C.BALL_RADIUS) continue;
+      const ddx = b.pos.x - o.pos.x;
+      const ddy = b.pos.y - o.pos.y;
+      const dd = hyp(ddx, ddy);
+      const ov = C.BALL_RADIUS * 2 - dd;
+      if (ov <= C.BALL_FREEZE_MAX_OVERLAP || dd < 1e-6) continue;
+      const push = ov - C.BALL_FREEZE_MAX_OVERLAP;
+      b.pos.x += (ddx / dd) * push;
+      b.pos.y += (ddy / dd) * push;
+    }
     clampGroundBall(b);
+    /**
+     * ...AND THE WAY OUT OF ANOTHER ARTIFACT IS NOT THROUGH A ROBOT.
+     *
+     * The push above is a position write like any other in this tick, so it can put the
+     * artifact somewhere it does not fit -- and the one place that matters is inside a
+     * chassis, because this rule runs after the robot eviction and nothing takes it back out.
+     * Measured without this line: a 5in artifact through a 4.3in gap between a robot corner
+     * and the wall, which is precisely the tunnelling the jam exists to prevent.
+     *
+     * So the push is attempted and then CHECKED. Where it lands clear, the overlap is broken;
+     * where it would land in a robot there is no valid resolution at all, and the artifact
+     * keeps the frozen position -- still overlapping, still stuck, which is what a jam looks
+     * like. It just stops being the DEFAULT outcome.
+     */
+    for (const r of world.robots) {
+      if (!ballWedgedInRobot(r, b.pos)) continue;
+      b.pos.x = was.x;
+      b.pos.y = was.y;
+      clampGroundBall(b);
+      break;
+    }
   }
 
 

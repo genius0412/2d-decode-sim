@@ -646,6 +646,27 @@ export const BALL_SOLVER_ITERATIONS = 2;
  */
 export const BALL_RELAX_PASSES = 6;
 
+/**
+ * HOW MUCH ARTIFACT-ON-ARTIFACT OVERLAP A FREEZE MAY PRESERVE.
+ *
+ * Two passes in this tick deliberately REVERT an artifact to where it began: the wall-pinch
+ * jam, and the resting-artifact settle. Both exist to stop the same thing -- separation and
+ * the wall clamp taking turns, 33 direction reversals a second in a packed corner -- and both
+ * are right about jitter. But a revert restores the position the artifact STARTED the tick
+ * in, and if that position was already inside another artifact, the freeze preserves the
+ * overlap instead of the jitter. Once two of them are both frozen in an overlapping
+ * configuration nothing can ever separate them again.
+ *
+ * Measured on a real match: a pair 2.24in apart on a 5in diameter -- 2.76in interpenetrated --
+ * held for 5534 consecutive ticks, 92 seconds, at the gate outflow mouth. Every tick the ball
+ * solve pushed them apart and the freeze put them straight back, to the decimal.
+ *
+ * So a freeze is refused for an artifact that is deeply inside another one: jitter is the
+ * lesser problem, and the separation pass is allowed to finish its work. Shallow overlap --
+ * ordinary contact slop, which is what a settled pile looks like -- still freezes.
+ */
+export const BALL_FREEZE_MAX_OVERLAP = 0.5; // in
+
 // ------------------------------------------------- robot contact torque ----
 /** per-tick angular correction cap from a single contact group (rad), at rest */
 export const CONTACT_ALIGN_RATE = 0.03;
