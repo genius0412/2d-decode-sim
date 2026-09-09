@@ -749,13 +749,43 @@ export function solveBalls(
           pen = oy + C.BALL_RADIUS;
         }
       }
-      const need = pen - C.BALL_SQUISH_SLOP;
+      /**
+       * ...AND THE SPACE AN ARTIFACT NEEDS INCLUDES THE SPACE ITS NEIGHBOURS NEED.
+       *
+       * "Artifacts should not be pinched between a chassis and a wall in the first place."
+       * That is the right rule, and backing the robot off its OWN overlap does not implement
+       * it: with a row of artifacts against a wall, the chassis touches the near one, the near
+       * one is driven into the far one, and the compression shows up as artifact-on-artifact
+       * overlap that the robot is never charged for. Measured across a real match, every deep
+       * pair -- 266 of them -- was at the perimeter, which is exactly this.
+       *
+       * So the eviction asks how much room this artifact is SHORT by, counting how far it is
+       * inside its neighbours as well as inside the chassis. The robot backs off the whole
+       * shortfall, which is what makes the pinch impossible rather than merely resolved.
+       */
+      let squeezed = 0;
+      for (const { b: o } of ballBodies) {
+        if (o.id === b.id) continue;
+        if (Math.abs((o.z ?? 0) - (b.z ?? 0)) > C.BALL_RADIUS) continue;
+        const gap = C.BALL_RADIUS * 2 - hyp(o.pos.x - b.pos.x, o.pos.y - b.pos.y);
+        if (gap > squeezed) squeezed = gap;
+      }
+      const need = pen + Math.max(0, squeezed - C.BALL_SQUISH_SLOP) - C.BALL_SQUISH_SLOP;
       if (need <= 0) continue; // a resting contact, which is what contact looks like
       // the robot leaves along -n, away from the artifact
       if (Math.abs(nx * need) > Math.abs(px)) px = -nx * need;
       if (Math.abs(ny * need) > Math.abs(py)) py = -ny * need;
     }
     if (px !== 0 || py !== 0) {
+      // ...at a BOUNDED rate. See BALL_EVICT_MAX_STEP: an unbounded position write is a
+      // teleport, and the shortfall does not go away, so capping the step spreads the same
+      // correction over consecutive ticks instead of disturbing everything around the chassis.
+      const mag = hyp(px, py);
+      if (mag > C.BALL_EVICT_MAX_STEP) {
+        const k = C.BALL_EVICT_MAX_STEP / mag;
+        px *= k;
+        py *= k;
+      }
       const world = rot({ x: px, y: py }, r.heading);
       r.pos.x += world.x;
       r.pos.y += world.y;

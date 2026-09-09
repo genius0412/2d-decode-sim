@@ -624,6 +624,20 @@ export const BALL_PIN_SLOP = 0.05; // in
  * contact looks to any solver, and anything past that is the chassis occupying the artifact.
  */
 export const BALL_SQUISH_SLOP = 0.3; // in
+
+/**
+ * HOW FAR THE ARTIFACT EVICTION MAY MOVE A ROBOT IN ONE TICK, in inches.
+ *
+ * The eviction is a position write, and an unbounded one is a teleport: charging the chassis
+ * for the whole shortfall at once -- its own overlap plus how far the artifacts it is pressing
+ * are inside each other -- moved it far enough in a single tick to disturb everything nearby,
+ * and measured, that alone cost three checks (a turning tank over its sideways budget, the
+ * gate arm reading as a shove, and an artifact squeezed through a gap by the displacement).
+ *
+ * Backing off over a few ticks reaches the same place without the disturbance: the shortfall
+ * does not go away, so the cap simply spreads the same correction across consecutive ticks.
+ */
+export const BALL_EVICT_MAX_STEP = 0.35; // in per tick
 /** the pin only pushes the robot back when the robot itself drives into it
  * faster than this — balls arriving under their own momentum just stop */
 export const BALL_PIN_PUSH_MIN_SPEED = 0.5; // in/s
