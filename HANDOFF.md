@@ -111,14 +111,51 @@ bound of ZERO fixes #8 and the gate-arm shove but lets an artifact tunnel a 4.4i
 cannot fit; the momentum bound stops the tunnelling but lets the doorway ring. The right
 answer is neither — it is the unification below.
 
-## THE actual fix, not yet done — unify the two solves
+## Unifying the two solves was TRIED IN FULL and is NOT the fix - measured
 
-One Rapier world per tick: robots + ground artifacts + field, ALL positions taken from it.
-That deletes the whole smuggling layer — `solveBalls`' bounded write-back, the momentum
-bound, the stall, `ballRobotFeedback`, and the `clampBallPosToStatics` prediction. Already
-the roadmap's "Rapier slice 2".
+This was the standing recommendation - one world a tick, all positions taken from it,
+deleting the whole smuggling layer. It has now been BUILT AND MEASURED, and should not be
+built again without new information.
 
-**Four partial restructures were tried and ALL measured worse** (13 → 17, 19, 17, 17):
+**The blocker everyone expects is not the real one.** Contact stiffness is stated on the Rapier
+WORLD, not the collider (there is no per-collider stiffness in the API), and robots and
+artifacts want different values. Swept, whole-suite:
+
+| single stiffness | failures | what breaks |
+|---|---|---|
+| split, as shipped | 8 | - |
+| ARTIFACT setting 25 / 0.001 for both | 10 | two marginal gate-lift numbers |
+| ROBOT setting 12 / 0.01 for both | 13 | drivetrain side-slip ORDER inverts, tank peak 5.0% to 35.7% |
+
+So one stiffness (the artifact one) does serve both, and the documented fear - that a stiff
+contact flings a robot, which can legally begin a step deep inside a wall via its intake reach
+- no longer applies, because slices A and B made the drive a FORCE rather than a velocity
+written onto the chassis. Unification is therefore VIABLE. It is just not worth it.
+
+**Built in full** (artifacts in `solveRobots` behind the group scheme below, positions taken
+from that solve, `solveBalls` deleted, the drive-force stall deleted, one stiffness at
+25 / 0.001): **18 failures against the split's 8, and it breaks Chain Reaction** - a mecanum
+strafing into a beam left the field, y = -8 to y = 61.
+
+**AND THE DECISIVE RESULT: unification does NOT remove the need for the geometric invariant.**
+With the solve unified and the eviction pass removed, artifacts still buried **5.15in of a
+2.5in radius** and sat with their centres inside a chassis for 58 and 63 ticks. The cause is
+not the architecture - it is the MASS RATIO. An 0.2lb artifact between a chassis carrying a
+`shoveMass` in the teens and a STATIC wall is tens-to-one terminating in an immovable body,
+which a fixed iteration budget cannot propagate through in time. No arrangement of worlds
+fixes that. That was the entire argument for unifying, so it is gone: `evictFromArtifacts` is
+required in EITHER architecture, and with the split it is cheaper.
+
+The group scheme, for anyone who revisits it: `U_FIELD 0x0001001a`, `U_FOOT 0x00020023`,
+`U_PROXY 0x00040008` (chassis-only, massless, artifacts only - this is what keeps the intake
+mouth open), `U_ART 0x0008001d`, `U_CLAIM 0x00100019`, `U_ARM 0x00200002`. It typechecks and
+runs; every number above came from it.
+
+**`cap = 0` plus the eviction was also tried** (zero artifact-to-robot lateral transfer, the
+literal form of "balls do not have the force to move the chassis"): 11 failures, artifact
+tunnelling returns at a 4.4in gap, and the doorway still rings. Not it either.
+
+**Five restructures have now been tried and ALL measured worse** (13 → 17, 19, 17, 17, and the full unification at 18):
 
 1. Full footprint solid to artifacts in `solveBalls` (mouth open only to claimed artifacts) —
    breaks clump pushing, intake squeeze, G408. The mouth must be open to LOOSE artifacts too.
@@ -131,12 +168,24 @@ the roadmap's "Rapier slice 2".
 4. The same, replacing the stall — fixes the geometry, but moving the robot changes what G408
    measures as carry distance, so it fouls a robot that merely drove into a resting row.
 
-All four fail for ONE reason: with two solves, one must throw away half its answer.
+The four PARTIAL ones fail for one reason: with two solves, one must throw away half its
+answer. The full unification does not have that flaw and still lost, which is the point above
+- the squish was never the seam's fault.
 
-**Squish is still real and is the same fault:** worst overlap 1.20 / 2.14 / 0.80 / 0.00in on
-a 2.5in radius. The owner's diagnosis is exact — *"I should not be able to squish into balls;
-balls have momentum saved when they get stuck and then flow again."* Rapier's penetration
-recovery is proportional to depth, so the buried inches ARE the stored momentum.
+**Squish is FIXED** (commit `7cc8dca`), by the geometric invariant rather than by any
+architecture change. Measured per pushing face - worst overlap on a 2.5in radius, and how many
+ticks an artifact's CENTRE spent inside the chassis:
+
+| face | before | after |
+|---|---|---|
+| front | 0.00in, 0 ticks | 0.00in, 0 |
+| back | 0.15in, 0 ticks | 0.15in, 0 |
+| left flank | **5.09in, 290 ticks** | **0.50in, 0** |
+| right flank | **5.09in, 261 ticks** | **0.50in, 0** |
+
+Front and back were always clean, which is why every probe missed it for so long - the old
+drive-force stall only ever protected the direction the robot was driving. The suite's own
+grind-through metric reads 0.57 / 1.48 / 1.23 / 0.00in with 0/0/0/0 centre-inside.
 
 ## Owner decisions on record
 
