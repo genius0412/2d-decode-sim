@@ -626,18 +626,24 @@ export const BALL_PIN_SLOP = 0.05; // in
 export const BALL_SQUISH_SLOP = 0.3; // in
 
 /**
- * HOW FAR THE ARTIFACT EVICTION MAY MOVE A ROBOT IN ONE TICK, in inches.
+ * THE ARTIFACT EVICTION MAY ONLY UNDO THE ROBOT'S OWN ADVANCE. IT MAY NEVER PUSH IT BACK.
  *
- * The eviction is a position write, and an unbounded one is a teleport: charging the chassis
- * for the whole shortfall at once -- its own overlap plus how far the artifacts it is pressing
- * are inside each other -- moved it far enough in a single tick to disturb everything nearby,
- * and measured, that alone cost three checks (a turning tank over its sideways budget, the
- * gate arm reading as a shove, and an artifact squeezed through a gap by the displacement).
+ * The eviction exists so a chassis cannot end a tick standing where an artifact is, and it
+ * cannot be a free position write: a wall clamp presses an artifact back into the robot, the
+ * eviction pushes the robot off it, and the pair take turns until the chassis has been walked
+ * across the field. Reported as "I still keep getting slowly pushed back from artifacts & the
+ * wall when I'm not putting any power" -- at 0.35in a tick that is 21 in/s of drift on a robot
+ * doing nothing.
  *
- * Backing off over a few ticks reaches the same place without the disturbance: the shortfall
- * does not go away, so the cap simply spreads the same correction across consecutive ticks.
+ * So the correction is bounded by how far the robot MOVED this tick. A robot that drove into
+ * an artifact can have that advance taken back, in full, which is what makes the pinch
+ * impossible. A robot standing still moved nothing, so nothing is taken back and artifacts
+ * cannot shift it at all -- which is the owner's own rule: they do not have the force.
+ *
+ * This is why the bound is a distance moved and not a rate. A rate cap (0.35in/tick, swept
+ * against 0.2 and 0.5) limits how FAST the drift is; it does not stop it being drift.
  */
-export const BALL_EVICT_MAX_STEP = 0.35; // in per tick
+export const BALL_EVICT_MAX_STEP = 0.35; // in per tick, on top of the advance rule
 /** the pin only pushes the robot back when the robot itself drives into it
  * faster than this — balls arriving under their own momentum just stop */
 export const BALL_PIN_PUSH_MIN_SPEED = 0.5; // in/s

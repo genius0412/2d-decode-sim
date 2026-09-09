@@ -526,6 +526,8 @@ export function solveBalls(
   dt: number,
   colliders: FieldColliders,
   claimed: Set<number> = new Set(),
+  /** where each robot stood before this tick's robot solve — see BALL_EVICT_MAX_STEP. */
+  prePos?: Map<number, Vec2>,
 ): void {
   const groundBalls = world.balls.filter((b) => b.state.kind === 'ground');
   if (groundBalls.length === 0) return;
@@ -777,16 +779,36 @@ export function solveBalls(
       if (Math.abs(ny * need) > Math.abs(py)) py = -ny * need;
     }
     if (px !== 0 || py !== 0) {
-      // ...at a BOUNDED rate. See BALL_EVICT_MAX_STEP: an unbounded position write is a
-      // teleport, and the shortfall does not go away, so capping the step spreads the same
-      // correction over consecutive ticks instead of disturbing everything around the chassis.
       const mag = hyp(px, py);
       if (mag > C.BALL_EVICT_MAX_STEP) {
         const k = C.BALL_EVICT_MAX_STEP / mag;
         px *= k;
         py *= k;
       }
-      const world = rot({ x: px, y: py }, r.heading);
+      let world = rot({ x: px, y: py }, r.heading);
+      /**
+       * ...AND IT MAY ONLY UNDO THIS TICK'S ADVANCE. See BALL_EVICT_MAX_STEP.
+       *
+       * Without this the eviction is a free position write, and the wall clamp presses the
+       * artifact straight back into the chassis, so the two take turns and walk the robot
+       * across the field: "I still keep getting slowly pushed back from artifacts & the wall
+       * when I'm not putting any power." A robot that MOVED can have that move taken back; a
+       * robot that stood still moved nothing, so artifacts cannot shift it at all.
+       */
+      const before = prePos?.get(r.id);
+      if (before) {
+        const ax = r.pos.x - before.x;
+        const ay = r.pos.y - before.y;
+        const adv = hyp(ax, ay);
+        const back = hyp(world.x, world.y);
+        if (back > adv) {
+          if (adv <= 1e-9) world = { x: 0, y: 0 };
+          else {
+            const k = adv / back;
+            world = { x: world.x * k, y: world.y * k };
+          }
+        }
+      }
       r.pos.x += world.x;
       r.pos.y += world.y;
     }

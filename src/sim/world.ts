@@ -137,6 +137,10 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
   // runs before the pass that records them — so the list has to survive the drive phase and
   // carry last tick's contacts into it. Nothing between the top of `step` and here reads it.
   world.rrContacts.length = 0;
+  // where each robot stood BEFORE the solve moved it — the artifact eviction may undo this
+  // tick's advance and nothing more, so that artifacts can never walk a parked chassis.
+  const prePos = new Map<number, Vec2>();
+  for (const r of world.robots) prePos.set(r.id, { x: r.pos.x, y: r.pos.y });
   const preVels = solveRobots(world, dt, decodeColliders, gateCol, drive);
   squareUpRobots(world, preVels);
 
@@ -191,7 +195,7 @@ export function step(world: World, dt: number, commands: Map<number, RobotComman
     if (b.state.kind !== 'ground') continue;
     for (const r of world.robots) if (!r.autoPathActive) clumpDrag(b, r);
   }
-  solveBalls(world, dt, decodeColliders, intakeClaims(world, actualCommands));
+  solveBalls(world, dt, decodeColliders, intakeClaims(world, actualCommands), prePos);
   // the INTAKE MOUTH stays bespoke (see `solveBalls`): the mouth is open by design and its
   // funnel geometry is per-preset. Iterated so a robot→ball→(wall/ball) chain converges
   // instead of tunnelling in a single pass.
